@@ -97,6 +97,7 @@ private:
     std::string cur_name_;
     TypePtr cur_class_;
     bool in_ctor_ = false;
+    bool in_dtor_ = false;
     bool super_ok_ = false;
     std::unordered_set<const LocalVar*> cur_params_;
     std::vector<const LocalVar*> forin_vars_;
@@ -657,6 +658,7 @@ private:
         cur_name_ = f->name;
         cur_class_ = nullptr;
         in_ctor_ = false;
+        in_dtor_ = false;
         scopes_.clear();
         auto_groups_.clear();
         cur_params_.clear();
@@ -706,6 +708,7 @@ private:
         cur_ret_ = ret;
         cur_name_ = name;
         in_ctor_ = false;
+        in_dtor_ = false;
         auto self = std::make_unique<LocalVar>();
         self->name = "this";
         self->rty = cls;
@@ -857,7 +860,9 @@ private:
         DtorDecl* d = c->dtor.get();
         if (!d) return;
         begin_member(c->ty, t_void(), c->name + " 析构器", d->line, d->col);
+        in_dtor_ = true;
         check_block(d->body.get());
+        in_dtor_ = false;
         end_member();
     }
 
@@ -1392,6 +1397,7 @@ private:
     }
 
     void check_return(ReturnStmt* s) {
+        if (in_dtor_) err("析构器中不允许 `return`（字段释放与基类析构在函数末尾执行）", s);
         if (!cur_ret_) err("`return` 只能出现在函数/方法中", s);
         TypePtr rt = cur_ret_;
         if (!s->value) {
