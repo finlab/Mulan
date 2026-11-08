@@ -114,6 +114,22 @@ TypePtr Type::make_enum(const std::string& unit, const std::string& name) {
     return t;
 }
 
+TypePtr Type::make_class(const std::string& unit, const std::string& name) {
+    auto t = std::make_shared<Type>();
+    t->kind = TypeKind::Class;
+    t->unit = unit;
+    t->name = name;
+    return t;
+}
+
+TypePtr Type::make_interface(const std::string& unit, const std::string& name) {
+    auto t = std::make_shared<Type>();
+    t->kind = TypeKind::Interface;
+    t->unit = unit;
+    t->name = name;
+    return t;
+}
+
 TypePtr Type::make_module(const std::string& unit) {
     auto t = std::make_shared<Type>();
     t->kind = TypeKind::Module;
@@ -155,6 +171,8 @@ std::string Type::str() const {
         }
         case TypeKind::Struct:
         case TypeKind::Enum:
+        case TypeKind::Class:
+        case TypeKind::Interface:
             return unit.empty() ? name : unit + "." + name;
         case TypeKind::Module:
             return unit;
@@ -194,7 +212,7 @@ bool Type::is_signed() const {
 }
 
 TypePtr Type::field_type(const std::string& fname) const {
-    if (kind != TypeKind::Struct) return nullptr;
+    if (kind != TypeKind::Struct && kind != TypeKind::Class) return nullptr;
     for (const auto& f : fields) {
         if (f.name == fname) return f.type;
     }
@@ -202,7 +220,7 @@ TypePtr Type::field_type(const std::string& fname) const {
 }
 
 int Type::field_index(const std::string& fname) const {
-    if (kind != TypeKind::Struct) return -1;
+    if (kind != TypeKind::Struct && kind != TypeKind::Class) return -1;
     for (size_t i = 0; i < fields.size(); ++i) {
         if (fields[i].name == fname) return static_cast<int>(i);
     }
@@ -284,7 +302,9 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
             return a->array_size == b->array_size && same_type(a->elem, b->elem);
         case TypeKind::Struct:
         case TypeKind::Enum:
-            // 结构体/枚举按 (unit, name) 比较，忽略字段（对应 Python 的 __eq__）
+        case TypeKind::Class:
+        case TypeKind::Interface:
+            // 结构体/枚举/class/interface 按 (unit, name) 比较
             return a->unit == b->unit && a->name == b->name;
         case TypeKind::Module:
             return a->unit == b->unit;
@@ -293,6 +313,46 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
 }
 
 // ---------------------------------------------------------------- 转换规则
+
+bool is_class_type(const TypePtr& t) { return t && t->kind == TypeKind::Class; }
+bool is_interface_type(const TypePtr& t) { return t && t->kind == TypeKind::Interface; }
+bool is_reference_type(const TypePtr& t) { return is_class_type(t) || is_interface_type(t); }
+
+bool is_subclass_of(const TypePtr& sub, const TypePtr& base) {
+    if (!sub || !base || base->kind != TypeKind::Class) return false;
+    TypePtr cur = sub;
+    int guard = 0;
+    while (cur && cur->kind == TypeKind::Class && guard++ < 1024) {
+        if (same_type(cur, base)) return true;
+        cur = cur->base;
+    }
+    return false;
+}
+
+static bool iface_extends(const TypePtr& a, const TypePtr& b, int depth) {
+    if (!a || !b || depth > 256) return false;
+    if (same_type(a, b)) return true;
+    for (auto& i : a->interfaces) {
+        if (iface_extends(i, b, depth + 1)) return true;
+    }
+    return false;
+}
+
+bool implements_interface(const TypePtr& t, const TypePtr& iface) {
+    if (!t || !iface || iface->kind != TypeKind::Interface) return false;
+    if (t->kind == TypeKind::Interface) return iface_extends(t, iface, 0);
+    if (t->kind != TypeKind::Class) return false;
+
+    TypePtr cur = t;
+    int guard = 0;
+    while (cur && cur->kind == TypeKind::Class && guard++ < 1024) {
+        for (auto& i : cur->interfaces) {
+            if (iface_extends(i, iface, 0)) return true;
+        }
+        cur = cur->base;
+    }
+    return false;
+}
 
 bool widens_int(const TypePtr& src, const TypePtr& dst) {
     if (!src || !dst) return false;
@@ -315,11 +375,16 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
     if (same_type(src, dst)) return true;
     if (!src || !dst) return false;
 
-    // null -> 指针 / 切片 / string
+    // null -> 指针 / 切片 / string / class / interface
     if (src->kind == TypeKind::Null) {
         return dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice ||
-               dst->kind == TypeKind::String;
+               dst->kind == TypeKind::String || dst->kind == TypeKind::Class ||
+               dst->kind == TypeKind::Interface;
     }
+
+    // class / interface 子类型（单继承 + 接口）
+    if (is_subclass_of(src, dst)) return true;
+    if (implements_interface(src, dst)) return true;
 
     // 指针：T* -> void*；T* -> readonly T*；去掉 readonly 必须显式 as
     if (src->kind == TypeKind::Ptr && dst->kind == TypeKind::Ptr) {

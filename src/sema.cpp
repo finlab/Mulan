@@ -89,6 +89,11 @@ private:
     std::unordered_map<std::string, UnitInfo> infos_;
     Unit* cur_ = nullptr;
     FuncDecl* cur_func_ = nullptr;
+    TypePtr cur_ret_;
+    std::string cur_name_;
+    TypePtr cur_class_;
+    bool in_ctor_ = false;
+    std::vector<std::unique_ptr<LocalVar>> this_local_;
     std::vector<Scope> scopes_;
     int loop_depth_ = 0;
     std::unordered_map<int, TypePtr> auto_groups_;  // auto 同一声明的推断结果
@@ -152,6 +157,12 @@ private:
                     ui.structs[s->name] = s;
                 } else if (auto e = dynamic_cast<EnumDecl*>(d.get())) {
                     ui.enums[e->name] = e;
+                } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
+                    if (ui.classes.count(c->name)) err("重复定义 class `" + c->name + "`", c);
+                    ui.classes[c->name] = c;
+                } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
+                    if (ui.interfaces.count(i->name)) err("重复定义 interface `" + i->name + "`", i);
+                    ui.interfaces[i->name] = i;
                 } else if (auto g = dynamic_cast<GlobalVar*>(d.get())) {
                     if (ui.globals.count(g->name)) err("重复定义变量 `" + g->name + "`", g);
                     ui.globals[g->name] = g;
@@ -170,6 +181,10 @@ private:
                     nm = s->name;
                 } else if (auto e = dynamic_cast<EnumDecl*>(node)) {
                     nm = e->name;
+                } else if (auto c = dynamic_cast<ClassDecl*>(node)) {
+                    nm = c->name;
+                } else if (auto i = dynamic_cast<InterfaceDecl*>(node)) {
+                    nm = i->name;
                 } else if (auto g = dynamic_cast<GlobalVar*>(node)) {
                     nm = g->name;
                 } else {
@@ -199,6 +214,10 @@ private:
                     // 与 Python 版不同（见回报）：枚举类型在这里就建好，保证跨 unit
                     // 引用到“尚未 resolve 的 unit 的枚举”时不会拿到空类型。
                     e->ty = Type::make_enum(u->name, e->name);
+                } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
+                    c->ty = Type::make_class(u->name, c->name);
+                } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
+                    i->ty = Type::make_interface(u->name, i->name);
                 }
             }
         }
@@ -220,9 +239,113 @@ private:
                 }
                 TypePtr ft = resolve_type(spec.get(), u);
                 if (is_void(ft)) err("结构体 `" + sd->name + "` 的字段不能是 void", sd);
+                if (contains_reference_type(ft)) {
+                    err("struct 字段不能包含 class/interface 引用（见 3.8）", sd);
+                }
                 fields.push_back(Field{fname, ft});
             }
             sd->ty->fields = std::move(fields);
+        }
+
+        // class：基类、接口、扁平字段、方法/构造器签名
+        for (auto& d : u->decls) {
+            auto c = dynamic_cast<ClassDecl*>(d.get());
+            if (!c) continue;
+            if (!c->ty) c->ty = Type::make_class(u->name, c->name);
+
+            bool has_base = false;
+            TypeSpec where;
+            where.line = c->line;
+            where.col = c->col;
+            for (size_t i = 0; i < c->bases.size(); ++i) {
+                TypePtr bt = resolve_named_type(c->bases[i], u, &where);
+                if (bt->kind == TypeKind::Class) {
+                    if (i != 0 || has_base) err("class 只允许一个基类，且必须写在最前", c);
+                    has_base = true;
+                    c->ty->base = bt;
+                } else if (bt->kind == TypeKind::Interface) {
+                    c->ty->interfaces.push_back(bt);
+                } else {
+                    err("`" + c->bases[i] + "` 不是 class 或 interface", c);
+                }
+            }
+
+            std::vector<Field> fields;
+            if (c->ty->base) fields = c->ty->base->fields;
+            std::unordered_set<std::string> fnames;
+            for (auto& f : fields) fnames.insert(f.name);
+            for (auto& [fname, spec] : c->fields) {
+                if (!fnames.insert(fname).second) {
+                    err("class `" + c->name + "` 字段 `" + fname + "` 重复", c);
+                }
+                TypePtr ft = resolve_type(spec.get(), u);
+                if (is_void(ft)) err("class 字段不能是 void", c);
+                fields.push_back(Field{fname, ft});
+            }
+            c->ty->fields = std::move(fields);
+
+            c->ty->methods.clear();
+            c->ty->is_abstract = false;
+            for (auto& m : c->methods) {
+                m->rty = resolve_type(m->ret.get(), u);
+                m->pty.clear();
+                for (auto& p : m->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    m->pty.push_back(pt);
+                }
+                MethodSig sig;
+                sig.name = m->name;
+                sig.ret = m->rty;
+                sig.params = m->pty;
+                sig.is_abstract = !m->body;
+                sig.is_override = m->is_override;
+                c->ty->methods.push_back(std::move(sig));
+                if (!m->body) c->ty->is_abstract = true;
+            }
+            for (auto& ctor : c->ctors) {
+                ctor->pty.clear();
+                for (auto& p : ctor->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    ctor->pty.push_back(pt);
+                }
+                c->ty->ctors.push_back(ctor->pty);
+            }
+        }
+
+        // interface：基接口与方法签名
+        for (auto& d : u->decls) {
+            auto itf = dynamic_cast<InterfaceDecl*>(d.get());
+            if (!itf) continue;
+            if (!itf->ty) itf->ty = Type::make_interface(u->name, itf->name);
+            TypeSpec where;
+            where.line = itf->line;
+            where.col = itf->col;
+            for (auto& b : itf->bases) {
+                TypePtr bt = resolve_named_type(b, u, &where);
+                if (bt->kind != TypeKind::Interface) {
+                    err("interface 只能继承 interface", itf);
+                }
+                itf->ty->interfaces.push_back(bt);
+            }
+            itf->ty->methods.clear();
+            for (auto& m : itf->methods) {
+                m->rty = resolve_type(m->ret.get(), u);
+                m->pty.clear();
+                for (auto& p : m->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    m->pty.push_back(pt);
+                }
+                MethodSig sig;
+                sig.name = m->name;
+                sig.ret = m->rty;
+                sig.params = m->pty;
+                sig.is_abstract = !m->body;
+                sig.is_override = false;
+                itf->ty->methods.push_back(std::move(sig));
+            }
         }
 
         // 枚举：检查成员重复（类型已在 place_structs 建好）
@@ -290,12 +413,16 @@ private:
             UnitInfo& ui = it->second;
             if (auto s = ui.structs.find(tn); s != ui.structs.end()) return s->second->ty;
             if (auto e = ui.enums.find(tn); e != ui.enums.end()) return e->second->ty;
+            if (auto c = ui.classes.find(tn); c != ui.classes.end()) return c->second->ty;
+            if (auto i = ui.interfaces.find(tn); i != ui.interfaces.end()) return i->second->ty;
             err_ts("unit `" + un + "` 中没有类型 `" + tn + "`", spec);
         }
 
         UnitInfo& ui = infos_.at(u->name);
         if (auto s = ui.structs.find(name); s != ui.structs.end()) return s->second->ty;
         if (auto e = ui.enums.find(name); e != ui.enums.end()) return e->second->ty;
+        if (auto c = ui.classes.find(name); c != ui.classes.end()) return c->second->ty;
+        if (auto i = ui.interfaces.find(name); i != ui.interfaces.end()) return i->second->ty;
         err_ts("未知类型 `" + name + "`", spec);
     }
 
@@ -355,6 +482,12 @@ private:
             if (!f || f->is_extern) continue;
             check_func(f);
         }
+        for (auto& d : u->decls) {
+            if (auto c = dynamic_cast<ClassDecl*>(d.get())) check_class(c);
+        }
+        for (auto& d : u->decls) {
+            if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) check_interface(i);
+        }
     }
 
     void check_global(GlobalVar* g) {
@@ -400,6 +533,10 @@ private:
     void check_func(FuncDecl* f) {
         if (!f->rty) err("函数 `" + f->name + "` 缺少返回类型", f);
         cur_func_ = f;
+        cur_ret_ = f->rty;
+        cur_name_ = f->name;
+        cur_class_ = nullptr;
+        in_ctor_ = false;
         scopes_.clear();
         auto_groups_.clear();
         scopes_.emplace_back();
@@ -427,6 +564,174 @@ private:
         scopes_.clear();
         auto_groups_.clear();
         cur_func_ = nullptr;
+        cur_ret_ = nullptr;
+        cur_name_.clear();
+        this_local_.clear();
+    }
+
+    // ------------------------------------------------------------ class / interface
+
+    void begin_member(const TypePtr& cls, const TypePtr& ret, const std::string& name, int line,
+                      int col) {
+        scopes_.clear();
+        auto_groups_.clear();
+        scopes_.emplace_back();
+        loop_depth_ = 0;
+        cur_class_ = cls;
+        cur_ret_ = ret;
+        cur_name_ = name;
+        in_ctor_ = false;
+        auto self = std::make_unique<LocalVar>();
+        self->name = "this";
+        self->rty = cls;
+        self->line = line;
+        self->col = col;
+        declare_local(self.get());
+        this_local_.clear();
+        this_local_.push_back(std::move(self));
+    }
+
+    void end_member() {
+        scopes_.clear();
+        auto_groups_.clear();
+        cur_class_ = nullptr;
+        cur_ret_ = nullptr;
+        cur_name_.clear();
+        in_ctor_ = false;
+        this_local_.clear();
+    }
+
+    void declare_params(std::vector<std::unique_ptr<LocalVar>>& out,
+                        std::vector<std::unique_ptr<Param>>& params,
+                        const std::vector<TypePtr>& pty) {
+        out.clear();
+        for (size_t i = 0; i < params.size() && i < pty.size(); ++i) {
+            auto lv = std::make_unique<LocalVar>();
+            lv->name = params[i]->name;
+            lv->rty = pty[i];
+            lv->line = params[i]->line;
+            lv->col = params[i]->col;
+            declare_local(lv.get());
+            out.push_back(std::move(lv));
+        }
+    }
+
+    static bool same_sig(const MethodSig& a, const MethodSig& b) {
+        if (a.name != b.name || a.params.size() != b.params.size()) return false;
+        for (size_t i = 0; i < a.params.size(); ++i) {
+            if (!same_type(a.params[i], b.params[i])) return false;
+        }
+        return true;
+    }
+
+    static const MethodSig* find_sig(const TypePtr& t, const MethodSig& sig, int depth = 0) {
+        if (!t || depth > 256) return nullptr;
+        for (auto& m : t->methods) {
+            if (same_sig(m, sig)) return &m;
+        }
+        if (t->kind == TypeKind::Class && t->base) {
+            if (auto r = find_sig(t->base, sig, depth + 1)) return r;
+        }
+        for (auto& i : t->interfaces) {
+            if (auto r = find_sig(i, sig, depth + 1)) return r;
+        }
+        return nullptr;
+    }
+
+    static const MethodSig* find_method(const TypePtr& t, const std::string& name, size_t argc,
+                                        int depth = 0) {
+        if (!t || depth > 256) return nullptr;
+        for (auto& m : t->methods) {
+            if (m.name == name && m.params.size() == argc) return &m;
+        }
+        if (t->kind == TypeKind::Class && t->base) {
+            if (auto r = find_method(t->base, name, argc, depth + 1)) return r;
+        }
+        for (auto& i : t->interfaces) {
+            if (auto r = find_method(i, name, argc, depth + 1)) return r;
+        }
+        return nullptr;
+    }
+
+    static bool has_method_named(const TypePtr& t, const std::string& name, int depth = 0) {
+        if (!t || depth > 256) return false;
+        for (auto& m : t->methods) {
+            if (m.name == name) return true;
+        }
+        if (t->kind == TypeKind::Class && t->base && has_method_named(t->base, name, depth + 1)) {
+            return true;
+        }
+        for (auto& i : t->interfaces) {
+            if (has_method_named(i, name, depth + 1)) return true;
+        }
+        return false;
+    }
+
+    void check_method(ClassDecl* c, MethodDecl* m) {
+        if (!m->body) return;  // 抽象方法
+        begin_member(c->ty, m->rty, c->name + "." + m->name, m->line, m->col);
+        declare_params(m->param_locals, m->params, m->pty);
+        check_block(m->body.get());
+        if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
+            err("方法 `" + m->name + "` 可能执行到末尾而没有返回值", m);
+        }
+        end_member();
+    }
+
+    void check_ctor(ClassDecl* c, CtorDecl* ctor) {
+        begin_member(c->ty, t_void(), c->name + " 构造器", ctor->line, ctor->col);
+        in_ctor_ = true;
+        declare_params(ctor->param_locals, ctor->params, ctor->pty);
+        check_block(ctor->body.get());
+        end_member();
+    }
+
+    void check_dtor(ClassDecl* c) {
+        DtorDecl* d = c->dtor.get();
+        if (!d) return;
+        begin_member(c->ty, t_void(), c->name + " 析构器", d->line, d->col);
+        check_block(d->body.get());
+        end_member();
+    }
+
+    void check_class(ClassDecl* c) {
+        std::unordered_set<std::string> seen;
+        for (auto& m : c->methods) {
+            MethodSig sig;
+            sig.name = m->name;
+            sig.params = m->pty;
+            std::string key = m->name + "(";
+            for (auto& p : m->pty) key += p->str() + ",";
+            key += ")";
+            if (!seen.insert(key).second) {
+                err("class `" + c->name + "` 方法 `" + key + "` 重复", m.get());
+            }
+            if (m->is_override) {
+                if (!find_sig(c->ty->base ? c->ty->base : c->ty, sig)) {
+                    bool found = false;
+                    for (auto& i : c->ty->interfaces) {
+                        if (find_sig(i, sig)) { found = true; break; }
+                    }
+                    if (!found) err("`override` 没有匹配的基类/接口方法", m.get());
+                }
+            }
+            check_method(c, m.get());
+        }
+        for (auto& ctor : c->ctors) check_ctor(c, ctor.get());
+        check_dtor(c);
+    }
+
+    void check_interface(InterfaceDecl* itf) {
+        for (auto& m : itf->methods) {
+            if (!m->body) continue;  // 默认方法之外的抽象声明
+            begin_member(itf->ty, m->rty, itf->name + "." + m->name, m->line, m->col);
+            declare_params(m->param_locals, m->params, m->pty);
+            check_block(m->body.get());
+            if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
+                err("接口方法 `" + m->name + "` 可能执行到末尾而没有返回值", m.get());
+            }
+            end_member();
+        }
     }
 
     void check_block(Block* b) {
@@ -467,6 +772,11 @@ private:
             if (loop_depth_ == 0) err("`continue` 只能出现在循环中", s);
         } else if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
             check_return(rs);
+        } else if (auto d = dynamic_cast<DelStmt*>(s)) {
+            TypePtr t = check_expr(d->value.get());
+            if (!is_reference_type(t)) err("`del` 只能用于 class/interface 引用", d);
+            if (!is_lvalue(d->value.get())) err("`del` 的目标必须是可写的引用左值", d);
+            if (root_is_const(d->value.get())) err("`del` 不能用于 `const` 绑定", d);
         } else if (auto b = dynamic_cast<Block*>(s)) {
             check_block(b);
         } else {
@@ -699,17 +1009,15 @@ private:
     }
 
     void check_return(ReturnStmt* s) {
-        if (!cur_func_) err("`return` 只能出现在函数中", s);
-        TypePtr rt = cur_func_->rty;
+        if (!cur_ret_) err("`return` 只能出现在函数/方法中", s);
+        TypePtr rt = cur_ret_;
         if (!s->value) {
             if (!is_void(rt)) {
-                err("函数 `" + cur_func_->name + "` 必须返回 " + (rt ? rt->str() : "void") +
-                        " 类型的值",
-                    s);
+                err("`" + cur_name_ + "` 必须返回 " + (rt ? rt->str() : "void") + " 类型的值", s);
             }
             return;
         }
-        if (is_void(rt)) err("void 函数 `" + cur_func_->name + "` 不能返回值", s);
+        if (is_void(rt)) err("void 函数/方法 `" + cur_name_ + "` 不能返回值", s);
         check_assign(s->value.get(), rt, "返回值");
     }
 
@@ -758,6 +1066,9 @@ private:
         if (s->by_ref && s->loop_kind == "range") {
             err("区间循环不能用 `for ref`", s);
         }
+        if (s->by_ref && s->elem_ty && is_reference_type(s->elem_ty)) {
+            err("暂不支持对 class/interface 元素使用 `for ref`（用值绑定句柄）", s);
+        }
         if (s->by_ref && s->seq_ty && s->seq_ty->kind == TypeKind::Slice && s->seq_ty->readonly) {
             err("不能对 readonly 切片使用 `for ref`", s->seq.get());
         }
@@ -785,6 +1096,15 @@ private:
     }
 
     // ------------------------------------------------------------ 赋值兼容
+    static bool contains_reference_type(const TypePtr& t) {
+        if (!t) return false;
+        if (is_reference_type(t)) return true;
+        if (t->kind == TypeKind::Array || t->kind == TypeKind::Slice) {
+            return contains_reference_type(t->elem);
+        }
+        return false;
+    }
+
     static bool is_zeroable(const TypePtr& t) {
         if (!t) return false;
         return t->kind == TypeKind::Struct || t->kind == TypeKind::Array ||
@@ -814,7 +1134,8 @@ private:
         }
         if (dynamic_cast<NullLit*>(e) && dst) {
             if (dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice ||
-                dst->kind == TypeKind::String) {
+                dst->kind == TypeKind::String || dst->kind == TypeKind::Class ||
+                dst->kind == TypeKind::Interface) {
                 e->ty = dst;
                 return true;
             }
@@ -889,7 +1210,8 @@ private:
         if (dynamic_cast<NullLit*>(e)) {
             if (expected) {
                 const auto k = expected->kind;
-                if (k == TypeKind::Ptr || k == TypeKind::Slice || k == TypeKind::String) {
+                if (k == TypeKind::Ptr || k == TypeKind::Slice || k == TypeKind::String ||
+                    k == TypeKind::Class || k == TypeKind::Interface) {
                     return expected;
                 }
             }
@@ -936,6 +1258,8 @@ private:
             return dt;
         }
 
+        if (auto ne = dynamic_cast<NewExpr*>(e)) return check_new(ne);
+
         if (auto c = dynamic_cast<Call*>(e)) return check_call(c);
 
         if (auto sz = dynamic_cast<SizeofExpr*>(e)) {
@@ -960,10 +1284,24 @@ private:
     }
 
     TypePtr check_name(Name* e) {
+        if (e->ident == "super") {
+            err("`super` 只能用于 `super(...)` 或 `super.method(...)`", e);
+        }
+        if (e->ident == "this" && lookup_local("this") == nullptr) {
+            err("`this` 只能出现在 class 方法/构造器/析构器中", e);
+        }
         if (LocalVar* lv = lookup_local(e->ident)) {
             e->kind = "local";
             e->sym = lv;
             return lv->rty;
+        }
+        if (cur_class_) {
+            if (TypePtr ft = cur_class_->field_type(e->ident)) {
+                e->kind = "field";
+                e->implicit_this = true;
+                e->field_index = cur_class_->field_index(e->ident);
+                return ft;
+            }
         }
         UnitInfo& ui = info();
         if (auto g = ui.globals.find(e->ident); g != ui.globals.end()) {
@@ -1011,9 +1349,14 @@ private:
         }
 
         TypePtr ot = check_expr(obj);
-        if (ot && ot->kind == TypeKind::Struct) {
+        if (ot && (ot->kind == TypeKind::Struct || ot->kind == TypeKind::Class)) {
             TypePtr ft = ot->field_type(e->name);
-            if (!ft) err("结构体 `" + ot->str() + "` 没有字段 `" + e->name + "`", e);
+            if (!ft) {
+                if (ot->kind == TypeKind::Class && has_method_named(ot, e->name)) {
+                    err("方法 `" + e->name + "` 必须被调用（`x." + e->name + "(...)`）", e);
+                }
+                err("类型 `" + ot->str() + "` 没有字段 `" + e->name + "`", e);
+            }
             e->kind = "field";
             e->field_index = ot->field_index(e->name);
             return ft;
@@ -1124,14 +1467,16 @@ private:
                     err("切片不能与 null 比较（用 len(s) == 0）", e);
                 }
                 if (other->kind == TypeKind::Ptr || other->kind == TypeKind::Slice ||
-                    other->kind == TypeKind::Null) {
+                    other->kind == TypeKind::Null || other->kind == TypeKind::Class ||
+                    other->kind == TypeKind::Interface) {
                     return t_bool();
                 }
             }
             if (lt->kind == TypeKind::String && rt->kind == TypeKind::String) return t_bool();
             if (is_numeric(lt) && is_numeric(rt)) return t_bool();
             const bool eq = same_type(lt, rt);
-            if ((eq && (lt->kind == TypeKind::Ptr || lt->kind == TypeKind::Enum)) ||
+            if ((eq && (lt->kind == TypeKind::Ptr || lt->kind == TypeKind::Enum ||
+                        lt->kind == TypeKind::Class || lt->kind == TypeKind::Interface)) ||
                 (is_prim(lt) && lt->name == "bool" && same_type(rt, lt))) {
                 return t_bool();
             }
@@ -1180,6 +1525,16 @@ private:
             if (nm->ident == "alloc" || nm->ident == "realloc" || nm->ident == "free") {
                 return check_builtin(c, nm->ident);
             }
+            if (nm->ident == "super") return check_super_call(c);
+            // 类内部对自身方法的非限定调用
+            if (lookup_local(nm->ident) == nullptr && cur_class_ &&
+                !info().funcs.count(nm->ident)) {
+                if (auto sig = find_method(cur_class_, nm->ident, c->args.size())) {
+                    check_method_args(c, sig, "方法 `" + nm->ident + "`");
+                    c->callee_kind = "method";
+                    return sig->ret;
+                }
+            }
         }
 
         FuncDecl* target = nullptr;
@@ -1207,13 +1562,38 @@ private:
             }
         } else if (auto m = dynamic_cast<Member*>(callee)) {
             Expr* obj = m->obj.get();
+            // super.method(...)
+            if (auto on = dynamic_cast<Name*>(obj);
+                on && on->ident == "super" && lookup_local("super") == nullptr) {
+                if (!cur_class_ || !cur_class_->base) err("当前类没有基类", c);
+                auto sig = find_method(cur_class_->base, m->name, c->args.size());
+                if (!sig) err("基类没有匹配的方法 `" + m->name + "`", c);
+                check_method_args(c, sig, "方法 `" + m->name + "`");
+                m->kind = "method";
+                c->callee_kind = "method";
+                return sig->ret;
+            }
+
             std::string uname;
             if (auto nm = dynamic_cast<Name*>(obj)) {
                 if (lookup_local(nm->ident) == nullptr && infos_.count(nm->ident)) {
                     uname = nm->ident;
                 }
             }
-            if (uname.empty()) err("`" + m->name + "` 不是函数", c);
+            if (uname.empty()) {
+                TypePtr ot = check_expr(obj);
+                if (is_reference_type(ot)) {
+                    auto sig = find_method(ot, m->name, c->args.size());
+                    if (!sig) {
+                        err("类型 `" + ot->str() + "` 没有匹配的方法 `" + m->name + "`", c);
+                    }
+                    check_method_args(c, sig, "方法 `" + m->name + "`");
+                    m->kind = "method";
+                    c->callee_kind = "method";
+                    return sig->ret;
+                }
+                err("`" + m->name + "` 不是函数", c);
+            }
             if (!uses_unit(uname)) err("未通过 `use` 导入 unit `" + uname + "`", c);
 
             UnitInfo& ui = infos_.at(uname);
@@ -1255,6 +1635,68 @@ private:
             check_assign(c->args[i].get(), params[i], "调用 `" + target->name + "` 的参数");
         }
         return target->rty;
+    }
+
+    void check_method_args(Call* c, const MethodSig* sig, const std::string& what) {
+        if (!c->named.empty()) err("方法调用不支持命名参数", c);
+        if (c->args.size() != sig->params.size()) {
+            err(what + " 需要 " + std::to_string(sig->params.size()) + " 个参数，实际 " +
+                    std::to_string(c->args.size()) + " 个",
+                c);
+        }
+        for (size_t i = 0; i < c->args.size(); ++i) {
+            check_assign(c->args[i].get(), sig->params[i], what + " 的参数");
+        }
+    }
+
+    TypePtr check_super_call(Call* c) {
+        if (!in_ctor_) err("`super(...)` 只能出现在构造器中", c);
+        if (!cur_class_ || !cur_class_->base) err("当前类没有基类", c);
+        if (!c->named.empty()) err("构造器调用不支持命名参数", c);
+        const auto& ctors = cur_class_->base->ctors;
+        const std::vector<TypePtr>* chosen = nullptr;
+        if (ctors.empty()) {
+            if (!c->args.empty()) err("基类没有匹配的构造器", c);
+        } else {
+            for (auto& cs : ctors) {
+                if (cs.size() == c->args.size()) {
+                    chosen = &cs;
+                    break;
+                }
+            }
+            if (!chosen) err("基类没有匹配的构造器", c);
+            for (size_t i = 0; i < c->args.size(); ++i) {
+                check_assign(c->args[i].get(), (*chosen)[i], "super 参数");
+            }
+        }
+        c->callee_kind = "super";
+        return t_void();
+    }
+
+    TypePtr check_new(NewExpr* ne) {
+        TypePtr t = resolve_type(ne->type.get(), cur_);
+        if (t->kind != TypeKind::Class) err("`new` 只能用于 class", ne);
+        if (t->is_abstract) err("抽象类 `" + t->str() + "` 不能 `new`", ne);
+        if (!ne->named.empty()) err("构造器暂不支持命名参数", ne);
+
+        const auto& ctors = t->ctors;
+        const std::vector<TypePtr>* chosen = nullptr;
+        if (ctors.empty()) {
+            if (!ne->args.empty()) err("class `" + t->str() + "` 没有匹配的构造器", ne);
+        } else {
+            for (auto& cs : ctors) {
+                if (cs.size() == ne->args.size()) {
+                    chosen = &cs;
+                    break;
+                }
+            }
+            if (!chosen) err("class `" + t->str() + "` 没有匹配的构造器", ne);
+            for (size_t i = 0; i < ne->args.size(); ++i) {
+                check_assign(ne->args[i].get(), (*chosen)[i], "构造参数");
+            }
+        }
+        ne->class_ty = t;
+        return t;
     }
 
     void check_ctor_args(Call* c, const TypePtr& ty) {

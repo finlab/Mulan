@@ -23,6 +23,8 @@ struct UnitInfo {
     std::unordered_map<std::string, GlobalVar*> globals;
     std::unordered_map<std::string, StructDecl*> structs;
     std::unordered_map<std::string, EnumDecl*> enums;
+    std::unordered_map<std::string, ClassDecl*> classes;
+    std::unordered_map<std::string, InterfaceDecl*> interfaces;
 };
 
 struct Program {

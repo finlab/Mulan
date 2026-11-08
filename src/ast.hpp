@@ -71,8 +71,10 @@ struct NullLit : Expr {};
 
 struct Name : Expr {
     std::string ident;
-    std::string kind;  // "local" | "global" | "func" | "enum_const"
+    std::string kind;  // "local" | "global" | "func" | "enum_const" | "field"
     Sym sym;
+    int field_index = -1;
+    bool implicit_this = false;  // 方法内直接访问字段
 };
 
 struct Member : Expr {
@@ -279,11 +281,18 @@ struct MethodDecl : Node {
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;  // nullptr = 抽象方法
     bool is_override = false;
+    // sema
+    TypePtr rty;
+    std::vector<TypePtr> pty;
+    std::vector<std::unique_ptr<LocalVar>> param_locals;
 };
 
 struct CtorDecl : Node {
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;
+    // sema
+    std::vector<TypePtr> pty;
+    std::vector<std::unique_ptr<LocalVar>> param_locals;
 };
 
 struct DtorDecl : Node {
