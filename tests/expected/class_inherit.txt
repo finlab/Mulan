@@ -1,0 +1,1 @@
+class inherit ok

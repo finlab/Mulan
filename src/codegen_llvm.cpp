@@ -354,14 +354,10 @@ struct Emitter {
         hb.SetInsertPoint(destroy);
         auto* descp = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 8));
         auto* desc = hb.CreateLoad(ptrTy(), descp);
-        if (!std::getenv("MULANC_NO_DESTROY")) {
-            auto* dfnp = hb.CreateGEP(i8(), desc, ConstantInt::get(i64(), 8));
-            auto* dfn = hb.CreateLoad(ptrTy(), dfnp);
-            // destroy 函数负责调用析构链并 free，这里不再 free（否则双重释放）
-            hb.CreateCall(FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false), dfn, {p});
-        } else {
-            hb.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {p});
-        }
+        auto* dfnp = hb.CreateGEP(i8(), desc, ConstantInt::get(i64(), 8));
+        auto* dfn = hb.CreateLoad(ptrTy(), dfnp);
+        // destroy 函数负责调用析构链并 free，这里不再 free（否则双重释放）
+        hb.CreateCall(FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false), dfn, {p});
         hb.CreateBr(done);
         hb.SetInsertPoint(done);
         hb.CreateRetVoid();
@@ -843,11 +839,8 @@ struct Emitter {
         uint64_t sz = objectSize(cls);
         Value* p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}),
                                 {ConstantInt::get(i64(), sz)});
-        if (std::getenv("MULANC_RAW_ALLOC")) return p;
-        if (!std::getenv("MULANC_NO_MEMSET")) {
-            b.CreateMemSet(p, ConstantInt::get(i8(), 0), ConstantInt::get(i64(), sz),
-                           MaybeAlign(objectAlign(cls)));
-        }
+        b.CreateMemSet(p, ConstantInt::get(i8(), 0), ConstantInt::get(i64(), sz),
+                       MaybeAlign(objectAlign(cls)));
         // rc = 1
         Value* rcp = b.CreateGEP(i8(), p, ConstantInt::get(i64(), 0));
         b.CreateStore(ConstantInt::get(i64(), 1), rcp);
@@ -1279,7 +1272,15 @@ struct Emitter {
             Value* addr = addrOf(as->target.get());
             if (as->op == "=") {
                 Value* nv = coerce(as->value.get(), as->target->ty);
-                if (isRefKind(as->target->ty)) {
+                bool weakTarget = false;
+                if (auto m = dynamic_cast<Member*>(as->target.get())) {
+                    TypePtr ot = m->obj->ty;
+                    if (ot && ot->kind == TypeKind::Class && m->field_index >= 0 &&
+                        m->field_index < static_cast<int>(ot->fields.size())) {
+                        weakTarget = ot->fields[m->field_index].weak;
+                    }
+                }
+                if (isRefKind(as->target->ty) && !weakTarget) {
                     Value* old = b.CreateLoad(lt(as->target->ty), addr);
                     if (!ownsReference(as->value.get())) emitRetainRef(nv, as->target->ty);
                     emitReleaseRef(old, as->target->ty);

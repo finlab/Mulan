@@ -294,8 +294,8 @@ private:
                 }
                 TypePtr ft = resolve_type(spec.get(), u);
                 if (is_void(ft)) err("class 字段不能是 void", c);
-                if (spec->weak && !is_reference_type(ft)) {
-                    err("`weak` 字段必须是 class/interface 引用", c);
+                if (spec->weak && !is_class_type(ft)) {
+                    err("`weak` 字段必须是 class 引用（接口暂不支持 weak）", c);
                 }
                 fields.push_back(Field{fname, ft, spec->weak});
             }
@@ -1088,6 +1088,9 @@ private:
             if (auto n = dynamic_cast<Name*>(d->value.get()); n && n->ident == "this") {
                 err("不能 `del this`", d);
             }
+            if (is_weak_field_access(d->value.get())) {
+                err("不能 `del` weak 字段（weak 不持有引用）", d);
+            }
             if (root_is_const(d->value.get())) err("`del` 不能用于 `const` 绑定", d);
         } else if (auto b = dynamic_cast<Block*>(s)) {
             check_block(b);
@@ -1293,6 +1296,24 @@ private:
                     err("不能通过 readonly 指针写入", t);
             }
         }
+    }
+
+    bool is_weak_field_access(Expr* e) {
+        if (auto n = dynamic_cast<Name*>(e)) {
+            if (n->kind == "field" && n->implicit_this && cur_class_ && n->field_index >= 0 &&
+                n->field_index < static_cast<int>(cur_class_->fields.size())) {
+                return cur_class_->fields[n->field_index].weak;
+            }
+            return false;
+        }
+        if (auto m = dynamic_cast<Member*>(e)) {
+            TypePtr ot = m->obj->ty;
+            if (ot && ot->kind == TypeKind::Class && m->field_index >= 0 &&
+                m->field_index < static_cast<int>(ot->fields.size())) {
+                return ot->fields[m->field_index].weak;
+            }
+        }
+        return false;
     }
 
     void check_assign_stmt(AssignStmt* s) {
