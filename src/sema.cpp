@@ -1972,9 +1972,10 @@ private:
             return implements_interface(src, dst);  // 仅向上；向下暂缓
         }
         if (is_interface_type(src) && is_class_type(dst)) return true;
-        const bool sp = src->kind == TypeKind::Ptr || src->kind == TypeKind::Slice;
-        const bool dp = dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice;
-        if (sp && dp) return true;
+        if (src->kind == TypeKind::Ptr && dst->kind == TypeKind::Ptr) return true;
+        if (src->kind == TypeKind::Slice && dst->kind == TypeKind::Slice) {
+            return same_type(src->elem, dst->elem);
+        }
         if (src->kind == TypeKind::Ptr && is_integer(dst) && dst->bits() >= 64) return true;
         if (dst->kind == TypeKind::Ptr && is_integer(src) && src->bits() >= 64) return true;
         if (src->kind == TypeKind::String && dst->kind == TypeKind::Ptr) return true;
