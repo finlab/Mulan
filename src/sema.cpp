@@ -558,6 +558,20 @@ private:
         // 同名函数的签名不能完全重复（重载必须参数不同）
         for (auto& entry : infos_.at(u->name).funcs) {
             auto& vec = entry.second;
+            if (entry.first == "main" && vec.size() > 1) {
+                err("`main` 不参与重载（每个 unit 最多一个 `main`）", vec[1]);
+            }
+            if (vec.size() > 1) {
+                bool hasExtern = false, hasBody = false;
+                for (auto* f : vec) {
+                    if (f->is_extern) hasExtern = true;
+                    else hasBody = true;
+                }
+                if (hasExtern && hasBody) {
+                    err("函数 `" + entry.first + "` 不能同时声明为 extern 与普通函数", vec[1]);
+                }
+                if (hasExtern) err("extern 函数 `" + entry.first + "` 不能重载", vec[1]);
+            }
             for (size_t i = 0; i < vec.size(); ++i) {
                 for (size_t j = i + 1; j < vec.size(); ++j) {
                     bool same = vec[i]->pty.size() == vec[j]->pty.size();

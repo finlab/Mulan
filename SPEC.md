@@ -263,10 +263,10 @@ class Cat {
 - **class 静态数组**：`Cat[3]`、`Cat[0]` 允许（元素是句柄）；拷贝逐元素 +1、销毁逐元素 -1、
   元素赋值先 -1 旧值再 +1 新值。struct 仍不能含 class 引用或 class 数组。
   动态数组/其他容器后续作为引用类型（class）提供；**class/interface 切片 `Cat[]` 第一阶段禁止**。
-- `readonly Cat c`（**暂缓**）：通过 c 不能写对象；`const Cat c`：绑定不可重绑定；可组合
-  `const readonly Cat c`。目前 `readonly` 只支持指针/切片，readonly class 视图待语法确定后实现。
-- `ref` 参数（仅 struct，**待实现**）：`void f(ref Point p)` 借用一个 struct 变量；不可存储、不可返回；
-  第一阶段不允许 `ref` 局部变量。
+- `readonly Cat c`（**第一阶段不支持**）：通过 c 不能写对象；`const Cat c`：绑定不可重绑定；可组合
+  `const readonly Cat c`。目前 `readonly` 只支持指针/切片，readonly class 视图待语法确定后再实现；编译器会拒绝这种写法。
+- `ref` 参数（仅 struct，**第一阶段不支持**）：`void f(ref Point p)` 借用一个 struct 变量；不可存储、不可返回；
+  第一阶段不允许 `ref` 局部变量。当前解析器只在 `for ref` 中接受 `ref`，参数位置会报错。
 - class 参数按借用传递（调用期间不 +1）；被调方要保存时由编译器在存储点 +1。
 - 禁止（第一阶段）：
   - struct 含 class 引用字段（值拷贝会引入隐式 retain/release）；
@@ -332,7 +332,7 @@ class Button : Widget, IFocusable { ... }     // 第一个是类，其余是接�
 - 接口值布局为两个机器字 `{对象指针, 类描述指针}`；可以为 `null`。
 - 转换：`class → interface` 隐式；`interface A → interface B`（A 继承 B）静态转换；
   `class → 派生 class`、`interface → class` 用 `as` 做运行期检查（沿 desc 基类链），失败得 `null`；
-  `interface → 派生 interface` 的向下转换暂缓。
+  `interface → 派生 interface` 的向下转换第一阶段不支持（报错）。
 - 接口引用是强引用：复制 +1、覆盖 -1；`weak` 暂不支持接口。
 - 接口不能作为 `extern` C 函数参数。
 
@@ -902,6 +902,9 @@ unit example;
 | 95 | 泛型路线 | 已定：单态化（未来实现） |
 | 96 | 保留字 | 已定：见 2.5 |
 | 97 | 异常展开 ABI | 待定：先做 SEH/Itanium spike |
+| 98 | `readonly` class 视图 / `readonly` 方法 | 已定：第一阶段不支持（语法与调用规则未定；`readonly` 仅用于指针/切片） |
+| 99 | `ref` 参数 | 已定：第一阶段不支持（仅 `for ref` 已实现；局部/参数借用后续再做） |
+| 100 | `interface` → 派生 `interface` 向下转换 | 已定：第一阶段不支持（只允许向上；`as` 会报错） |
 
 ---
 
@@ -925,7 +928,8 @@ unit example;
     重载解析、运算符派发（含一元与 `[]`/`[]=`）、接口默认方法冲突、抽象类推导、继承环检查、`weak` 字段。
   - 2026-11-09（0.0.3–0.0.13）：对象头/desc/vtable/itable、构造与析构链、原子 RC、局部引用清理、
     引用数组逐元素 RC、`as` 向下转换（desc 基类链）、临时值释放；端到端用例 41 个。
-  - **待办**：`readonly` class 视图、`ref` 参数、跨线程 RC 压力验证。
+  - **第一阶段不支持**：`readonly` class 视图、`ref` 参数、`interface` 向派生接口的向下转换（见 12 表 98–100）；
+    跨线程 RC 压力验证后续补。
   - 特征矩阵与偏差见 `docs/object-model-plan.md`。
 - **异常**：设计已定（3.14），实现前先做 Windows EH ABI spike；泛型单态化、并发为后续里程碑。
 - 手动内存直接映射 libc `malloc/free/realloc`；运行时只需少量入口/支持代码。
