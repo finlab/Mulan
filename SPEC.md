@@ -18,9 +18,9 @@
 | 类型推断 | 局部变量可用 `auto x = expr;`；仅局部、必须有初始化器；`dynamic`/`any` 仅预留命名 |
 | 动态类型 | 第一阶段不做；异构值优先库级 Variant/和类型；`dynamic`/`any` 仅预留 |
 | 作用域 | 声明不写 `T x(...)`；`Point p` 未初始化，`= 0` 零初始化；unit 级变量须 `static`/`extern`（`const` 除外） |
-| 对象模型 | 第一阶段只有值类型 `struct`；没有 `class`、方法、继承、虚函数 |
+| 对象模型 | 值与引用分离：`struct` 值类型；`class` 引用类型（堆对象，RC + weak；无 GC/环收集器；无方法/继承） |
 | 字符串 | 内建 `string`（UTF-8、不可变、NUL 结尾）；支持与 `byte[]` 的字节视图/拷贝 |
-| 内存 | 指针 + `alloc/free/realloc`；无 GC、无借用检查 |
+| 内存 | 指针 + `alloc/free/realloc`（裸内存）；`class` 用 `new/del` + 引用计数；无 GC、无借用检查 |
 | 控制流 | `if/else`、`while`、`for-in`、`break/continue/return`；条件必须是 `bool`；强制花括号 |
 | 条件括号 | 可选，规范写法省略（`if cond { }`）；C 式 `if (cond)` 仍合法 |
 | 结构体构造 | `Point(x = 1, y = 2)` 命名参数，或 `Point(1, 2)` 位置参数；两者不可混用 |
@@ -36,6 +36,7 @@
 3. **显式优于隐式**：类型转换用 `as`；可变性用 `const` 修饰；只读视图用 `readonly`。
 4. **小而可预测**：无重载、无泛型、无闭包、无隐藏分配；编译期能查的错不留到运行期。
 5. **为优化留空间但不牺牲语义**：`const` 单赋值、结构化 `for-in`、后续的别名注解。
+6. **值与引用分离**：`struct` 值语义、`class` 引用语义，互不混淆；堆对象用引用计数管理，环靠 `weak` 手动打破。
 
 ---
 
@@ -54,7 +55,7 @@
 ### 2.3 关键字
 
 ```
-unit use const static auto struct enum extern
+unit use const static auto struct enum extern class new del weak
 if else while for in ref break continue return
 true false null as sizeof alignof len alloc realloc free
 readonly void bool byte ubyte char short ushort int uint long ulong
@@ -72,7 +73,7 @@ and or not
 - **字符**：`'a'`；转义 `'\n' '\t' '\\' '\'' '\0' '\xNN'`；类型 `char`（u8）。非 ASCII 字符字面量待定。
 - **字符串**：`"..."`，UTF-8，编译期静态存储，NUL 结尾；类型 `string`（内建不可变视图，见 3.3），可隐式转 `readonly char*`；`\u{...}` 待定。
 - **布尔**：`true` / `false`。
-- **空指针**：`null`（不是 0）。
+- **空值**：`null`（不是 0）；可赋给指针与 class 引用，不能用于 struct/标量。
 
 ---
 
@@ -101,7 +102,7 @@ and or not
 
 - 类型：`T*`；`void*` 为无类型指针；`T**` 合法。
 - 操作：`&expr`、`*p`、`p[i]`、`p + n`、`p - n`、指针比较、指针相减。
-- `null` 只能赋给指针；`p == null` 合法。
+- `null` 只能赋给指针或 class 引用（见 3.8）；`p == null` 合法。
 - `T*` 可隐式转 `void*`；`void*` 转 `T*` 必须显式 `as`。
 - `T*` 可隐式转 `readonly T*`；反向必须显式 `as`（不安全）。
 - 指针算术以 `sizeof(T)` 为单位；`void*` 不允许算术。
@@ -150,7 +151,7 @@ struct Point {
 - 语义分析阶段解析：被调名是类型则按结构体构造，是函数则按函数调用；类型名与同作用域的函数/变量名不得冲突。
 - 无方法、无继承、无虚函数、无匿名 struct/union（第一阶段）。
 - 递归只能通过指针：`struct Node { int v; Node* next; }`。
-- 成员只能是值类型：标量、指针、数组、切片描述符、结构体、`string` 视图；第一阶段没有引用类型成员。
+- 成员只能是值类型：标量、指针、数组、切片描述符、结构体、`string` 视图；第一阶段没有引用类型成员（包括 class 引用，见 3.8）。
 - 可取地址、`sizeof(S)`；赋值按字节拷贝（memcpy 语义）。
 - 结构体构造函数、方法、`this` 属于对象机制，第一阶段不做；`Point(...)` 只做聚合初始化。是否引入用户构造函数待定。
 - 字段同样支持多个名字共享类型：`int x, y;`；也可使用类型在前的定长数组，如 `char[20] name;`。
@@ -208,6 +209,55 @@ readonly int* q = ...;  // 通过 q 不能写目标
 - 强制检查（编译器必须拒绝）：给 `const` 绑定赋值、修改 `const` 绑定的成员/元素、通过 `readonly` 指针/切片写入、写 `string` 元素、对 `readonly` 切片或 `const` 绑定使用 `for ref`。
 - `const` 不要求编译期求值（与 C# 的 `const` 不完全相同）；真正的编译期常量后续用 `constexpr` 一类机制（待定）。
 
+### 3.8 引用类型 `class`（RC + weak）
+
+值与引用严格分离：`struct` 永远是值语义，`class` 永远是引用语义，二者不互通。
+
+```c
+class Cat {
+    string name;      // 值类型字段
+    Cat parent;       // class 引用字段（可空、强引用）
+    weak Cat owner;   // 非拥有弱引用字段（用于断环）
+}
+```
+
+- **类型即句柄**：`Cat` 就是引用类型；没有 `&` 类型后缀，`&` 只作取地址。
+- `class` 与 `struct` 同为 unit 级类型声明；只支持字段，不支持方法、继承、虚函数（第一阶段）。
+- 构造：`new Cat(...)`；参数规则与结构体构造一致（位置或命名，字段给全）。
+  `new Cat` / `new Cat()` 表示所有字段零初始化（数值 0、引用 null、`string` 空）。
+  `new` 失败即 `abort()`（语言无异常；构造出的引用不会为空）。
+- `new` 只用于 `class`，不用于 `struct`（struct 保持值构造 `Point(...)`）。
+- 初始化/赋值：
+  - `Cat b = a;` 复制句柄（强引用 +1）
+  - `Cat c = null;` 空引用（声明中 `= 0` 等价于 `null`）
+  - `b = c;` 重绑定（旧目标 -1，新目标 +1）
+  - `b = null;` 重绑定为空
+- 空值：class 引用允许 `null`；`c == null` / `c != null` 合法。
+- 身份比较：`c == d` 比较是否同一对象；不支持 class 的值比较（需要时逐字段比较）。
+- 成员访问自动解引用：`c.name`、`c.parent.name`；写入受 `readonly` 约束。
+- `del c;`：释放一次强引用并把 `c` 置为 null；`del null` 是空操作。
+  `del` 的目标必须是可写的 class 引用左值：`const` 绑定不可 del，`readonly` 字段不可 del；
+  局部 `readonly Cat c` 的绑定本身可重绑定，因此可以 del。对象在强引用计数归零时销毁；
+  对共享对象 `del` 只减少你这一份引用。
+- `weak Cat p;`：
+  - 只能作 class 字段（不能作局部变量、参数、返回值）；
+  - 不增加目标计数；目标销毁时自动置 null（零化）；
+  - 读取得到可空的借用句柄，有效期到所在表达式结束；需要保留时赋给强引用（+1）；
+  - 环必须用 weak 打破；语言不提供环收集器，未打破的环会泄漏（见 8.3）。
+- `readonly Cat c`：通过 c 不能写对象；`const Cat c`：绑定不可重绑定；可组合
+  `const readonly Cat c`。
+- `ref` 参数（仅 struct）：`void f(ref Point p)` 借用一个 struct 变量；不可存储、不可返回；
+  第一阶段不允许 `ref` 局部变量。
+- class 参数按借用传递（调用期间不 +1）；被调方要保存时由编译器在存储点 +1。
+- 禁止（第一阶段）：
+  - struct 含 class 引用字段（值拷贝会引入隐式 retain/release）；
+  - class 引用数组/切片（`Cat[3]`、`Cat[]`）；
+  - class 传给 `extern` C 函数（C 侧不参与引用计数）；
+  - `sizeof` / `alignof` 作用于 class 类型（待定，见 12）；
+  - `weak` 用于局部变量、参数、返回值。
+- 内存：非原子引用计数（单线程）；字段按声明逆序释放；弱引用不计数。
+- 线程：第一阶段单线程；多线程需原子 RC 或线程本地堆（待定，见 12）。
+
 ---
 
 ## 4. 声明与作用域
@@ -251,6 +301,9 @@ readonly int* q = ...;  // 通过 q 不能写目标
 - unit 级变量必须带 `static`（模块私有）或 `extern`（外部）；`const` 常量可不加 `static`（模块私有），初始化器建议要求编译期可求值（待定）。没有裸的 unit 级变量声明。
 - `static` 只用于 unit 级变量（第一阶段）；函数体内不支持 `static` 局部变量；第一阶段不支持 `static` 函数。
 - 参数是可变局部绑定（第一阶段，C 语义）；是否改为默认不可变待定。
+- `ref T` 参数（仅 struct）：按引用借用调用方变量；callee 可写，但不能存储该引用或返回。
+  第一阶段不允许 `ref` 局部变量。
+- class 参数是借用句柄：调用期间不增加引用计数；callee 需要保存时在存储点 +1。
 
 ---
 
@@ -297,6 +350,7 @@ readonly int* q = ...;  // 通过 q 不能写目标
 - `len(seq)` 作用于数组/切片。
 - 内建函数：`alloc(bytes: usize) -> void*`、`realloc(p: void*, bytes: usize) -> void*`、`free(p: void*)`。
 - 结构体构造表达式：`Point(1, 2)`、`Point(x = 1, y = 2)`、`Point()`（零值）；花括号初始化不是表达式。
+- `new T(...)` 是表达式（`T` 必须是 class），返回 class 引用；`del` 是语句，不出现在表达式中。
 - 表达式中的 `0` 是 `int`；零值初始化 `= 0` 只用于声明初始化位置。结构体在表达式/赋值里的零值用 `Point()`，不能写 `p = 0` 或 `f(0)`。
 - 字符串字面量类型 `string`；可隐式转 `readonly char*`；`"abc"[0]` 合法。
 
@@ -359,6 +413,7 @@ for ref x in seq { ... }   // x 是元素的可变引用
 ### 6.5 其他
 
 - `return expr;` / `return;`（void）。
+- `del c;`：释放一次 class 强引用并把句柄置 null（见 3.8 / 8.3）。
 - 不提供 `do-while`、C 风格 `for`、`goto`。
 - `switch` 第一阶段不实现；用 `if/else if`；后续讨论无 fallthrough 的 `switch` 或 `match`。
 - 无异常、无 `try/catch`；致命错误用 `abort()`（libc）或返回错误码。
@@ -426,6 +481,22 @@ extern int puts(readonly char* s);
 - 除数为 0；移位位数 ≥ 位宽（待定：UB 还是定义）。
 - 有符号整数溢出：**建议定义为二进制补码回绕**（避免 UB，简化优化）。
 - 数组/切片越界：待定（建议 debug 检查，release 可关闭；或始终检查）。
+- 访问 `null` 的 class 引用；`del` 后继续使用同一句柄（`del` 已置 null，等同空引用）。
+- 对 class 对象使用 `alloc/free`，或对 `alloc` 内存使用 `del`（两套内存管理不能交叉）。
+
+### 8.3 class 的引用计数与 weak
+
+- 每个 class 对象带强引用计数；`new` 创建后计数为 1。
+- **+1**：句柄复制（初始化、赋值重绑定、存入字段、返回后由调用方存储）。
+  参数传递按借用处理（不 +1）；被调方需要保存时在存储点 +1。
+- **-1**：句柄被覆盖、离开作用域、字段随对象销毁、`del`。
+- **归零**：按字段声明逆序释放（强引用字段 -1），然后释放对象内存。
+- `weak` 字段不计入计数；目标销毁时由运行时把所有 weak 指向置 null（需要 side table）。
+- 环：**不收集**；必须用 `weak` 打破。未打破的环 = 泄漏（不崩溃、不提前释放）。
+- `del c`：提前 -1 并把 c 置 null；对象仍被其他强引用持有则不销毁；`del null` 空操作。
+- 与裸内存分开：`alloc/free/realloc` 管裸内存，`new/del` 只用于 class，二者不能交叉使用。
+- 第一阶段单线程、非原子计数；多线程方案待定（原子 RC 或线程本地堆）。
+- 没有用户析构函数；`deinit` 不在第一阶段（见 10）。
 
 ---
 
@@ -442,6 +513,7 @@ unit example;
 - 可见性：函数和类型默认公开；`static` 变量模块私有；`extern` 表示外部符号；`const` 常量模块私有。`private` 待定。
 - 无预处理器；模块级常量用顶层 `const`（可不加 `static`）。
 - `extern` 用于 C 函数/全局变量；C ABI；struct 布局兼容 C。
+- class 对象不能传给 C：C 侧不参与引用计数；需要跨语言时用 struct + `alloc`。
 - 字符串字面量为 NUL 结尾的 `readonly char*`，可直接传给 C。
 - 符号修饰/命名冲突规则待定。
 
@@ -449,7 +521,7 @@ unit example;
 
 ## 10. 第一阶段非目标
 
-- 对象/类/继承/虚函数/方法
+- class 的方法/继承/虚函数/构造析构函数（class 本身见 3.8）
 - 异常/panic 展开
 - 泛型/模板
 - 闭包/lambda
@@ -502,6 +574,9 @@ unit example;
 | 预处理 | 有 | 无 |
 | goto/switch | 有 | 待定/暂不实现 |
 | 结构体构造 | `(struct S){...}` | 声明 `S s = {x=..., y=...}`；表达式 `S(...)` |
+| 堆对象 | `malloc/free` | `new/del` + 引用计数（无 GC） |
+| 引用 | 指针 + `->` | `class` 句柄，自动解引用；struct 用 `ref` 参数 |
+| 环 | 手动 | `weak` 字段手动断环；无环收集器 |
 
 ---
 
@@ -575,6 +650,15 @@ unit example;
 | 64 | 整数 ↔ 枚举转换 | 已定：枚举→int 隐式；int→枚举必须 `as` |
 | 65 | 整数字面量上限 | 已定：`2^63-1`，超出报错 |
 | 66 | `const`/`readonly`/`string` 可写性检查 | 已定：编译器必须拒绝写入（见 3.7） |
+| 67 | 对象模型 | 已定：struct 值 / class 引用；RC + weak；无环收集器（见 3.8 / 8.3） |
+| 68 | `weak` 的范围 | 仅 class 字段；局部/参数/返回值禁用 |
+| 69 | `del` 的语义 | 强引用 -1 并置 null；`del null` 空操作；共享对象只减少自己那份 |
+| 70 | class 参数的所有权 | 借用（调用期不 +1）；存储时 +1 |
+| 71 | class 与 C 互操作 | 禁止传给 `extern`；跨语言用 struct + alloc |
+| 72 | class 数组/切片 | 第一阶段禁止（需要逐元素 retain/release） |
+| 73 | `sizeof`/`alignof` class | 待定（建议：句柄大小；对象大小不直接暴露） |
+| 74 | 多线程引用计数 | 待定：原子 RC 或线程本地堆（第一阶段单线程） |
+| 75 | 用户析构 `deinit` | 第一阶段不做；字段按声明逆序释放 |
 
 ---
 
