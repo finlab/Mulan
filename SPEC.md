@@ -168,7 +168,8 @@ struct Point {
 - 递归只能通过指针：`struct Node { int v; Node* next; }`。
 - 成员只能是值类型：标量、指针、数组、切片描述符、结构体、`string` 视图；第一阶段没有引用类型成员（包括 class 引用，见 3.8）。
 - 可取地址、`sizeof(S)`；赋值按字节拷贝（memcpy 语义）。
-- 结构体构造函数、方法、`this` 属于对象机制，第一阶段不做；`Point(...)` 只做聚合初始化。是否引入用户构造函数待定。
+- 结构体构造函数、方法、`this` 属于对象机制：**struct 仍不支持**；`Point(...)` 只做聚合初始化。
+  用户构造器/方法/`this` 仅 class 支持（见 3.8–3.12）。
 - 字段同样支持多个名字共享类型：`int x, y;`；也可使用类型在前的定长数组，如 `char[20] name;`。
 - 打包/对齐属性：待定。
 
@@ -261,18 +262,19 @@ class Cat {
   - 环必须用 weak 打破；语言不提供环收集器，未打破的环会泄漏（见 8.3）。
 - **class 静态数组**：`Cat[3]`、`Cat[0]` 允许（元素是句柄）；拷贝逐元素 +1、销毁逐元素 -1、
   元素赋值先 -1 旧值再 +1 新值。struct 仍不能含 class 引用或 class 数组。
-  动态数组/其他容器后续作为引用类型（class）提供。
-- `readonly Cat c`：通过 c 不能写对象；`const Cat c`：绑定不可重绑定；可组合
-  `const readonly Cat c`。
-- `ref` 参数（仅 struct）：`void f(ref Point p)` 借用一个 struct 变量；不可存储、不可返回；
+  动态数组/其他容器后续作为引用类型（class）提供；**class/interface 切片 `Cat[]` 第一阶段禁止**。
+- `readonly Cat c`（**暂缓**）：通过 c 不能写对象；`const Cat c`：绑定不可重绑定；可组合
+  `const readonly Cat c`。目前 `readonly` 只支持指针/切片，readonly class 视图待语法确定后实现。
+- `ref` 参数（仅 struct，**待实现**）：`void f(ref Point p)` 借用一个 struct 变量；不可存储、不可返回；
   第一阶段不允许 `ref` 局部变量。
 - class 参数按借用传递（调用期间不 +1）；被调方要保存时由编译器在存储点 +1。
 - 禁止（第一阶段）：
   - struct 含 class 引用字段（值拷贝会引入隐式 retain/release）；
-  - class 引用数组/切片（`Cat[3]`、`Cat[]`）；
+  - class/interface **切片** `Cat[]`（静态数组 `Cat[3]` 允许，见上）；
   - class 传给 `extern` C 函数（C 侧不参与引用计数）；
   - `sizeof` / `alignof` 作用于 class 类型（待定，见 12）；
-  - `weak` 用于局部变量、参数、返回值。
+  - `weak` 用于局部变量、参数、返回值；
+  - `readonly Cat` 视图与 `readonly` 方法（语法与调用规则未定，**暂缓**；`readonly` 目前只用于指针/切片）。
 - 内存：原子引用计数（relaxed）；字段按声明逆序释放；弱引用不计数。
 - 线程：对象可跨线程共享；析构器在最后释放引用的线程执行，必须线程安全。
 
@@ -336,7 +338,7 @@ class Button : Widget, IFocusable { ... }     // 第一个是类，其余是接�
 ### 3.11 方法、重载与运算符
 
 - 类方法：`ret name(params) { ... }`；`this` 是隐式借用的当前对象句柄，需要消歧时写 `this`。
-- 方法内可直接访问字段；`this` 不可重绑定；`readonly` 方法不能写字段。
+- 方法内可直接访问字段；`this` 不可重绑定；`readonly` 方法（**暂缓**，语法未定）不能写字段。
 - 方法默认虚；`override` 必须与基类/接口方法签名一致。
 
 **重载**（自由函数、方法、构造器、运算符）：
@@ -912,8 +914,11 @@ unit example;
   - 状态（2026-11-08）：已实现（`src/codegen_llvm.cpp`，LLVM C++ API 直接产出 COFF 目标文件），
     为当前唯一后端。
   - 当前仍用 gcc 链接，尚未接入优化管线、调试信息与 `lld-link`。
-- **对象模型**（class/继承/接口/重载/构造器/运算符）已于 2026-11-09 完成设计（见 3.8–3.14、8.3），
-  **尚未实现**；当前编译器仍只支持 struct 与自由函数。
+- **对象模型**（class/继承/接口/重载/构造器/运算符）已完成设计与**前端语义实现**：
+  - 2026-11-09：类型模型、注册/继承/字段扁平化、方法/构造器/析构器检查、`this`/`super`、`new`/`del`、
+    重载解析、运算符派发（含一元与 `[]`/`[]=`）、接口默认方法冲突、抽象类推导、继承环检查、`weak` 字段。
+  - **尚未实现**：LLVM 代码生成（对象头/vtable/RC/CleanupScope）、跨线程原子 RC 运行时。
+  - 特征矩阵与偏差见 `docs/object-model-plan.md`。
 - **异常**：设计已定（3.14），实现前先做 Windows EH ABI spike；泛型单态化、并发为后续里程碑。
 - 手动内存直接映射 libc `malloc/free/realloc`；运行时只需少量入口/支持代码。
 - 无 GC/异常/栈图需求，后端选择面比托管语言宽。
