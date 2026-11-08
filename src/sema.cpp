@@ -436,6 +436,15 @@ private:
                 f->pty.push_back(pt);
             }
             if (f->is_extern) {
+                if (contains_reference_type(f->rty)) {
+                    err("`extern` 函数 `" + f->name + "` 不能返回 class/interface（C 侧不参与引用计数）",
+                        f);
+                }
+                for (auto& pt : f->pty) {
+                    if (contains_reference_type(pt)) {
+                        err("`extern` 函数 `" + f->name + "` 的参数不能是 class/interface", f);
+                    }
+                }
                 f->cname = f->name;
             } else if (f->name == "main" && u->name == entry_) {
                 f->cname = "main";
