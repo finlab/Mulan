@@ -1973,6 +1973,22 @@ struct Emitter {
         Value* dp = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
         b.CreateStore(descOf(c->ty), dp);
         bindParams(fn, 1, ctor->param_locals);
+
+        // 省略 super(...) 且基类有无参构造器：按 C++ 语义隐式调用
+        if (!ctor->has_explicit_super && c->ty->base && c->ty->base->kind == TypeKind::Class) {
+            bool baseDefault = false;
+            for (auto& cs : c->ty->base->ctors) {
+                if (cs.empty()) { baseDefault = true; break; }
+            }
+            if (baseDefault) {
+                FunctionCallee baseCtor = mod->getOrInsertFunction(
+                    ctor_cname(c->ty->base->unit, c->ty->base->name, {}),
+                    FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+                b.CreateCall(baseCtor, {curThis});
+                Value* dp2 = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
+                b.CreateStore(descOf(c->ty), dp2);
+            }
+        }
         block(ctor->body.get());
         finishBody(fn, c->name + " 构造器");
     }

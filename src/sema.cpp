@@ -837,6 +837,7 @@ private:
         if (needs_super && !first_super) {
             err("构造器必须在第一条语句调用 `super(...)`", ctor);
         }
+        ctor->has_explicit_super = first_super;
 
         push();
         size_t start = 0;

@@ -305,6 +305,7 @@ struct CtorDecl : Node {
     std::vector<TypePtr> pty;
     std::vector<std::unique_ptr<LocalVar>> param_locals;
     std::string cname;  // 构造器符号名
+    bool has_explicit_super = false;
 };
 
 struct DtorDecl : Node {
