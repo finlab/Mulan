@@ -24,6 +24,7 @@ struct MethodSig {
     std::vector<TypePtr> params;
     bool is_abstract = false;
     bool is_override = false;
+    TypePtr owner;  // 声明该方法的 class/interface（sema 填）
 };
 
 struct Type {

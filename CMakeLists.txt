@@ -29,6 +29,7 @@ add_executable(mulanc
   src/lexer.cpp
   src/parser.cpp
   src/types.cpp
+  src/mangle.cpp
   src/sema.cpp
   src/codegen_llvm.cpp
 )

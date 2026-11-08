@@ -4,6 +4,7 @@
 #include "codegen_llvm.hpp"
 
 #include "common.hpp"
+#include "mangle.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -115,6 +116,7 @@ struct Emitter {
 
     LStruct* strTy = nullptr;
     LStruct* sliceTy = nullptr;
+    LStruct* descTy = nullptr;
     std::map<std::string, LStruct*> named;
     std::map<std::string, Constant*> strCache;
 
@@ -124,6 +126,11 @@ struct Emitter {
     std::string curUnit;
     std::map<const LocalVar*, AllocaInst*> slots;
     std::vector<std::pair<BasicBlock*, BasicBlock*>> loops;  // (continue, break)
+    TypePtr curClassTy;   // 当前方法/构造器/析构器所属 class
+    Value* curThis = nullptr;  // 当前 this 指针（方法入口的第一个参数）
+    AllocaInst* thisSlot = nullptr;
+    Function* rcRetainFn = nullptr;
+    Function* rcReleaseFn = nullptr;
 
     // ------------------------------------------------------------ 基础工具
     LType* ptrTy() { return PointerType::get(ctx, 0); }
@@ -167,6 +174,40 @@ struct Emitter {
         named[key] = st;
         st->setBody({LArray::get(lt(t->elem), t->array_size)}, false);
         return st;
+    }
+
+    // 对象布局：{ i64 rc, ptr desc, fields... }（fields 已在 sema 扁平化，基类字段在前）
+    LStruct* objStruct(const TypePtr& cls) {
+        std::string key = "o:" + cls->unit + ":" + cls->name;
+        auto it = named.find(key);
+        if (it != named.end()) return it->second;
+        auto* st = LStruct::create(ctx, "mu_obj_" + sane(cls->unit) + "_" + sane(cls->name));
+        named[key] = st;
+        std::vector<LType*> fs{i64(), ptrTy()};
+        for (auto& f : cls->fields) fs.push_back(lt(f.type));
+        st->setBody(fs, false);
+        return st;
+    }
+
+    static constexpr unsigned kObjRc = 0;
+    static constexpr unsigned kObjDesc = 1;
+    static constexpr unsigned kObjField0 = 2;
+
+    uint64_t objectSize(const TypePtr& cls) {
+        return mod->getDataLayout().getTypeAllocSize(objStruct(cls));
+    }
+
+    uint64_t objectAlign(const TypePtr& cls) {
+        return mod->getDataLayout().getABITypeAlign(objStruct(cls)).value();
+    }
+
+    Value* fieldAddr(Value* objPtr, const TypePtr& cls, int field_index) {
+        return b.CreateStructGEP(objStruct(cls), objPtr,
+                                 static_cast<unsigned>(kObjField0 + field_index));
+    }
+
+    Value* descOf(const TypePtr& cls) {
+        return mod->getOrInsertGlobal(class_desc_name(cls->unit, cls->name), descTy);
     }
 
     LType* lt(const TypePtr& t) {
@@ -264,6 +305,96 @@ struct Emitter {
         Constant* c = ConstantStruct::get(strTy, {gv, ConstantInt::get(i64(), bytes.size())});
         strCache[bytes] = c;
         return c;
+    }
+
+    // ------------------------------------------------------------ 引用计数运行时
+    Function* ensureRetain() {
+        if (rcRetainFn) return rcRetainFn;
+        auto* ft = FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false);
+        auto* fn = cast<Function>(mod->getOrInsertFunction("mu_rt_retain", ft).getCallee());
+        fn->setLinkage(GlobalValue::InternalLinkage);
+        IRBuilder<> hb(ctx);
+        auto* entry = BasicBlock::Create(ctx, "entry", fn);
+        auto* inc = BasicBlock::Create(ctx, "inc", fn);
+        auto* done = BasicBlock::Create(ctx, "done", fn);
+        hb.SetInsertPoint(entry);
+        auto* p = fn->getArg(0);
+        hb.CreateCondBr(hb.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), done, inc);
+        hb.SetInsertPoint(inc);
+        auto* rc = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 0));
+        hb.CreateAtomicRMW(llvm::AtomicRMWInst::Add, rc, ConstantInt::get(i64(), 1),
+                           MaybeAlign(8), llvm::AtomicOrdering::Monotonic);
+        hb.CreateBr(done);
+        hb.SetInsertPoint(done);
+        hb.CreateRetVoid();
+        rcRetainFn = fn;
+        return fn;
+    }
+
+    Function* ensureRelease() {
+        if (rcReleaseFn) return rcReleaseFn;
+        auto* ft = FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false);
+        auto* fn = cast<Function>(mod->getOrInsertFunction("mu_rt_release", ft).getCallee());
+        fn->setLinkage(GlobalValue::InternalLinkage);
+        IRBuilder<> hb(ctx);
+        auto* entry = BasicBlock::Create(ctx, "entry", fn);
+        auto* body = BasicBlock::Create(ctx, "body", fn);
+        auto* destroy = BasicBlock::Create(ctx, "destroy", fn);
+        auto* done = BasicBlock::Create(ctx, "done", fn);
+        hb.SetInsertPoint(entry);
+        auto* p = fn->getArg(0);
+        hb.CreateCondBr(hb.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), done, body);
+        hb.SetInsertPoint(body);
+        auto* rc = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 0));
+        auto* old = hb.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, rc, ConstantInt::get(i64(), 1),
+                                       MaybeAlign(8), llvm::AtomicOrdering::Monotonic);
+        hb.CreateCondBr(hb.CreateICmpEQ(old, ConstantInt::get(i64(), 1)), destroy, done);
+        hb.SetInsertPoint(destroy);
+        auto* descp = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 8));
+        auto* desc = hb.CreateLoad(ptrTy(), descp);
+        if (!std::getenv("MULANC_NO_DESTROY")) {
+            auto* dfnp = hb.CreateGEP(i8(), desc, ConstantInt::get(i64(), 8));
+            auto* dfn = hb.CreateLoad(ptrTy(), dfnp);
+            // destroy 函数负责调用析构链并 free，这里不再 free（否则双重释放）
+            hb.CreateCall(FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false), dfn, {p});
+        } else {
+            hb.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {p});
+        }
+        hb.CreateBr(done);
+        hb.SetInsertPoint(done);
+        hb.CreateRetVoid();
+        rcReleaseFn = fn;
+        return fn;
+    }
+
+    void emitRetain(Value* p) {
+        if (!p) return;
+        b.CreateCall(ensureRetain(), {p});
+    }
+
+    void emitRelease(Value* p) {
+        if (!p) return;
+        b.CreateCall(ensureRelease(), {p});
+    }
+
+    bool isRefKind(const TypePtr& t) {
+        return t && (t->kind == TypeKind::Class || t->kind == TypeKind::Interface);
+    }
+
+    // 表达式是否已经持有一份可转移的强引用（new / 返回 class 引用的调用）
+    bool ownsReference(Expr* e) {
+        if (!e || !isRefKind(e->ty)) return false;
+        if (dynamic_cast<NewExpr*>(e)) return true;
+        if (dynamic_cast<Call*>(e)) return true;
+        if (dynamic_cast<Cast*>(e)) return ownsReference(static_cast<Cast*>(e)->expr.get());
+        return false;
+    }
+
+    // 返回 class 引用时把借用变成一份新的强引用
+    Value* prepareReturn(Expr* e) {
+        Value* v = coerce(e, curRetTy);
+        if (isRefKind(curRetTy) && !ownsReference(e)) emitRetain(v);
+        return v;
     }
 
     // ------------------------------------------------------------ 分配
@@ -441,6 +572,11 @@ struct Emitter {
 
     Value* addrOf(Expr* e) {
         if (auto n = dynamic_cast<Name*>(e)) {
+            if (n->ident == "this") return thisSlot;
+            if (n->kind == "field" && n->implicit_this) {
+                if (!curClassTy || !thisSlot) fail("LLVM 后端：隐式字段访问缺少 this", n->line, n->col);
+                return fieldAddr(b.CreateLoad(ptrTy(), thisSlot), curClassTy, n->field_index);
+            }
             if (auto lv = std::get_if<LocalVar*>(&n->sym)) {
                 AllocaInst* a = slotFor(*lv);
                 if ((*lv)->by_ref) return b.CreateLoad(ptrTy(), a);
@@ -456,8 +592,12 @@ struct Emitter {
                 auto* gv = std::get_if<GlobalVar*>(&m->sym);
                 if (gv) return mod->getOrInsertGlobal((*gv)->cname, lt((*gv)->rty));
             }
-            Value* base = addrOf(m->obj.get());
             TypePtr ot = m->obj->ty;
+            if (ot->kind == TypeKind::Class) {
+                Value* p = eval(m->obj.get());
+                return fieldAddr(p, ot, m->field_index);
+            }
+            Value* base = addrOf(m->obj.get());
             if (ot->kind != TypeKind::Struct)
                 fail("LLVM 后端：成员访问的基类型不是结构体", m->line, m->col);
             auto* st = cast<LStruct>(lt(ot));
@@ -533,6 +673,10 @@ struct Emitter {
         TypePtr lt_ = e->left->ty;
         TypePtr rt_ = e->right->ty;
 
+        if (e->op_func) {
+            return emitUserCall(e->op_func, {e->left.get(), e->right.get()});
+        }
+
         if (op == "string_eq_helper") return nullptr;
 
         if (op == "and" || op == "or") {
@@ -593,6 +737,17 @@ struct Emitter {
         Value* l = eval(e->left.get());
         Value* r = eval(e->right.get());
 
+        if (op == "==" || op == "!=") {
+            bool lref = isRefKind(lt_) || lt_->kind == TypeKind::Null;
+            bool rref = isRefKind(rt_) || rt_->kind == TypeKind::Null;
+            if (lref && rref && (isRefKind(lt_) || isRefKind(rt_))) {
+                Value* l = eval(e->left.get());
+                Value* r = eval(e->right.get());
+                if (lt_->kind == TypeKind::Null) l = Constant::getNullValue(ptrTy());
+                if (rt_->kind == TypeKind::Null) r = Constant::getNullValue(ptrTy());
+                return compareOp(op, l, r, false, false);
+            }
+        }
         if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
             if (lt_->kind == TypeKind::Ptr || rt_->kind == TypeKind::Ptr) {
                 Value* lv = eval(e->left.get());
@@ -635,6 +790,71 @@ struct Emitter {
         fail("LLVM 后端：未知二元运算 " + op, e->line, e->col);
     }
 
+    // 调用自由函数/运算符/方法（静态派发）
+    Value* emitUserCall(FuncDecl* f, const std::vector<Expr*>& args) {
+        std::vector<LType*> ptys;
+        for (auto& t : f->pty) ptys.push_back(lt(t));
+        FunctionCallee callee =
+            mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, false));
+        std::vector<Value*> vals;
+        for (size_t i = 0; i < args.size() && i < f->pty.size(); ++i)
+            vals.push_back(coerce(args[i], f->pty[i]));
+        return b.CreateCall(callee, vals);
+    }
+
+    Value* evalNew(NewExpr* ne) {
+        TypePtr cls = ne->class_ty;
+        uint64_t sz = objectSize(cls);
+        Value* p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}),
+                                {ConstantInt::get(i64(), sz)});
+        if (std::getenv("MULANC_RAW_ALLOC")) return p;
+        if (!std::getenv("MULANC_NO_MEMSET")) {
+            b.CreateMemSet(p, ConstantInt::get(i8(), 0), ConstantInt::get(i64(), sz),
+                           MaybeAlign(objectAlign(cls)));
+        }
+        // rc = 1
+        Value* rcp = b.CreateGEP(i8(), p, ConstantInt::get(i64(), 0));
+        b.CreateStore(ConstantInt::get(i64(), 1), rcp);
+        auto storeDesc = [&]() {
+            Value* dp = b.CreateGEP(i8(), p, ConstantInt::get(i64(), 8));
+            return b.CreateStore(descOf(cls), dp);
+        };
+        storeDesc();
+
+        if (ne->has_ctor) {
+            std::vector<LType*> ptys{ptrTy()};
+            for (auto& t : ne->ctor_pty) ptys.push_back(lt(t));
+            FunctionCallee callee = mod->getOrInsertFunction(
+                ctor_cname(cls->unit, cls->name, ne->ctor_pty),
+                FunctionType::get(LType::getVoidTy(ctx), ptys, false));
+            std::vector<Value*> vals{p};
+            for (size_t i = 0; i < ne->args.size() && i < ne->ctor_pty.size(); ++i)
+                vals.push_back(coerce(ne->args[i].get(), ne->ctor_pty[i]));
+            b.CreateCall(callee, vals);
+        } else {
+            // 隐式默认构造：调用最近祖先声明的无参构造器（它会继续链式调用自己的基类）
+            TypePtr b0 = cls->base;
+            while (b0 && b0->kind == TypeKind::Class) {
+                if (!b0->ctors.empty()) {
+                    bool hasDefault = false;
+                    for (auto& cs : b0->ctors) {
+                        if (cs.empty()) { hasDefault = true; break; }
+                    }
+                    if (hasDefault) {
+                        FunctionCallee callee = mod->getOrInsertFunction(
+                            ctor_cname(b0->unit, b0->name, {}),
+                            FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+                        b.CreateCall(callee, {p});
+                    }
+                    break;
+                }
+                b0 = b0->base;
+            }
+            storeDesc();  // 祖先构造器可能改写了 desc，恢复为最终类型
+        }
+        return p;
+    }
+
     Value* evalCall(Call* c) {
         if (c->callee_kind == "builtin") {
             if (c->builtin == "alloc") {
@@ -667,6 +887,63 @@ struct Emitter {
             }
             return v;
         }
+        if (c->callee_kind == "method") {
+            const MethodSig* sig = c->method;
+            if (!sig || !sig->owner) fail("LLVM 后端：方法调用缺少签名", c->line, c->col);
+            Value* recv = nullptr;
+            if (auto m = dynamic_cast<Member*>(c->callee.get())) {
+                recv = eval(m->obj.get());
+            } else {
+                recv = b.CreateLoad(ptrTy(), thisSlot);
+            }
+            std::vector<LType*> ptys{ptrTy()};
+            for (auto& t : sig->params) ptys.push_back(lt(t));
+            FunctionCallee callee = mod->getOrInsertFunction(
+                method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
+                FunctionType::get(lt(sig->ret), ptys, false));
+            std::vector<Value*> vals{recv};
+            for (size_t i = 0; i < c->args.size() && i < sig->params.size(); ++i)
+                vals.push_back(coerce(c->args[i].get(), sig->params[i]));
+            return b.CreateCall(callee, vals);
+        }
+        if (c->callee_kind == "super") {
+            if (c->method) {
+                const MethodSig* sig = c->method;
+                std::vector<LType*> ptys{ptrTy()};
+                for (auto& t : sig->params) ptys.push_back(lt(t));
+                FunctionCallee callee = mod->getOrInsertFunction(
+                    method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
+                    FunctionType::get(lt(sig->ret), ptys, false));
+                std::vector<Value*> vals{b.CreateLoad(ptrTy(), thisSlot)};
+                for (size_t i = 0; i < c->args.size() && i < sig->params.size(); ++i)
+                    vals.push_back(coerce(c->args[i].get(), sig->params[i]));
+                return b.CreateCall(callee, vals);
+            }
+            // super(...)：调用基类构造器，然后恢复派生类的 desc
+            TypePtr base = curClassTy ? curClassTy->base : nullptr;
+            if (!base || base->kind != TypeKind::Class)
+                fail("LLVM 后端：super(...) 缺少基类", c->line, c->col);
+            if (!base->ctors.empty()) {
+                const std::vector<TypePtr>* pty =
+                    c->ctor_pty ? c->ctor_pty : nullptr;
+                std::vector<TypePtr> empty;
+                std::vector<LType*> ptys{ptrTy()};
+                for (auto& t : (pty ? *pty : empty)) ptys.push_back(lt(t));
+                FunctionCallee callee = mod->getOrInsertFunction(
+                    ctor_cname(base->unit, base->name, pty ? *pty : empty),
+                    FunctionType::get(LType::getVoidTy(ctx), ptys, false));
+                std::vector<Value*> vals{b.CreateLoad(ptrTy(), thisSlot)};
+                for (size_t i = 0; i < c->args.size(); ++i)
+                    vals.push_back(coerce(c->args[i].get(), (pty ? *pty : empty)[i]));
+                b.CreateCall(callee, vals);
+            }
+            if (curClassTy) {
+                Value* p = b.CreateLoad(ptrTy(), thisSlot);
+                Value* dp = b.CreateGEP(i8(), p, ConstantInt::get(i64(), 8));
+                b.CreateStore(descOf(curClassTy), dp);
+            }
+            return nullptr;
+        }
         // 普通函数调用
         FuncDecl* f = c->func;
         if (!f) fail("LLVM 后端：调用缺少目标函数", c->line, c->col);
@@ -687,6 +964,8 @@ struct Emitter {
 
     Value* eval(Expr* e) {
         if (auto v = dynamic_cast<IntLit*>(e)) {
+            if (isRefKind(e->ty) || (e->ty && e->ty->kind == TypeKind::Null))
+                return Constant::getNullValue(ptrTy());
             LType* ty = lt(e->ty);
             return ConstantInt::get(cast<IntegerType>(ty), static_cast<uint64_t>(v->value),
                                     /*isSigned=*/true);
@@ -710,10 +989,12 @@ struct Emitter {
         if (dynamic_cast<Member*>(e)) {
             return b.CreateLoad(lt(e->ty), addrOf(e));
         }
-        if (dynamic_cast<Index*>(e)) {
+        if (auto ix = dynamic_cast<Index*>(e)) {
+            if (ix->get_func) return emitUserCall(ix->get_func, {ix->base.get(), ix->index.get()});
             return b.CreateLoad(lt(e->ty), addrOf(e));
         }
         if (auto u = dynamic_cast<Unary*>(e)) {
+            if (u->op_func) return emitUserCall(u->op_func, {u->operand.get()});
             if (u->op == "&") return addrOf(u->operand.get());
             if (u->op == "*") return b.CreateLoad(lt(e->ty), eval(u->operand.get()));
             Value* v = eval(u->operand.get());
@@ -734,6 +1015,7 @@ struct Emitter {
         if (auto v = dynamic_cast<Cast*>(e))
             return convertTo(eval(v->expr.get()), v->expr->ty, e->ty, v->line, v->col);
         if (auto v = dynamic_cast<Call*>(e)) return evalCall(v);
+        if (auto v = dynamic_cast<NewExpr*>(e)) return evalNew(v);
         if (auto v = dynamic_cast<SizeofExpr*>(e)) {
             // resolve spec via sema 已写入 e->ty=usize；尺寸需要类型本身：由 spec 推断
             TypePtr t = specType(v->spec.get());
@@ -812,6 +1094,10 @@ struct Emitter {
         }
         if (auto ie = dynamic_cast<InitExpr*>(init)) {
             Expr* e = ie->expr.get();
+            if (isRefKind(ty) && is_zero_literal(init)) {
+                storeValue(Constant::getNullValue(ptrTy()), addr, ty);
+                return;
+            }
             if (ty->kind == TypeKind::Array && sizeOf(ty->elem) == 1 &&
                 dynamic_cast<StringLit*>(e)) {
                 if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       char-array from string\n";
@@ -827,6 +1113,7 @@ struct Emitter {
                 return;
             }
             Value* v = coerce(e, ty);
+            if (isRefKind(ty) && !ownsReference(e)) emitRetain(v);
             storeValue(v, addr, ty);
             return;
         }
@@ -910,9 +1197,23 @@ struct Emitter {
             return;
         }
         if (auto as = dynamic_cast<AssignStmt*>(s)) {
+            if (as->set_func) {
+                auto* ix = dynamic_cast<Index*>(as->target.get());
+                emitUserCall(as->set_func,
+                             {ix->base.get(), ix->index.get(), as->value.get()});
+                return;
+            }
             Value* addr = addrOf(as->target.get());
             if (as->op == "=") {
-                b.CreateStore(coerce(as->value.get(), as->target->ty), addr);
+                Value* nv = coerce(as->value.get(), as->target->ty);
+                if (isRefKind(as->target->ty)) {
+                    if (!ownsReference(as->value.get())) emitRetain(nv);
+                    Value* old = b.CreateLoad(ptrTy(), addr);
+                    emitRelease(old);
+                    b.CreateStore(nv, addr);
+                    return;
+                }
+                b.CreateStore(nv, addr);
                 return;
             }
             Value* v = eval(as->value.get());
@@ -980,6 +1281,14 @@ struct Emitter {
             emitFor(fs);
             return;
         }
+        if (auto d = dynamic_cast<DelStmt*>(s)) {
+            Value* addr = addrOf(d->value.get());
+            Value* p = b.CreateLoad(ptrTy(), addr);
+            b.CreateStore(Constant::getNullValue(ptrTy()), addr);
+            if (!std::getenv("MULANC_RAW_ALLOC")) emitRelease(p);
+            else b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {p});
+            return;
+        }
         if (dynamic_cast<BreakStmt*>(s)) {
             if (loops.empty()) fail("LLVM 后端：break 不在循环中");
             b.CreateBr(loops.back().second);
@@ -998,7 +1307,7 @@ struct Emitter {
             if (!rs->value) {
                 b.CreateRetVoid();
             } else {
-                b.CreateRet(coerce(rs->value.get(), curRetTy));
+                b.CreateRet(prepareReturn(rs->value.get()));
             }
             BasicBlock* dead = BasicBlock::Create(ctx, "dead", curFn);
             b.SetInsertPoint(dead);
@@ -1105,6 +1414,176 @@ struct Emitter {
         b.SetInsertPoint(endBB);
     }
 
+    // ------------------------------------------------------------ class 代码生成
+    void beginBody(Function* fn) {
+        curFn = fn;
+        allocaBB = BasicBlock::Create(ctx, "allocas", fn);
+        bodyBB = BasicBlock::Create(ctx, "entry", fn);
+        ab.SetInsertPoint(allocaBB);
+        b.SetInsertPoint(bodyBB);
+        thisSlot = nullptr;
+        curThis = nullptr;
+        slots.clear();
+    }
+
+    void finishBody(Function* fn, const std::string& what) {
+        if (!hasTerm(b.GetInsertBlock())) {
+            if (fn->getReturnType()->isVoidTy()) {
+                b.CreateRetVoid();
+            } else {
+                b.CreateUnreachable();
+            }
+        }
+        ab.SetInsertPoint(allocaBB);
+        ab.CreateBr(bodyBB);
+        std::string errs;
+        raw_string_ostream os(errs);
+        if (verifyFunction(*fn, &os)) {
+            throw MuError("LLVM 后端：`" + what + "` 生成的 IR 无效：" + os.str());
+        }
+        curFn = nullptr;
+        allocaBB = nullptr;
+        bodyBB = nullptr;
+        slots.clear();
+        curClassTy = nullptr;
+        curThis = nullptr;
+        thisSlot = nullptr;
+    }
+
+    void bindParams(Function* fn, size_t first,
+                    const std::vector<std::unique_ptr<LocalVar>>& pls) {
+        size_t i = first;
+        for (auto& pl : pls) {
+            if (i >= fn->arg_size()) break;
+            auto* slot = entryAlloca(lt(pl->rty), sane(pl->name));
+            slots[pl.get()] = slot;
+            IRBuilder<>::InsertPointGuard g(b);
+            b.SetInsertPoint(bodyBB);
+            b.CreateStore(fn->getArg(static_cast<unsigned>(i)), slot);
+            i++;
+        }
+    }
+
+    void emitMethod(ClassDecl* c, MethodDecl* m) {
+        if (!m->body) return;
+        std::vector<LType*> ptys{ptrTy()};
+        for (auto& t : m->pty) ptys.push_back(lt(t));
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(m->cname, FunctionType::get(lt(m->rty), ptys, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::ExternalLinkage);
+        curClassTy = c->ty;
+        beginBody(fn);
+        curThis = fn->getArg(0);
+        thisSlot = entryAlloca(ptrTy(), "this");
+        b.CreateStore(curThis, thisSlot);
+        bindParams(fn, 1, m->param_locals);
+        block(m->body.get());
+        finishBody(fn, c->name + "." + m->name);
+    }
+
+    void emitCtor(ClassDecl* c, CtorDecl* ctor) {
+        std::vector<LType*> ptys{ptrTy()};
+        for (auto& t : ctor->pty) ptys.push_back(lt(t));
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(ctor->cname,
+                                     FunctionType::get(LType::getVoidTy(ctx), ptys, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::ExternalLinkage);
+        curClassTy = c->ty;
+        beginBody(fn);
+        curThis = fn->getArg(0);
+        thisSlot = entryAlloca(ptrTy(), "this");
+        b.CreateStore(curThis, thisSlot);
+        // 入口先设置本类的 desc；调用 super(...) 之后会恢复
+        Value* dp = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
+        b.CreateStore(descOf(c->ty), dp);
+        bindParams(fn, 1, ctor->param_locals);
+        block(ctor->body.get());
+        finishBody(fn, c->name + " 构造器");
+    }
+
+    void emitReleaseValue(Value* addr, const TypePtr& ty) {
+        if (!ty) return;
+        if (isRefKind(ty)) {
+            emitRelease(b.CreateLoad(ptrTy(), addr));
+            return;
+        }
+        if (ty->kind == TypeKind::Array && isRefKind(ty->elem)) {
+            for (size_t i = 0; i < ty->array_size; ++i) {
+                auto* st = cast<LStruct>(lt(ty));
+                Value* ep = b.CreateGEP(st, addr, {ConstantInt::get(i64(), 0),
+                                                   ConstantInt::get(i32(), 0),
+                                                   ConstantInt::get(i64(), i)});
+                emitRelease(b.CreateLoad(ptrTy(), ep));
+            }
+        }
+    }
+
+    void emitDtor(ClassDecl* c) {
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(dtor_cname(c->ty->unit, c->name),
+                                     FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::ExternalLinkage);
+        curClassTy = c->ty;
+        beginBody(fn);
+        curThis = fn->getArg(0);
+        thisSlot = entryAlloca(ptrTy(), "this");
+        b.CreateStore(curThis, thisSlot);
+        if (c->dtor && c->dtor->body) block(c->dtor->body.get());
+
+        // 释放本类声明的引用字段（逆序）
+        size_t total = c->ty->fields.size();
+        size_t own = c->fields.size();
+        size_t baseCount = total >= own ? total - own : 0;
+        for (size_t k = total; k > baseCount; --k) {
+            size_t idx = k - 1;
+            if (c->ty->fields[idx].weak) continue;
+            Value* fa = fieldAddr(curThis, c->ty, static_cast<int>(idx));
+            emitReleaseValue(fa, c->ty->fields[idx].type);
+        }
+        if (c->ty->base && c->ty->base->kind == TypeKind::Class) {
+            FunctionCallee baseDtor = mod->getOrInsertFunction(
+                dtor_cname(c->ty->base->unit, c->ty->base->name),
+                FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+            b.CreateCall(baseDtor, {curThis});
+        }
+        finishBody(fn, c->name + " 析构器");
+    }
+
+    void emitDestroy(ClassDecl* c) {
+        std::string nm = "mu_" + c->ty->unit + "_destroy_" + c->name;
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(nm, FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::ExternalLinkage);
+        beginBody(fn);
+        Value* p = fn->getArg(0);
+        FunctionCallee dtor = mod->getOrInsertFunction(
+            dtor_cname(c->ty->unit, c->name),
+            FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+        b.CreateCall(dtor, {p});
+        b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {p});
+        finishBody(fn, c->name + " 销毁函数");
+    }
+
+    void emitClassDesc(ClassDecl* c) {
+        std::string destroyName = "mu_" + c->ty->unit + "_destroy_" + c->name;
+        FunctionCallee dfn =
+            mod->getOrInsertFunction(destroyName,
+                                     FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+        Constant* vt = Constant::getNullValue(ptrTy());
+        std::vector<Constant*> vals{
+            ConstantInt::get(i64(), objectSize(c->ty)),
+            cast<Constant>(dfn.getCallee()),
+            vt,
+        };
+        new GlobalVariable(*mod, descTy, /*isConstant=*/true, GlobalValue::InternalLinkage,
+                           ConstantStruct::get(descTy, vals),
+                           class_desc_name(c->ty->unit, c->name));
+    }
+
     // ------------------------------------------------------------ 函数
     void emitFunction(FuncDecl* f) {
         if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm] emit " << f->name << "\n";
@@ -1115,6 +1594,9 @@ struct Emitter {
         fn->setLinkage(GlobalValue::ExternalLinkage);
         if (f->is_extern) return;
 
+        curClassTy = nullptr;
+        curThis = nullptr;
+        thisSlot = nullptr;
         curFn = fn;
         curRetTy = f->rty;
         allocaBB = BasicBlock::Create(ctx, "allocas", fn);
@@ -1197,6 +1679,8 @@ struct Emitter {
         strTy->setBody({ptrTy(), i64()}, false);
         sliceTy = LStruct::create(ctx, "mu_slice");
         sliceTy->setBody({ptrTy(), i64()}, false);
+        descTy = LStruct::create(ctx, "mu_desc");
+        descTy->setBody({i64(), ptrTy(), ptrTy()}, false);
 
         // 先建结构体类型（字段可能引用彼此；指针是 opaque ptr，不会递归）
         for (auto& u : prog.units) {
@@ -1204,6 +1688,16 @@ struct Emitter {
                 if (auto sd = dynamic_cast<StructDecl*>(d.get())) {
                     if (sd->ty) structOf(sd->ty);
                 }
+            }
+        }
+        // 对象布局与描述符
+        for (auto& u : prog.units) {
+            curUnit = u->name;
+            for (auto& d : u->decls) {
+                auto c = dynamic_cast<ClassDecl*>(d.get());
+                if (!c || !c->ty) continue;
+                objStruct(c->ty);
+                emitClassDesc(c);
             }
         }
 
@@ -1226,6 +1720,18 @@ struct Emitter {
             curUnit = u->name;
             for (auto& d : u->decls) {
                 if (auto f = dynamic_cast<FuncDecl*>(d.get())) emitFunction(f);
+            }
+        }
+        // class 成员函数、构造器、析构器、销毁函数
+        for (auto& u : prog.units) {
+            curUnit = u->name;
+            for (auto& d : u->decls) {
+                auto c = dynamic_cast<ClassDecl*>(d.get());
+                if (!c || !c->ty) continue;
+                for (auto& m : c->methods) emitMethod(c, m.get());
+                for (auto& ctor : c->ctors) emitCtor(c, ctor.get());
+                emitDtor(c);
+                emitDestroy(c);
             }
         }
 

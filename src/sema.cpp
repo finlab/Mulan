@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "common.hpp"
+#include "mangle.hpp"
 
 namespace {
 
@@ -25,63 +26,6 @@ bool is_integer(const TypePtr& t) { return t && t->is_integer(); }
 bool is_numeric(const TypePtr& t) { return t && t->is_numeric(); }
 bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
 bool is_prim(const TypePtr& t) { return t && t->kind == TypeKind::Prim; }
-
-// ---------------------------------------------------------------- 名字修饰辅助
-
-std::string type_code(const TypePtr& t) {
-    if (!t) return "v";
-    switch (t->kind) {
-        case TypeKind::Void: return "v";
-        case TypeKind::Prim: return t->name;
-        case TypeKind::String: return "str";
-        case TypeKind::Ptr: return "p_" + type_code(t->elem);
-        case TypeKind::Array: return "a" + std::to_string(t->array_size) + "_" + type_code(t->elem);
-        case TypeKind::Slice: return "s_" + type_code(t->elem);
-        case TypeKind::Struct: return "S_" + t->unit + "_" + t->name;
-        case TypeKind::Enum: return "E_" + t->unit + "_" + t->name;
-        case TypeKind::Class: return "C_" + t->unit + "_" + t->name;
-        case TypeKind::Interface: return "I_" + t->unit + "_" + t->name;
-        case TypeKind::Module: return "m_" + t->unit;
-        case TypeKind::Null: return "null";
-        case TypeKind::Range: return "rng";
-    }
-    return "x";
-}
-
-std::string op_code(const std::string& sym) {
-    if (sym == "+") return "add";
-    if (sym == "-") return "sub";
-    if (sym == "*") return "mul";
-    if (sym == "/") return "div";
-    if (sym == "%") return "mod";
-    if (sym == "<") return "lt";
-    if (sym == "<=") return "le";
-    if (sym == ">") return "gt";
-    if (sym == ">=") return "ge";
-    if (sym == "==") return "eq";
-    if (sym == "!=") return "ne";
-    if (sym == "&") return "band";
-    if (sym == "|") return "bor";
-    if (sym == "^") return "bxor";
-    if (sym == "<<") return "shl";
-    if (sym == ">>") return "shr";
-    if (sym == "[]") return "idx";
-    if (sym == "[]=") return "idxset";
-    return "op";
-}
-
-std::string func_code_name(const std::string& name) {
-    const std::string prefix = "operator";
-    if (name.rfind(prefix, 0) == 0) return "op_" + op_code(name.substr(prefix.size()));
-    return name;
-}
-
-std::string func_cname(const std::string& unit, FuncDecl* f) {
-    if (f->is_extern) return f->name;
-    std::string out = "mu_" + unit + "_" + func_code_name(f->name);
-    for (auto& t : f->pty) out += "__" + type_code(t);
-    return out;
-}
 
 // 类型语法文本化。ast.hpp 里声明了 TypeSpec::str()，但它的定义属于 parser.cpp；
 // 这里自带一份，避免 sema 对 parser 的链接期依赖（只在错误信息里用）。
@@ -373,7 +317,9 @@ private:
                 sig.params = m->pty;
                 sig.is_abstract = !m->body;
                 sig.is_override = m->is_override;
+                sig.owner = c->ty;
                 c->ty->methods.push_back(std::move(sig));
+                m->cname = method_cname(u->name, c->name, m->name, m->pty);
                 if (!m->body) c->ty->is_abstract = true;
             }
             for (auto& ctor : c->ctors) {
@@ -383,8 +329,10 @@ private:
                     if (is_void(pt)) err("参数不能是 void", p.get());
                     ctor->pty.push_back(pt);
                 }
+                ctor->cname = ctor_cname(u->name, c->name, ctor->pty);
                 c->ty->ctors.push_back(ctor->pty);
             }
+            if (c->dtor) c->dtor->cname = dtor_cname(u->name, c->name);
         }
 
         // interface：基接口与方法签名
@@ -422,7 +370,9 @@ private:
                 sig.params = m->pty;
                 sig.is_abstract = !m->body;
                 sig.is_override = false;
+                sig.owner = itf->ty;
                 itf->ty->methods.push_back(std::move(sig));
+                m->cname = method_cname(u->name, itf->name, m->name, m->pty);
             }
         }
 
@@ -1359,9 +1309,9 @@ private:
                     err("类型 `" + bt->str() + "` 不支持下标赋值（没有 `operator[]=`）", s);
                 }
                 check_writable(s->target.get());
-                choose_overload(cands,
-                                {ix->base.get(), ix->index.get(), s->value.get()},
-                                "operator[]=", s);
+                s->set_func = choose_overload(cands,
+                                              {ix->base.get(), ix->index.get(), s->value.get()},
+                                              "operator[]=", s);
                 return;
             }
         }
@@ -1513,6 +1463,11 @@ private:
                 il->ty = dst;
                 return true;
             }
+            if (il->value == 0 && dst &&
+                (dst->kind == TypeKind::Class || dst->kind == TypeKind::Interface)) {
+                il->ty = dst;  // `Cat c = 0` 等价于 null
+                return true;
+            }
         }
         if (dynamic_cast<NullLit*>(e) && dst) {
             if (dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice ||
@@ -1622,6 +1577,7 @@ private:
                 }
                 auto f = choose_overload(cands, {ix->base.get(), ix->index.get()},
                                          "operator[]", e);
+                ix->get_func = f;
                 return f->rty;
             }
             err("类型 " + bt->str() + " 不能下标访问", e);
@@ -1789,6 +1745,7 @@ private:
                     err("类型 `" + t->str() + "` 没有一元 `" + e->op + "` 运算符重载", e);
                 }
                 auto f = choose_overload(unary, {e->operand.get()}, "operator" + e->op, e);
+                e->op_func = f;
                 return f->rty;
             }
             err("`" + e->op + "` 需要数值操作数，实际是 " + (t ? t->str() : "void"), e);
@@ -1823,6 +1780,7 @@ private:
                 }
                 auto f = choose_overload(cands, {e->left.get(), e->right.get()},
                                          "operator" + op, e);
+                e->op_func = f;
                 return f->rty;
             }
         }
@@ -1911,6 +1869,7 @@ private:
                 }
                 auto f = choose_overload(cands, {e->left.get(), e->right.get()},
                                          "operator" + op, e);
+                e->op_func = f;
                 return f->rty;
             }
             err("`" + op + "` 不支持 " + lt->str() + " 与 " + rt->str(), e);
@@ -1967,6 +1926,7 @@ private:
                     auto sig = choose_method(ms, raw_args(c->args), "方法 `" + nm->ident + "`", c);
                     check_method_args(c, sig, "方法 `" + nm->ident + "`");
                     c->callee_kind = "method";
+                    c->method = sig;
                     return sig->ret;
                 }
             }
@@ -2012,7 +1972,8 @@ private:
                 }
                 check_method_args(c, sig, "方法 `" + m->name + "`");
                 m->kind = "method";
-                c->callee_kind = "method";
+                c->callee_kind = "super";
+                c->method = sig;
                 return sig->ret;
             }
 
@@ -2034,6 +1995,7 @@ private:
                     check_method_args(c, sig, "方法 `" + m->name + "`");
                     m->kind = "method";
                     c->callee_kind = "method";
+                    c->method = sig;
                     return sig->ret;
                 }
                 err("`" + m->name + "` 不是函数", c);
@@ -2330,6 +2292,7 @@ private:
             for (size_t i = 0; i < c->args.size(); ++i) {
                 check_assign(c->args[i].get(), (*chosen)[i], "super 参数");
             }
+            c->ctor_pty = chosen;
         }
         c->callee_kind = "super";
         return t_void();
@@ -2342,6 +2305,7 @@ private:
         if (!ne->named.empty()) err("构造器暂不支持命名参数", ne);
 
         const auto& ctors = t->ctors;
+        ne->has_ctor = !ctors.empty();
         if (ctors.empty()) {
             if (!ne->args.empty()) err("class `" + t->str() + "` 没有匹配的构造器", ne);
         } else {
@@ -2349,6 +2313,7 @@ private:
             for (size_t i = 0; i < ne->args.size(); ++i) {
                 check_assign(ne->args[i].get(), (*chosen)[i], "构造参数");
             }
+            ne->ctor_pty = *chosen;
         }
         ne->class_ty = t;
         return t;

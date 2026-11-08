@@ -89,11 +89,14 @@ struct Member : Expr {
 struct Index : Expr {
     ExprPtr base;
     ExprPtr index;
+    // sema: 用户类型下标走运算符重载时记录选中的函数
+    FuncDecl* get_func = nullptr;
 };
 
 struct Unary : Expr {
     std::string op;  // - + & * !
     ExprPtr operand;
+    FuncDecl* op_func = nullptr;  // sema: 用户运算符重载
 };
 
 struct NotExpr : Expr {  // 关键字 not
@@ -104,6 +107,7 @@ struct Binary : Expr {
     std::string op;  // + - * / % << >> & | ^ < <= > >= == != and or
     ExprPtr left;
     ExprPtr right;
+    FuncDecl* op_func = nullptr;  // sema: 用户运算符重载
 };
 
 struct Cast : Expr {
@@ -116,11 +120,13 @@ struct Call : Expr {
     std::vector<ExprPtr> args;
     std::vector<std::pair<std::string, ExprPtr>> named;
     // sema
-    std::string callee_kind;  // "func" | "ctor" | "builtin"
+    std::string callee_kind;  // "func" | "ctor" | "builtin" | "method" | "super"
     FuncDecl* func = nullptr;
     TypePtr ctor;             // 结构体构造目标类型
     std::string builtin;      // alloc / realloc / free
     std::vector<int> field_order;
+    const MethodSig* method = nullptr;      // 选中的方法/接口默认方法
+    const std::vector<TypePtr>* ctor_pty = nullptr;  // 选中的构造器（super 用）
 };
 
 struct NewExpr : Expr {
@@ -130,6 +136,8 @@ struct NewExpr : Expr {
     // sema
     TypePtr class_ty;
     CtorDecl* ctor = nullptr;
+    bool has_ctor = false;          // class 声明了构造器（选中 ne->ctor_pty）
+    std::vector<TypePtr> ctor_pty;  // 选中的构造器参数表（空 = 默认零初始化构造）
 };
 
 struct SizeofExpr : Expr {
@@ -236,6 +244,7 @@ struct AssignStmt : Stmt {
     ExprPtr target;
     std::string op;  // = += -= *= /= %= &= |= ^= <<= >>=
     ExprPtr value;
+    FuncDecl* set_func = nullptr;  // sema: operator[]= 重载
 };
 
 struct IfStmt : Stmt {
@@ -286,6 +295,7 @@ struct MethodDecl : Node {
     TypePtr rty;
     std::vector<TypePtr> pty;
     std::vector<std::unique_ptr<LocalVar>> param_locals;
+    std::string cname;  // 方法符号名
 };
 
 struct CtorDecl : Node {
@@ -294,10 +304,12 @@ struct CtorDecl : Node {
     // sema
     std::vector<TypePtr> pty;
     std::vector<std::unique_ptr<LocalVar>> param_locals;
+    std::string cname;  // 构造器符号名
 };
 
 struct DtorDecl : Node {
     std::unique_ptr<Block> body;
+    std::string cname;  // 析构器符号名
 };
 
 struct ClassDecl : Decl {
