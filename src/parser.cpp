@@ -440,6 +440,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
     expect_op("{");
     while (!at_op("}")) {
         if (at_op("~")) {
+            if (cd->dtor) throw err("class `" + cd->name + "` 只能有一个析构器");
             cd->dtor = parse_dtor();
             continue;
         }
@@ -456,11 +457,8 @@ std::unique_ptr<Decl> Parser::parse_class() {
         }
         bool prefix_weak = false;
         if (at_kw("weak")) {
-            const Token wt = advance();
+            advance();
             prefix_weak = true;
-            if (!is_type_start(peek()) && !peek().is_kw("readonly")) {
-                throw err_at("`weak` 后缺少字段类型", wt);
-            }
         }
         TypeSpecPtr spec = parse_type();
         if (prefix_weak) spec->weak = true;

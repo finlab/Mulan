@@ -329,6 +329,11 @@ private:
                     has_base = true;
                     c->ty->base = bt;
                 } else if (bt->kind == TypeKind::Interface) {
+                    for (auto& prev : c->ty->interfaces) {
+                        if (same_type(prev, bt)) {
+                            err("class `" + c->name + "` 重复实现接口 `" + bt->str() + "`", c);
+                        }
+                    }
                     c->ty->interfaces.push_back(bt);
                 } else {
                     err("`" + c->bases[i] + "` 不是 class 或 interface", c);
@@ -394,6 +399,11 @@ private:
                 TypePtr bt = resolve_named_type(b, u, &where);
                 if (bt->kind != TypeKind::Interface) {
                     err("interface 只能继承 interface", itf);
+                }
+                for (auto& prev : itf->ty->interfaces) {
+                    if (same_type(prev, bt)) {
+                        err("interface `" + itf->name + "` 重复继承 `" + bt->str() + "`", itf);
+                    }
                 }
                 itf->ty->interfaces.push_back(bt);
             }
@@ -490,6 +500,9 @@ private:
             const std::string tn = name.substr(dot + 1);
             auto it = infos_.find(un);
             if (it == infos_.end()) err_ts("未导入的 unit `" + un + "`", spec);
+            if (un != u->name && !uses_unit(un)) {
+                err_ts("未通过 `use` 导入 unit `" + un + "`", spec);
+            }
             UnitInfo& ui = it->second;
             if (auto s = ui.structs.find(tn); s != ui.structs.end()) return s->second->ty;
             if (auto e = ui.enums.find(tn); e != ui.enums.end()) return e->second->ty;
@@ -930,6 +943,24 @@ private:
             }
             check_ctor(c, ctor.get());
         }
+        // 派生类隐式默认构造器要求基类有无参构造器
+        if (c->ctors.empty() && c->ty->base && !c->ty->base->ctors.empty()) {
+            bool base_default = false;
+            for (auto& cs : c->ty->base->ctors) {
+                if (cs.empty()) { base_default = true; break; }
+            }
+            if (!base_default) {
+                err("class `" + c->name + "` 的基类没有无参构造器，必须显式声明构造器", c);
+            }
+        }
+        // 派生类字段不能遮蔽基类方法名（用字段名访问会与方法调用混淆）
+        if (c->ty->base) {
+            for (auto& [fname, spec] : c->fields) {
+                if (has_method_named(c->ty->base, fname)) {
+                    err("class `" + c->name + "` 的字段 `" + fname + "` 与基类方法同名", c);
+                }
+            }
+        }
         check_dtor(c);
     }
 
@@ -1045,7 +1076,9 @@ private:
                 c->ty->is_abstract = abs;
 
                 std::vector<MethodSig> defaults;
-                for (auto& i : c->ty->interfaces) collect_defaults(i, defaults);
+                for (TypePtr cur = c->ty; cur && cur->kind == TypeKind::Class; cur = cur->base) {
+                    for (auto& i : cur->interfaces) collect_defaults(i, defaults);
+                }
                 for (size_t i = 0; i < defaults.size(); ++i) {
                     for (size_t j = i + 1; j < defaults.size(); ++j) {
                         if (same_sig(defaults[i], defaults[j]) &&
@@ -1321,7 +1354,7 @@ private:
             if (is_user_type(bt)) {
                 if (!is_integer(it)) err("下标必须是整数", s->target.get());
                 if (s->op != "=") err("用户下标暂只支持 `=` 赋值", s);
-                auto cands = collect_operators("[]=");
+                auto cands = collect_operators("[]=", {bt, it});
                 if (cands.empty()) {
                     err("类型 `" + bt->str() + "` 不支持下标赋值（没有 `operator[]=`）", s);
                 }
@@ -1583,7 +1616,7 @@ private:
             }
             if (bt->kind == TypeKind::String) return Type::make_prim("char");
             if (is_user_type(bt)) {
-                auto cands = collect_operators("[]");
+                auto cands = collect_operators("[]", {bt, it});
                 if (cands.empty()) {
                     err("类型 `" + bt->str() + "` 不支持下标（没有 `operator[]`）", e);
                 }
@@ -1745,10 +1778,20 @@ private:
             return t;
         }
         if (e->op == "-" || e->op == "+") {
-            if (!is_numeric(t)) {
-                err("`" + e->op + "` 需要数值操作数，实际是 " + (t ? t->str() : "void"), e);
+            if (is_numeric(t)) return t;
+            if (is_user_type(t)) {
+                auto cands = collect_operators(e->op, {t});
+                std::vector<FuncDecl*> unary;
+                for (auto* f : cands) {
+                    if (f->pty.size() == 1) unary.push_back(f);
+                }
+                if (unary.empty()) {
+                    err("类型 `" + t->str() + "` 没有一元 `" + e->op + "` 运算符重载", e);
+                }
+                auto f = choose_overload(unary, {e->operand.get()}, "operator" + e->op, e);
+                return f->rty;
             }
-            return t;
+            err("`" + e->op + "` 需要数值操作数，实际是 " + (t ? t->str() : "void"), e);
         }
         err("未知一元运算符 `" + e->op + "`", e);
     }
@@ -1772,7 +1815,7 @@ private:
 
         if (is_user_type(lt) || is_user_type(rt)) {
             if (op != "==" && op != "!=") {
-                auto cands = collect_operators(op);
+                auto cands = collect_operators(op, {lt, rt});
                 if (cands.empty()) {
                     err("类型 `" + lt->str() + "` 与 `" + rt->str() + "` 没有运算符 `" + op +
                             "` 重载",
@@ -1853,9 +1896,9 @@ private:
                 return t_bool();
             }
             if (is_user_type(lt) || is_user_type(rt)) {
-                auto cands = collect_operators(op);
+                auto cands = collect_operators(op, {lt, rt});
                 if (cands.empty() && op == "!=") {
-                    auto eqs = collect_operators("==");
+                    auto eqs = collect_operators("==", {lt, rt});
                     if (!eqs.empty()) {
                         choose_overload(eqs, {e->left.get(), e->right.get()}, "operator==", e);
                         return t_bool();
@@ -1964,6 +2007,9 @@ private:
                 collect_methods(cur_class_->base, m->name, ms);
                 if (ms.empty()) err("基类没有方法 `" + m->name + "`", c);
                 auto sig = choose_method(ms, raw_args(c->args), "方法 `" + m->name + "`", c);
+                if (sig->is_abstract) {
+                    err("不能通过 `super` 调用抽象方法 `" + m->name + "`", c);
+                }
                 check_method_args(c, sig, "方法 `" + m->name + "`");
                 m->kind = "method";
                 c->callee_kind = "method";
@@ -2077,10 +2123,26 @@ private:
                      t->kind == TypeKind::Interface);
     }
 
-    std::vector<FuncDecl*> collect_operators(const std::string& sym) {
+    // 运算符查找范围：当前 unit + use 引入的 unit + 操作数类型所属 unit（ADL 风格）。
+    // 未导入 unit 的运算符不可见，避免无关 unit 之间意外冲突。
+    std::vector<FuncDecl*> collect_operators(const std::string& sym,
+                                             const std::vector<TypePtr>& operands = {}) {
+        std::unordered_set<std::string> scope;
+        if (cur_) {
+            scope.insert(cur_->name);
+            for (auto& u : cur_->uses) scope.insert(u->unit_name);
+        }
+        for (auto& t : operands) {
+            if (t && (t->kind == TypeKind::Struct || t->kind == TypeKind::Class ||
+                      t->kind == TypeKind::Enum || t->kind == TypeKind::Interface)) {
+                if (!t->unit.empty()) scope.insert(t->unit);
+            }
+        }
+
         std::vector<FuncDecl*> out;
         const std::string name = "operator" + sym;
         for (auto& entry : infos_) {
+            if (!scope.empty() && !scope.count(entry.first)) continue;
             auto it = entry.second.funcs.find(name);
             if (it != entry.second.funcs.end()) {
                 out.insert(out.end(), it->second.begin(), it->second.end());
