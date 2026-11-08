@@ -20,7 +20,7 @@ int main() {
     del b;
     if keep.get() != 2 { puts("keep failed"); return 1; }
     if a.peek().get() != 2 { puts("weak read failed"); return 1; }
-    del keep;              // 只剩 weak（悬空，不再读取）
+    del keep;              // 目标销毁时 weak 字段会被自动置 null
     del a;
     puts("class weak ok");
     return 0;
