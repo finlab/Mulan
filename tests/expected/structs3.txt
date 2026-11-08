@@ -1,0 +1,4 @@
+box init ok
+array of struct ok
+nested ok
+named nested ok

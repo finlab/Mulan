@@ -1,0 +1,8 @@
+slice ref ok
+struct array field ok
+nested loop ok
+trunc ok
+ptr diff ok
+escape ok
+shadow ok
+outer ok

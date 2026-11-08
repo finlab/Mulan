@@ -1,0 +1,22 @@
+hello, mu-lan
+1
+3628800
+4950
+5
+struct is a value type
+struct init ok
+zero-init ok
+string view: mu-lan
+mu-lan
+multi-declarator ok
+15
+2 4 6 8 10
+auto inference ok
+30
+0 1 2 4 5 6
+30
+null pointer check
+slice literal ok
+49
+42
+0 1 2

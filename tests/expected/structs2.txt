@@ -1,0 +1,5 @@
+nested copy ok
+nested pass ok
+string field ok
+array field copy ok
+array field ref ok

@@ -1,0 +1,5 @@
+eq ok
+ne ok
+zero eq empty ok
+len ok
+literal eq ok

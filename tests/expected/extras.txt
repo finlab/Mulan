@@ -1,0 +1,6 @@
+enum ok
+slice from array ok
+sizeof ok
+ptr arith ok
+ptr struct ok
+while true ok

@@ -1,0 +1,20 @@
+13
+20
+3
+2
+-14
+85
+8
+5
+2
+5
+1
+5
+7
+4
+10
+2
+bitwise binds tighter than ==
+relational binds looser than |
+55
+14

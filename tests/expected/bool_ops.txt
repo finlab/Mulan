@@ -1,0 +1,13 @@
+not x == y means not (x == y)
+not 3 == 7 is true
+not a and b is false
+not (a and b) is true
+p or q and r is true
+1 < 2 == 2 < 3 is true
+not 1 == 2 is true
+not not p is true
+not not q is false
+0 C
+1 D
+2 A
+3 B

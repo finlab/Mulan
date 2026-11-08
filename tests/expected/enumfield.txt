@@ -1,0 +1,2 @@
+enum field ok
+enum zero ok

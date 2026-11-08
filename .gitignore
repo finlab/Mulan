@@ -1,0 +1,8 @@
+build/
+build_dbg/
+__pycache__/
+*.pyc
+*.exe
+*.obj
+*.o
+*.ll

@@ -1,0 +1,7 @@
+hi
+empty slice ok
+ctor zero ok
+return value ok
+const string ok
+uint literal ok
+long ok
