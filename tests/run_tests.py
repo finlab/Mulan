@@ -6,8 +6,6 @@
 
 编译器命令通过环境变量 MULANC_CMD 配置（默认 `mulanc`），例如：
     $env:MULANC_CMD = "build/mulanc.exe"; python tests/run_tests.py   (PowerShell)
-后端通过 MULANC_BACKEND 选择（c / llvm），例如：
-    $env:MULANC_BACKEND = "llvm"; python tests/run_tests.py
 
 用法:
     python tests/run_tests.py                 # 全部用例（含根目录 example.mu）
@@ -39,7 +37,7 @@ ERRORS_DIR = ROOT / "tests" / "errors"
 BUILD_DIR = ROOT / "build" / "tests"
 
 # 编译器命令：<MULANC_CMD> build <case.mu> -o <exe> --run
-# 默认 `mulanc`（即编译出来的 mulanc.exe）；后端由 MULANC_BACKEND 控制。
+# 默认 `mulanc`（即编译出来的 mulanc.exe）。
 DEFAULT_COMPILER = "mulanc"
 
 # 编译器自身打到 stdout 的状态行前缀（与被剔除）

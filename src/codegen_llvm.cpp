@@ -1,12 +1,9 @@
 // LLVM 后端：用 LLVM C++ API 直接构造 IR，产出 COFF 目标文件（由 gcc 链接）。
 //
-// 策略：所有局部变量用 alloca 承载（配合 -O 时可被 mem2reg 优化），
-// 类型 / 命名 / lowering 与 C 后端保持一致，便于两后端对拍。
+// 策略：所有局部变量用 alloca 承载（配合 -O 时可被 mem2reg 优化）。
 #include "codegen_llvm.hpp"
 
 #include "common.hpp"
-
-#if defined(MULANC_HAVE_LLVM)
 
 #include <algorithm>
 #include <cctype>
@@ -76,7 +73,6 @@ using LArray = llvm::ArrayType;
 #define MULANC_VERSION "0.0.0"
 #endif
 
-bool llvm_backend_available() { return true; }
 namespace {
 
 std::string sane(std::string s) {
@@ -1271,17 +1267,6 @@ void llvm_emit_object(Program& prog, const std::string& obj_path) {
     dest.flush();
 }
 
-#else  // !MULANC_HAVE_LLVM
-
-bool llvm_backend_available() { return false; }
-
-std::string llvm_emit_text(Program&) { return "; LLVM backend not built\n"; }
-
-void llvm_emit_object(Program&, const std::string&) {
-    throw MuError("本编译器构建时未启用 LLVM 后端（重新配置 CMake 并安装 LLVM）");
-}
-
-#endif
 
 
 

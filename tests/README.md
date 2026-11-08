@@ -11,10 +11,8 @@
 
 ```powershell
 # 编译器命令由环境变量 MULANC_CMD 决定（默认 mulanc）
-$env:MULANC_CMD = "build/mulanc.exe"      # C++ 编译器
-python tests/run_tests.py                 # C 后端
-$env:MULANC_BACKEND = "llvm"
-python tests/run_tests.py                 # LLVM 后端
+$env:MULANC_CMD = "build/mulanc.exe"
+python tests/run_tests.py                 # 全部用例
 python tests/run_tests.py --filter arith  # 只跑名字含 "arith" 的用例
 python tests/run_tests.py -v              # 失败时打印完整实际输出
 python tests/run_tests.py --keep-c        # 保留生成的中间产物（默认编完即删）

@@ -9,7 +9,6 @@
 #include <typeinfo>
 #include <vector>
 
-#include "codegen_c.hpp"
 #include "codegen_llvm.hpp"
 #include "common.hpp"
 #include "loader.hpp"
@@ -22,7 +21,7 @@ namespace fs = std::filesystem;
 #define MULANC_VERSION "0.0.0"
 #endif
 
-static const char* USAGE = R"(mulanc - mu-lan 编译器（阶段 A：C99 后端）
+static const char* USAGE = R"(mulanc - mu-lan 编译器（LLVM 后端）
 
 用法:
   mulanc check <entry.mu>            只做语义检查
@@ -32,15 +31,14 @@ static const char* USAGE = R"(mulanc - mu-lan 编译器（阶段 A：C99 后端�
 
 build 选项:
   -o <path>        输出可执行文件（默认 build/<entry>.exe）
-  --backend <b>    后端：c（默认）或 llvm
-  --emit-c <path>  另存生成的 C 源码（C 后端）
-  --emit-ir <path> 另存生成的 LLVM IR（LLVM 后端）
-  --cc <name>      C 编译器 / 链接器（默认环境变量 CC，否则 gcc）
+  --backend <b>    后端（本版本只有 llvm，保留参数兼容）
+  --emit-ir <path> 另存生成的 LLVM IR
+  --cc <name>      链接器（默认环境变量 CC，否则 gcc）
   -I <dir>         额外的 unit 搜索目录（可重复）
   --run            编译成功后立即运行
 
 环境变量:
-  MULANC_BACKEND   默认后端（c / llvm），可被 --backend 覆盖
+  MULANC_BACKEND   默认后端（仅 llvm）
 )";
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
@@ -223,9 +221,8 @@ static void dump(const Node* n, int ind) {
 struct BuildArgs {
     std::string entry;
     std::string out;
-    std::string emit_c;
     std::string emit_ir;
-    std::string backend = "c";
+    std::string backend = "llvm";
     std::string cc = "gcc";
     std::vector<std::string> dirs;
     bool run = false;
@@ -246,7 +243,6 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
             return args[++i];
         };
         if (a == "-o") b.out = need("-o");
-        else if (a == "--emit-c") b.emit_c = need("--emit-c");
         else if (a == "--emit-ir") b.emit_ir = need("--emit-ir");
         else if (a == "--backend") b.backend = need("--backend");
         else if (a == "--cc") b.cc = need("--cc");
@@ -288,49 +284,26 @@ static int cmd_build(const std::vector<std::string>& args) {
     fs::create_directories(build_dir);
     fs::path out = ba.out.empty() ? build_dir / (base + ".exe") : fs::path(ba.out);
 
-    std::string cmd;
-    if (ba.backend == "c") {
-        std::string src = generate(prog);
-        fs::path c_path = ba.emit_c.empty() ? build_dir / (base + ".c") : fs::path(ba.emit_c);
-        if (c_path.has_parent_path()) fs::create_directories(c_path.parent_path());
-        {
-            std::ofstream f(c_path, std::ios::binary);
-            if (!f) throw MuError("无法写入 " + c_path.string());
-            f << src;
-        }
-        cmd = ba.cc +
-              " -std=c99 -O0 -g -Wall -Wno-unused-variable"
-              " -Wno-unused-but-set-variable -Wno-unused-function -o " +
-              quote(out.string()) + " " + quote(c_path.string());
-        std::cout << "+ " << cmd << "\n";
-        int rc = std::system(cmd.c_str());
-        if (rc != 0) {
-            std::cerr << "error: C 编译失败（生成的源码：" << c_path.string() << "）\n";
-            return rc;
-        }
-    } else if (ba.backend == "llvm") {
-        if (!llvm_backend_available()) {
-            throw MuError("本次构建未启用 LLVM 后端（需安装 LLVM 并重新配置 CMake）");
-        }
-        fs::path ir_path = ba.emit_ir.empty() ? build_dir / (base + ".ll") : fs::path(ba.emit_ir);
-        if (ir_path.has_parent_path()) fs::create_directories(ir_path.parent_path());
-        {
-            std::ofstream f(ir_path, std::ios::binary);
-            if (!f) throw MuError("无法写入 " + ir_path.string());
-            f << llvm_emit_text(prog);
-        }
-        fs::path obj = build_dir / (base + ".o");
-        llvm_emit_object(prog, obj.string());
-        cmd = ba.cc + " -o " + quote(out.string()) + " " + quote(obj.string());
-        std::cout << "+ " << cmd << "\n";
-        int rc = std::system(cmd.c_str());
-        if (rc != 0) {
-            std::cerr << "error: 链接失败（目标文件：" << obj.string()
-                      << "，IR：" << ir_path.string() << "）\n";
-            return rc;
-        }
-    } else {
-        throw MuError("未知 backend `" + ba.backend + "`（可选 c / llvm）");
+    if (ba.backend != "llvm") {
+        throw MuError("未知 backend `" + ba.backend + "`（本版本只有 llvm）");
+    }
+
+    fs::path ir_path = ba.emit_ir.empty() ? build_dir / (base + ".ll") : fs::path(ba.emit_ir);
+    if (ir_path.has_parent_path()) fs::create_directories(ir_path.parent_path());
+    {
+        std::ofstream f(ir_path, std::ios::binary);
+        if (!f) throw MuError("无法写入 " + ir_path.string());
+        f << llvm_emit_text(prog);
+    }
+    fs::path obj = build_dir / (base + ".o");
+    llvm_emit_object(prog, obj.string());
+    std::string cmd = ba.cc + " -o " + quote(out.string()) + " " + quote(obj.string());
+    std::cout << "+ " << cmd << "\n";
+    int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        std::cerr << "error: 链接失败（目标文件：" << obj.string()
+                  << "，IR：" << ir_path.string() << "）\n";
+        return rc;
     }
     std::cout << "ok: " << out.string() << "\n";
     if (ba.run) {

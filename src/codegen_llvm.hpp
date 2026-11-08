@@ -5,9 +5,6 @@
 
 #include "sema.hpp"
 
-// 编译期是否带 LLVM 支持
-bool llvm_backend_available();
-
 // 生成文本 IR（调试 / --emit-ir）
 std::string llvm_emit_text(Program& prog);
 

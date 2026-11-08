@@ -16,11 +16,12 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-# ---- LLVM（可选；找不到时只构建 C 后端） ----
-option(MULANC_WITH_LLVM "Build the LLVM backend" ON)
-if(MULANC_WITH_LLVM AND NOT LLVM_DIR AND EXISTS "C:/msys64/mingw64/lib/cmake/llvm/LLVMConfig.cmake")
+# ---- LLVM 是唯一后端（必需） ----
+if(NOT LLVM_DIR AND EXISTS "C:/msys64/mingw64/lib/cmake/llvm/LLVMConfig.cmake")
   set(LLVM_DIR "C:/msys64/mingw64/lib/cmake/llvm" CACHE PATH "LLVM cmake dir")
 endif()
+find_package(LLVM CONFIG REQUIRED)
+message(STATUS "mulanc: LLVM ${LLVM_PACKAGE_VERSION} (${LLVM_INSTALL_PREFIX})")
 
 add_executable(mulanc
   src/main.cpp
@@ -29,11 +30,12 @@ add_executable(mulanc
   src/parser.cpp
   src/types.cpp
   src/sema.cpp
-  src/codegen_c.cpp
   src/codegen_llvm.cpp
 )
 
-target_compile_definitions(mulanc PRIVATE MULANC_VERSION="${MULANC_VERSION}")
+separate_arguments(LLVM_DEFS_LIST NATIVE_COMMAND "${LLVM_DEFINITIONS}")
+target_compile_definitions(mulanc PRIVATE MULANC_VERSION="${MULANC_VERSION}" ${LLVM_DEFS_LIST})
+target_include_directories(mulanc SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 
 if(MSVC)
   target_compile_options(mulanc PRIVATE /W4 /WX-)
@@ -41,20 +43,9 @@ else()
   target_compile_options(mulanc PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 
-if(MULANC_WITH_LLVM)
-  find_package(LLVM CONFIG QUIET)
-  if(LLVM_FOUND)
-    message(STATUS "mulanc: LLVM ${LLVM_PACKAGE_VERSION} (${LLVM_INSTALL_PREFIX})")
-    separate_arguments(LLVM_DEFS_LIST NATIVE_COMMAND "${LLVM_DEFINITIONS}")
-    target_compile_definitions(mulanc PRIVATE MULANC_HAVE_LLVM ${LLVM_DEFS_LIST})
-    target_include_directories(mulanc SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
-    if(TARGET LLVM)
-      target_link_libraries(mulanc PRIVATE LLVM)
-    else()
-      llvm_map_components_to_libnames(LLVM_LIBS core support target x86codegen x86desc x86info)
-      target_link_libraries(mulanc PRIVATE ${LLVM_LIBS})
-    endif()
-  else()
-    message(STATUS "mulanc: LLVM not found，只构建 C 后端")
-  endif()
+if(TARGET LLVM)
+  target_link_libraries(mulanc PRIVATE LLVM)
+else()
+  llvm_map_components_to_libnames(LLVM_LIBS core support target x86codegen x86desc x86info)
+  target_link_libraries(mulanc PRIVATE ${LLVM_LIBS})
 endif()

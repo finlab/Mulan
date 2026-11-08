@@ -5,7 +5,7 @@
 
 # 版本
 
-当前版本：**0.0.1**（版本规则与每次 build 的记录见 [`docs/versions.md`](docs/versions.md)）
+当前版本：**0.0.2**（版本规则与每次 build 的记录见 [`docs/versions.md`](docs/versions.md)）
 
 - 语言规范：[`SPEC.md`](SPEC.md)（草案 v0.1，逐条标注「已定 / 建议 / 待定」）
 - 语法示例：[`example.mu`](example.mu)、[`math.mu`](math.mu)
@@ -18,20 +18,19 @@
 | 词法 `src/lexer.cpp` | ✅ |
 | 语法 `src/parser.cpp` | ✅ |
 | 语义 `src/sema.cpp` | ✅ |
-| C99 后端 `src/codegen_c.cpp` | ✅ |
-| LLVM 后端 `src/codegen_llvm.cpp` | ✅ 阶段 B（LLVM C++ API → COFF，gcc 链接） |
-| 回归测试 `tests/` | ✅ 58 / 58（20 成功用例 + 38 必须报错用例），**两个后端都通过** |
+| LLVM 后端 `src/codegen_llvm.cpp` | ✅ 唯一后端（LLVM C++ API → COFF，gcc 链接） |
+| 回归测试 `tests/` | ✅ 58 / 58（20 成功用例 + 38 必须报错用例） |
 | 语言边界审查 | [`docs/design-review.md`](docs/design-review.md) |
 | 标准库 | 无（只有内建函数 + libc） |
 
-实现路线（见 `SPEC.md` §14）：**阶段 A** 生成 C99 交给 gcc 验证语义；**阶段 B** 用 LLVM C++ API
-直接构造 IR、产出 COFF 目标文件，再由 gcc 链接。两个后端共享同一套前端与测试，用
-`--backend c|llvm` 切换。
+实现路线（见 `SPEC.md` §14）：**阶段 A** 生成 C99 验证语义（0.0.2 起已移除，代码保留在
+git 历史 `cf3af48`）；**阶段 B** 用 LLVM C++ API 直接构造 IR、产出 COFF 目标文件，再由 gcc 链接。
+当前只有 LLVM 后端。
 
 ## 构建
 
-依赖：**CMake ≥ 3.20**、**Ninja**、**g++ ≥ 11**（C++20）、**gcc**（编译生成的 C / 链接 LLVM 目标文件）、
-**LLVM ≥ 17**（开发库；用于 LLVM 后端）。
+依赖：**CMake ≥ 3.20**、**Ninja**、**g++ ≥ 11**（C++20）、**gcc**（链接 LLVM 目标文件）、
+**LLVM ≥ 17**（开发库，必需）。
 
 ```powershell
 # 没有 cmake/make 时可用 pip 装用户级版本
@@ -49,12 +48,6 @@ python -m cmake --build build
 # 产物：build/mulanc.exe
 ```
 
-只想要 C 后端、或机器上没有 LLVM：
-
-```powershell
-python -m cmake -S . -B build -G Ninja -DMULANC_WITH_LLVM=OFF
-```
-
 > 若 `cmake`/`ninja` 已在 PATH，直接 `cmake -S . -B build -G Ninja && cmake --build build` 即可。
 
 ## 快速开始
@@ -66,21 +59,15 @@ build\mulanc.exe check example.mu
 # 查看 AST
 build\mulanc.exe dump math.mu
 
-# 编译 + 运行（默认 C 后端，输出到 build/<名字>.exe）
+# 编译 + 运行（生成 .ll + COFF .o，再用 gcc 链接）
 build\mulanc.exe build example.mu --run
 
-# 用 LLVM 后端（生成 .ll + COFF .o，再用 gcc 链接）
-build\mulanc.exe build example.mu --backend llvm --run
+# 保留生成的 IR
+build\mulanc.exe build example.mu --emit-ir build/example.ll
 
-# 保留中间产物
-build\mulanc.exe build example.mu --emit-c build/example.c
-build\mulanc.exe build example.mu --backend llvm --emit-ir build/example.ll
-
-# 回归测试（C++ 编译器 + 指定后端）
+# 回归测试
 $env:MULANC_CMD = "build/mulanc.exe"
-python tests/run_tests.py                 # C 后端
-$env:MULANC_BACKEND = "llvm"
-python tests/run_tests.py                 # LLVM 后端
+python tests/run_tests.py
 ```
 
 ## 目录结构
@@ -93,11 +80,9 @@ src/               编译器（C++20）
   ast.hpp          AST 定义 + sema 注解契约
   types.cpp/.hpp   类型模型
   sema.cpp/.hpp    名字解析 / 类型检查 / 注解
-  codegen_c.cpp    C99 代码生成（阶段 A 后端）
   codegen_llvm.cpp LLVM 后端（LLVM C++ API → COFF 目标文件，gcc 链接）
   loader.cpp       unit 加载（use -> 同名 .mu）
 docs/
-  codegen-spec.md  C 后端实现规范
   llvm-backend.md  LLVM 后端设计说明与限制
 tests/
   cases/*.mu       成功用例（编译 + 运行 + 比对期望输出）
@@ -160,8 +145,7 @@ int main() {
 
 ## 质量检查
 
-- `tests/run_tests.py`：58 个用例（20 个成功 + 38 个必须报错）。
-  - C 后端：58/58；LLVM 后端：58/58（`MULANC_BACKEND=llvm`）。
+- `tests/run_tests.py`：58 个用例（20 个成功 + 38 个必须报错），全绿。
 - 必须报错用例覆盖：`const`/`readonly`/`string` 可写性、`const` 必须初始化、`auto` 多声明符一致、枚举重复、`void*` 算术、`int`→枚举、非 void 函数掉出末尾、字面量溢出、`string`/切片与 `null` 比较、类型/参数/下标/构造错误等。
 - 编译器自身在 `-D_GLIBCXX_ASSERTIONS -fstack-protector-strong` 下重编后跑同一套测试（两个后端）全绿；
   注意 `-D_GLIBCXX_DEBUG` 与 LLVM 共享库 ABI 不兼容，不能用于链接 LLVM 的构建。

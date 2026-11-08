@@ -1,18 +1,17 @@
 # LLVM 后端（阶段 B）
 
 用 **LLVM C++ API** 直接构造 IR，产出 **COFF 目标文件**，再由 gcc 链接成 exe。
-与 C 后端共享 lexer / parser / sema，用 `--backend llvm`（或环境变量 `MULANC_BACKEND=llvm`）切换。
+这是编译器当前的唯一后端（0.0.2 起移除了 C99 后端，代码保留在 git 历史 `cf3af48`）。
 
 ```powershell
-build\mulanc.exe build example.mu --backend llvm --run
-build\mulanc.exe build example.mu --backend llvm --emit-ir build/example.ll
+build\mulanc.exe build example.mu --run
+build\mulanc.exe build example.mu --emit-ir build/example.ll
 ```
 
 ## 环境
 
 - LLVM ≥ 17 开发库（本机 MSYS2 `mingw-w64-x86_64-llvm` 23.1.5）
-- CMake 通过 `LLVMConfig.cmake` 找到 LLVM；找不到时自动退化为只构建 C 后端
-  （`-DMULANC_WITH_LLVM=OFF` 可显式关闭）
+- CMake 通过 `LLVMConfig.cmake` 找到 LLVM（必需；找不到时配置失败并给出提示）
 - 目标三元组：`x86_64-w64-windows-gnu`，`Reloc::PIC_`（否则全局常量会得到 ADDR32 绝对重定位，
   gcc 链接时报 `relocation truncated to fit`）
 
@@ -32,7 +31,7 @@ build\mulanc.exe build example.mu --backend llvm --emit-ir build/example.ll
 | `T[N]` | `%mu_arr_<elem>_<N> = type { [N x T] }` |
 | `struct S` | `%mu_<unit>_<S>` |
 
-与 C 后端的 ABI 保持一致（字符串/切片 16 字节、数组包装 struct、结构体自然对齐）。
+与 mu-lan 的类型布局约定一致（字符串/切片 16 字节、数组包装 struct、结构体自然对齐）。
 
 ## 降级策略
 
@@ -51,13 +50,11 @@ build\mulanc.exe build example.mu --backend llvm --emit-ir build/example.ll
 
 ## 验证
 
-`tests/run_tests.py` 的 58 个用例在 LLVM 后端下同样全绿，且 `example.mu` 输出与 C 后端逐行一致：
+`tests/run_tests.py` 的 58 个用例全绿，`example.mu` 输出与 `tests/expected/example.txt` 逐行一致：
 
 ```powershell
 $env:MULANC_CMD = "build/mulanc.exe"
-python tests/run_tests.py                  # C 后端 58/58
-$env:MULANC_BACKEND = "llvm"
-python tests/run_tests.py                  # LLVM 后端 58/58
+python tests/run_tests.py
 ```
 
 ## 已知限制
