@@ -231,6 +231,25 @@ private:
         }
     }
 
+    void resolve_class_fields(ClassDecl* c, Unit* u) {
+        std::vector<Field> fields;
+        if (c->ty->base) fields = c->ty->base->fields;
+        std::unordered_set<std::string> fnames;
+        for (auto& f : fields) fnames.insert(f.name);
+        for (auto& [fname, spec] : c->fields) {
+            if (!fnames.insert(fname).second) {
+                err("class `" + c->name + "` 字段 `" + fname + "` 重复", c);
+            }
+            TypePtr ft = resolve_type(spec.get(), u);
+            if (is_void(ft)) err("class 字段不能是 void", c);
+            if (spec->weak && !is_class_type(ft)) {
+                err("`weak` 字段必须是 class 引用（接口暂不支持 weak）", c);
+            }
+            fields.push_back(Field{fname, ft, spec->weak});
+        }
+        c->ty->fields = std::move(fields);
+    }
+
     void resolve_unit_types(Unit* u) {
         cur_ = u;
 
@@ -287,22 +306,7 @@ private:
                 }
             }
 
-            std::vector<Field> fields;
-            if (c->ty->base) fields = c->ty->base->fields;
-            std::unordered_set<std::string> fnames;
-            for (auto& f : fields) fnames.insert(f.name);
-            for (auto& [fname, spec] : c->fields) {
-                if (!fnames.insert(fname).second) {
-                    err("class `" + c->name + "` 字段 `" + fname + "` 重复", c);
-                }
-                TypePtr ft = resolve_type(spec.get(), u);
-                if (is_void(ft)) err("class 字段不能是 void", c);
-                if (spec->weak && !is_class_type(ft)) {
-                    err("`weak` 字段必须是 class 引用（接口暂不支持 weak）", c);
-                }
-                fields.push_back(Field{fname, ft, spec->weak});
-            }
-            c->ty->fields = std::move(fields);
+            // 字段在后面的拓扑 pass 处理（基类字段需先就绪）
 
             c->ty->methods.clear();
             c->ty->is_abstract = false;
@@ -336,6 +340,29 @@ private:
                 c->ty->ctors.push_back(ctor->pty);
             }
             if (c->dtor) c->dtor->cname = dtor_cname(u->name, c->name);
+        }
+
+        // class 字段：按基类依赖顺序解析（同一 unit 内基类可能后声明）
+        {
+            std::unordered_map<std::string, ClassDecl*> by_name;
+            for (auto& d : u->decls) {
+                if (auto c = dynamic_cast<ClassDecl*>(d.get())) by_name[c->name] = c;
+            }
+            std::unordered_map<ClassDecl*, int> state;
+            std::function<void(ClassDecl*)> resolve_fields = [&](ClassDecl* c) {
+                if (!c || state[c] != 0) return;
+                state[c] = 1;
+                for (auto& bn : c->bases) {
+                    if (bn.find('.') != std::string::npos) continue;
+                    auto it = by_name.find(bn);
+                    if (it != by_name.end() && it->second != c) resolve_fields(it->second);
+                }
+                resolve_class_fields(c, u);
+                state[c] = 2;
+            };
+            for (auto& d : u->decls) {
+                if (auto c = dynamic_cast<ClassDecl*>(d.get())) resolve_fields(c);
+            }
         }
 
         // interface：基接口与方法签名
