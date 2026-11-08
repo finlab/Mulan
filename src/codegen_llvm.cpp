@@ -456,19 +456,35 @@ struct Emitter {
     // 表达式是否已经持有一份可转移的强引用（new / 返回 class 引用的调用）
     bool ownsReference(Expr* e) {
         if (!e || !isRefKind(e->ty)) return false;
+        return valueOwned(e);
+    }
+
+    // 表达式结果是否已持有一份可转移的强引用（不限于 class 句柄，也用于引用数组）
+    bool valueOwned(Expr* e) {
+        if (!e) return false;
         if (dynamic_cast<NewExpr*>(e)) return true;
         if (dynamic_cast<Call*>(e)) return true;
         if (auto b = dynamic_cast<Binary*>(e); b && b->op_func) return true;
         if (auto u = dynamic_cast<Unary*>(e); u && u->op_func) return true;
         if (auto ix = dynamic_cast<Index*>(e); ix && ix->get_func) return true;
-        if (dynamic_cast<Cast*>(e)) return ownsReference(static_cast<Cast*>(e)->expr.get());
+        if (auto c = dynamic_cast<Cast*>(e)) return valueOwned(c->expr.get());
         return false;
     }
 
     // 返回 class 引用时把借用变成一份新的强引用
     Value* prepareReturn(Expr* e) {
         Value* v = coerce(e, curRetTy);
-        if (isRefKind(curRetTy) && !ownsReference(e)) emitRetainRef(v, curRetTy);
+        if (isRefKind(curRetTy)) {
+            if (!ownsReference(e)) emitRetainRef(v, curRetTy);
+            return v;
+        }
+        if (curRetTy && curRetTy->kind == TypeKind::Array && needsCleanup(curRetTy)) {
+            if (valueOwned(e)) return v;
+            auto* tmp = entryAlloca(lt(curRetTy), "ret.arr");
+            b.CreateStore(v, tmp);
+            emitRetainValue(tmp, curRetTy);
+            return b.CreateLoad(lt(curRetTy), tmp);
+        }
         return v;
     }
 
@@ -885,7 +901,10 @@ struct Emitter {
         ArgPack pack;
         for (size_t i = 0; i < args.size() && i < ptys.size(); ++i) {
             Value* v = coerce(args[i], ptys[i]);
-            if (ownsReference(args[i]) && isRefKind(ptys[i])) {
+            bool refArg = isRefKind(ptys[i]);
+            bool arrArg = ptys[i] && ptys[i]->kind == TypeKind::Array &&
+                          needsCleanup(ptys[i]);
+            if ((refArg || arrArg) && valueOwned(args[i])) {
                 pack.owned.emplace_back(v, ptys[i]);
             }
             pack.vals.push_back(v);
@@ -894,7 +913,15 @@ struct Emitter {
     }
 
     void releaseTemps(ArgPack& pack) {
-        for (auto& [v, ty] : pack.owned) emitReleaseRef(v, ty);
+        for (auto& [v, ty] : pack.owned) {
+            if (isRefKind(ty)) {
+                emitReleaseRef(v, ty);
+            } else if (ty && ty->kind == TypeKind::Array && needsCleanup(ty)) {
+                auto* tmp = entryAlloca(lt(ty), "arg.tmp");
+                b.CreateStore(v, tmp);
+                emitReleaseValue(tmp, ty);
+            }
+        }
         pack.owned.clear();
     }
 
@@ -1367,7 +1394,16 @@ struct Emitter {
                 return;
             }
             Value* v = coerce(e, ty);
-            if (isRefKind(ty) && !ownsReference(e)) emitRetainRef(v, ty);
+            if (isRefKind(ty)) {
+                if (!ownsReference(e)) emitRetainRef(v, ty);
+                storeValue(v, addr, ty);
+                return;
+            }
+            if (ty->kind == TypeKind::Array && needsCleanup(ty)) {
+                storeValue(v, addr, ty);
+                if (!valueOwned(e)) emitRetainValue(addr, ty);
+                return;
+            }
             storeValue(v, addr, ty);
             return;
         }
@@ -1457,8 +1493,15 @@ struct Emitter {
         }
         if (auto es = dynamic_cast<ExprStmt*>(s)) {
             Value* v = eval(es->expr.get());
-            if (ownsReference(es->expr.get()) && isRefKind(es->expr->ty)) {
-                emitReleaseRef(v, es->expr->ty);
+            TypePtr ty = es->expr->ty;
+            if (valueOwned(es->expr.get())) {
+                if (isRefKind(ty)) {
+                    emitReleaseRef(v, ty);
+                } else if (ty && ty->kind == TypeKind::Array && needsCleanup(ty)) {
+                    auto* tmp = entryAlloca(lt(ty), "expr.tmp");
+                    b.CreateStore(v, tmp);
+                    emitReleaseValue(tmp, ty);
+                }
             }
             return;
         }
@@ -1485,6 +1528,15 @@ struct Emitter {
                     if (!ownsReference(as->value.get())) emitRetainRef(nv, as->target->ty);
                     emitReleaseRef(old, as->target->ty);
                     b.CreateStore(nv, addr);
+                    return;
+                }
+                TypePtr tty = as->target->ty;
+                if (!weakTarget && tty && tty->kind == TypeKind::Array && needsCleanup(tty)) {
+                    auto* tmp = entryAlloca(lt(tty), "arr.tmp");
+                    b.CreateStore(nv, tmp);
+                    if (!valueOwned(as->value.get())) emitRetainValue(tmp, tty);
+                    emitReleaseValue(addr, tty);
+                    b.CreateStore(b.CreateLoad(lt(tty), tmp), addr);
                     return;
                 }
                 b.CreateStore(nv, addr);
@@ -2002,13 +2054,30 @@ struct Emitter {
             emitReleaseRef(b.CreateLoad(lt(ty), addr), ty);
             return;
         }
-        if (ty->kind == TypeKind::Array && isRefKind(ty->elem)) {
+        if (ty->kind == TypeKind::Array && needsCleanup(ty->elem)) {
             auto* st = cast<LStruct>(lt(ty));
             for (size_t i = 0; i < ty->array_size; ++i) {
                 Value* ep = b.CreateGEP(st, addr, {ConstantInt::get(i64(), 0),
                                                    ConstantInt::get(i32(), 0),
                                                    ConstantInt::get(i64(), i)});
-                emitReleaseRef(b.CreateLoad(lt(ty->elem), ep), ty->elem);
+                emitReleaseValue(ep, ty->elem);
+            }
+        }
+    }
+
+    void emitRetainValue(Value* addr, const TypePtr& ty) {
+        if (!ty) return;
+        if (isRefKind(ty)) {
+            emitRetainRef(b.CreateLoad(lt(ty), addr), ty);
+            return;
+        }
+        if (ty->kind == TypeKind::Array && needsCleanup(ty->elem)) {
+            auto* st = cast<LStruct>(lt(ty));
+            for (size_t i = 0; i < ty->array_size; ++i) {
+                Value* ep = b.CreateGEP(st, addr, {ConstantInt::get(i64(), 0),
+                                                   ConstantInt::get(i32(), 0),
+                                                   ConstantInt::get(i64(), i)});
+                emitRetainValue(ep, ty->elem);
             }
         }
     }
