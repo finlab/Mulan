@@ -107,7 +107,9 @@ class CheckCase:
 def collect_check_cases() -> list[CheckCase]:
     if not CHECKS_DIR.is_dir():
         return []
-    return [CheckCase(s.stem, s) for s in sorted(CHECKS_DIR.glob("*.mu"))]
+    # 以 lib_ 开头的文件是多 unit 测试的依赖库，不作为独立用例
+    return [CheckCase(s.stem, s) for s in sorted(CHECKS_DIR.glob("*.mu"))
+            if not s.stem.startswith("lib_")]
 
 
 def run_check_case(case: CheckCase, verbose: bool) -> tuple[bool, str]:

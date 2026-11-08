@@ -1150,8 +1150,14 @@ private:
             check_return(rs);
         } else if (auto d = dynamic_cast<DelStmt*>(s)) {
             TypePtr t = check_expr(d->value.get());
-            if (!is_reference_type(t)) err("`del` 只能用于 class/interface 引用", d);
-            if (!is_lvalue(d->value.get())) err("`del` 的目标必须是可写的引用左值", d);
+            if (t && t->kind == TypeKind::Null) {
+                // `del null` 是空操作
+            } else if (!is_reference_type(t)) {
+                err("`del` 只能用于 class/interface 引用", d);
+            }
+            if (!is_lvalue(d->value.get()) && !(t && t->kind == TypeKind::Null)) {
+                err("`del` 的目标必须是可写的引用左值", d);
+            }
             if (auto n = dynamic_cast<Name*>(d->value.get()); n && n->ident == "this") {
                 err("不能 `del this`", d);
             }

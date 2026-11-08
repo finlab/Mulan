@@ -1610,6 +1610,7 @@ struct Emitter {
             return;
         }
         if (auto d = dynamic_cast<DelStmt*>(s)) {
+            if (d->value->ty && d->value->ty->kind == TypeKind::Null) return;  // del null
             Value* addr = addrOf(d->value.get());
             TypePtr ty = d->value->ty;
             Value* p = b.CreateLoad(lt(ty), addr);
