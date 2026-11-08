@@ -19,7 +19,7 @@ struct EnumConst {
 
 struct UnitInfo {
     Unit* unit = nullptr;
-    std::unordered_map<std::string, FuncDecl*> funcs;
+    std::unordered_map<std::string, std::vector<FuncDecl*>> funcs;
     std::unordered_map<std::string, GlobalVar*> globals;
     std::unordered_map<std::string, StructDecl*> structs;
     std::unordered_map<std::string, EnumDecl*> enums;

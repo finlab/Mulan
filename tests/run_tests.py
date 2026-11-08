@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CASES_DIR = ROOT / "tests" / "cases"
 EXPECTED_DIR = ROOT / "tests" / "expected"
 ERRORS_DIR = ROOT / "tests" / "errors"
+CHECKS_DIR = ROOT / "tests" / "check"
 BUILD_DIR = ROOT / "build" / "tests"
 
 # 编译器命令：<MULANC_CMD> build <case.mu> -o <exe> --run
@@ -90,6 +91,46 @@ class ErrCase:
 def collect_error_cases() -> list[ErrCase]:
     return [ErrCase(s.stem, s, ERRORS_DIR / f"{s.stem}.err")
             for s in sorted(ERRORS_DIR.glob("*.mu"))]
+
+
+class CheckCase:
+    """只需要通过语义检查（`check`）就必须成功的用例。
+
+    用于 codegen 尚未覆盖、但语义层已完整支持的特性（如 class / interface）。
+    """
+
+    def __init__(self, name: str, src: Path) -> None:
+        self.name = name
+        self.src = src
+
+
+def collect_check_cases() -> list[CheckCase]:
+    if not CHECKS_DIR.is_dir():
+        return []
+    return [CheckCase(s.stem, s) for s in sorted(CHECKS_DIR.glob("*.mu"))]
+
+
+def run_check_case(case: CheckCase, verbose: bool) -> tuple[bool, str]:
+    cmd = resolve_compiler() + ["check", str(case.src.relative_to(ROOT))]
+    try:
+        r = subprocess.run(
+            cmd, cwd=ROOT, capture_output=True, text=True,
+            errors="replace", timeout=RUN_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"超时（>{RUN_TIMEOUT}s）: " + " ".join(cmd)
+    except OSError as e:
+        return False, f"无法执行编译器 `{cmd[0]}`（{e}）"
+
+    if r.returncode == 0:
+        return True, "ok"
+    lines = ["语义检查失败（应通过）", "  命令: " + " ".join(cmd)]
+    text = ((r.stderr or "") + "\n" + (r.stdout or "")).strip()
+    lines += ["    " + ln for ln in text.splitlines()[:10]]
+    if verbose:
+        lines.append("  --- stderr 全文 ---")
+        lines += ["  " + ln for ln in (r.stderr or "").splitlines()]
+    return False, "\n".join(lines)
 
 
 def normalize(text: str) -> list[str]:
@@ -207,13 +248,15 @@ def main(argv: list[str] | None = None) -> int:
 
     cases = collect_cases()
     err_cases = collect_error_cases()
+    check_cases = collect_check_cases()
     if args.filter:
         cases = [c for c in cases if args.filter in c.name]
         err_cases = [c for c in err_cases if args.filter in c.name]
-    if not cases and not err_cases:
+        check_cases = [c for c in check_cases if args.filter in c.name]
+    if not cases and not err_cases and not check_cases:
         print(f"没有匹配 `{args.filter}` 的用例")
         return 1
-    total = len(cases) + len(err_cases)
+    total = len(cases) + len(err_cases) + len(check_cases)
 
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -241,9 +284,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL {case.name} (must-fail)")
             print(msg)
 
+    for case in check_cases:
+        ok, msg = run_check_case(case, args.verbose)
+        if ok:
+            passed.append(case.name)
+            print(f"PASS {case.name} (check)")
+        else:
+            failed.append(case.name)
+            print(f"FAIL {case.name} (check)")
+            print(msg)
+
     print()
     print(f"通过 {len(passed)} / {total}")
-    print(f"  （成功用例 {len(cases)}，必须报错用例 {len(err_cases)}）")
+    print(f"  （成功用例 {len(cases)}，必须报错用例 {len(err_cases)}，check 用例 {len(check_cases)}）")
     if failed:
         print("失败用例: " + ", ".join(failed))
         code = 1

@@ -43,6 +43,7 @@ TypeSpecPtr clone_spec(const TypeSpec& s) {
     out->elem = s.elem ? clone_spec(*s.elem) : nullptr;
     out->size = s.size;
     out->readonly = s.readonly;
+    out->weak = s.weak;
     out->line = s.line;
     out->col = s.col;
     return out;
@@ -304,6 +305,9 @@ std::unique_ptr<Decl> Parser::parse_struct() {
     decl->col = tk.col;
 
     while (!at_op("}")) {
+        if (at_kw("weak")) {
+            throw err("`weak` 只能用于 class 字段");
+        }
         TypeSpecPtr spec = parse_type();
         for (;;) {
             std::string fname = expect_ident("字段名").text;
@@ -450,14 +454,25 @@ std::unique_ptr<Decl> Parser::parse_class() {
             cd->ctors.push_back(parse_ctor(ctor_name));
             continue;
         }
+        bool prefix_weak = false;
+        if (at_kw("weak")) {
+            const Token wt = advance();
+            prefix_weak = true;
+            if (!is_type_start(peek()) && !peek().is_kw("readonly")) {
+                throw err_at("`weak` 后缺少字段类型", wt);
+            }
+        }
         TypeSpecPtr spec = parse_type();
+        if (prefix_weak) spec->weak = true;
         const Token name_tok = expect_ident("成员名");
         if (at_op("(")) {
+            if (prefix_weak) throw err_at("`weak` 只能用于字段，不能用于方法", name_tok);
             auto m = parse_method(std::move(spec), name_tok);
             if (prefix_override) m->is_override = true;
             cd->methods.push_back(std::move(m));
             continue;
         }
+        if (prefix_override) throw err_at("`override` 只能用于方法", name_tok);
         cd->fields.emplace_back(name_tok.text, clone_spec(*spec));
         while (at_op(",")) {
             advance();

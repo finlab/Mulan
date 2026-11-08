@@ -14,6 +14,7 @@ using TypePtr = std::shared_ptr<Type>;
 struct Field {
     std::string name;
     TypePtr type;
+    bool weak = false;  // weak 字段（只用于 class）
 };
 
 // 方法签名（class / interface）

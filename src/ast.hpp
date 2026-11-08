@@ -26,6 +26,7 @@ struct TypeSpec {
     std::unique_ptr<TypeSpec> elem;
     size_t size = 0;           // Array
     bool readonly = false;
+    bool weak = false;         // class 字段的 weak 修饰
     int line = 0;
     int col = 0;
     std::string str() const;
