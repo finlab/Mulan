@@ -190,7 +190,7 @@ private:
                 } else {
                     continue;
                 }
-                if (auto fn = dynamic_cast<FuncDecl*>(node)) {
+                if (dynamic_cast<FuncDecl*>(node)) {
                     auto it = names.find(nm);
                     if (it != names.end() && !dynamic_cast<FuncDecl*>(it->second)) {
                         err("`" + nm + "` 与其它声明重名", node);
