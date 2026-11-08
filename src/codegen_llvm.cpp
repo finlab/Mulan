@@ -269,6 +269,7 @@ struct Emitter {
             case TypeKind::Ptr:
             case TypeKind::String:
             case TypeKind::Slice: return 8 * 2;
+            case TypeKind::Interface: return 8 * 2;  // {obj, desc}
             case TypeKind::Enum: return 4;
             case TypeKind::Array: return sizeOf(t->elem) * t->array_size;
             case TypeKind::Struct: {
