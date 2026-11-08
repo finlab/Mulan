@@ -423,8 +423,13 @@ private:
         switch (spec->kind) {
             case TypeSpec::K::Named:
                 return resolve_named_type(spec->name, u, spec);
-            case TypeSpec::K::Ptr:
-                return Type::make_ptr(resolve_type(spec->elem.get(), u), spec->readonly);
+            case TypeSpec::K::Ptr: {
+                TypePtr elem = resolve_type(spec->elem.get(), u);
+                if (is_reference_type(elem)) {
+                    err_ts("暂不支持指向 class/interface 的指针（引用类型本身已是句柄）", spec);
+                }
+                return Type::make_ptr(elem, spec->readonly);
+            }
             case TypeSpec::K::Slice: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
                 if (is_reference_type(elem)) {
@@ -1100,6 +1105,9 @@ private:
             }
             if (is_weak_field_access(d->value.get())) {
                 err("不能 `del` weak 字段（weak 不持有引用）", d);
+            }
+            if (auto ix = dynamic_cast<Index*>(d->value.get()); ix && ix->get_func) {
+                err("不能 `del` 运算符下标的结果（`operator[]` 返回的是值）", d);
             }
             if (auto n = dynamic_cast<Name*>(d->value.get())) {
                 if (auto lv = std::get_if<LocalVar*>(&n->sym)) {
@@ -1896,6 +1904,11 @@ private:
             if ((eq && (lt->kind == TypeKind::Ptr || lt->kind == TypeKind::Enum ||
                         lt->kind == TypeKind::Class || lt->kind == TypeKind::Interface)) ||
                 (is_prim(lt) && lt->name == "bool" && same_type(rt, lt))) {
+                return t_bool();
+            }
+            // 引用类型之间：可相互转换（基类/接口）即可做身份比较
+            if (is_reference_type(lt) && is_reference_type(rt) &&
+                (implicitly_convertible(lt, rt) || implicitly_convertible(rt, lt))) {
                 return t_bool();
             }
             if (is_user_type(lt) || is_user_type(rt)) {
