@@ -2084,7 +2084,7 @@ private:
                 on && on->ident == "super" && lookup_local("super") == nullptr) {
                 if (!cur_class_ || !cur_class_->base) err("当前类没有基类", c);
                 std::vector<const MethodSig*> ms;
-                collect_methods(cur_class_->base, m->name, ms);
+                collect_class_methods(cur_class_->base, m->name, ms);
                 if (ms.empty()) err("基类没有方法 `" + m->name + "`", c);
                 auto sig = choose_method(ms, raw_args(c->args), "方法 `" + m->name + "`", c);
                 if (sig->is_abstract) {
@@ -2285,6 +2285,23 @@ private:
         }
         if (best < 0) err("`" + what + "` 的重载调用有歧义", at);
         return ok[static_cast<size_t>(best)];
+    }
+
+    // 只收集 class 链上的方法（接口默认方法不参与 super 调用）
+    void collect_class_methods(const TypePtr& t, const std::string& name,
+                               std::vector<const MethodSig*>& out, int depth = 0) {
+        if (!t || depth > 256) return;
+        for (auto& m : t->methods) {
+            if (m.name != name) continue;
+            bool dup = false;
+            for (auto* e : out) {
+                if (same_sig(*e, m)) { dup = true; break; }
+            }
+            if (!dup) out.push_back(&m);
+        }
+        if (t->kind == TypeKind::Class && t->base) {
+            collect_class_methods(t->base, name, out, depth + 1);
+        }
     }
 
     void collect_methods(const TypePtr& t, const std::string& name,
