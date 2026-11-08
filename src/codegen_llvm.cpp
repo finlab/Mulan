@@ -132,6 +132,8 @@ struct Emitter {
     AllocaInst* thisSlot = nullptr;
     Function* rcRetainFn = nullptr;
     Function* rcReleaseFn = nullptr;
+    std::vector<std::vector<const LocalVar*>> refScopes;  // 需要释放的引用局部变量
+    std::vector<size_t> loopScopeDepth;
 
     // ------------------------------------------------------------ 基础工具
     LType* ptrTy() { return PointerType::get(ctx, 0); }
@@ -400,6 +402,53 @@ struct Emitter {
             emitRelease(b.CreateExtractValue(v, {0}));
         } else {
             emitRelease(v);
+        }
+    }
+
+    // ------------------------------------------------------------ 局部引用清理
+    static bool needsCleanup(const TypePtr& t) {
+        if (!t) return false;
+        if (t->kind == TypeKind::Class || t->kind == TypeKind::Interface) return true;
+        if (t->kind == TypeKind::Array) return needsCleanup(t->elem);
+        return false;
+    }
+
+    void releaseLocal(const LocalVar* lv) {
+        if (!lv || !needsCleanup(lv->rty) || lv->by_ref) return;
+        auto it = slots.find(lv);
+        if (it == slots.end()) return;
+        if (isRefKind(lv->rty)) {
+            Value* v = b.CreateLoad(lt(lv->rty), it->second);
+            emitReleaseRef(v, lv->rty);
+        } else {
+            emitReleaseValue(it->second, lv->rty);
+        }
+    }
+
+    void pushRefScope() { refScopes.emplace_back(); }
+
+    void popRefScope() {
+        if (refScopes.empty()) return;
+        auto scope = refScopes.back();
+        if (!hasTerm(b.GetInsertBlock())) {
+            for (auto it = scope.rbegin(); it != scope.rend(); ++it) releaseLocal(*it);
+        }
+        refScopes.pop_back();
+    }
+
+    // 跳出当前块/循环前释放内层作用域的引用
+    void releaseScopesDeeperThan(size_t depth) {
+        if (depth >= refScopes.size()) return;
+        for (size_t i = refScopes.size(); i > depth; --i) {
+            auto& scope = refScopes[i - 1];
+            for (auto it = scope.rbegin(); it != scope.rend(); ++it) releaseLocal(*it);
+        }
+    }
+
+    void releaseAllScopes() {
+        for (size_t i = refScopes.size(); i > 0; --i) {
+            auto& scope = refScopes[i - 1];
+            for (auto it = scope.rbegin(); it != scope.rend(); ++it) releaseLocal(*it);
         }
     }
 
@@ -1240,7 +1289,9 @@ struct Emitter {
 
     void block(Block* blk) {
         if (!blk) return;
+        pushRefScope();
         for (auto& x : blk->stmts) stmt(x.get());
+        popRefScope();
     }
 
     void stmt(Stmt* s) {
@@ -1255,7 +1306,14 @@ struct Emitter {
         }
         if (auto lv = dynamic_cast<LocalVar*>(s)) {
             AllocaInst* slot = slotFor(lv);
-            if (lv->init) initInto(slot, lv->rty, lv->init.get());
+            if (lv->init) {
+                initInto(slot, lv->rty, lv->init.get());
+            } else if (isRefKind(lv->rty)) {
+                b.CreateStore(Constant::getNullValue(lt(lv->rty)), slot);
+            } else if (lv->rty && lv->rty->kind == TypeKind::Array && needsCleanup(lv->rty)) {
+                zeroMem(slot, lv->rty);
+            }
+            if (needsCleanup(lv->rty) && !lv->by_ref) refScopes.back().push_back(lv);
             return;
         }
         if (auto es = dynamic_cast<ExprStmt*>(s)) {
@@ -1345,7 +1403,9 @@ struct Emitter {
             b.CreateCondBr(cond, bodyBB2, endBB);
             b.SetInsertPoint(bodyBB2);
             loops.push_back({condBB, endBB});
+            loopScopeDepth.push_back(refScopes.size());
             block(ws->body.get());
+            loopScopeDepth.pop_back();
             loops.pop_back();
             if (!hasTerm(b.GetInsertBlock())) b.CreateBr(condBB);
             b.SetInsertPoint(endBB);
@@ -1366,6 +1426,7 @@ struct Emitter {
         }
         if (dynamic_cast<BreakStmt*>(s)) {
             if (loops.empty()) fail("LLVM 后端：break 不在循环中");
+            if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().second);
             BasicBlock* dead = BasicBlock::Create(ctx, "dead", curFn);
             b.SetInsertPoint(dead);
@@ -1373,6 +1434,7 @@ struct Emitter {
         }
         if (dynamic_cast<ContinueStmt*>(s)) {
             if (loops.empty()) fail("LLVM 后端：continue 不在循环中");
+            if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().first);
             BasicBlock* dead = BasicBlock::Create(ctx, "dead", curFn);
             b.SetInsertPoint(dead);
@@ -1380,9 +1442,12 @@ struct Emitter {
         }
         if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
             if (!rs->value) {
+                releaseAllScopes();
                 b.CreateRetVoid();
             } else {
-                b.CreateRet(prepareReturn(rs->value.get()));
+                Value* rv = prepareReturn(rs->value.get());
+                releaseAllScopes();
+                b.CreateRet(rv);
             }
             BasicBlock* dead = BasicBlock::Create(ctx, "dead", curFn);
             b.SetInsertPoint(dead);
@@ -1413,7 +1478,9 @@ struct Emitter {
             b.CreateCondBr(b.CreateICmpSLT(cur, hi), bodyBB2, endBB);
             b.SetInsertPoint(bodyBB2);
             loops.push_back({incBB, endBB});
+            loopScopeDepth.push_back(refScopes.size());
             block(s->body.get());
+            loopScopeDepth.pop_back();
             loops.pop_back();
             if (!hasTerm(b.GetInsertBlock())) b.CreateBr(incBB);
             b.SetInsertPoint(incBB);
@@ -1479,7 +1546,9 @@ struct Emitter {
             b.CreateStore(b.CreateLoad(lt(et), ep), varSlot);
         }
         loops.push_back({incBB, endBB});
+        loopScopeDepth.push_back(refScopes.size());
         block(s->body.get());
+        loopScopeDepth.pop_back();
         loops.pop_back();
         if (!hasTerm(b.GetInsertBlock())) b.CreateBr(incBB);
         b.SetInsertPoint(incBB);
@@ -1679,6 +1748,8 @@ struct Emitter {
     void beginBody(Function* fn, const TypePtr& ret = nullptr) {
         curFn = fn;
         curRetTy = ret;
+        refScopes.clear();
+        loopScopeDepth.clear();
         allocaBB = BasicBlock::Create(ctx, "allocas", fn);
         bodyBB = BasicBlock::Create(ctx, "entry", fn);
         ab.SetInsertPoint(allocaBB);
@@ -1707,6 +1778,8 @@ struct Emitter {
         allocaBB = nullptr;
         bodyBB = nullptr;
         slots.clear();
+        refScopes.clear();
+        loopScopeDepth.clear();
         curClassTy = nullptr;
         curThis = nullptr;
         thisSlot = nullptr;
@@ -1878,6 +1951,8 @@ struct Emitter {
         curClassTy = nullptr;
         curThis = nullptr;
         thisSlot = nullptr;
+        refScopes.clear();
+        loopScopeDepth.clear();
         curFn = fn;
         curRetTy = f->rty;
         allocaBB = BasicBlock::Create(ctx, "allocas", fn);
