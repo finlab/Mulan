@@ -98,6 +98,8 @@ private:
     TypePtr cur_class_;
     bool in_ctor_ = false;
     bool super_ok_ = false;
+    std::unordered_set<const LocalVar*> cur_params_;
+    std::vector<const LocalVar*> forin_vars_;
     std::vector<std::unique_ptr<LocalVar>> this_local_;
     std::vector<Scope> scopes_;
     int loop_depth_ = 0;
@@ -652,6 +654,8 @@ private:
         in_ctor_ = false;
         scopes_.clear();
         auto_groups_.clear();
+        cur_params_.clear();
+        forin_vars_.clear();
         scopes_.emplace_back();
         loop_depth_ = 0;
         f->param_locals.clear();
@@ -665,6 +669,7 @@ private:
             lv->col = p->col;
             declare_local(lv.get());
             f->param_locals.push_back(std::move(lv));
+            cur_params_.insert(f->param_locals.back().get());
         }
 
         if (f->body) check_block(f->body.get());
@@ -688,6 +693,8 @@ private:
                       int col) {
         scopes_.clear();
         auto_groups_.clear();
+        cur_params_.clear();
+        forin_vars_.clear();
         scopes_.emplace_back();
         loop_depth_ = 0;
         cur_class_ = cls;
@@ -707,6 +714,8 @@ private:
     void end_member() {
         scopes_.clear();
         auto_groups_.clear();
+        cur_params_.clear();
+        forin_vars_.clear();
         cur_class_ = nullptr;
         cur_ret_ = nullptr;
         cur_name_.clear();
@@ -726,6 +735,7 @@ private:
             lv->col = params[i]->col;
             declare_local(lv.get());
             out.push_back(std::move(lv));
+            cur_params_.insert(out.back().get());
         }
     }
 
@@ -1091,6 +1101,18 @@ private:
             if (is_weak_field_access(d->value.get())) {
                 err("不能 `del` weak 字段（weak 不持有引用）", d);
             }
+            if (auto n = dynamic_cast<Name*>(d->value.get())) {
+                if (auto lv = std::get_if<LocalVar*>(&n->sym)) {
+                    if (cur_params_.count(*lv)) {
+                        err("不能 `del` 函数参数（参数是借用）；先赋给局部变量", d);
+                    }
+                    for (auto* fv : forin_vars_) {
+                        if (fv == *lv) {
+                            err("不能 `del` for-in 循环变量（借用）；先赋给局部变量", d);
+                        }
+                    }
+                }
+            }
             if (root_is_const(d->value.get())) err("`del` 不能用于 `const` 绑定", d);
         } else if (auto b = dynamic_cast<Block*>(s)) {
             check_block(b);
@@ -1444,7 +1466,9 @@ private:
         s->lvar = std::move(lv);
 
         ++loop_depth_;
+        forin_vars_.push_back(s->lvar.get());
         check_block(s->body.get());
+        forin_vars_.pop_back();
         --loop_depth_;
     }
 

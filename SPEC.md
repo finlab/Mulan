@@ -331,7 +331,7 @@ class Button : Widget, IFocusable { ... }     // 第一个是类，其余是接�
 - 默认方法只能调用接口方法，不能访问字段；两个接口提供同签名默认实现时，类必须显式覆盖，否则编译错误。
 - 接口值布局为两个机器字 `{对象指针, 类描述指针}`；可以为 `null`。
 - 转换：`class → interface` 隐式；`interface A → interface B`（A 继承 B）静态转换；
-  `interface → class` 必须显式 `as`，失败得到 null。
+  `interface → class` 的 `as` 向下转换**暂缓**（运行时类型检查未实现，编译器直接拒绝）。
 - 接口引用是强引用：复制 +1、覆盖 -1；`weak` 暂不支持接口。
 - 接口不能作为 `extern` C 函数参数。
 
@@ -685,26 +685,29 @@ extern int puts(readonly char* s);
 
 ### 8.3 class 的引用计数、虚表与 weak
 
-对象布局：
+对象布局（当前实现）：
 
 ```
 object:        [ rc | class_desc* | fields... ]
-class_desc:    { size, align, type_id, flags, base_desc, vtable[], destroy, itables[] }
+class_desc:    { size, destroy, vtable*, itable* }
 interface 值:  { obj*, class_desc* }        // 16 字节；null = {null,null}
 ```
 
+- `vtable`：方法槽数组，槽序为「基类已有的槽在前，派生类新方法追加」；`override` 复用基类槽。
+- `itable`：全局接口方法槽表（按全程序接口方法签名去重编号），值为 thunk（类实现或接口默认实现）。
 - 每个 class 对象带**原子**强引用计数（relaxed）；`new` 创建后计数为 1。
 - **+1**：句柄复制（初始化、赋值重绑定、存入字段、返回后由调用方存储、存入接口值）。
   参数传递按借用处理（不 +1）；被调方需要保存时在存储点 +1。
 - **-1**：句柄被覆盖、离开作用域、字段随对象销毁、接口值被覆盖、`del`。
-- **归零**：调用 `class_desc->vtable[destroy]`：先执行用户析构器，再按字段声明逆序释放派生字段 → 基类析构器 → 基类字段，最后释放对象内存。构造未完成时（`constructed` 标志未置位）只释放字段，不执行用户析构器。
-- **虚调用**：类方法走 `desc->vtable[slot]`；接口方法走 `desc->itables[iface_id][slot]`。
+- **归零**：`class_desc->destroy`：执行析构链（用户析构器 → 派生字段逆序释放 → 基类析构器 → …）后 `free` 对象。
+- **虚调用**：类方法走 `desc->vtable[slot]`；接口方法走 `desc->itable[slot]`，接口默认方法同理。
 - **接口值**：强引用；复制 +1、覆盖 -1；`null` 不计数；接口之间的向上转换不改变值。
-- `weak` 字段不计入计数；目标销毁时由运行时把所有 weak 指向置 null（需要原子 side table）。
-- 环：**不收集**；必须用 `weak` 打破。未打破的环 = 泄漏（不崩溃、不提前释放）。
+- `weak` 字段不计入计数、析构时也不释放；**目标销毁自动置 null 尚未实现**（当前为悬空借用，禁止跨对象生命周期延后读取），环必须用 `weak` 打破。
+- 环：**不收集**；未打破的环 = 泄漏。
 - `del c`：提前 -1 并把 c 置 null；对象仍被其他强引用持有则不销毁；`del null` 空操作。
 - 与裸内存分开：`alloc/free/realloc` 管裸内存，`new/del` 只用于 class，二者不能交叉使用。
 - 对象可跨线程共享；析构器在最后释放引用的线程执行，必须线程安全。
+- 构造失败（malloc 返回 null）当前直接 `abort()`。
 - 可选择 `--single-thread` 构建使用非原子快速路径（该构建禁止跨线程，待定）。
 - 没有用户析构函数以外的资源释放机制；析构器见 3.13。
 

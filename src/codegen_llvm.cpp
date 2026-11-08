@@ -871,16 +871,39 @@ struct Emitter {
         fail("LLVM 后端：未知二元运算 " + op, e->line, e->col);
     }
 
+    // 调用参数：求值 + 记录需要释放的临时强引用（new / 返回引用的调用）
+    struct ArgPack {
+        std::vector<Value*> vals;
+        std::vector<std::pair<Value*, TypePtr>> owned;
+    };
+
+    ArgPack prepareArgs(const std::vector<Expr*>& args, const std::vector<TypePtr>& ptys) {
+        ArgPack pack;
+        for (size_t i = 0; i < args.size() && i < ptys.size(); ++i) {
+            Value* v = coerce(args[i], ptys[i]);
+            if (ownsReference(args[i]) && isRefKind(ptys[i])) {
+                pack.owned.emplace_back(v, ptys[i]);
+            }
+            pack.vals.push_back(v);
+        }
+        return pack;
+    }
+
+    void releaseTemps(ArgPack& pack) {
+        for (auto& [v, ty] : pack.owned) emitReleaseRef(v, ty);
+        pack.owned.clear();
+    }
+
     // 调用自由函数/运算符/方法（静态派发）
     Value* emitUserCall(FuncDecl* f, const std::vector<Expr*>& args) {
         std::vector<LType*> ptys;
         for (auto& t : f->pty) ptys.push_back(lt(t));
         FunctionCallee callee =
             mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, false));
-        std::vector<Value*> vals;
-        for (size_t i = 0; i < args.size() && i < f->pty.size(); ++i)
-            vals.push_back(coerce(args[i], f->pty[i]));
-        return b.CreateCall(callee, vals);
+        ArgPack pack = prepareArgs(args, f->pty);
+        Value* r = b.CreateCall(callee, pack.vals);
+        releaseTemps(pack);
+        return r;
     }
 
     Value* evalNew(NewExpr* ne) {
@@ -888,6 +911,14 @@ struct Emitter {
         uint64_t sz = objectSize(cls);
         Value* p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}),
                                 {ConstantInt::get(i64(), sz)});
+        // malloc 失败直接 abort（语言无异常）
+        BasicBlock* okBB = BasicBlock::Create(ctx, "new.ok", curFn);
+        BasicBlock* failBB = BasicBlock::Create(ctx, "new.fail", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), failBB, okBB);
+        b.SetInsertPoint(failBB);
+        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateUnreachable();
+        b.SetInsertPoint(okBB);
         b.CreateMemSet(p, ConstantInt::get(i8(), 0), ConstantInt::get(i64(), sz),
                        MaybeAlign(objectAlign(cls)));
         // rc = 1
@@ -905,10 +936,13 @@ struct Emitter {
             FunctionCallee callee = mod->getOrInsertFunction(
                 ctor_cname(cls->unit, cls->name, ne->ctor_pty),
                 FunctionType::get(LType::getVoidTy(ctx), ptys, false));
+            std::vector<Expr*> rawArgs;
+            for (auto& a : ne->args) rawArgs.push_back(a.get());
+            ArgPack pack = prepareArgs(rawArgs, ne->ctor_pty);
             std::vector<Value*> vals{p};
-            for (size_t i = 0; i < ne->args.size() && i < ne->ctor_pty.size(); ++i)
-                vals.push_back(coerce(ne->args[i].get(), ne->ctor_pty[i]));
+            for (auto* v : pack.vals) vals.push_back(v);
             b.CreateCall(callee, vals);
+            releaseTemps(pack);
         } else {
             // 隐式默认构造：调用最近祖先声明的无参构造器（它会继续链式调用自己的基类）
             TypePtr b0 = cls->base;
@@ -970,9 +1004,11 @@ struct Emitter {
             if (!sig || !sig->owner) fail("LLVM 后端：方法调用缺少签名", c->line, c->col);
             Value* recv = nullptr;
             TypePtr recvTy = nullptr;
+            bool recvOwned = false;
             if (auto m = dynamic_cast<Member*>(c->callee.get())) {
                 recv = eval(m->obj.get());
                 recvTy = m->obj->ty;
+                recvOwned = ownsReference(m->obj.get());
             } else {
                 recvTy = curClassTy;
                 recv = b.CreateLoad(lt(recvTy), thisSlot);
@@ -980,18 +1016,29 @@ struct Emitter {
             std::vector<LType*> ptys{ptrTy()};
             for (auto& t : sig->params) ptys.push_back(lt(t));
             auto* fnTy = FunctionType::get(lt(sig->ret), ptys, false);
-            std::vector<Value*> vals{recv};
-            for (size_t i = 0; i < c->args.size() && i < sig->params.size(); ++i)
-                vals.push_back(coerce(c->args[i].get(), sig->params[i]));
+            std::vector<Expr*> rawArgs;
+            for (auto& a : c->args) rawArgs.push_back(a.get());
+            ArgPack pack = prepareArgs(rawArgs, sig->params);
 
-            if (recvTy && recvTy->kind == TypeKind::Interface) {
+            bool ifaceCall = (recvTy && recvTy->kind == TypeKind::Interface) ||
+                             (sig->owner && sig->owner->kind == TypeKind::Interface);
+            if (ifaceCall) {
                 auto it = islotIndex.find(sigKey(*sig));
                 if (it == islotIndex.end()) {
                     fail("LLVM 后端：接口方法未进入 itable", c->line, c->col);
                 }
                 int idx = it->second;
-                Value* obj = b.CreateExtractValue(recv, {0});
-                Value* dsc = b.CreateExtractValue(recv, {1});
+                Value* obj = nullptr;
+                Value* dsc = nullptr;
+                if (recvTy && recvTy->kind == TypeKind::Interface) {
+                    obj = b.CreateExtractValue(recv, {0});
+                    dsc = b.CreateExtractValue(recv, {1});
+                } else {
+                    // 类变量上调用接口默认方法：现场构造接口值
+                    obj = recv;
+                    Value* dpp = b.CreateGEP(i8(), recv, ConstantInt::get(i64(), 8));
+                    dsc = b.CreateLoad(ptrTy(), dpp);
+                }
                 Value* itp = b.CreateGEP(i8(), dsc, ConstantInt::get(i64(), 24));
                 Value* itab = b.CreateLoad(ptrTy(), itp);
                 Value* fnp = b.CreateGEP(ptrTy(), itab, ConstantInt::get(i64(), idx));
@@ -1000,8 +1047,11 @@ struct Emitter {
                 for (auto& t : sig->params) ip.push_back(lt(t));
                 auto* ifnTy = FunctionType::get(lt(sig->ret), ip, false);
                 std::vector<Value*> iargs{obj, dsc};
-                for (size_t i = 1; i < vals.size(); ++i) iargs.push_back(vals[i]);
-                return b.CreateCall(ifnTy, fn, iargs);
+                for (auto* v : pack.vals) iargs.push_back(v);
+                Value* r = b.CreateCall(ifnTy, fn, iargs);
+                releaseTemps(pack);
+                if (recvOwned) emitReleaseRef(recv, recvTy);
+                return r;
             }
 
             int idx = slotOf(recvTy, sig);
@@ -1012,11 +1062,21 @@ struct Emitter {
                 Value* vt = b.CreateLoad(ptrTy(), vtp);
                 Value* fnp = b.CreateGEP(ptrTy(), vt, ConstantInt::get(i64(), idx));
                 Value* fn = b.CreateLoad(ptrTy(), fnp);
-                return b.CreateCall(fnTy, fn, vals);
+                std::vector<Value*> vals{recv};
+                for (auto* v : pack.vals) vals.push_back(v);
+                Value* r = b.CreateCall(fnTy, fn, vals);
+                releaseTemps(pack);
+                if (recvOwned) emitReleaseRef(recv, recvTy);
+                return r;
             }
             // 未进虚表：静态调用声明处实现
             FunctionCallee callee = methodFn(sig);
-            return b.CreateCall(callee, vals);
+            std::vector<Value*> vals{recv};
+            for (auto* v : pack.vals) vals.push_back(v);
+            Value* r = b.CreateCall(callee, vals);
+            releaseTemps(pack);
+            if (recvOwned) emitReleaseRef(recv, recvTy);
+            return r;
         }
         if (c->callee_kind == "super") {
             if (c->method) {
@@ -1026,10 +1086,14 @@ struct Emitter {
                 FunctionCallee callee = mod->getOrInsertFunction(
                     method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
                     FunctionType::get(lt(sig->ret), ptys, false));
+                std::vector<Expr*> rawArgs;
+                for (auto& a : c->args) rawArgs.push_back(a.get());
+                ArgPack pack = prepareArgs(rawArgs, sig->params);
                 std::vector<Value*> vals{b.CreateLoad(ptrTy(), thisSlot)};
-                for (size_t i = 0; i < c->args.size() && i < sig->params.size(); ++i)
-                    vals.push_back(coerce(c->args[i].get(), sig->params[i]));
-                return b.CreateCall(callee, vals);
+                for (auto* v : pack.vals) vals.push_back(v);
+                Value* r = b.CreateCall(callee, vals);
+                releaseTemps(pack);
+                return r;
             }
             // super(...)：调用基类构造器，然后恢复派生类的 desc
             TypePtr base = curClassTy ? curClassTy->base : nullptr;
@@ -1044,10 +1108,13 @@ struct Emitter {
                 FunctionCallee callee = mod->getOrInsertFunction(
                     ctor_cname(base->unit, base->name, pty ? *pty : empty),
                     FunctionType::get(LType::getVoidTy(ctx), ptys, false));
+                std::vector<Expr*> rawArgs;
+                for (auto& a : c->args) rawArgs.push_back(a.get());
+                ArgPack pack = prepareArgs(rawArgs, pty ? *pty : empty);
                 std::vector<Value*> vals{b.CreateLoad(ptrTy(), thisSlot)};
-                for (size_t i = 0; i < c->args.size(); ++i)
-                    vals.push_back(coerce(c->args[i].get(), (pty ? *pty : empty)[i]));
+                for (auto* v : pack.vals) vals.push_back(v);
                 b.CreateCall(callee, vals);
+                releaseTemps(pack);
             }
             if (curClassTy) {
                 Value* p = b.CreateLoad(ptrTy(), thisSlot);
@@ -1063,10 +1130,12 @@ struct Emitter {
         for (auto& t : f->pty) ptys.push_back(lt(t));
         FunctionCallee callee = mod->getOrInsertFunction(
             f->cname, FunctionType::get(lt(f->rty), ptys, false));
-        std::vector<Value*> args;
-        for (size_t i = 0; i < c->args.size() && i < f->pty.size(); ++i)
-            args.push_back(coerce(c->args[i].get(), f->pty[i]));
-        return b.CreateCall(callee, args);
+        std::vector<Expr*> rawArgs;
+        for (auto& a : c->args) rawArgs.push_back(a.get());
+        ArgPack pack = prepareArgs(rawArgs, f->pty);
+        Value* r = b.CreateCall(callee, pack.vals);
+        releaseTemps(pack);
+        return r;
     }
 
     // 块是否已有终结指令（getTerminator 在空块上会断言）
@@ -1076,8 +1145,8 @@ struct Emitter {
 
     Value* eval(Expr* e) {
         if (auto v = dynamic_cast<IntLit*>(e)) {
-            if (isRefKind(e->ty) || (e->ty && e->ty->kind == TypeKind::Null))
-                return Constant::getNullValue(ptrTy());
+            if (isRefKind(e->ty)) return Constant::getNullValue(lt(e->ty));
+            if (e->ty && e->ty->kind == TypeKind::Null) return Constant::getNullValue(ptrTy());
             LType* ty = lt(e->ty);
             return ConstantInt::get(cast<IntegerType>(ty), static_cast<uint64_t>(v->value),
                                     /*isSigned=*/true);
@@ -1101,7 +1170,14 @@ struct Emitter {
             if (n->kind == "func") fail("LLVM 后端：函数不能作为值", e->line, e->col);
             return b.CreateLoad(lt(e->ty), addrOf(e));
         }
-        if (dynamic_cast<Member*>(e)) {
+        if (auto m = dynamic_cast<Member*>(e)) {
+            if (m->kind == "field" && m->obj->ty && m->obj->ty->kind == TypeKind::Class) {
+                Value* p = eval(m->obj.get());
+                Value* addr = fieldAddr(p, m->obj->ty, m->field_index);
+                Value* v = b.CreateLoad(lt(e->ty), addr);
+                if (ownsReference(m->obj.get())) emitReleaseRef(p, m->obj->ty);
+                return v;
+            }
             return b.CreateLoad(lt(e->ty), addrOf(e));
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
@@ -1317,7 +1393,10 @@ struct Emitter {
             return;
         }
         if (auto es = dynamic_cast<ExprStmt*>(s)) {
-            eval(es->expr.get());
+            Value* v = eval(es->expr.get());
+            if (ownsReference(es->expr.get()) && isRefKind(es->expr->ty)) {
+                emitReleaseRef(v, es->expr->ty);
+            }
             return;
         }
         if (auto as = dynamic_cast<AssignStmt*>(s)) {

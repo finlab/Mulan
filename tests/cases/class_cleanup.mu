@@ -15,6 +15,10 @@ int make_one() {
     return 1;
 }
 
+void take(C c) {
+    if c.v != 0 { }
+}
+
 int main() {
     {
         C a = new C();
@@ -61,6 +65,16 @@ int main() {
         if b.v != 0 { puts("share value failed"); return 1; }
     }
     if live != 0 { puts("share cleanup failed"); return 1; }
+
+    take(new C());              // 临时实参应在调用后释放
+    if live != 0 { puts("temp arg cleanup failed"); return 1; }
+
+    int q = (new C()).v;        // 临时接收者的成员访问
+    if q != 0 { puts("temp member failed"); return 1; }
+    if live != 0 { puts("temp member cleanup failed"); return 1; }
+
+    new C();                    // 表达式语句丢弃临时对象
+    if live != 0 { puts("temp stmt cleanup failed"); return 1; }
 
     puts("class cleanup ok");
     return 0;
