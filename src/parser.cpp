@@ -126,6 +126,14 @@ private:
     std::unique_ptr<Decl> parse_extern(const Token& tk);
     std::unique_ptr<Decl> parse_struct();
     std::unique_ptr<Decl> parse_enum();
+    std::unique_ptr<Decl> parse_class();
+    std::unique_ptr<Decl> parse_interface();
+    std::unique_ptr<FuncDecl> parse_operator_func(TypeSpecPtr ret, const Token& tk);
+    std::unique_ptr<MethodDecl> parse_method(TypeSpecPtr ret, const Token& name_tok);
+    std::unique_ptr<CtorDecl> parse_ctor(const Token& name_tok);
+    std::unique_ptr<DtorDecl> parse_dtor();
+    std::vector<std::string> parse_base_list();
+    std::string parse_qualified_name();
     std::vector<std::unique_ptr<GlobalVar>> parse_global();
     std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, const Token& tk);
     std::vector<std::unique_ptr<Param>> parse_params();
@@ -224,6 +232,16 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             continue;
         }
 
+        if (at_kw("class")) {
+            unit->decls.push_back(parse_class());
+            continue;
+        }
+
+        if (at_kw("interface")) {
+            unit->decls.push_back(parse_interface());
+            continue;
+        }
+
         if (at_kw("static", "const")) {
             for (auto& g : parse_global()) unit->decls.push_back(std::move(g));
             continue;
@@ -233,6 +251,10 @@ std::unique_ptr<Unit> Parser::parse_unit() {
 
         // 函数定义或（非法的）unit 级变量
         TypeSpecPtr spec = parse_type();
+        if (at_kw("operator")) {
+            unit->decls.push_back(parse_operator_func(std::move(spec), tk));
+            continue;
+        }
         const Token name_tok = expect_ident("声明名");
         if (at_op("(")) {
             unit->decls.push_back(parse_func(name_tok.text, std::move(spec), name_tok));
@@ -332,6 +354,170 @@ std::unique_ptr<Decl> Parser::parse_enum() {
     expect_op("}");
     if (at_op(";")) advance();
     return decl;
+}
+
+std::string Parser::parse_qualified_name() {
+    Token t = expect_ident("类型名");
+    std::string n = t.text;
+    while (at_op(".")) {
+        advance();
+        n += ".";
+        n += expect_ident("名称").text;
+    }
+    return n;
+}
+
+std::vector<std::string> Parser::parse_base_list() {
+    std::vector<std::string> bases;
+    if (!at_op(":")) return bases;
+    advance();
+    for (;;) {
+        bases.push_back(parse_qualified_name());
+        if (at_op(",")) {
+            advance();
+            continue;
+        }
+        break;
+    }
+    return bases;
+}
+
+std::unique_ptr<MethodDecl> Parser::parse_method(TypeSpecPtr ret, const Token& name_tok) {
+    auto m = std::make_unique<MethodDecl>();
+    m->name = name_tok.text;
+    m->ret = std::move(ret);
+    m->line = name_tok.line;
+    m->col = name_tok.col;
+    m->params = parse_params();
+    if (at_kw("override")) {
+        advance();
+        m->is_override = true;
+    }
+    if (at_op(";")) {
+        advance();
+    } else {
+        m->body = parse_block();
+    }
+    return m;
+}
+
+std::unique_ptr<CtorDecl> Parser::parse_ctor(const Token& name_tok) {
+    auto c = std::make_unique<CtorDecl>();
+    c->line = name_tok.line;
+    c->col = name_tok.col;
+    c->params = parse_params();
+    c->body = parse_block();
+    return c;
+}
+
+std::unique_ptr<DtorDecl> Parser::parse_dtor() {
+    const Token tk = expect_op("~");
+    expect_ident("类名");
+    expect_op("(");
+    expect_op(")");
+    auto d = std::make_unique<DtorDecl>();
+    d->line = tk.line;
+    d->col = tk.col;
+    d->body = parse_block();
+    return d;
+}
+
+std::unique_ptr<Decl> Parser::parse_class() {
+    const Token tk = expect_kw("class");
+    const Token nm = expect_ident("类名");
+    type_names_.insert(nm.text);
+
+    auto cd = std::make_unique<ClassDecl>();
+    cd->name = nm.text;
+    cd->line = tk.line;
+    cd->col = tk.col;
+    cd->bases = parse_base_list();
+
+    expect_op("{");
+    while (!at_op("}")) {
+        if (at_op("~")) {
+            cd->dtor = parse_dtor();
+            continue;
+        }
+        bool prefix_override = false;
+        if (at_kw("override")) {
+            advance();
+            prefix_override = true;
+        }
+        const Token t = peek();
+        if (t.kind == TokKind::Ident && t.text == cd->name && peek(1).is_op("(")) {
+            const Token ctor_name = advance();
+            cd->ctors.push_back(parse_ctor(ctor_name));
+            continue;
+        }
+        TypeSpecPtr spec = parse_type();
+        const Token name_tok = expect_ident("成员名");
+        if (at_op("(")) {
+            auto m = parse_method(std::move(spec), name_tok);
+            if (prefix_override) m->is_override = true;
+            cd->methods.push_back(std::move(m));
+            continue;
+        }
+        cd->fields.emplace_back(name_tok.text, clone_spec(*spec));
+        while (at_op(",")) {
+            advance();
+            cd->fields.emplace_back(expect_ident("字段名").text, clone_spec(*spec));
+        }
+        semicolon();
+    }
+    expect_op("}");
+    if (at_op(";")) advance();
+    return cd;
+}
+
+std::unique_ptr<Decl> Parser::parse_interface() {
+    const Token tk = expect_kw("interface");
+    const Token nm = expect_ident("接口名");
+    type_names_.insert(nm.text);
+
+    auto id = std::make_unique<InterfaceDecl>();
+    id->name = nm.text;
+    id->line = tk.line;
+    id->col = tk.col;
+    id->bases = parse_base_list();
+
+    expect_op("{");
+    while (!at_op("}")) {
+        TypeSpecPtr spec = parse_type();
+        const Token name_tok = expect_ident("方法名");
+        id->methods.push_back(parse_method(std::move(spec), name_tok));
+    }
+    expect_op("}");
+    if (at_op(";")) advance();
+    return id;
+}
+
+std::unique_ptr<FuncDecl> Parser::parse_operator_func(TypeSpecPtr ret, const Token& tk) {
+    expect_kw("operator");
+    std::string sym;
+    if (at_op("[")) {
+        advance();
+        expect_op("]");
+        sym = "[]";
+        if (at_op("=")) {
+            advance();
+            sym = "[]=";
+        }
+    } else if (peek().kind == TokKind::Op) {
+        sym = advance().text;
+    } else {
+        throw err("`operator` 后缺少运算符");
+    }
+
+    auto f = std::make_unique<FuncDecl>();
+    f->name = "operator" + sym;
+    f->ret = std::move(ret);
+    f->line = tk.line;
+    f->col = tk.col;
+    f->is_operator = true;
+    f->params = parse_params();
+    f->body = parse_block();
+    return f;
 }
 
 // ---------------------------------------------------------------- 类型
@@ -571,6 +757,18 @@ std::vector<StmtPtr> Parser::parse_stmt() {
         s->col = t.col;
         std::vector<StmtPtr> out;
         out.push_back(std::move(s));
+        return out;
+    }
+    if (at_kw("del")) {
+        const Token dt = advance();
+        auto value = parse_expr();
+        semicolon();
+        auto d = std::make_unique<DelStmt>();
+        d->value = std::move(value);
+        d->line = dt.line;
+        d->col = dt.col;
+        std::vector<StmtPtr> out;
+        out.push_back(std::move(d));
         return out;
     }
     if (at_kw("static")) {
@@ -914,6 +1112,34 @@ ExprPtr Parser::parse_mul() {
 
 ExprPtr Parser::parse_unary() {
     const Token t = peek();
+    if (at_kw("new")) {
+        advance();
+        auto ne = std::make_unique<NewExpr>();
+        ne->type = parse_type();
+        ne->line = t.line;
+        ne->col = t.col;
+        if (at_op("(")) {
+            advance();
+            while (!at_op(")")) {
+                if (peek().kind == TokKind::Ident && peek(1).is_op("=")) {
+                    std::string nm = advance().text;
+                    advance();
+                    ne->named.emplace_back(std::move(nm), parse_expr());
+                } else {
+                    ne->args.push_back(parse_expr());
+                }
+                if (at_op(",")) {
+                    advance();
+                } else {
+                    break;
+                }
+            }
+            expect_op(")");
+            if (!ne->args.empty() && !ne->named.empty())
+                throw err_at("位置参数与命名参数不能混用", t);
+        }
+        return ne;
+    }
     if (t.kind == TokKind::Op && at_op("-", "+", "&", "*", "!")) {
         advance();
         ExprPtr operand = parse_unary();
@@ -1028,6 +1254,14 @@ ExprPtr Parser::parse_call(ExprPtr callee) {
 
 ExprPtr Parser::parse_primary() {
     const Token t = peek();
+    if (t.kind == TokKind::Kw && (t.text == "this" || t.text == "super")) {
+        advance();
+        auto node = std::make_unique<Name>();
+        node->ident = t.text;
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
     if (t.kind == TokKind::Int) {
         advance();
         auto node = std::make_unique<IntLit>();

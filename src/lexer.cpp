@@ -43,6 +43,8 @@ const std::unordered_set<std::string>& keywords() {
         "readonly", "void",     "bool",    "byte",    "ubyte",    "char",     "short",
         "ushort",   "int",      "uint",    "long",    "ulong",    "float",    "double",
         "usize",    "isize",    "string",  "and",     "or",       "not",
+        "class",    "interface", "new",    "del",     "weak",     "this",     "super",
+        "override", "operator",
     };
     return kws;
 }
@@ -51,7 +53,7 @@ const std::unordered_set<std::string>& keywords() {
 const char* const OPS3[] = {"<<=", ">>="};
 const char* const OPS2[] = {"==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=",
                             "|=", "^=", "<<", ">>", ".."};
-const char* const OPS1 = "+-*/%&|^!<>=(){}[];,.?";
+const char* const OPS1 = "+-*/%&|^!~<>=(){}[];,.?:";
 
 // 近似 Python 的 repr(ch)，用于「非法字符」提示
 std::string quote_char(int ch) {
@@ -229,7 +231,6 @@ private:
             return tok;
         }
 
-        if (ch == '~') throw err("不支持 `~`：按位取反请写 `!`（逻辑非用 `not`）");
         if (ch == '\\') throw err("非法字符 `\\`");
         throw err("非法字符 " + quote_char(ch));
     }

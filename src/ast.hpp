@@ -38,6 +38,7 @@ struct LocalVar;
 struct GlobalVar;
 struct FuncDecl;
 struct EnumConst;
+struct CtorDecl;
 
 // 名字解析结果（sema 写入，codegen 读取）
 using Sym = std::variant<std::monostate, LocalVar*, GlobalVar*, FuncDecl*, EnumConst*, Type*>;
@@ -117,6 +118,15 @@ struct Call : Expr {
     TypePtr ctor;             // 结构体构造目标类型
     std::string builtin;      // alloc / realloc / free
     std::vector<int> field_order;
+};
+
+struct NewExpr : Expr {
+    TypeSpecPtr type;   // 目标 class 类型
+    std::vector<ExprPtr> args;
+    std::vector<std::pair<std::string, ExprPtr>> named;
+    // sema
+    TypePtr class_ty;
+    CtorDecl* ctor = nullptr;
 };
 
 struct SizeofExpr : Expr {
@@ -257,12 +267,53 @@ struct ReturnStmt : Stmt {
     ExprPtr value;
 };
 
+struct DelStmt : Stmt {
+    ExprPtr value;
+};
+
+// ---------------------------------------------------------------- 对象模型声明
+
+struct MethodDecl : Node {
+    std::string name;
+    TypeSpecPtr ret;
+    std::vector<std::unique_ptr<Param>> params;
+    std::unique_ptr<Block> body;  // nullptr = 抽象方法
+    bool is_override = false;
+};
+
+struct CtorDecl : Node {
+    std::vector<std::unique_ptr<Param>> params;
+    std::unique_ptr<Block> body;
+};
+
+struct DtorDecl : Node {
+    std::unique_ptr<Block> body;
+};
+
+struct ClassDecl : Decl {
+    std::string name;
+    std::vector<std::string> bases;  // 第一个是基类，其余是接口
+    std::vector<std::pair<std::string, TypeSpecPtr>> fields;
+    std::vector<std::unique_ptr<MethodDecl>> methods;
+    std::vector<std::unique_ptr<CtorDecl>> ctors;
+    std::unique_ptr<DtorDecl> dtor;
+    TypePtr ty;  // sema 预留
+};
+
+struct InterfaceDecl : Decl {
+    std::string name;
+    std::vector<std::string> bases;
+    std::vector<std::unique_ptr<MethodDecl>> methods;
+    TypePtr ty;
+};
+
 struct FuncDecl : Decl {
     std::string name;
     TypeSpecPtr ret;
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;
     bool is_extern = false;
+    bool is_operator = false;
     // sema
     TypePtr rty;
     std::vector<TypePtr> pty;
