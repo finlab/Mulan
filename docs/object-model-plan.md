@@ -90,7 +90,7 @@
 
 - 新增报错用例：对象模型、运算符、`weak`、`del` 规则、继承/接口冲突等（80 个）
 - 文档更新 + 版本号（0.0.3、0.0.4 正式构建 + 全量测试）
-- 待办：weak 目标销毁置 null、interface→class `as`、`readonly` class 视图、`ref` 参数、
+- 待办：weak 目标销毁置 null、`readonly` class 视图、`ref` 参数、
   异常/泛型/并发（后续里程碑）
 
 ## 当前状态

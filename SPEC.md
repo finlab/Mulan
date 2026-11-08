@@ -331,7 +331,8 @@ class Button : Widget, IFocusable { ... }     // 第一个是类，其余是接�
 - 默认方法只能调用接口方法，不能访问字段；两个接口提供同签名默认实现时，类必须显式覆盖，否则编译错误。
 - 接口值布局为两个机器字 `{对象指针, 类描述指针}`；可以为 `null`。
 - 转换：`class → interface` 隐式；`interface A → interface B`（A 继承 B）静态转换；
-  `interface → class` 的 `as` 向下转换**暂缓**（运行时类型检查未实现，编译器直接拒绝）。
+  `class → 派生 class`、`interface → class` 用 `as` 做运行期检查（沿 desc 基类链），失败得 `null`；
+  `interface → 派生 interface` 的向下转换暂缓。
 - 接口引用是强引用：复制 +1、覆盖 -1；`weak` 暂不支持接口。
 - 接口不能作为 `extern` C 函数参数。
 
@@ -689,7 +690,7 @@ extern int puts(readonly char* s);
 
 ```
 object:        [ rc | class_desc* | fields... ]
-class_desc:    { size, destroy, vtable*, itable* }
+class_desc:    { size, destroy, vtable*, itable*, base_desc* }
 interface 值:  { obj*, class_desc* }        // 16 字节；null = {null,null}
 ```
 

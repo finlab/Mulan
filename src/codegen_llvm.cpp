@@ -1144,6 +1144,47 @@ struct Emitter {
         return bb && !bb->empty() && bb->back().isTerminator();
     }
 
+    // 引用类型向下/向上转换（运行期检查 desc 链；失败得 null）
+    Value* emitDowncast(Value* src, const TypePtr& from, const TypePtr& to) {
+        Value* obj = (from->kind == TypeKind::Interface) ? b.CreateExtractValue(src, {0}) : src;
+        AllocaInst* res = entryAlloca(ptrTy(), "cast.res");
+        BasicBlock* search = BasicBlock::Create(ctx, "cast.search", curFn);
+        BasicBlock* check = BasicBlock::Create(ctx, "cast.check", curFn);
+        BasicBlock* found = BasicBlock::Create(ctx, "cast.found", curFn);
+        BasicBlock* done = BasicBlock::Create(ctx, "cast.done", curFn);
+        b.CreateStore(Constant::getNullValue(ptrTy()), res);
+        b.CreateCondBr(b.CreateICmpEQ(obj, Constant::getNullValue(ptrTy())), done, search);
+
+        b.SetInsertPoint(search);
+        AllocaInst* cur = entryAlloca(ptrTy(), "cast.cur");
+        Value* d0 = b.CreateLoad(ptrTy(), b.CreateGEP(i8(), obj, ConstantInt::get(i64(), 8)));
+        b.CreateStore(d0, cur);
+        b.CreateBr(check);
+
+        b.SetInsertPoint(check);
+        Value* d = b.CreateLoad(ptrTy(), cur);
+        Value* isNull = b.CreateICmpEQ(d, Constant::getNullValue(ptrTy()));
+        BasicBlock* next = BasicBlock::Create(ctx, "cast.next", curFn);
+        b.CreateCondBr(isNull, done, next);
+
+        b.SetInsertPoint(next);
+        Value* isTarget = b.CreateICmpEQ(d, cast<Value>(descOf(to)));
+        BasicBlock* advance = BasicBlock::Create(ctx, "cast.advance", curFn);
+        b.CreateCondBr(isTarget, found, advance);
+
+        b.SetInsertPoint(advance);
+        Value* base = b.CreateLoad(ptrTy(), b.CreateGEP(i8(), d, ConstantInt::get(i64(), 32)));
+        b.CreateStore(base, cur);
+        b.CreateBr(check);
+
+        b.SetInsertPoint(found);
+        b.CreateStore(obj, res);
+        b.CreateBr(done);
+
+        b.SetInsertPoint(done);
+        return b.CreateLoad(ptrTy(), res);
+    }
+
     Value* eval(Expr* e) {
         if (auto v = dynamic_cast<IntLit*>(e)) {
             if (isRefKind(e->ty)) return Constant::getNullValue(lt(e->ty));
@@ -1204,8 +1245,14 @@ struct Emitter {
             return b.CreateXor(x, ConstantInt::get(i1(), 1));
         }
         if (auto v = dynamic_cast<Binary*>(e)) return evalBinary(v);
-        if (auto v = dynamic_cast<Cast*>(e))
+        if (auto v = dynamic_cast<Cast*>(e)) {
+            TypePtr from = v->expr->ty;
+            if (from && e->ty && isRefKind(from) && e->ty->kind == TypeKind::Class &&
+                !same_type(from, e->ty)) {
+                return emitDowncast(eval(v->expr.get()), from, e->ty);
+            }
             return convertTo(eval(v->expr.get()), v->expr->ty, e->ty, v->line, v->col);
+        }
         if (auto v = dynamic_cast<Call*>(e)) return evalCall(v);
         if (auto v = dynamic_cast<NewExpr*>(e)) return evalNew(v);
         if (auto v = dynamic_cast<SizeofExpr*>(e)) {
@@ -2002,15 +2049,25 @@ struct Emitter {
                                      FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
         GlobalVariable* vt = emitVtable(c->ty);
         GlobalVariable* it = emitItable(c->ty);
+        Constant* baseDesc = Constant::getNullValue(ptrTy());
+        if (c->ty->base && c->ty->base->kind == TypeKind::Class) {
+            baseDesc = cast<Constant>(descOf(c->ty->base));
+        }
         std::vector<Constant*> vals{
             ConstantInt::get(i64(), objectSize(c->ty)),
             cast<Constant>(dfn.getCallee()),
             vt ? cast<Constant>(vt) : Constant::getNullValue(ptrTy()),
             it ? cast<Constant>(it) : Constant::getNullValue(ptrTy()),
+            baseDesc,
         };
-        new GlobalVariable(*mod, descTy, /*isConstant=*/true, GlobalValue::InternalLinkage,
-                           ConstantStruct::get(descTy, vals),
-                           class_desc_name(c->ty->unit, c->name));
+        auto* gv = mod->getNamedGlobal(class_desc_name(c->ty->unit, c->name));
+        if (!gv) {
+            gv = new GlobalVariable(*mod, descTy, /*isConstant=*/true,
+                                    GlobalValue::InternalLinkage, ConstantStruct::get(descTy, vals),
+                                    class_desc_name(c->ty->unit, c->name));
+            return;
+        }
+        gv->setInitializer(ConstantStruct::get(descTy, vals));
     }
 
     void emitInterfaceMethod(InterfaceDecl* itf, MethodDecl* m) {
@@ -2128,7 +2185,7 @@ struct Emitter {
         sliceTy = LStruct::create(ctx, "mu_slice");
         sliceTy->setBody({ptrTy(), i64()}, false);
         descTy = LStruct::create(ctx, "mu_desc");
-        descTy->setBody({i64(), ptrTy(), ptrTy(), ptrTy()}, false);
+        descTy->setBody({i64(), ptrTy(), ptrTy(), ptrTy(), ptrTy()}, false);
         ifaceTy = LStruct::create(ctx, "mu_iface");
         ifaceTy->setBody({ptrTy(), ptrTy()}, false);
 
@@ -2142,12 +2199,23 @@ struct Emitter {
         }
         // 对象布局与描述符
         buildIfaceSlots();
+        // 先占位所有 desc（派生类可能引用基类 desc），再填初始化器
         for (auto& u : prog.units) {
             curUnit = u->name;
             for (auto& d : u->decls) {
                 auto c = dynamic_cast<ClassDecl*>(d.get());
                 if (!c || !c->ty) continue;
                 objStruct(c->ty);
+                new GlobalVariable(*mod, descTy, /*isConstant=*/true, GlobalValue::InternalLinkage,
+                                   Constant::getNullValue(descTy),
+                                   class_desc_name(c->ty->unit, c->name));
+            }
+        }
+        for (auto& u : prog.units) {
+            curUnit = u->name;
+            for (auto& d : u->decls) {
+                auto c = dynamic_cast<ClassDecl*>(d.get());
+                if (!c || !c->ty) continue;
                 emitClassDesc(c);
             }
         }

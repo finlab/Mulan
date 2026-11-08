@@ -1963,6 +1963,14 @@ private:
         if (!src || !dst) return false;
         if (same_type(src, dst)) return true;
         if (is_numeric(src) && is_numeric(dst)) return true;
+        // 引用类型：向上/向下转换（向下在运行期检查，失败得 null）
+        if (is_class_type(src) && is_class_type(dst)) {
+            return is_subclass_of(src, dst) || is_subclass_of(dst, src);
+        }
+        if (is_interface_type(src) && is_interface_type(dst)) {
+            return implements_interface(src, dst);  // 仅向上；向下暂缓
+        }
+        if (is_interface_type(src) && is_class_type(dst)) return true;
         const bool sp = src->kind == TypeKind::Ptr || src->kind == TypeKind::Slice;
         const bool dp = dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice;
         if (sp && dp) return true;
