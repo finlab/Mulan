@@ -703,7 +703,9 @@ interface 值:  { obj*, class_desc* }        // 16 字节；null = {null,null}
 - **归零**：`class_desc->destroy`：执行析构链（用户析构器 → 派生字段逆序释放 → 基类析构器 → …）后 `free` 对象。
 - **虚调用**：类方法走 `desc->vtable[slot]`；接口方法走 `desc->itable[slot]`，接口默认方法同理。
 - **接口值**：强引用；复制 +1、覆盖 -1；`null` 不计数；接口之间的向上转换不改变值。
-- `weak` 字段不计入计数、析构时也不释放；**目标销毁自动置 null 尚未实现**（当前为悬空借用，禁止跨对象生命周期延后读取），环必须用 `weak` 打破。
+- `weak` 字段不计入计数、析构时也不释放；**目标销毁时自动置 null**（运行时 weak 注册表）：
+  赋值登记 {target, field}，覆盖/持有者析构时注销，目标销毁时把仍指向它的 weak 字段清零。
+  环必须用 `weak` 打破。
 - 环：**不收集**；未打破的环 = 泄漏。
 - `del c`：提前 -1 并把 c 置 null；对象仍被其他强引用持有则不销毁；`del null` 空操作。
 - 与裸内存分开：`alloc/free/realloc` 管裸内存，`new/del` 只用于 class，二者不能交叉使用。
@@ -923,7 +925,7 @@ unit example;
     重载解析、运算符派发（含一元与 `[]`/`[]=`）、接口默认方法冲突、抽象类推导、继承环检查、`weak` 字段。
   - 2026-11-09（0.0.3–0.0.13）：对象头/desc/vtable/itable、构造与析构链、原子 RC、局部引用清理、
     引用数组逐元素 RC、`as` 向下转换（desc 基类链）、临时值释放；端到端用例 41 个。
-  - **待办**：`weak` 目标销毁自动置空、`readonly` class 视图、`ref` 参数、跨线程 RC 压力验证。
+  - **待办**：`readonly` class 视图、`ref` 参数、跨线程 RC 压力验证。
   - 特征矩阵与偏差见 `docs/object-model-plan.md`。
 - **异常**：设计已定（3.14），实现前先做 Windows EH ABI spike；泛型单态化、并发为后续里程碑。
 - 手动内存直接映射 libc `malloc/free/realloc`；运行时只需少量入口/支持代码。

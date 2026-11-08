@@ -132,6 +132,10 @@ struct Emitter {
     AllocaInst* thisSlot = nullptr;
     Function* rcRetainFn = nullptr;
     Function* rcReleaseFn = nullptr;
+    Function* weakRegFn = nullptr;
+    Function* weakUnregFn = nullptr;
+    Function* weakNotifyFn = nullptr;
+    LStruct* weakNodeTy = nullptr;
     std::vector<std::vector<const LocalVar*>> refScopes;  // 需要释放的引用局部变量
     std::vector<size_t> loopScopeDepth;
 
@@ -376,6 +380,196 @@ struct Emitter {
     void emitRelease(Value* p) {
         if (!p) return;
         b.CreateCall(ensureRelease(), {p});
+    }
+
+    // ------------------------------------------------------------ weak 注册表
+    GlobalVariable* weakHeadGlobal() { return mod->getNamedGlobal("mu_weak_head"); }
+    GlobalVariable* weakLockGlobal() { return mod->getNamedGlobal("mu_weak_lock"); }
+
+    void emitWeakLock(IRBuilder<>& hb) {
+        auto* fn = hb.GetInsertBlock()->getParent();
+        auto* spin = BasicBlock::Create(ctx, "weak.spin", fn);
+        auto* got = BasicBlock::Create(ctx, "weak.got", fn);
+        hb.CreateBr(spin);
+        hb.SetInsertPoint(spin);
+        auto* old = hb.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, weakLockGlobal(),
+                                       ConstantInt::get(i32(), 1), MaybeAlign(4),
+                                       llvm::AtomicOrdering::Monotonic);
+        hb.CreateCondBr(hb.CreateICmpEQ(old, ConstantInt::get(i32(), 0)), got, spin);
+        hb.SetInsertPoint(got);
+    }
+
+    void emitWeakUnlock(IRBuilder<>& hb) {
+        hb.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, weakLockGlobal(),
+                           ConstantInt::get(i32(), 0), MaybeAlign(4),
+                           llvm::AtomicOrdering::Monotonic);
+    }
+
+    Function* ensureWeakReg() {
+        if (weakRegFn) return weakRegFn;
+        auto* ft = FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), ptrTy()}, false);
+        auto* fn = cast<Function>(mod->getOrInsertFunction("mu_rt_weak_reg", ft).getCallee());
+        fn->setLinkage(GlobalValue::InternalLinkage);
+        IRBuilder<> hb(ctx);
+        auto* entry = BasicBlock::Create(ctx, "entry", fn);
+        hb.SetInsertPoint(entry);
+        emitWeakLock(hb);
+        auto* node = hb.CreateCall(libFn("malloc", ptrTy(), {i64()}),
+                                   {ConstantInt::get(i64(), 24)});
+        hb.CreateStore(fn->getArg(0), hb.CreateStructGEP(weakNodeTy, node, 0));  // target
+        hb.CreateStore(fn->getArg(1), hb.CreateStructGEP(weakNodeTy, node, 1));  // field
+        auto* H = weakHeadGlobal();
+        auto* head = hb.CreateLoad(ptrTy(), H);
+        hb.CreateStore(head, hb.CreateStructGEP(weakNodeTy, node, 2));  // next
+        hb.CreateStore(node, H);
+        emitWeakUnlock(hb);
+        hb.CreateRetVoid();
+        weakRegFn = fn;
+        return fn;
+    }
+
+    Function* ensureWeakUnreg() {
+        if (weakUnregFn) return weakUnregFn;
+        auto* ft = FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false);
+        auto* fn = cast<Function>(mod->getOrInsertFunction("mu_rt_weak_unreg", ft).getCallee());
+        fn->setLinkage(GlobalValue::InternalLinkage);
+        IRBuilder<> hb(ctx);
+        auto* H = weakHeadGlobal();
+        auto* entry = BasicBlock::Create(ctx, "entry", fn);
+        auto* loop = BasicBlock::Create(ctx, "loop", fn);
+        auto* body = BasicBlock::Create(ctx, "body", fn);
+        auto* remove = BasicBlock::Create(ctx, "remove", fn);
+        auto* rmHead = BasicBlock::Create(ctx, "rm.head", fn);
+        auto* rmNode = BasicBlock::Create(ctx, "rm.node", fn);
+        auto* removed = BasicBlock::Create(ctx, "removed", fn);
+        auto* keep = BasicBlock::Create(ctx, "keep", fn);
+        auto* done = BasicBlock::Create(ctx, "done", fn);
+
+        hb.SetInsertPoint(entry);
+        emitWeakLock(hb);
+        auto* curS = hb.CreateAlloca(ptrTy());
+        auto* prevS = hb.CreateAlloca(ptrTy());
+        hb.CreateStore(hb.CreateLoad(ptrTy(), H), curS);
+        hb.CreateStore(Constant::getNullValue(ptrTy()), prevS);
+        hb.CreateBr(loop);
+
+        hb.SetInsertPoint(loop);
+        auto* cur = hb.CreateLoad(ptrTy(), curS);
+        hb.CreateCondBr(hb.CreateICmpEQ(cur, Constant::getNullValue(ptrTy())), done, body);
+
+        hb.SetInsertPoint(body);
+        auto* f = hb.CreateLoad(ptrTy(), hb.CreateStructGEP(weakNodeTy, cur, 1));
+        auto* nxt = hb.CreateLoad(ptrTy(), hb.CreateStructGEP(weakNodeTy, cur, 2));
+        hb.CreateCondBr(hb.CreateICmpEQ(f, fn->getArg(0)), remove, keep);
+
+        hb.SetInsertPoint(remove);
+        auto* prev = hb.CreateLoad(ptrTy(), prevS);
+        hb.CreateCondBr(hb.CreateICmpEQ(prev, Constant::getNullValue(ptrTy())), rmHead, rmNode);
+        hb.SetInsertPoint(rmHead);
+        hb.CreateStore(nxt, H);
+        hb.CreateBr(removed);
+        hb.SetInsertPoint(rmNode);
+        hb.CreateStore(nxt, hb.CreateStructGEP(weakNodeTy, prev, 2));
+        hb.CreateBr(removed);
+        hb.SetInsertPoint(removed);
+        hb.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {cur});
+        hb.CreateStore(nxt, curS);
+        hb.CreateBr(loop);
+
+        hb.SetInsertPoint(keep);
+        hb.CreateStore(cur, prevS);
+        hb.CreateStore(nxt, curS);
+        hb.CreateBr(loop);
+
+        hb.SetInsertPoint(done);
+        emitWeakUnlock(hb);
+        hb.CreateRetVoid();
+        weakUnregFn = fn;
+        return fn;
+    }
+
+    Function* ensureWeakNotify() {
+        if (weakNotifyFn) return weakNotifyFn;
+        auto* ft = FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false);
+        auto* fn = cast<Function>(mod->getOrInsertFunction("mu_rt_weak_notify", ft).getCallee());
+        fn->setLinkage(GlobalValue::InternalLinkage);
+        IRBuilder<> hb(ctx);
+        auto* H = weakHeadGlobal();
+        auto* entry = BasicBlock::Create(ctx, "entry", fn);
+        auto* loop = BasicBlock::Create(ctx, "loop", fn);
+        auto* body = BasicBlock::Create(ctx, "body", fn);
+        auto* hit = BasicBlock::Create(ctx, "hit", fn);
+        auto* nullStore = BasicBlock::Create(ctx, "nullstore", fn);
+        auto* remove = BasicBlock::Create(ctx, "remove", fn);
+        auto* rmHead = BasicBlock::Create(ctx, "rm.head", fn);
+        auto* rmNode = BasicBlock::Create(ctx, "rm.node", fn);
+        auto* removed = BasicBlock::Create(ctx, "removed", fn);
+        auto* keep = BasicBlock::Create(ctx, "keep", fn);
+        auto* done = BasicBlock::Create(ctx, "done", fn);
+
+        hb.SetInsertPoint(entry);
+        emitWeakLock(hb);
+        auto* curS = hb.CreateAlloca(ptrTy());
+        auto* prevS = hb.CreateAlloca(ptrTy());
+        hb.CreateStore(hb.CreateLoad(ptrTy(), H), curS);
+        hb.CreateStore(Constant::getNullValue(ptrTy()), prevS);
+        hb.CreateBr(loop);
+
+        hb.SetInsertPoint(loop);
+        auto* cur = hb.CreateLoad(ptrTy(), curS);
+        hb.CreateCondBr(hb.CreateICmpEQ(cur, Constant::getNullValue(ptrTy())), done, body);
+
+        hb.SetInsertPoint(body);
+        auto* target = hb.CreateLoad(ptrTy(), hb.CreateStructGEP(weakNodeTy, cur, 0));
+        auto* nxt = hb.CreateLoad(ptrTy(), hb.CreateStructGEP(weakNodeTy, cur, 2));
+        hb.CreateCondBr(hb.CreateICmpEQ(target, fn->getArg(0)), hit, keep);
+
+        hb.SetInsertPoint(hit);
+        auto* fa = hb.CreateLoad(ptrTy(), hb.CreateStructGEP(weakNodeTy, cur, 1));
+        auto* cv = hb.CreateLoad(ptrTy(), fa);
+        hb.CreateCondBr(hb.CreateICmpEQ(cv, fn->getArg(0)), nullStore, remove);
+
+        hb.SetInsertPoint(nullStore);
+        hb.CreateStore(Constant::getNullValue(ptrTy()), fa);
+        hb.CreateBr(remove);
+
+        hb.SetInsertPoint(remove);
+        auto* prev = hb.CreateLoad(ptrTy(), prevS);
+        hb.CreateCondBr(hb.CreateICmpEQ(prev, Constant::getNullValue(ptrTy())), rmHead, rmNode);
+        hb.SetInsertPoint(rmHead);
+        hb.CreateStore(nxt, H);
+        hb.CreateBr(removed);
+        hb.SetInsertPoint(rmNode);
+        hb.CreateStore(nxt, hb.CreateStructGEP(weakNodeTy, prev, 2));
+        hb.CreateBr(removed);
+        hb.SetInsertPoint(removed);
+        hb.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {cur});
+        hb.CreateStore(nxt, curS);
+        hb.CreateBr(loop);
+
+        hb.SetInsertPoint(keep);
+        hb.CreateStore(cur, prevS);
+        hb.CreateStore(nxt, curS);
+        hb.CreateBr(loop);
+
+        hb.SetInsertPoint(done);
+        emitWeakUnlock(hb);
+        hb.CreateRetVoid();
+        weakNotifyFn = fn;
+        return fn;
+    }
+
+    // 写 weak 字段：先注销旧登记，存储新值，非空则登记到目标对象
+    void emitWeakStore(Value* addr, Value* val) {
+        b.CreateCall(ensureWeakUnreg(), {addr});
+        b.CreateStore(val, addr);
+        BasicBlock* nn = BasicBlock::Create(ctx, "weak.nn", curFn);
+        BasicBlock* done = BasicBlock::Create(ctx, "weak.done", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(val, Constant::getNullValue(ptrTy())), done, nn);
+        b.SetInsertPoint(nn);
+        b.CreateCall(ensureWeakReg(), {val, addr});
+        b.CreateBr(done);
+        b.SetInsertPoint(done);
     }
 
     bool isRefKind(const TypePtr& t) {
@@ -814,45 +1008,46 @@ struct Emitter {
             return op == "==" ? eq : b.CreateNot(eq);
         }
 
+        // 操作数只求值一次（后面所有分支复用）
+        Value* l = eval(e->left.get());
+        Value* r = eval(e->right.get());
+
         // 指针算术
         if ((op == "+" || op == "-") && lt_->kind == TypeKind::Ptr && is_integer(rt_)) {
-            Value* p = eval(e->left.get());
-            Value* n = convertTo(eval(e->right.get()), rt_, Type::make_prim("isize"));
-            return gep(lt(lt_->elem), p, n);
+            Value* n = convertTo(r, rt_, Type::make_prim("isize"));
+            return gep(lt(lt_->elem), l, n);
         }
         if (op == "+" && is_integer(lt_) && rt_->kind == TypeKind::Ptr) {
-            Value* n = convertTo(eval(e->left.get()), lt_, Type::make_prim("isize"));
-            Value* p = eval(e->right.get());
-            return gep(lt(rt_->elem), p, n);
+            Value* n = convertTo(l, lt_, Type::make_prim("isize"));
+            return gep(lt(rt_->elem), r, n);
         }
         if (op == "-" && lt_->kind == TypeKind::Ptr && rt_->kind == TypeKind::Ptr) {
-            Value* a = b.CreatePtrToInt(eval(e->left.get()), i64());
-            Value* c = b.CreatePtrToInt(eval(e->right.get()), i64());
+            Value* a = b.CreatePtrToInt(l, i64());
+            Value* c = b.CreatePtrToInt(r, i64());
             Value* d = b.CreateSub(a, c);
             uint64_t sz = sizeOf(lt_->elem);
             return b.CreateSDiv(d, ConstantInt::get(i64(), sz ? sz : 1));
         }
 
-        Value* l = eval(e->left.get());
-        Value* r = eval(e->right.get());
-
         if (op == "==" || op == "!=") {
             bool lref = isRefKind(lt_) || lt_->kind == TypeKind::Null;
             bool rref = isRefKind(rt_) || rt_->kind == TypeKind::Null;
             if (lref && rref && (isRefKind(lt_) || isRefKind(rt_))) {
-                Value* l = eval(e->left.get());
-                Value* r = eval(e->right.get());
-                if (lt_->kind == TypeKind::Null) l = Constant::getNullValue(ptrTy());
-                else if (isRefKind(lt_)) l = refObj(l, lt_);
-                if (rt_->kind == TypeKind::Null) r = Constant::getNullValue(ptrTy());
-                else if (isRefKind(rt_)) r = refObj(r, rt_);
-                return compareOp(op, l, r, false, false);
+                Value* lobj = (isRefKind(lt_) && lt_->kind != TypeKind::Null) ? refObj(l, lt_) : l;
+                Value* robj = (isRefKind(rt_) && rt_->kind != TypeKind::Null) ? refObj(r, rt_) : r;
+                if (lt_->kind == TypeKind::Null) lobj = Constant::getNullValue(ptrTy());
+                if (rt_->kind == TypeKind::Null) robj = Constant::getNullValue(ptrTy());
+                Value* cmp = compareOp(op, lobj, robj, false, false);
+                // 比较后释放临时的 owned 引用（new / 返回引用的调用）
+                if (ownsReference(e->left.get())) emitReleaseRef(l, lt_);
+                if (ownsReference(e->right.get())) emitReleaseRef(r, rt_);
+                return cmp;
             }
         }
         if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
             if (lt_->kind == TypeKind::Ptr || rt_->kind == TypeKind::Ptr) {
-                Value* lv = eval(e->left.get());
-                Value* rv = eval(e->right.get());
+                Value* lv = l;
+                Value* rv = r;
                 if (lt_->kind == TypeKind::Null) lv = Constant::getNullValue(ptrTy());
                 if (rt_->kind == TypeKind::Null) rv = Constant::getNullValue(ptrTy());
                 return compareOp(op, lv, rv, false, false);
@@ -1522,8 +1717,18 @@ struct Emitter {
                         m->field_index < static_cast<int>(ot->fields.size())) {
                         weakTarget = ot->fields[m->field_index].weak;
                     }
+                } else if (auto n = dynamic_cast<Name*>(as->target.get())) {
+                    if (n->kind == "field" && n->implicit_this && curClassTy &&
+                        n->field_index >= 0 &&
+                        n->field_index < static_cast<int>(curClassTy->fields.size())) {
+                        weakTarget = curClassTy->fields[n->field_index].weak;
+                    }
                 }
-                if (isRefKind(as->target->ty) && !weakTarget) {
+                if (weakTarget) {
+                    emitWeakStore(addr, nv);
+                    return;
+                }
+                if (isRefKind(as->target->ty)) {
                     Value* old = b.CreateLoad(lt(as->target->ty), addr);
                     if (!ownsReference(as->value.get())) emitRetainRef(nv, as->target->ty);
                     emitReleaseRef(old, as->target->ty);
@@ -2096,14 +2301,17 @@ struct Emitter {
         b.CreateStore(curThis, thisSlot);
         if (c->dtor && c->dtor->body) block(c->dtor->body.get());
 
-        // 释放本类声明的引用字段（逆序）
+        // 释放本类声明的引用字段（逆序）；weak 字段只注销登记
         size_t total = c->ty->fields.size();
         size_t own = c->fields.size();
         size_t baseCount = total >= own ? total - own : 0;
         for (size_t k = total; k > baseCount; --k) {
             size_t idx = k - 1;
-            if (c->ty->fields[idx].weak) continue;
             Value* fa = fieldAddr(curThis, c->ty, static_cast<int>(idx));
+            if (c->ty->fields[idx].weak) {
+                b.CreateCall(ensureWeakUnreg(), {fa});
+                continue;
+            }
             emitReleaseValue(fa, c->ty->fields[idx].type);
         }
         if (c->ty->base && c->ty->base->kind == TypeKind::Class) {
@@ -2123,6 +2331,8 @@ struct Emitter {
         fn->setLinkage(GlobalValue::ExternalLinkage);
         beginBody(fn);
         Value* p = fn->getArg(0);
+        // 先把指向本对象的所有 weak 引用置 null
+        b.CreateCall(ensureWeakNotify(), {p});
         FunctionCallee dtor = mod->getOrInsertFunction(
             dtor_cname(c->ty->unit, c->name),
             FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
@@ -2277,6 +2487,12 @@ struct Emitter {
         descTy->setBody({i64(), ptrTy(), ptrTy(), ptrTy(), ptrTy()}, false);
         ifaceTy = LStruct::create(ctx, "mu_iface");
         ifaceTy->setBody({ptrTy(), ptrTy()}, false);
+        weakNodeTy = LStruct::create(ctx, "mu_weak_node");
+        weakNodeTy->setBody({ptrTy(), ptrTy(), ptrTy()}, false);
+        new GlobalVariable(*mod, ptrTy(), /*isConstant=*/false, GlobalValue::InternalLinkage,
+                           Constant::getNullValue(ptrTy()), "mu_weak_head");
+        new GlobalVariable(*mod, i32(), /*isConstant=*/false, GlobalValue::InternalLinkage,
+                           ConstantInt::get(i32(), 0), "mu_weak_lock");
 
         // 先建结构体类型（字段可能引用彼此；指针是 opaque ptr，不会递归）
         for (auto& u : prog.units) {
