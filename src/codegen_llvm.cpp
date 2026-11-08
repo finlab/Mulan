@@ -1239,10 +1239,22 @@ struct Emitter {
                     if (it != prog.infos.end()) {
                         auto s = it->second.structs.find(tn);
                         if (s != it->second.structs.end()) return s->second->ty;
+                        auto c = it->second.classes.find(tn);
+                        if (c != it->second.classes.end()) return c->second->ty;
+                        auto i2 = it->second.interfaces.find(tn);
+                        if (i2 != it->second.interfaces.end()) return i2->second->ty;
+                        auto e = it->second.enums.find(tn);
+                        if (e != it->second.enums.end()) return e->second->ty;
                     }
                 }
                 auto it = prog.infos[curUnit].structs.find(spec->name);
                 if (it != prog.infos[curUnit].structs.end()) return it->second->ty;
+                auto c = prog.infos[curUnit].classes.find(spec->name);
+                if (c != prog.infos[curUnit].classes.end()) return c->second->ty;
+                auto i2 = prog.infos[curUnit].interfaces.find(spec->name);
+                if (i2 != prog.infos[curUnit].interfaces.end()) return i2->second->ty;
+                auto e = prog.infos[curUnit].enums.find(spec->name);
+                if (e != prog.infos[curUnit].enums.end()) return e->second->ty;
                 fail("LLVM 后端：sizeof/alignof 未知类型 " + spec->name);
             }
             case TypeSpec::K::Ptr:

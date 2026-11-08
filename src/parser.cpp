@@ -172,6 +172,7 @@ private:
     ExprPtr parse_mul();
     ExprPtr parse_unary();
     ExprPtr parse_postfix();
+    ExprPtr parse_postfix_tail(ExprPtr e);
     ExprPtr parse_call(ExprPtr callee);
     ExprPtr parse_primary();
 
@@ -1151,7 +1152,7 @@ ExprPtr Parser::parse_unary() {
             if (!ne->args.empty() && !ne->named.empty())
                 throw err_at("位置参数与命名参数不能混用", t);
         }
-        return ne;
+        return parse_postfix_tail(std::move(ne));
     }
     if (t.kind == TokKind::Op && at_op("-", "+", "&", "*", "!")) {
         advance();
@@ -1161,7 +1162,7 @@ ExprPtr Parser::parse_unary() {
         node->operand = std::move(operand);
         node->line = t.line;
         node->col = t.col;
-        return node;
+        return parse_postfix_tail(std::move(node));
     }
     if (at_kw("sizeof", "alignof")) {
         std::string which = advance().text;
@@ -1173,7 +1174,7 @@ ExprPtr Parser::parse_unary() {
         node->which = std::move(which);
         node->line = t.line;
         node->col = t.col;
-        return node;
+        return parse_postfix_tail(std::move(node));
     }
     if (at_kw("len")) {
         advance();
@@ -1184,13 +1185,16 @@ ExprPtr Parser::parse_unary() {
         node->seq = std::move(seq);
         node->line = t.line;
         node->col = t.col;
-        return node;
+        return parse_postfix_tail(std::move(node));
     }
     return parse_postfix();
 }
 
 ExprPtr Parser::parse_postfix() {
-    ExprPtr e = parse_primary();
+    return parse_postfix_tail(parse_primary());
+}
+
+ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
     for (;;) {
         const Token t = peek();
         if (t.is_op("(")) {
