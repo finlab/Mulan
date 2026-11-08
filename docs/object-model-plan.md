@@ -23,7 +23,7 @@
 - 语法：C++ 式 `class A : Base, I1, I2`、`interface I : J, K`、方法/抽象方法、
   构造器、`~T()`、`operator+` / `operator[]` / `operator[]=`、`new`/`del`、`this`/`super`
 
-### M2 前端语义（已完成，98/98）
+### M2 前端语义（已完成）
 
 类型模型与注册：
 
@@ -63,7 +63,7 @@
 
 - `tests/errors/` 74 个必须报错用例
 - `tests/check/` 4 个仅语义检查的成功用例（codegen 尚未覆盖）
-- 合计 98/98
+- 后续在 M4 扩充到 115/115
 
 明确**暂缓**（待语法/规则确定）：
 
@@ -72,28 +72,31 @@
 - 接口静态转换 `as` 的向下转型语义
 - 两个接口同签名、返回类型不同的冲突细化
 
-### M3 LLVM 代码生成
+### M3 LLVM 代码生成（已完成，0.0.3–0.0.4）
 
-- 对象布局：`[rc][class_desc*][fields...]`
-- `class_desc`：vtable、destroy、itable 目录
-- 方法调用：类虚派发、接口 itable 派发
-- 构造：分配/清零、逐层 vtable、`super`
-- 析构：用户析构器 → 字段逆序释放 → 基类析构器
-- `new`/`del`：malloc + RC；`del` 置 null
-- 类数组：逐元素 retain/release、赋值、销毁
-- 运算符：按签名调用；`a[i]` / `a[i] = v` / 复合赋值
-- 接口值：`{obj, desc}`、向上转换、`as` 向下转换
-- 验收：对象模型示例可编译运行，输出与预期一致
+- 对象布局：`{ rc, desc*, fields... }`；`desc = { size, destroy, vtable*, itable* }`
+- 虚派发：基类优先的 vtable 槽序，`override` 复用槽位；`super.method` 静态派发
+- 接口：`{obj, desc}` 值；全程序接口槽表 + 每类 itable（类实现/接口默认方法的 thunk）
+- 构造：malloc + 清零 + rc=1 + desc；`super(...)` 链；隐式默认构造调用最近祖先无参构造器
+- 析构：用户析构器 → 派生字段逆序释放 → 基类析构器链 → `free`
+- RC：原子递增/递减（relaxed）；local/字段/接口值/临时实参/返回值的 retain/release；
+  块作用域、`return`、`break`、`continue` 的局部引用清理
+- 运算符：二元/一元/`[]`/`[]=` 按签名派发；`==`/`!=` 身份比较（含相关引用类型之间）
+- 类数组：逐元素 retain/release、赋值、析构释放
+- `weak` 字段：不计入计数、析构不释放（目标销毁置 null 尚未实现）
+- 验证：class/继承/接口/默认方法/重载/运算符/数组/RC/清理 共 9 个端到端用例
 
-### M4 测试与收尾
+### M4 测试与收尾（进行中）
 
-- 新增成功用例：class/构造/析构/继承/接口/重载/运算符/类数组
-- 新增报错用例：抽象类实例化、override 签名错误、接口缺失、重载歧义、struct 含 class 引用等
-- 文档更新 + 版本号（正式构建后 build +1）
-- 与 struct/值语义、C 互操作、RC/weak 的交叉检查
+- 新增报错用例：对象模型、运算符、`weak`、`del` 规则、继承/接口冲突等（80 个）
+- 文档更新 + 版本号（0.0.3、0.0.4 正式构建 + 全量测试）
+- 待办：weak 目标销毁置 null、interface→class `as`、`readonly` class 视图、`ref` 参数、
+  异常/泛型/并发（后续里程碑）
 
 ## 当前状态
 
-- M1、M2 均已完成并合入主干（`tests/` 98/98 全绿）。
-- codegen 尚未识别 class/interface：含对象语法的文件仍只能 `check`，不能 `build`。
-- 下一步：M3 LLVM 代码生成（对象头、desc、vtable/itable、构造/析构、RC、CleanupScope）。
+- M1、M2、M3 已完成并合入主干（`tests/` 115/115 全绿，其中 31 个端到端用例）。
+- codegen 已支持 class/接口/继承/虚派发/RC/`weak`（非持有）/类数组/运算符，可 `build --run`。
+- 下一步：M4 收尾与已知缺口（weak 置 null、接口向下转换、readonly class 视图、`ref` 参数），
+  随后是异常、泛型、并发里程碑。
+
