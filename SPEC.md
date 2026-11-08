@@ -18,9 +18,9 @@
 | 类型推断 | 局部变量可用 `auto x = expr;`；仅局部、必须有初始化器；`dynamic`/`any` 仅预留命名 |
 | 动态类型 | 第一阶段不做；异构值优先库级 Variant/和类型；`dynamic`/`any` 仅预留 |
 | 作用域 | 声明不写 `T x(...)`；`Point p` 未初始化，`= 0` 零初始化；unit 级变量须 `static`/`extern`（`const` 除外） |
-| 对象模型 | 值与引用分离：`struct` 值类型；`class` 引用类型（单继承 + 接口；默认虚方法；RC + weak；无 GC/环收集器） |
+| 对象模型 | 值与引用分离：`struct` 值类型；`class` 引用类型（单继承 + 接口；默认虚方法；原子 RC + weak；无 GC/环收集器） |
 | 字符串 | 内建 `string`（UTF-8、不可变、NUL 结尾）；支持与 `byte[]` 的字节视图/拷贝 |
-| 内存 | 指针 + `alloc/free/realloc`（裸内存）；`class` 用 `new/del` + 引用计数；无 GC、无借用检查 |
+| 内存 | 指针 + `alloc/free/realloc`（裸内存）；`class` 用 `new/del` + 原子引用计数；无 GC、无借用检查 |
 | 控制流 | `if/else`、`while`、`for-in`、`break/continue/return`；条件必须是 `bool`；强制花括号 |
 | 条件括号 | 可选，规范写法省略（`if cond { }`）；C 式 `if (cond)` 仍合法 |
 | 结构体构造 | `Point(x = 1, y = 2)` 命名参数，或 `Point(1, 2)` 位置参数；两者不可混用 |
@@ -74,6 +74,21 @@ and or not override operator super this
 - **字符串**：`"..."`，UTF-8，编译期静态存储，NUL 结尾；类型 `string`（内建不可变视图，见 3.3），可隐式转 `readonly char*`；`\u{...}` 待定。
 - **布尔**：`true` / `false`。
 - **空值**：`null`（不是 0）；可赋给指针与 class 引用，不能用于 struct/标量。
+
+### 2.5 保留字（未来扩展，暂不可作标识符）
+
+以下标识符预留给后续特性，编译器应拒绝将其用作变量/函数/类型名：
+
+```
+where  try  catch  throw  finally
+async  await  spawn  shared  atomic
+move  unsafe  typeof  match
+```
+
+- 泛型：`where`；
+- 异常：`try/catch/throw/finally`；
+- 并发：`async/await/spawn/shared/atomic`；
+- 其他：`move/unsafe/typeof/match`。
 
 ---
 
@@ -258,8 +273,8 @@ class Cat {
   - class 传给 `extern` C 函数（C 侧不参与引用计数）；
   - `sizeof` / `alignof` 作用于 class 类型（待定，见 12）；
   - `weak` 用于局部变量、参数、返回值。
-- 内存：非原子引用计数（单线程）；字段按声明逆序释放；弱引用不计数。
-- 线程：第一阶段单线程；多线程需原子 RC 或线程本地堆（待定，见 12）。
+- 内存：原子引用计数（relaxed）；字段按声明逆序释放；弱引用不计数。
+- 线程：对象可跨线程共享；析构器在最后释放引用的线程执行，必须线程安全。
 
 ### 3.9 继承（单继承）
 
@@ -405,6 +420,38 @@ class File {
 - 环永远不会归零，因此环中的析构器不会执行（weak 断环后才会）。
 - 析构器里不能把 `this` 存到字段/全局（会复活对象）；第一阶段可先靠文档约束。
 - 构造器失败（`abort`）时不执行析构器。
+- 析构器可能在任意线程执行（对象被共享时）；需要线程安全的资源释放。
+
+### 3.14 异常（设计已定，尚未实现）
+
+```c
+class MyError : Exception {
+    int code;
+}
+
+void f() {
+    if bad { throw new MyError("bad", 42); }
+}
+
+void g() {
+    try {
+        f();
+    } catch (e: MyError) {
+        puts(e.message);
+    } finally {
+        cleanup();
+    }
+}
+```
+
+- **非检查型**：函数不声明 `throws`，任何函数都可能抛；调用方自担。
+- 只有 `Exception` 的派生类可以 `throw`/`catch`；`Exception` 是**基类**（单继承，错误类不能再继承其他基类）。
+- `catch` 按 class/interface 与书写顺序匹配；依赖对象描述符里的 `type_id` 与基类/接口链。
+- `finally` 在所有退出路径执行（正常、`return`、`break`、`continue`、异常）。
+- 异常对象是 RC 管理的 class 句柄；`catch` 参数是借用；未捕获 → `abort`。
+- 析构器必须 `nothrow`；构造器抛异常时用 `constructed` 标志做部分清理。
+- 异常不跨 C ABI、不跨线程。
+- Windows 展开 ABI（SEH / Itanium）先做 spike 验证，再定实现。
 
 ---
 
@@ -640,23 +687,24 @@ extern int puts(readonly char* s);
 
 ```
 object:        [ rc | class_desc* | fields... ]
-class_desc:    { vtable[]; itables[iface_id]; }
+class_desc:    { size, align, type_id, flags, base_desc, vtable[], destroy, itables[] }
 interface 值:  { obj*, class_desc* }        // 16 字节；null = {null,null}
 ```
 
-- 每个 class 对象带强引用计数；`new` 创建后计数为 1。
+- 每个 class 对象带**原子**强引用计数（relaxed）；`new` 创建后计数为 1。
 - **+1**：句柄复制（初始化、赋值重绑定、存入字段、返回后由调用方存储、存入接口值）。
   参数传递按借用处理（不 +1）；被调方需要保存时在存储点 +1。
 - **-1**：句柄被覆盖、离开作用域、字段随对象销毁、接口值被覆盖、`del`。
-- **归零**：调用 `class_desc->vtable[destroy]`：先执行用户析构器，再按字段声明逆序释放派生字段 → 基类析构器 → 基类字段，最后释放对象内存。
+- **归零**：调用 `class_desc->vtable[destroy]`：先执行用户析构器，再按字段声明逆序释放派生字段 → 基类析构器 → 基类字段，最后释放对象内存。构造未完成时（`constructed` 标志未置位）只释放字段，不执行用户析构器。
 - **虚调用**：类方法走 `desc->vtable[slot]`；接口方法走 `desc->itables[iface_id][slot]`。
 - **接口值**：强引用；复制 +1、覆盖 -1；`null` 不计数；接口之间的向上转换不改变值。
-- `weak` 字段不计入计数；目标销毁时由运行时把所有 weak 指向置 null（需要 side table）。
+- `weak` 字段不计入计数；目标销毁时由运行时把所有 weak 指向置 null（需要原子 side table）。
 - 环：**不收集**；必须用 `weak` 打破。未打破的环 = 泄漏（不崩溃、不提前释放）。
 - `del c`：提前 -1 并把 c 置 null；对象仍被其他强引用持有则不销毁；`del null` 空操作。
 - 与裸内存分开：`alloc/free/realloc` 管裸内存，`new/del` 只用于 class，二者不能交叉使用。
-- 第一阶段单线程、非原子计数；多线程方案待定（原子 RC 或线程本地堆）。
-- 没有用户析构函数；`deinit` 不在第一阶段（见 10）。
+- 对象可跨线程共享；析构器在最后释放引用的线程执行，必须线程安全。
+- 可选择 `--single-thread` 构建使用非原子快速路径（该构建禁止跨线程，待定）。
+- 没有用户析构函数以外的资源释放机制；析构器见 3.13。
 
 ---
 
@@ -841,6 +889,11 @@ unit example;
 | 90 | class 静态数组 | 已定：允许（struct 禁止）；逐元素 retain/release |
 | 91 | `[]` 重载 | 已定：`operator[]` 读、`operator[]=` 写；显式区分，不用 `&`/`const` |
 | 92 | 用户析构器 | 已定：`~T()`，RC 归零时执行；派生先于基类 |
+| 93 | 异常模型 | 已定：非检查、`Exception` 基类、`finally`；见 3.14（尚未实现） |
+| 94 | RC 线程模型 | 已定：原子 RC（relaxed），对象可跨线程共享 |
+| 95 | 泛型路线 | 已定：单态化（未来实现） |
+| 96 | 保留字 | 已定：见 2.5 |
+| 97 | 异常展开 ABI | 待定：先做 SEH/Itanium spike |
 
 ---
 
@@ -859,8 +912,9 @@ unit example;
   - 状态（2026-11-08）：已实现（`src/codegen_llvm.cpp`，LLVM C++ API 直接产出 COFF 目标文件），
     为当前唯一后端。
   - 当前仍用 gcc 链接，尚未接入优化管线、调试信息与 `lld-link`。
-- **对象模型**（class/继承/接口/重载/构造器/运算符）已于 2026-11-09 完成设计（见 3.8–3.12、8.3），
+- **对象模型**（class/继承/接口/重载/构造器/运算符）已于 2026-11-09 完成设计（见 3.8–3.14、8.3），
   **尚未实现**；当前编译器仍只支持 struct 与自由函数。
+- **异常**：设计已定（3.14），实现前先做 Windows EH ABI spike；泛型单态化、并发为后续里程碑。
 - 手动内存直接映射 libc `malloc/free/realloc`；运行时只需少量入口/支持代码。
 - 无 GC/异常/栈图需求，后端选择面比托管语言宽。
 - `for-in` 降级：区间 → 索引循环；数组/切片 → 带长度缓存的索引循环；`continue` 目标必须指向「推进处」。

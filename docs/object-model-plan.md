@@ -1,7 +1,17 @@
 # 对象模型实现计划（v0.3）
 
-目标：在现有 LLVM 唯一后端上落地 SPEC 3.8–3.13 的对象模型。
+目标：在现有 LLVM 唯一后端上落地 SPEC 3.8–3.14 的对象模型。
 原则：分里程碑推进，每步保持现有 58 个回归用例全绿；新能力单独加用例。
+
+## 地基决定（已定）
+
+- **RC**：原子计数（relaxed），对象可跨线程共享；析构器可能在任何线程执行。
+- **异常**：非检查型；`Exception` 基类；支持 `finally`；实现前先做 Windows EH ABI spike。
+- **泛型**：单态化（未来里程碑，当前只预留 mangling/desc/保留字）。
+- **保留字**：`where try catch throw finally async await spawn shared atomic move unsafe typeof match`。
+- **对象头**：`[rc][desc*]`；desc 含 `size/align/type_id/flags/base/vtable/destroy/itables`；
+  构造未完成用 `constructed` 标志，销毁时跳过用户析构器。
+- **清理路径**：从 M2/M3 起就用统一的 CleanupScope（RC + 析构），为异常展开预留。
 
 ## 里程碑
 
