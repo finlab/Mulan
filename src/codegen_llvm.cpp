@@ -458,6 +458,9 @@ struct Emitter {
         if (!e || !isRefKind(e->ty)) return false;
         if (dynamic_cast<NewExpr*>(e)) return true;
         if (dynamic_cast<Call*>(e)) return true;
+        if (auto b = dynamic_cast<Binary*>(e); b && b->op_func) return true;
+        if (auto u = dynamic_cast<Unary*>(e); u && u->op_func) return true;
+        if (auto ix = dynamic_cast<Index*>(e); ix && ix->get_func) return true;
         if (dynamic_cast<Cast*>(e)) return ownsReference(static_cast<Cast*>(e)->expr.get());
         return false;
     }

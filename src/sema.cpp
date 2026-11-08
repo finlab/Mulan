@@ -769,6 +769,16 @@ private:
         return nullptr;
     }
 
+    static void collect_sigs(const TypePtr& t, const MethodSig& sig,
+                             std::vector<const MethodSig*>& out, int depth = 0) {
+        if (!t || depth > 256) return;
+        for (auto& m : t->methods) {
+            if (same_sig(m, sig)) out.push_back(&m);
+        }
+        if (t->kind == TypeKind::Class && t->base) collect_sigs(t->base, sig, out, depth + 1);
+        for (auto& i : t->interfaces) collect_sigs(i, sig, out, depth + 1);
+    }
+
     static const MethodSig* find_method(const TypePtr& t, const std::string& name, size_t argc,
                                         int depth = 0) {
         if (!t || depth > 256) return nullptr;
@@ -896,6 +906,15 @@ private:
             if (base_sig) {
                 if (!m->is_override) {
                     err("覆盖/实现基类方法必须写 `override`", m.get());
+                }
+                std::vector<const MethodSig*> matches;
+                collect_sigs(c->ty->base ? c->ty->base : c->ty, sig, matches);
+                for (auto& i : c->ty->interfaces) collect_sigs(i, sig, matches);
+                for (auto* ms : matches) {
+                    if (!same_type(ms->ret, m->rty)) {
+                        err("override 的返回类型不一致：与 `" + ms->owner->str() + "` 的声明不符",
+                            m.get());
+                    }
                 }
                 if (!same_type(base_sig->ret, m->rty)) {
                     err("override 的返回类型不一致", m.get());
