@@ -271,6 +271,23 @@
   - 切片 of class/interface 的实现（逐元素 RC + owner 释放）；
   - 边界检查的默认策略（debug/release）。
 
+### B2（实现缺口，重要）：extern C 的聚合参数/返回值 ABI 不一致
+- 现象：`extern` C 函数按值接收 16 字节 struct 时，mulan 侧调用崩溃（访问冲突）。
+- 复现：
+  - C：`struct P { long long a,b; }; long long take_p(struct P p);`（gcc 编译）
+  - mu-lan：`struct P { long a,b; } extern long take_p(P p); take_p(p)`
+  - gcc 生成的 `take_p` 期望 **RCX = &p**（MS x64 ABI：非 1/2/4/8 字节的聚合按引用传递）；
+  - mulan/LLVM 生成的是 `RCX=a, RDX=b`（两个寄存器），链接运行 → access violation。
+- 原因：codegen 构造 `FunctionType` 时把聚合**按值**作为参数，但**没有加 `byval`/`sret` 属性**；
+  LLVM 后端对 first-class aggregate 的 Windows 调用约定与 Clang（Clang 会发 `byval`）不同。
+- 影响：所有 `extern C` 的「struct/数组按值传参/返回」；内部 mulan 调用自洽所以测试没暴露。
+- 修法（待做）：
+  - 按目标 ABI 做聚合分类：Win64 下大小 1/2/4/8 字节按整数寄存器；其余用 `byval(T)`；
+    返回大小非 1/2/4/8 用 `sret` 隐藏指针；
+  - extern 声明与定义、调用点统一；
+  - 加 C 侧交叉测试（gcc 编译的 `sizeof/offsetof` 与按值传/返 struct）。
+- 这也说明"按值传参更快"必须看 ABI：内部寄存器传参很快，但不等于 C ABI 兼容。
+
 ## 已完成（留档）
 
 - 0.0.20：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（删除 `ubyte`/`uchar` 别名）；
