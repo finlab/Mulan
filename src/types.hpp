@@ -64,6 +64,7 @@ struct Type {
     bool is_numeric() const;   // 整数 / 浮点 / 枚举
     int bits() const;          // 整数位宽（usize/isize=64）
     bool is_signed() const;
+    bool needs_cleanup() const;  // 值是否含需要 RC 清理的字段（递归）
     TypePtr field_type(const std::string& fname) const;  // 不存在返回 nullptr
     int field_index(const std::string& fname) const;     // 不存在返回 -1
 };

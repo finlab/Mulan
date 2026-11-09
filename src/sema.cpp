@@ -275,9 +275,6 @@ private:
                 if (same_type(ft, sd->ty)) {
                     err("结构体 `" + sd->name + "` 不能按值包含自身", sd);
                 }
-                if (contains_reference_type(ft)) {
-                    err("struct 字段不能包含 class/interface 引用（见 3.8）", sd);
-                }
                 if (spec->weak) err("`weak` 只能用于 class 字段", sd);
                 if (noncopyable_struct(ft)) {
                     err("含析构器的 struct `" + ft->str() +
@@ -713,6 +710,11 @@ private:
         if (!g->rty) err("全局变量 `" + g->name + "` 缺少类型", g);
         if (noncopyable_struct(g->rty)) {
             err("含析构器的 struct `" + g->rty->str() +
+                    "` 暂不能作为全局变量（无退出析构）",
+                g);
+        }
+        if (g->rty->kind == TypeKind::Struct && g->rty->needs_cleanup()) {
+            err("含引用字段的 struct `" + g->rty->str() +
                     "` 暂不能作为全局变量（无退出析构）",
                 g);
         }
@@ -1463,11 +1465,13 @@ private:
                 direct_init_expr_ = e;
                 check_expr(e, ty);
                 direct_init_expr_ = nullptr;
-                if (call->callee_kind != "struct_ctor") {
-                    err("有构造器的 struct `" + ty->str() + "` 必须用 `T(...)` 构造初始化",
+                if (call->callee_kind == "struct_ctor") return;  // 就地构造
+                if (!same_type(call->ty, ty)) {
+                    err("有构造器的 struct `" + ty->str() +
+                            "` 必须用 `T(...)` 构造，或由同类型表达式拷贝初始化",
                         node);
                 }
-                return;
+                return;  // 同类型返回值：拷贝初始化
             }
             if (ty->kind == TypeKind::Array && is_char(ty->elem) &&
                 dynamic_cast<StringLit*>(e)) {
@@ -1771,6 +1775,12 @@ private:
         if (is_reference_type(t)) return true;
         if (t->kind == TypeKind::Array || t->kind == TypeKind::Slice) {
             return contains_reference_type(t->elem);
+        }
+        if (t->kind == TypeKind::Struct) {
+            for (const auto& f : t->fields) {
+                if (f.weak) continue;
+                if (contains_reference_type(f.type)) return true;
+            }
         }
         return false;
     }

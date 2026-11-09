@@ -138,6 +138,8 @@ struct Emitter {
     LStruct* weakNodeTy = nullptr;
     std::vector<std::vector<const LocalVar*>> refScopes;  // 需要释放的引用局部变量
     std::vector<size_t> loopScopeDepth;
+    // 语句内被取地址物化的 owned struct/array 临时值，语句结束时统一释放
+    std::vector<std::pair<Value*, TypePtr>> stmtTemps;
 
     // ------------------------------------------------------------ 基础工具
     LType* ptrTy() { return PointerType::get(ctx, 0); }
@@ -605,12 +607,9 @@ struct Emitter {
     }
 
     // ------------------------------------------------------------ 局部引用清理
+    // 值的生命周期里是否需要 RC 清理（含递归的 struct/array 字段）
     static bool needsCleanup(const TypePtr& t) {
-        if (!t) return false;
-        if (t->kind == TypeKind::Class || t->kind == TypeKind::Interface) return true;
-        if (t->kind == TypeKind::Struct && t->has_dtor) return true;
-        if (t->kind == TypeKind::Array) return needsCleanup(t->elem);
-        return false;
+        return t && t->needs_cleanup();
     }
 
     void releaseLocal(const LocalVar* lv) {
@@ -657,6 +656,15 @@ struct Emitter {
         }
     }
 
+    // 释放语句执行期间物化的 owned 右值（从 mark 之后注册的），保持逆序
+    void destroyTempsFrom(size_t mark) {
+        if (stmtTemps.size() <= mark) return;
+        for (size_t i = stmtTemps.size(); i > mark; --i) {
+            emitReleaseValue(stmtTemps[i - 1].first, stmtTemps[i - 1].second);
+        }
+        stmtTemps.resize(mark);
+    }
+
     // 表达式是否已经持有一份可转移的强引用（new / 返回 class 引用的调用）
     bool ownsReference(Expr* e) {
         if (!e || !isRefKind(e->ty)) return false;
@@ -685,6 +693,14 @@ struct Emitter {
         if (curRetTy && curRetTy->kind == TypeKind::Array && needsCleanup(curRetTy)) {
             if (valueOwned(e)) return v;
             auto* tmp = entryAlloca(lt(curRetTy), "ret.arr");
+            b.CreateStore(v, tmp);
+            emitRetainValue(tmp, curRetTy);
+            return b.CreateLoad(lt(curRetTy), tmp);
+        }
+        if (curRetTy && curRetTy->kind == TypeKind::Struct && needsCleanup(curRetTy)) {
+            // 返回值按 owned 转移：借用值先逐字段 retain，局部随后在 releaseAllScopes 释放
+            if (valueOwned(e)) return v;
+            auto* tmp = entryAlloca(lt(curRetTy), "ret.struct");
             b.CreateStore(v, tmp);
             emitRetainValue(tmp, curRetTy);
             return b.CreateLoad(lt(curRetTy), tmp);
@@ -941,6 +957,11 @@ struct Emitter {
         Value* v = eval(e);
         auto* tmp = entryAlloca(v->getType(), "tmp");
         b.CreateStore(v, tmp);
+        // owned 的 struct/array 右值被物化后，语句结束时要释放其引用字段
+        if (e->ty && needsCleanup(e->ty) && valueOwned(e) &&
+            (e->ty->kind == TypeKind::Struct || e->ty->kind == TypeKind::Array)) {
+            stmtTemps.emplace_back(tmp, e->ty);
+        }
         return tmp;
     }
 
@@ -1111,10 +1132,8 @@ struct Emitter {
         ArgPack pack;
         for (size_t i = 0; i < args.size() && i < ptys.size(); ++i) {
             Value* v = coerce(args[i], ptys[i]);
-            bool refArg = isRefKind(ptys[i]);
-            bool arrArg = ptys[i] && ptys[i]->kind == TypeKind::Array &&
-                          needsCleanup(ptys[i]);
-            if ((refArg || arrArg) && valueOwned(args[i])) {
+            // 参数按借用传递（callee 不释放）；只有调用者持有所有权的实参临时值才需在调用后清理
+            if (needsCleanup(ptys[i]) && valueOwned(args[i])) {
                 pack.owned.emplace_back(v, ptys[i]);
             }
             pack.vals.push_back(v);
@@ -1126,7 +1145,7 @@ struct Emitter {
         for (auto& [v, ty] : pack.owned) {
             if (isRefKind(ty)) {
                 emitReleaseRef(v, ty);
-            } else if (ty && ty->kind == TypeKind::Array && needsCleanup(ty)) {
+            } else if (ty && needsCleanup(ty)) {
                 auto* tmp = entryAlloca(lt(ty), "arg.tmp");
                 b.CreateStore(v, tmp);
                 emitReleaseValue(tmp, ty);
@@ -1244,6 +1263,7 @@ struct Emitter {
             TypePtr st = c->ctor;
             const auto* cpty = c->ctor_pty;
             auto* tmp = entryAlloca(lt(st), "ctor.tmp");
+            if (st->needs_cleanup()) zeroMem(tmp, st);
             std::vector<LType*> ptys{ptrTy()};
             for (auto& t : *cpty) ptys.push_back(lt(t));
             FunctionCallee callee = mod->getOrInsertFunction(
@@ -1630,6 +1650,8 @@ struct Emitter {
                 call && call->callee_kind == "struct_ctor") {
                 TypePtr st = call->ctor;
                 const auto* cpty = call->ctor_pty;
+                // 构造器可能不写全部引用字段：先清零，保证析构时不会释放垃圾指针
+                if (st->needs_cleanup()) zeroMem(addr, st);
                 std::vector<LType*> ptys{ptrTy()};
                 for (auto& t : *cpty) ptys.push_back(lt(t));
                 FunctionCallee callee = mod->getOrInsertFunction(
@@ -1665,6 +1687,12 @@ struct Emitter {
                 return;
             }
             if (ty->kind == TypeKind::Array && needsCleanup(ty)) {
+                storeValue(v, addr, ty);
+                if (!valueOwned(e)) emitRetainValue(addr, ty);
+                return;
+            }
+            if (ty->kind == TypeKind::Struct && needsCleanup(ty)) {
+                // 借用源：逐字段 retain；owned 源（调用返回/构造结果）：所有权转移
                 storeValue(v, addr, ty);
                 if (!valueOwned(e)) emitRetainValue(addr, ty);
                 return;
@@ -1735,6 +1763,12 @@ struct Emitter {
     }
 
     void stmt(Stmt* s) {
+        size_t mark = stmtTemps.size();
+        stmtImpl(s);
+        destroyTempsFrom(mark);
+    }
+
+    void stmtImpl(Stmt* s) {
         if (std::getenv("MULANC_LLVM_TRACE")) {
             std::cerr << "[llvm]   stmt " << typeid(*s).name();
             if (auto lv = dynamic_cast<LocalVar*>(s)) std::cerr << " " << lv->name;
@@ -1755,8 +1789,9 @@ struct Emitter {
                     FunctionCallee ctor = mod->getOrInsertFunction(
                         ctor_cname(lv->rty->unit, lv->rty->name, {}),
                         FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+                    if (lv->rty->needs_cleanup()) zeroMem(slot, lv->rty);
                     b.CreateCall(ctor, {slot});
-                } else if (lv->rty->has_dtor) {
+                } else if (needsCleanup(lv->rty)) {
                     zeroMem(slot, lv->rty);
                 }
             } else if (lv->rty && lv->rty->kind == TypeKind::Array && needsCleanup(lv->rty)) {
@@ -1772,6 +1807,10 @@ struct Emitter {
                 if (isRefKind(ty)) {
                     emitReleaseRef(v, ty);
                 } else if (ty && ty->kind == TypeKind::Array && needsCleanup(ty)) {
+                    auto* tmp = entryAlloca(lt(ty), "expr.tmp");
+                    b.CreateStore(v, tmp);
+                    emitReleaseValue(tmp, ty);
+                } else if (ty && ty->kind == TypeKind::Struct && needsCleanup(ty)) {
                     auto* tmp = entryAlloca(lt(ty), "expr.tmp");
                     b.CreateStore(v, tmp);
                     emitReleaseValue(tmp, ty);
@@ -1815,8 +1854,9 @@ struct Emitter {
                     return;
                 }
                 TypePtr tty = as->target->ty;
-                if (!weakTarget && tty && tty->kind == TypeKind::Array && needsCleanup(tty)) {
-                    auto* tmp = entryAlloca(lt(tty), "arr.tmp");
+                if (!weakTarget && tty && needsCleanup(tty) &&
+                    (tty->kind == TypeKind::Array || tty->kind == TypeKind::Struct)) {
+                    auto* tmp = entryAlloca(lt(tty), "val.tmp");
                     b.CreateStore(nv, tmp);
                     if (!valueOwned(as->value.get())) emitRetainValue(tmp, tty);
                     emitReleaseValue(addr, tty);
@@ -1877,7 +1917,9 @@ struct Emitter {
             BasicBlock* endBB = BasicBlock::Create(ctx, "while.end", curFn);
             b.CreateBr(condBB);
             b.SetInsertPoint(condBB);
+            size_t cmark = stmtTemps.size();
             Value* cond = eval(ws->cond.get());
+            destroyTempsFrom(cmark);  // 条件里的 struct 右值每轮释放
             b.CreateCondBr(cond, bodyBB2, endBB);
             b.SetInsertPoint(bodyBB2);
             loops.push_back({condBB, endBB});
@@ -1905,6 +1947,7 @@ struct Emitter {
         }
         if (dynamic_cast<BreakStmt*>(s)) {
             if (loops.empty()) fail("LLVM 后端：break 不在循环中");
+            destroyTempsFrom(0);
             if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().second);
             BasicBlock* dead = BasicBlock::Create(ctx, "dead", curFn);
@@ -1913,6 +1956,7 @@ struct Emitter {
         }
         if (dynamic_cast<ContinueStmt*>(s)) {
             if (loops.empty()) fail("LLVM 后端：continue 不在循环中");
+            destroyTempsFrom(0);
             if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().first);
             BasicBlock* dead = BasicBlock::Create(ctx, "dead", curFn);
@@ -1921,10 +1965,12 @@ struct Emitter {
         }
         if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
             if (!rs->value) {
+                destroyTempsFrom(0);
                 releaseAllScopes();
                 b.CreateRetVoid();
             } else {
                 Value* rv = prepareReturn(rs->value.get());
+                destroyTempsFrom(0);
                 releaseAllScopes();
                 b.CreateRet(rv);
             }
@@ -2229,6 +2275,7 @@ struct Emitter {
         curRetTy = ret;
         refScopes.clear();
         loopScopeDepth.clear();
+        stmtTemps.clear();
         allocaBB = BasicBlock::Create(ctx, "allocas", fn);
         bodyBB = BasicBlock::Create(ctx, "entry", fn);
         ab.SetInsertPoint(allocaBB);
@@ -2259,6 +2306,7 @@ struct Emitter {
         slots.clear();
         refScopes.clear();
         loopScopeDepth.clear();
+        stmtTemps.clear();
         curClassTy = nullptr;
         curThis = nullptr;
         thisSlot = nullptr;
@@ -2339,6 +2387,22 @@ struct Emitter {
             emitReleaseRef(b.CreateLoad(lt(ty), addr), ty);
             return;
         }
+        if (ty->kind == TypeKind::Struct) {
+            if (ty->has_dtor) {
+                FunctionCallee dtor = mod->getOrInsertFunction(
+                    dtor_cname(ty->unit, ty->name),
+                    FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+                b.CreateCall(dtor, {addr});
+                return;
+            }
+            for (size_t k = ty->fields.size(); k > 0; --k) {
+                size_t idx = k - 1;
+                if (ty->fields[idx].weak) continue;
+                emitReleaseValue(fieldAddr(addr, ty, static_cast<int>(idx)),
+                                 ty->fields[idx].type);
+            }
+            return;
+        }
         if (ty->kind == TypeKind::Array && needsCleanup(ty->elem)) {
             auto* st = cast<LStruct>(lt(ty));
             for (size_t i = 0; i < ty->array_size; ++i) {
@@ -2354,6 +2418,14 @@ struct Emitter {
         if (!ty) return;
         if (isRefKind(ty)) {
             emitRetainRef(b.CreateLoad(lt(ty), addr), ty);
+            return;
+        }
+        if (ty->kind == TypeKind::Struct) {
+            for (size_t i = 0; i < ty->fields.size(); ++i) {
+                if (ty->fields[i].weak) continue;
+                emitRetainValue(fieldAddr(addr, ty, static_cast<int>(i)),
+                                ty->fields[i].type);
+            }
             return;
         }
         if (ty->kind == TypeKind::Array && needsCleanup(ty->elem)) {
@@ -2494,6 +2566,14 @@ struct Emitter {
         thisSlot = entryAlloca(ptrTy(), "this");
         b.CreateStore(fn->getArg(0), thisSlot);
         block(sd->dtor->body.get());
+        // 用户析构体之后，逐字段释放引用（逆序）
+        for (size_t k = sd->ty->fields.size(); k > 0; --k) {
+            size_t idx = k - 1;
+            if (sd->ty->fields[idx].weak) continue;
+            emitReleaseValue(fieldAddr(b.CreateLoad(ptrTy(), thisSlot), sd->ty,
+                                       static_cast<int>(idx)),
+                             sd->ty->fields[idx].type);
+        }
         finishBody(fn, sd->name + " 析构器");
     }
 
@@ -2529,6 +2609,7 @@ struct Emitter {
         thisSlot = nullptr;
         refScopes.clear();
         loopScopeDepth.clear();
+        stmtTemps.clear();
         curFn = fn;
         curRetTy = f->rty;
         allocaBB = BasicBlock::Create(ctx, "allocas", fn);

@@ -210,6 +210,23 @@ bool Type::is_signed() const {
     return true;
 }
 
+bool Type::needs_cleanup() const {
+    switch (kind) {
+        case TypeKind::Class:
+        case TypeKind::Interface: return true;
+        case TypeKind::Struct:
+            if (has_dtor) return true;
+            for (const auto& f : fields) {
+                if (f.weak) continue;
+                if (f.type && f.type->needs_cleanup()) return true;
+            }
+            return false;
+        case TypeKind::Array:
+            return elem && elem->needs_cleanup();
+        default: return false;
+    }
+}
+
 TypePtr Type::field_type(const std::string& fname) const {
     if (kind != TypeKind::Struct && kind != TypeKind::Class) return nullptr;
     for (const auto& f : fields) {

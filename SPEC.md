@@ -176,15 +176,24 @@ struct Point {
   - `S(...)` 构造器可重载；`S s;` 调用无参构造器；`S s = S(args);` 直接就地构造；
     有构造器时禁止聚合初始化与 `= 0`；
   - `~S()` 在作用域结束、`return`/`break`/`continue` 时自动调用（局部变量）；
-  - **临时限制**：含用户析构器的 struct 暂不可按值拷贝/赋值/传参/返回，也不能作全局变量、
-    数组元素或其它 struct/class 字段（`struct` 字段析构未实现）；通过指针/引用传递。
-    这些限制将在拷贝控制（U24：RC 字段 + 生成拷贝/析构）实现后放宽。
 - 无继承、无虚函数、无匿名 struct/union（第一阶段）。
 - 递归只能通过指针：`struct Node { int v; Node* next; }`。
-- 成员只能是值类型：标量、指针、数组、切片描述符、结构体、`string` 视图；第一阶段没有引用类型成员（包括 class 引用，见 3.8）。
-- 可取地址、`sizeof(S)`；赋值按字节拷贝（memcpy 语义）。
-- 结构体构造函数、方法、`this` 属于对象机制：**struct 仍不支持**；`Point(...)` 只做聚合初始化。
-  用户构造器/方法/`this` 仅 class 支持（见 3.8–3.12）。
+- 字段可以是标量、指针、枚举、定长数组、嵌套 struct、`string` 视图，以及
+  **class/interface 引用字段**（此时 struct 为非 POD 值类型）。
+- 含 class/interface 引用字段（含嵌套 struct/数组中的引用）的 struct 由编译器生成逐字段 RC：
+  - 拷贝初始化 `S b = a;` 与按值传参：复制后对引用字段 retain；
+  - 赋值 `b = a;`：先 retain 新值、再 release 旧值（自赋值安全）；
+  - 析构（作用域结束、`return`/`break`/`continue`、宿主 class 销毁、数组逐元素）：
+    逐字段 release；
+  - 参数按借用传递（callee 不 retain/不释放）；函数返回值是 owned 值（借用返回时先 retain
+    字段）；调用返回的 struct 临时值在语句结束时释放；
+  - 未显式初始化的本地 struct 会先清零，避免析构时释放未初始化指针。
+- **临时限制**：
+  - 含引用字段的 struct 暂不能作全局变量（无退出析构）；
+  - `extern C` 签名递归检查：含 class/interface 的 struct 不能作为 C 参数/返回值；
+  - 含**用户析构器**的 struct 仍不可按值拷贝/赋值/传参/返回，也不能作全局变量、数组元素
+    或其它 struct/class 字段（用户析构器与自动字段 RC 的交互待后续实现）；通过指针传递。
+- `sizeof(S)` 可用；纯值 struct 赋值按字节拷贝语义，含引用字段的拷贝由编译器插入 RC 操作。
 - 字段同样支持多个名字共享类型：`int x, y;`；也可使用类型在前的定长数组，如 `char[20] name;`。
 - 打包/对齐属性：待定。
 
@@ -276,7 +285,8 @@ class Cat {
   - 读取得到可空的借用句柄，有效期到所在表达式结束；需要保留时赋给强引用（+1）；
   - 环必须用 weak 打破；语言不提供环收集器，未打破的环会泄漏（见 8.3）。
 - **class 静态数组**：`Cat[3]`、`Cat[0]` 允许（元素是句柄）；拷贝逐元素 +1、销毁逐元素 -1、
-  元素赋值先 -1 旧值再 +1 新值。struct 仍不能含 class 引用或 class 数组。
+  元素赋值先 -1 旧值再 +1 新值。struct 允许含 class/interface 引用字段（非 POD，编译器生成
+  逐字段 RC，见 3.4）。
   动态数组/其他容器后续作为引用类型（class）提供；**class/interface 切片 `Cat[]` 第一阶段禁止**。
 - `readonly Cat c`（**第一阶段不支持**）：通过 c 不能写对象；`const Cat c`：绑定不可重绑定；可组合
   `const readonly Cat c`。目前 `readonly` 只支持指针/切片，readonly class 视图待语法确定后再实现；编译器会拒绝这种写法。
@@ -284,7 +294,6 @@ class Cat {
   第一阶段不允许 `ref` 局部变量。当前解析器只在 `for ref` 中接受 `ref`，参数位置会报错。
 - class 参数按借用传递（调用期间不 +1）；被调方要保存时由编译器在存储点 +1。
 - 禁止（第一阶段）：
-  - struct 含 class 引用字段（值拷贝会引入隐式 retain/release）；
   - class/interface **切片** `Cat[]`（静态数组 `Cat[3]` 允许，见上）；
   - class 传给 `extern` C 函数（C 侧不参与引用计数）；
   - `sizeof` / `alignof` 作用于 class 类型（待定，见 12）；

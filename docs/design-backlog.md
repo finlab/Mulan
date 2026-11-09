@@ -361,6 +361,15 @@
   - 测试：拷贝 retain、赋值 release、自赋值、数组、class 字段、传参/返回、零初始化、extern 拒绝。
 - 备选：若不想让 struct 变复杂，保留 struct POD，另加 `value class` 承载"值 + 引用字段"；两者语义等价，
   只是命名/关键字不同。
+- **实现状态（0.0.23）**：已落地第一版——
+  - `Type::needs_cleanup()` 递归判定（class/interface、含引用/析构字段的 struct、数组）；
+  - sema 允许 struct 含 class/interface 字段；含引用字段的 struct 不能作全局变量；extern 签名递归拒绝；
+  - codegen：逐字段/逐元素 retain/release（`emitRetainValue`/`emitReleaseValue`）、struct 赋值先 retain 新再
+    release 旧、返回值借用转 owned、调用实参临时值语句结束清理、未初始化本地 struct 自动清零、
+    struct 用户析构器在函数末尾逐字段释放；
+  - 测试：`struct_rc_fields`（拷贝/赋值/传参/返回/数组/嵌套/class 字段/interface/dtor struct）+ 2 个报错用例。
+  - 暂缓：含**用户析构器**的 struct 仍禁止按值拷贝/赋值/传参/返回/作数组元素或字段；含引用 struct 的
+    取址规则并入 U21；拥有型 slice/string 字段等 U22/U26。
 
 ### U25. 用现有设施实现 `struct string`：缺口清单
 - 若只是 **C 风格手工管理**（`struct Str { byte* data; usize n; usize cap; }` + 自由函数 + `alloc/realloc/free`）：
@@ -368,7 +377,8 @@
   - 名字冲突：内置 `string` 是关键字，不能 `struct string`；需叫 `Str`/`StringBuf`，或改名内置类型；
   - **关键字不能做字段名**：`len`/`free`/`alloc` 等是关键字，`int len;` 解析报错；用 `n`/`length`；
   - 无 `->`/指针自动解引用：`p.n` 报"类型 S* 没有成员"，必须 `(*p).n`；
-  - 无 struct 方法/构造/析构：API 只能是自由函数（`str_init(&s)`、`str_free(&s)`）；
+  - struct 方法与构造/析构已支持（0.0.21–0.0.22）；但含用户析构器的 struct 仍不可按值拷贝，
+    API 可用方法/构造器，仍建议 `str_free(&s)` 显式释放；
   - 无自动清理：忘了 `str_free` 就泄漏；无 RAII；
   - **按值复制 = 双 owner**：编译器逐字段拷贝，`Str b = a` 后两边都 free 会双重释放；只能约定"不要复制、用 `str_clone`"，编译器不阻止；
   - 无 `new byte[n]`：用 `alloc/realloc/free`；
