@@ -201,6 +201,30 @@
   高并发下可明显退化。缓解：move 优化、尽量传借用、线程本地/arena、或 `--single-thread` 非原子构建。
 - 结论：**Java/C# 不付原子 RC 代价，付的是 GC 代价**；受管视图要付原子计数，需要靠 move/借用优化压低。
 
+### U21. 原生指针保留范围；RC 对象取地址 / 取成员地址
+- 现状（sema 过宽，已确认）：
+  - 声明 `C*` 被拒绝，但**表达式可以绕过**：`&c`、`&c.x`、`&c.d`（d 是 class 字段）、
+    `void* v = &c` 都能通过 `check`，产生指向 RC 句柄/对象内部的裸指针。
+  - `&c.x` 得到的 `int*` 在 `del c` 后悬空；`&c.d` 指向 class 句柄槽，写它可绕过 retain/release。
+- 建议策略：
+  - **保留**裸指针用于：`alloc/free/realloc`、C 互操作（非引用类型）、
+    `&struct_var` / `&struct.field` / `&arr[i]`（元素非 class/interface）、指针变量取址（`int**`）、指针算术。
+  - **禁止**：
+    - 对 class/interface 句柄取地址（`&c`、`&this`、`&iface`）；
+    - 对**经由 class/interface 引用访问的成员**取地址（`&c.x`、`&c.d`、`&h.items[0]`），
+      即使字段是标量/struct——生命周期不可表达，易悬空；
+    - 对 class/interface 数组元素取地址（元素是句柄）。
+  - 理由：RC 生命周期无法用裸指针表达；内部指针可绕过 retain/release（字段是引用时尤其危险）；
+    C 互操作本来就不允许 class 对象过界；没有借用检查器。
+- 合法替代：
+  - 字段/结构体拷到局部变量，调用后再赋回：`S tmp = c.s; api(&tmp); c.s = tmp;`
+  - 标量 out 参数同理；
+  - 真正需要就地借用时，后续加 **`ref` 参数/返回（仅 struct）** 或显式 `unsafe` 块（保留字已留），
+    而不是裸指针。
+- 实现要点（待做）：`check_unary` 的 `&` 分支增加"操作数类型是引用 / 操作数是经引用访问的成员/下标"检查；
+  `&this`、`&c`、`&c.x`、`&c.d`、`&classArray[i]` 报清晰错误；struct/数组/指针变量的取址保持可用。
+- 注意：`&p`（`p` 是 `int*` 变量）应继续允许（C 的 `int**` out 参数）；它不是 class 句柄。
+
 ## 已完成（留档）
 
 - 0.0.20：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（删除 `ubyte`/`uchar` 别名）；
