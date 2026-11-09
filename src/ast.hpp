@@ -40,6 +40,7 @@ struct GlobalVar;
 struct FuncDecl;
 struct EnumConst;
 struct CtorDecl;
+struct DtorDecl;
 struct MethodDecl;
 
 // 名字解析结果（sema 写入，codegen 读取）
@@ -204,6 +205,8 @@ struct StructDecl : Decl {
     std::string name;
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
     std::vector<std::unique_ptr<MethodDecl>> methods;  // 值类型方法（静态派发）
+    std::vector<std::unique_ptr<CtorDecl>> ctors;
+    std::unique_ptr<DtorDecl> dtor;
     TypePtr ty;  // sema: 结构体类型（占位后填充 fields）
 };
 

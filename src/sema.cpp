@@ -105,6 +105,7 @@ private:
     std::vector<Scope> scopes_;
     int loop_depth_ = 0;
     std::unordered_map<int, TypePtr> auto_groups_;  // auto 同一声明的推断结果
+    Expr* direct_init_expr_ = nullptr;  // 当前正在检查的直接初始化表达式（构造器就地构造）
 
     // ------------------------------------------------------------ 工具
 
@@ -245,6 +246,11 @@ private:
             if (spec->weak && !is_class_type(ft)) {
                 err("`weak` 字段必须是 class 引用（接口暂不支持 weak）", c);
             }
+            if (noncopyable_struct(ft)) {
+                err("含析构器的 struct `" + ft->str() +
+                        "` 暂不能作为字段（字段析构未实现）",
+                    c);
+            }
             fields.push_back(Field{fname, ft, spec->weak});
         }
         c->ty->fields = std::move(fields);
@@ -273,6 +279,11 @@ private:
                     err("struct 字段不能包含 class/interface 引用（见 3.8）", sd);
                 }
                 if (spec->weak) err("`weak` 只能用于 class 字段", sd);
+                if (noncopyable_struct(ft)) {
+                    err("含析构器的 struct `" + ft->str() +
+                            "` 暂不能作为字段（字段析构未实现）",
+                        sd);
+                }
                 fields.push_back(Field{fname, ft});
             }
             sd->ty->fields = std::move(fields);
@@ -280,10 +291,20 @@ private:
             sd->ty->methods.clear();
             for (auto& m : sd->methods) {
                 m->rty = resolve_type(m->ret.get(), u);
+                if (noncopyable_struct(m->rty)) {
+                    err("含析构器的 struct `" + m->rty->str() +
+                            "` 不能按值返回（用指针）",
+                        m.get());
+                }
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
                     if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("含析构器的 struct `" + pt->str() +
+                                "` 只能通过指针传递（按值会拷贝）",
+                            p.get());
+                    }
                     m->pty.push_back(pt);
                 }
                 MethodSig sig;
@@ -296,6 +317,24 @@ private:
                 sd->ty->methods.push_back(std::move(sig));
                 m->cname = method_cname(u->name, sd->name, m->name, m->pty);
             }
+            sd->ty->ctors.clear();
+            for (auto& ctor : sd->ctors) {
+                ctor->pty.clear();
+                for (auto& p : ctor->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("含析构器的 struct `" + pt->str() +
+                                "` 只能通过指针传递（按值会拷贝）",
+                            p.get());
+                    }
+                    ctor->pty.push_back(pt);
+                }
+                ctor->cname = ctor_cname(u->name, sd->name, ctor->pty);
+                sd->ty->ctors.push_back(ctor->pty);
+            }
+            sd->ty->has_dtor = sd->dtor != nullptr;
+            if (sd->dtor) sd->dtor->cname = dtor_cname(u->name, sd->name);
         }
 
         // class：基类、接口、扁平字段、方法/构造器签名
@@ -332,10 +371,20 @@ private:
             c->ty->is_abstract = false;
             for (auto& m : c->methods) {
                 m->rty = resolve_type(m->ret.get(), u);
+                if (noncopyable_struct(m->rty)) {
+                    err("含析构器的 struct `" + m->rty->str() +
+                            "` 不能按值返回（用指针）",
+                        m.get());
+                }
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
                     if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("含析构器的 struct `" + pt->str() +
+                                "` 只能通过指针传递（按值会拷贝）",
+                            p.get());
+                    }
                     m->pty.push_back(pt);
                 }
                 MethodSig sig;
@@ -354,6 +403,11 @@ private:
                 for (auto& p : ctor->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
                     if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("含析构器的 struct `" + pt->str() +
+                                "` 只能通过指针传递（按值会拷贝）",
+                            p.get());
+                    }
                     ctor->pty.push_back(pt);
                 }
                 ctor->cname = ctor_cname(u->name, c->name, ctor->pty);
@@ -408,10 +462,20 @@ private:
             itf->ty->methods.clear();
             for (auto& m : itf->methods) {
                 m->rty = resolve_type(m->ret.get(), u);
+                if (noncopyable_struct(m->rty)) {
+                    err("含析构器的 struct `" + m->rty->str() +
+                            "` 不能按值返回（用指针）",
+                        m.get());
+                }
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
                     if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("含析构器的 struct `" + pt->str() +
+                                "` 只能通过指针传递（按值会拷贝）",
+                            p.get());
+                    }
                     m->pty.push_back(pt);
                 }
                 MethodSig sig;
@@ -449,10 +513,18 @@ private:
             auto f = dynamic_cast<FuncDecl*>(d.get());
             if (!f) continue;
             f->rty = resolve_type(f->ret.get(), u);
+            if (noncopyable_struct(f->rty)) {
+                err("含析构器的 struct `" + f->rty->str() + "` 不能按值返回（用指针）", f);
+            }
             f->pty.clear();
             for (auto& p : f->params) {
                 TypePtr pt = resolve_type(p->spec.get(), u);
                 if (is_void(pt)) err("参数 `" + p->name + "` 不能是 void", p.get());
+                if (noncopyable_struct(pt)) {
+                    err("含析构器的 struct `" + pt->str() +
+                            "` 只能通过指针传递（按值会拷贝）",
+                        p.get());
+                }
                 f->pty.push_back(pt);
             }
             if (f->is_extern) {
@@ -497,6 +569,11 @@ private:
             case TypeSpec::K::Array: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
                 if (is_void(elem)) err_ts("数组元素不能是 void", spec);
+                if (noncopyable_struct(elem)) {
+                    err_ts("含析构器的 struct `" + elem->str() +
+                               "` 暂不能作为数组元素（数组析构未实现）",
+                           spec);
+                }
                 return Type::make_array(elem, spec->size);
             }
         }
@@ -634,6 +711,11 @@ private:
 
     void check_global(GlobalVar* g) {
         if (!g->rty) err("全局变量 `" + g->name + "` 缺少类型", g);
+        if (noncopyable_struct(g->rty)) {
+            err("含析构器的 struct `" + g->rty->str() +
+                    "` 暂不能作为全局变量（无退出析构）",
+                g);
+        }
         if (g->is_extern) {
             if (g->init) err("`extern` 变量 `" + g->name + "` 不能有初始化器", g);
             return;
@@ -963,6 +1045,24 @@ private:
         end_member();
     }
 
+    void check_struct_ctor(StructDecl* sd, CtorDecl* ctor) {
+        begin_member(sd->ty, t_void(), sd->name + " 构造器", ctor->line, ctor->col);
+        in_ctor_ = true;
+        declare_params(ctor->param_locals, ctor->params, ctor->pty);
+        check_block(ctor->body.get());
+        end_member();
+    }
+
+    void check_struct_dtor(StructDecl* sd) {
+        DtorDecl* d = sd->dtor.get();
+        if (!d) return;
+        begin_member(sd->ty, t_void(), sd->name + " 析构器", d->line, d->col);
+        in_dtor_ = true;
+        check_block(d->body.get());
+        in_dtor_ = false;
+        end_member();
+    }
+
     void check_struct(StructDecl* sd) {
         std::unordered_set<std::string> seen;
         for (auto& m : sd->methods) {
@@ -977,6 +1077,16 @@ private:
             }
             check_struct_method(sd, m.get());
         }
+        std::unordered_set<std::string> ctor_keys;
+        for (auto& ctor : sd->ctors) {
+            std::string key;
+            for (auto& p : ctor->pty) key += p->str() + ",";
+            if (!ctor_keys.insert(key).second) {
+                err("struct `" + sd->name + "` 的构造器签名重复", ctor.get());
+            }
+            check_struct_ctor(sd, ctor.get());
+        }
+        check_struct_dtor(sd);
     }
 
     void check_class(ClassDecl* c) {
@@ -1290,6 +1400,22 @@ private:
             err("`const` 变量 `" + lv->name + "` 必须初始化", lv);
         }
 
+        if (!lv->init && lv->rty && lv->rty->kind == TypeKind::Struct &&
+            !lv->rty->ctors.empty()) {
+            bool has_default = false;
+            for (auto& cs : lv->rty->ctors) {
+                if (cs.empty()) {
+                    has_default = true;
+                    break;
+                }
+            }
+            if (!has_default) {
+                err("struct `" + lv->rty->str() +
+                        "` 没有无参构造器，声明时必须用构造器初始化",
+                    lv);
+            }
+        }
+
         declare_local(lv);
         if (lv->init) check_decl_init(lv->zero, lv->rty, lv->init.get(), "初始化", lv);
     }
@@ -1300,6 +1426,11 @@ private:
         if (auto ie = dynamic_cast<InitExpr*>(init)) {
             if (auto il = dynamic_cast<IntLit*>(ie->expr.get())) {
                 if (il->value == 0 && is_zeroable(ty)) {
+                    if (ty->kind == TypeKind::Struct && !ty->ctors.empty()) {
+                        err("有构造器的 struct `" + ty->str() +
+                                "` 不能用 `= 0` 初始化（调用构造器）",
+                            node);
+                    }
                     zero_flag = true;
                     il->ty = t_int();
                     return;
@@ -1318,9 +1449,25 @@ private:
             if (!e) err("缺少初始化表达式", node);
             if (auto il = dynamic_cast<IntLit*>(e)) {
                 if (il->value == 0 && is_zeroable(ty)) {
+                    if (ty->kind == TypeKind::Struct && !ty->ctors.empty()) {
+                        err("有构造器的 struct `" + ty->str() +
+                                "` 不能用 `= 0` 初始化（调用构造器）",
+                            node);
+                    }
                     il->ty = t_int();
                     return;
                 }
+            }
+            if (auto call = dynamic_cast<Call*>(e);
+                call && ty->kind == TypeKind::Struct && !ty->ctors.empty()) {
+                direct_init_expr_ = e;
+                check_expr(e, ty);
+                direct_init_expr_ = nullptr;
+                if (call->callee_kind != "struct_ctor") {
+                    err("有构造器的 struct `" + ty->str() + "` 必须用 `T(...)` 构造初始化",
+                        node);
+                }
+                return;
             }
             if (ty->kind == TypeKind::Array && is_char(ty->elem) &&
                 dynamic_cast<StringLit*>(e)) {
@@ -1339,6 +1486,10 @@ private:
 
     void check_aggregate(InitAggregate* init, const TypePtr& ty, const std::string& what) {
         auto& items = init->items;
+
+        if (ty->kind == TypeKind::Struct && !ty->ctors.empty()) {
+            err("有构造器的 struct `" + ty->str() + "` 不能使用聚合初始化", init);
+        }
 
         if (ty->kind == TypeKind::Struct) {
             const auto& fields = ty->fields;
@@ -1635,7 +1786,16 @@ private:
         return t->name == "char" || t->name == "byte";
     }
 
+    static bool noncopyable_struct(const TypePtr& t) {
+        return t && t->kind == TypeKind::Struct && t->has_dtor;
+    }
+
     TypePtr check_assign(Expr* e, const TypePtr& dst, const std::string& what) {
+        if (noncopyable_struct(dst)) {
+            err(what + "：含析构器的 struct `" + dst->str() +
+                    "` 不能按值拷贝（用指针/显式 clone）",
+                e);
+        }
         TypePtr src = check_expr(e, dst);
         if (assignable(e, src, dst)) return src;
         err(what + "：不能把 " + (src ? src->str() : "void") + " 赋给 " +
@@ -2257,6 +2417,21 @@ private:
         }
 
         if (struct_ty) {
+            if (!struct_ty->ctors.empty()) {
+                if (!c->named.empty()) err("struct 构造器不支持命名参数", c);
+                if (struct_ty->has_dtor && c != direct_init_expr_) {
+                    err("含析构器的 struct 构造只能用于声明初始化", c);
+                }
+                const auto* chosen = choose_ctor(struct_ty->ctors, raw_args(c->args),
+                                                 "struct `" + struct_ty->str() + "`", c);
+                for (size_t i = 0; i < c->args.size(); ++i) {
+                    check_assign(c->args[i].get(), (*chosen)[i], "构造参数");
+                }
+                c->callee_kind = "struct_ctor";
+                c->ctor = struct_ty;
+                c->ctor_pty = chosen;
+                return struct_ty;
+            }
             c->callee_kind = "ctor";
             c->ctor = struct_ty;
             check_ctor_args(c, struct_ty);

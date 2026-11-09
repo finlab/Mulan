@@ -307,10 +307,14 @@ std::unique_ptr<Decl> Parser::parse_struct() {
 
     while (!at_op("}")) {
         if (at_op("~")) {
-            throw err("暂不支持 struct 析构器（后续实现）");
+            if (decl->dtor) throw err("struct `" + name + "` 只能有一个析构器");
+            decl->dtor = parse_dtor();
+            continue;
         }
         if (peek().kind == TokKind::Ident && peek().text == name && peek(1).is_op("(")) {
-            throw err_at("暂不支持 struct 构造器（后续实现）", peek());
+            const Token ctor_name = advance();
+            decl->ctors.push_back(parse_ctor(ctor_name));
+            continue;
         }
         if (at_kw("weak")) {
             throw err("`weak` 只能用于 class 字段");

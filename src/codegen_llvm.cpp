@@ -608,6 +608,7 @@ struct Emitter {
     static bool needsCleanup(const TypePtr& t) {
         if (!t) return false;
         if (t->kind == TypeKind::Class || t->kind == TypeKind::Interface) return true;
+        if (t->kind == TypeKind::Struct && t->has_dtor) return true;
         if (t->kind == TypeKind::Array) return needsCleanup(t->elem);
         return false;
     }
@@ -619,6 +620,11 @@ struct Emitter {
         if (isRefKind(lv->rty)) {
             Value* v = b.CreateLoad(lt(lv->rty), it->second);
             emitReleaseRef(v, lv->rty);
+        } else if (lv->rty->kind == TypeKind::Struct && lv->rty->has_dtor) {
+            FunctionCallee dtor = mod->getOrInsertFunction(
+                dtor_cname(lv->rty->unit, lv->rty->name),
+                FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+            b.CreateCall(dtor, {it->second});
         } else {
             emitReleaseValue(it->second, lv->rty);
         }
@@ -1234,6 +1240,24 @@ struct Emitter {
             }
             return v;
         }
+        if (c->callee_kind == "struct_ctor") {
+            TypePtr st = c->ctor;
+            const auto* cpty = c->ctor_pty;
+            auto* tmp = entryAlloca(lt(st), "ctor.tmp");
+            std::vector<LType*> ptys{ptrTy()};
+            for (auto& t : *cpty) ptys.push_back(lt(t));
+            FunctionCallee callee = mod->getOrInsertFunction(
+                ctor_cname(st->unit, st->name, *cpty),
+                FunctionType::get(LType::getVoidTy(ctx), ptys, false));
+            std::vector<Expr*> rawArgs;
+            for (auto& a : c->args) rawArgs.push_back(a.get());
+            ArgPack pack = prepareArgs(rawArgs, *cpty);
+            std::vector<Value*> vals{tmp};
+            for (auto* v : pack.vals) vals.push_back(v);
+            b.CreateCall(callee, vals);
+            releaseTemps(pack);
+            return b.CreateLoad(lt(st), tmp);
+        }
         if (c->callee_kind == "struct_method") {
             const MethodSig* sig = c->method;
             if (!sig || !sig->owner) fail("LLVM 后端：struct 方法缺少签名", c->line, c->col);
@@ -1602,6 +1626,24 @@ struct Emitter {
                 storeValue(Constant::getNullValue(lt(ty)), addr, ty);
                 return;
             }
+            if (auto call = dynamic_cast<Call*>(e);
+                call && call->callee_kind == "struct_ctor") {
+                TypePtr st = call->ctor;
+                const auto* cpty = call->ctor_pty;
+                std::vector<LType*> ptys{ptrTy()};
+                for (auto& t : *cpty) ptys.push_back(lt(t));
+                FunctionCallee callee = mod->getOrInsertFunction(
+                    ctor_cname(st->unit, st->name, *cpty),
+                    FunctionType::get(LType::getVoidTy(ctx), ptys, false));
+                std::vector<Expr*> rawArgs;
+                for (auto& a : call->args) rawArgs.push_back(a.get());
+                ArgPack pack = prepareArgs(rawArgs, *cpty);
+                std::vector<Value*> vals{addr};
+                for (auto* v : pack.vals) vals.push_back(v);
+                b.CreateCall(callee, vals);
+                releaseTemps(pack);
+                return;
+            }
             if (ty->kind == TypeKind::Array && sizeOf(ty->elem) == 1 &&
                 dynamic_cast<StringLit*>(e)) {
                 if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       char-array from string\n";
@@ -1708,6 +1750,15 @@ struct Emitter {
                 initInto(slot, lv->rty, lv->init.get());
             } else if (isRefKind(lv->rty)) {
                 b.CreateStore(Constant::getNullValue(lt(lv->rty)), slot);
+            } else if (lv->rty && lv->rty->kind == TypeKind::Struct) {
+                if (!lv->rty->ctors.empty()) {
+                    FunctionCallee ctor = mod->getOrInsertFunction(
+                        ctor_cname(lv->rty->unit, lv->rty->name, {}),
+                        FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+                    b.CreateCall(ctor, {slot});
+                } else if (lv->rty->has_dtor) {
+                    zeroMem(slot, lv->rty);
+                }
             } else if (lv->rty && lv->rty->kind == TypeKind::Array && needsCleanup(lv->rty)) {
                 zeroMem(slot, lv->rty);
             }
@@ -2414,6 +2465,38 @@ struct Emitter {
         finishBody(fn, sd->name + "." + m->name);
     }
 
+    void emitStructCtor(StructDecl* sd, CtorDecl* ctor) {
+        std::vector<LType*> ptys{ptrTy()};
+        for (auto& t : ctor->pty) ptys.push_back(lt(t));
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(ctor->cname,
+                                     FunctionType::get(LType::getVoidTy(ctx), ptys, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::ExternalLinkage);
+        curClassTy = sd->ty;
+        beginBody(fn);
+        thisSlot = entryAlloca(ptrTy(), "this");
+        b.CreateStore(fn->getArg(0), thisSlot);
+        bindParams(fn, 1, ctor->param_locals);
+        block(ctor->body.get());
+        finishBody(fn, sd->name + " 构造器");
+    }
+
+    void emitStructDtor(StructDecl* sd) {
+        if (!sd->dtor) return;
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(sd->dtor->cname,
+                                     FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::ExternalLinkage);
+        curClassTy = sd->ty;
+        beginBody(fn);
+        thisSlot = entryAlloca(ptrTy(), "this");
+        b.CreateStore(fn->getArg(0), thisSlot);
+        block(sd->dtor->body.get());
+        finishBody(fn, sd->name + " 析构器");
+    }
+
     void emitInterfaceMethod(InterfaceDecl* itf, MethodDecl* m) {
         if (!m->body) return;
         std::vector<LType*> ptys{ifaceTy};
@@ -2609,6 +2692,8 @@ struct Emitter {
                 auto sd = dynamic_cast<StructDecl*>(d.get());
                 if (sd && sd->ty) {
                     for (auto& m : sd->methods) emitStructMethod(sd, m.get());
+                    for (auto& ctor : sd->ctors) emitStructCtor(sd, ctor.get());
+                    emitStructDtor(sd);
                 }
             }
         }

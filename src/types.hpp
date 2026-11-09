@@ -41,6 +41,7 @@ struct Type {
     TypePtr base;               // Class 的基类
     std::vector<TypePtr> interfaces;  // Class/Interface 实现的接口
     bool is_abstract = false;   // Class 有未实现方法
+    bool has_dtor = false;      // 用户声明了析构器（struct/class）
 
     static TypePtr make_void();
     static TypePtr make_prim(const std::string& name);
