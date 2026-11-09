@@ -191,6 +191,16 @@
   由 owner 计数保证已产出的 string 不被破坏。
 - 未定：小字符串优化（SSO，需要 tag/分支）、子串是否默认复制、控制块是否缓存哈希、weak 视图。
 
+#### U20.1 线程安全与原子 RC 成本（对比 Java/C#/Go）
+- Java/C#/Go 的字符串**不可变 + tracing GC**：跨线程共享**读**安全；复制引用**没有 RC 原子操作**。
+  代价是 GC（分配、追踪、写屏障、延迟），不是 refcount。
+- 共享可变的"引用变量"仍需同步（Java `final`/`volatile`，C# `readonly`/`volatile`/lock）：
+  不可变对象本身安全，但对变量的并发读写仍是 data race。
+- 原子 RC（Rust `Arc<str>`、Swift 字符串存储、我们的受管视图 owner）：
+  每次复制/释放都有原子 op；大量共享时控制块所在 cache line 会被多核反复争用（ping-pong），
+  高并发下可明显退化。缓解：move 优化、尽量传借用、线程本地/arena、或 `--single-thread` 非原子构建。
+- 结论：**Java/C# 不付原子 RC 代价，付的是 GC 代价**；受管视图要付原子计数，需要靠 move/借用优化压低。
+
 ## 已完成（留档）
 
 - 0.0.20：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（删除 `ubyte`/`uchar` 别名）；
