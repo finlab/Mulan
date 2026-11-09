@@ -1,1 +1,1 @@
-`+` 不支持 string 与 int
+不能把 int 赋给 std.string.string

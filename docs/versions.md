@@ -35,5 +35,12 @@
 | 0.0.22 | 2026-11-09 | **struct 构造/析构**：构造器重载、`S s;` 默认构造、`S s = S(args)` 就地构造；析构器在作用域/return/break/continue 自动调用；含析构器的 struct 暂禁按值拷贝/传参/返回/数组/字段/全局；新增 1 个成功用例 + 11 个报错用例 | 161/161（48 成功 + 108 报错 + 5 check） |
 | 0.0.23 | 2026-11-09 | **U24：struct 引用字段 + 逐字段 RC**：struct 可含 class/interface 字段（含数组/嵌套）；拷贝/传参 retain、赋值先 retain 新再 release 旧、析构逐字段/逐元素 release；返回值借用转 owned；调用临时 struct 语句结束释放；未初始化本地 struct 自动清零；extern/全局递归拒绝；含用户析构器的 struct 仍禁拷贝；新增 `struct_rc_fields` 成功用例 + 2 个报错用例，移除过时的“struct 不能含 class 字段”用例 | 163/163（49 成功 + 109 报错 + 5 check） |
 | 0.0.24 | 2026-11-09 | **动态数组 `T[]` + 多维数组**：`new T[n]` 创建带 RC 头的堆数组（句柄 8 字节，O(1) 复制共享）；静态矩形 `T[m,n]`（嵌套定长数组、`a[i,j]`/`a[i][j]`）、动态矩形 `T[,]` + `new T[m,n]`、锯齿 `T[][]` + `new T[m][]`（一次一维，循环填行）；`len(a)`/`len(a,k)`（静态 axis 字面量、动态可运行期）；`T[N]→T[]`、`T[m,n]→T[,]` 分配复制；元素支持 class/interface 与含引用 struct，逐元素 release；null 句柄 len=0；extern 递归拒绝 `T[]`；含析构器 struct 仍禁作元素；移除 class/interface 切片禁用与旧借用视图语义 | 171/171（51 成功 + 115 报错 + 5 check） |
+| 0.0.25 | 2026-11-09 | **字符串改为 std.string.string struct，移除内建 `string`**：`libs/std/string.mu`（unit `std.string`）中的 struct `string { byte* p; usize n; byte[] owner; }` + 字符串库；字面量类型为 string（owner=null，rodata，零分配/零 RC）；`s[i]`/`len`/`==`/for-in 按 canonical 布局内置降级；复制/字段/返回走 U24 逐字段 RC；std.string 提供 `str_from_cstr`/`str_cstr`/`str_sub`/`str_concat`/`operator+` 与方法；移除 lexer/parser/sema 的 `string` 关键字，迁移全部测试与示例；新增 `str_struct` 用例；生成 IR 后运行 LLVM `-O2` 标准流水线 | 172/172（52 成功 + 115 报错 + 5 check） |
+| 0.0.26 | 2026-11-09 | **标准库目录与类型改名**：新增 `libs` 默认库搜索路径（入口目录、`-I`、`MULANC_LIBS`、当前目录及祖先的 `libs`/`libs/std`）；`libs/std/string.mu`（unit `std.string`）替代编译器内嵌 prelude；`unit`/`use` 支持点号名（`std.string` → `libs/std/string.mu`）；字符串结构体由 `Str` 改名为 `string`；测试/示例/文档同步 | 172/172（52 成功 + 115 报错 + 5 check） |
 
 > 后续条目只递增 build 号，例如 0.0.2、0.0.3……；主/次版本变更会单独注明。
+
+
+
+
+

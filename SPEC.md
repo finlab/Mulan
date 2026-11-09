@@ -19,7 +19,7 @@
 | 动态类型 | 第一阶段不做；异构值优先库级 Variant/和类型；`dynamic`/`any` 仅预留 |
 | 作用域 | 声明不写 `T x(...)`；`Point p` 未初始化，`= 0` 零初始化；unit 级变量须 `static`/`extern`（`const` 除外） |
 | 对象模型 | 值与引用分离：`struct` 值类型；`class` 引用类型（单继承 + 接口；默认虚方法；原子 RC + weak；无 GC/环收集器） |
-| 字符串 | 内建 `string`（UTF-8、不可变、NUL 结尾）；支持与 `byte[]` 的字节视图/拷贝 |
+| 字符串 | `string`（std.string struct：`byte* p; usize n; byte[] owner`；UTF-8、NUL 结尾仅保证完整串/字面量） |
 | 内存 | 指针 + `alloc/free/realloc`（裸内存）；`class` 用 `new/del` + 原子引用计数；无 GC、无借用检查 |
 | 控制流 | `if/else`、`while`、`for-in`、`break/continue/return`；条件必须是 `bool`；强制花括号 |
 | 条件括号 | 可选，规范写法省略（`if cond { }`）；C 式 `if (cond)` 仍合法 |
@@ -59,7 +59,7 @@ unit use const static auto struct enum extern class interface new del weak
 if else while for in ref break continue return
 true false null as sizeof alignof len alloc realloc free
 readonly void bool byte char short ushort int uint long ulong
-float double usize isize string
+float double usize isize
 and or not override operator super this
 ```
 
@@ -76,7 +76,7 @@ and or not override operator super this
   - 字符字面量表示**单个字节**，不是 Unicode 码点：`'a'` 即 `0x61`；`'中'` 这类多字节字符**编译报错**（第一阶段不支持非 ASCII 字面量）。
   - Unicode 文本用 `string`（UTF-8 字节序列，见 3.3），`len(s)` 与 `s[i]` 均按字节；`s[i]` 与字符串 for-in 的元素类型都是 `byte`。
   - `\u{...}` 与 Unicode 码点类型待定。
-- **字符串**：`"..."`，UTF-8，编译期静态存储，NUL 结尾；类型 `string`（内建不可变视图，见 3.3），可隐式转 `readonly char*`；`\u{...}` 待定。
+- **字符串**：`"..."`，UTF-8，编译期静态存储，NUL 结尾；类型是 std.string 的 `string` 结构体（见 3.3），可隐式转 `readonly char*`；`\u{...}` 待定。
 - **布尔**：`true` / `false`。
 - **空值**：`null`（不是 0）；可赋给指针与 class 引用，不能用于 struct/标量。
 
@@ -111,11 +111,11 @@ move  unsafe  typeof  match
 | `long` / `ulong` | 8 | 有/无符号 64 位 |
 | `float` / `double` | 4 / 8 | IEEE-754 |
 | `usize` / `isize` | 指针宽 | 平台相关；用于大小、下标 |
-| `string` | 2 个机器字 | 内建不可变 UTF-8 视图（指针 + 长度），NUL 结尾 |
+| `string` | 3 个机器字 | std.string struct：`byte* p; usize n; byte[] owner`（UTF-8；NUL 结尾仅保证完整串/字面量） |
 | `void` | — | 无值；只能作返回类型或 `void*` 的基类型 |
 
 - 第一阶段不引入 `wchar`、`decimal`、`i8/u8` 等别名；`decimal` 后续作为库实现。
-- 所有类型宽度固定；`usize/isize` 是唯一平台相关类型（`string` 描述符随指针宽度）。
+- 所有类型宽度固定；`usize/isize` 是唯一平台相关类型（`string` 是 24 字节 struct，含一个指针）。
 - `void` 不能声明变量、字段、参数、数组元素；`void*` 合法；`sizeof(void)` / `alignof(void)` 非法。
 
 ### 3.2 指针
@@ -164,12 +164,25 @@ move  unsafe  typeof  match
 - `len(x)`：定长数组返回编译期常量，动态数组返回运行时长度，均为 `usize`。
 - 边界检查：待定（建议 debug 构建检查，release 可配置关闭；动态数组默认检查）。
 - 全零/空值用 `= 0`：`int[5] a = 0;`、`int[] s = 0;`、`string s = 0;`。
-- `string` 是内建不可变 UTF-8 视图，布局为 `{ readonly char* ptr; usize len; }`（16 字节）；NUL 结尾，`len` 不含 NUL。
-- `string` 可隐式转 `readonly char*`；`s[i]` 返回 `byte`；`len(s)` 返回字节长度；`for c in s` 的 `c` 也是 `byte`。
-- `string` 的 `==` / `!=` 是**值比较**（按字节、含长度）；`string` 不能与 `null` 比较（用 `len(s) == 0` 或 `s == ""`）。
-  - 零值 `string`（`= 0`）是空字符串，因此 `s == ""` 为真。
-  - `string` 与其他指针类型不能比较。
-- 定长 `char[N]` 从 `string` 初始化时执行字节拷贝：要求 `len(s) + 1 <= N`，复制内容并补 NUL 与零（建议；长度已知时编译期检查，否则运行期检查）。
+- **`string` 是 std.string 中的普通 struct**（不再有内建 `string` 类型）：
+
+  ```
+  struct string {
+      byte* p;      // 指向 UTF-8 字节（NUL 结尾仅对完整字符串/字面量保证）
+      usize n;      // 字节长度（不含 NUL）
+      byte[] owner; // 拥有型缓冲区（null = 字面量/借用视图）
+  }
+  ```
+
+  - 字面量 `"abc"` 的类型是 `string`，`owner == null`，数据在只读段且 NUL 结尾；零分配、零 RC。
+  - 复制 `string` 是值拷贝（24 字节）；`owner` 非 null 时 retain，析构时 release（编译器按普通 struct 字段 RC 处理）。
+  - `s[i]` 返回 `byte`；`len(s)` 返回字节长度；`for c in s` 按字节遍历；`==`/`!=` 按字节值比较（编译器对 canonical 布局直接降级）。
+  - `string` 不能与 `null` 比较（用 `len(s) == 0` 或 `s == ""`）；零值 `string s = 0` 是空串。
+  - `string → readonly char*` / `readonly byte*` 隐式转换（返回 `p`；要求 NUL 结尾）。
+  - std.string 提供：`str_from_cstr`、`str_cstr`、`str_sub`、`str_concat`、`operator+`；
+    `string.length()/empty()/at(i)` 为 struct 方法。
+  - 子串 `str_sub` 与原串共享 `owner`（retain），零分配；不保证子串自身 NUL 结尾。
+- 定长 `char[N]` 从 `string` 字面量初始化时执行字节拷贝：复制内容并补 NUL 与零。
 
 ### 3.4 结构体
 
@@ -199,7 +212,7 @@ struct Point {
   - `~S()` 在作用域结束、`return`/`break`/`continue` 时自动调用（局部变量）；
 - 无继承、无虚函数、无匿名 struct/union（第一阶段）。
 - 递归只能通过指针：`struct Node { int v; Node* next; }`。
-- 字段可以是标量、指针、枚举、定长数组、动态数组 `T[]`、嵌套 struct、`string` 视图，以及
+- 字段可以是标量、指针、枚举、定长数组、动态数组 `T[]`、嵌套 struct、`string` 字段，以及
   **class/interface 引用字段**（此时 struct 为非 POD 值类型）。
 - 含 class/interface 引用字段（含嵌套 struct/数组中的引用）的 struct 由编译器生成逐字段 RC：
   - 拷贝初始化 `S b = a;` 与按值传参：复制后对引用字段 retain；
@@ -242,7 +255,7 @@ enum Color { Red, Green, Blue }
 - 浮点字面量同样按上下文适配：`float f = 1.5;` 合法；但**变量/表达式**之间的 `double` → `float` 仍必须写 `as`。
 - 整数运算：小于 `int` 的类型先提升到 `int`；混合符号/宽度按上述规则，不能隐式转换就报错。
 - `bool` 不参与数值转换；条件必须是 `bool`。
-- `string` → `readonly char*` 隐式；`string` → `readonly byte[]` / `readonly char[]` 隐式（建议，同一数据）。
+- `string` → `readonly char*` / `readonly byte*` 隐式（返回 `p`，要求 NUL 结尾）。
 - `string` 不是数值类型，不能与指针/整数隐式互转。
 - `as` 可用于：数值截断/扩展、指针与整数互转、`readonly` 去除（显式且不安全）。
 
@@ -832,7 +845,7 @@ unit example;
 | 条件括号 | 必需 | 可选，规范省略 |
 | 转换 | 大量隐式 | 仅值域不丢失的加宽；其余 `as` |
 | 数组 | 退化指针、值语义混合 | 定长数组值语义；切片显式 |
-| 字符串 | `char*` | 内建 `string`（UTF-8 视图，NUL 结尾） |
+| 字符串 | `char*` | std.string `string`（UTF-8；NUL 仅保证完整串/字面量） |
 | 类型转换 | `(T)x` | `x as T` |
 | 逻辑 | `&&` / `||` / `!` | `and` / `or` / `not` |
 | 位取反 | `~` | `!`（`not` 专用于逻辑非） |
@@ -859,7 +872,7 @@ unit example;
 | 1 | 声明语法 | 已定：C# 风格，类型在前，多变量共享类型 |
 | 2 | 条件括号是否强制 | 已定：可选，规范省略；C 式仍合法 |
 | 3 | 固定宽度类型命名（C 名 vs `i32`） | 先用 C 名 |
-| 4 | `string` 的布局与 `byte[]` 转换 | 已定：内建 `string`；细节见 3.3 |
+| 4 | `string` 的布局与 `byte[]` 转换 | 已定：std.string.string struct；细节见 3.3 |
 | 5 | 数组是否隐式衰减为指针 | 不衰减 |
 | 6 | 动态数组是否纳入第一阶段 | 已定：纳入（`T[]` / `T[,]`，RC 堆数组） |
 | 7 | 边界检查策略 | debug 检查；release 可配 |
@@ -994,3 +1007,8 @@ unit example;
 - unit 级 `static` 变量由加载器/启动代码零初始化。
 - `auto` 仅在前端做表达式类型直取；多声明符要求推断结果一致；无运行时开销。
 - 动态类型不在第一阶段；未来优先实现库级 Variant，再评估和类型 + `match`；`dynamic` 作为独立运行时层而非核心类型。
+
+
+
+
+

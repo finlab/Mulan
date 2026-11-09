@@ -26,6 +26,8 @@
 - `for c in s` 目前按**字节**遍历；是否保留，还是改成按码点（会破坏现有语义，需谨慎）。
 
 #### B1（实现缺口，待批量修）
+- **已过时（0.0.25）**：内建 `string` 已移除，`string → readonly byte[]` 不再提供；
+  `string` 与 `byte[]` 的转换由 std.string 库函数显式完成。
 - **`string` 隐式转 `readonly byte[]` / `readonly char[]`：sema 允许，但 codegen 没有转换分支**，
   会在 `build` 时报 `无法转换 string → readonly byte[]`。
 - 修法二选一：codegen 按 `{ptr,len}` 同布局重建 slice；或在实现前先让 sema 拒绝（避免"check 通过、build 失败"）。
@@ -70,7 +72,7 @@
 - 并发：`spawn/await/shared/atomic` 等保留字已预留。
 
 ### U13. `string` 的功能边界：内置类型 vs 标准库（建议）
-- **建议：类型内置、功能进标准库（minimal core）**。
+- **建议：类型内置、功能进标准库（minimal std）**。
   - 内置（编译器必须知道）：`string` 类型与布局 `{ptr, usize}`、字面量/NUL、零值、
     `s[i]` 读 `byte`、`len`、字符串 for-in、`==`/`!=`、C 互操作、`char[N]` 初始化；
   - 标准库（`str` / `utf8` / `fmt` 等 unit）：find/split/trim/replace/case/format/join/parse、
@@ -173,6 +175,8 @@
   - RC 的 `null` 检查本来就有（retain/release 已判空），用 `owner==null` 表示静态**不增加额外分支**。
 
 ### U20. 单一 `string` 类型：受管视图（managed view，建议）
+- **实现状态（0.0.25）**：已采用该模型（`string { byte* p; usize n; byte[] owner }`），见 U26；
+  字面量 `owner=null`，子串/拥有串 retain owner；内建 `string` 已移除。
 - 动机：多数字符串是运行时生成的堆缓冲；"借用视图 + 拥有类型"两分法不美观；又不想引入 tracing GC。
 - 方案：`string = { ptr, len, owner* }`（24 字节）
   - `ptr` 直接指向字节（`s[i]`/`len`/比较**无额外间接层、无 tag 判断**）；
@@ -388,17 +392,18 @@
     取址规则并入 U21；拥有型 slice/string 字段等 U22/U26。
 
 ### U25. 用现有设施实现 `struct string`：缺口清单
-- 若只是 **C 风格手工管理**（`struct Str { byte* data; usize n; usize cap; }` + 自由函数 + `alloc/realloc/free`）：
+- **实现状态（0.0.25）**：已由 U26 完成（内建 `string` 已移除，`std.string.string` + 库函数）；以下为历史缺口记录。
+- 若只是 **C 风格手工管理**（`struct string { byte* data; usize n; usize cap; }` + 自由函数 + `alloc/realloc/free`）：
   **现在几乎可以**，但缺少/需注意（已实测）：
-  - 名字冲突：内置 `string` 是关键字，不能 `struct string`；需叫 `Str`/`StringBuf`，或改名内置类型；
+  - 名字冲突：内置 `string` 是关键字，不能 `struct string`；需叫 `string`/`StringBuf`，或改名内置类型；
   - **关键字不能做字段名**：`len`/`free`/`alloc` 等是关键字，`int len;` 解析报错；用 `n`/`length`；
   - 无 `->`/指针自动解引用：`p.n` 报"类型 S* 没有成员"，必须 `(*p).n`；
   - struct 方法与构造/析构已支持（0.0.21–0.0.22）；但含用户析构器的 struct 仍不可按值拷贝，
     API 可用方法/构造器，仍建议 `str_free(&s)` 显式释放；
   - 无自动清理：忘了 `str_free` 就泄漏；无 RAII；
-  - **按值复制 = 双 owner**：编译器逐字段拷贝，`Str b = a` 后两边都 free 会双重释放；只能约定"不要复制、用 `str_clone`"，编译器不阻止；
+  - **按值复制 = 双 owner**：编译器逐字段拷贝，`string b = a` 后两边都 free 会双重释放；只能约定"不要复制、用 `str_clone`"，编译器不阻止；
   - 无 `new byte[n]`：用 `alloc/realloc/free`；
-  - 内置 `string` ↔ `Str` 无自动转换：需库函数逐字节拷贝/构造；
+  - 内置 `string` ↔ `string` 无自动转换：需库函数逐字节拷贝/构造；
   - 无 `+=`/`+` 复合/二元重载派发（struct 复合赋值不支持），append 只能函数调用；
   - 无边界检查/UTF-8 校验，靠库。
 - 若要 **RAII / 值语义 / 动态缓冲**（U18/U20/U22 的设计），还缺：
@@ -415,9 +420,25 @@
   若要把 `string` 变成用户定义的值类型，则需要上面 1–6，属于语言层改造（大版本）。
 
 ### U26. 用语言设施支持"完整的 string 类型"（依赖顺序）
+
+- **实现状态（0.0.26）**：已落地不可变值 `string`：
+  - `libs/std/string.mu`（unit `std.string`）声明普通 struct
+    `string { byte* p; usize n; byte[] owner; }`，作为标准库自动加载、对所有 unit 可见；
+  - 字符串字面量类型为 `string`（`owner=null`，rodata，NUL 结尾），零分配/零 RC；
+  - struct 字段 RC（U24）直接承担 owner 的 retain/release；复制/赋值/传参/返回/字段/数组均已工作；
+  - 编译器对 canonical string 布局保留 intrinsics：`s[i]`、`len(s)`、`==`/`!=`、`for c in s`、literal；
+  - 生成 IR 后运行 LLVM `-O2` 标准流水线，库函数/方法可内联；
+  - std.string 提供：`str_from_cstr`、`str_cstr`、`str_sub`、`str_concat`、`operator+`，
+    以及 `string.length()/empty()/at(i)`；
+  - **已移除内建 `string` 类型**（lexer/parser/sema 不再有 `string` 关键字；测试/示例使用 `string` 结构体）；
+  - 库搜索路径：入口目录、`-I`、`MULANC_LIBS`、当前目录及祖先的 `libs`、`libs/std`；
+    `unit std.string` 对应 `libs/std/string.mu`；
+  - 仍缺：码点/`chars()`、`\u{}`、非 ASCII 字符字面量、StringBuilder/格式化、
+    `find/split/trim/replace` 等高层 API、子串 NUL 保证（`str_sub` 不保证）、可变/COW 版本。
+
 - 目标模型三选一：
-  - **A. 不可变值 string（struct）**：`Str { Buf b; usize off; usize n; }`，Buf 是 RC class；
-    操作返回新 Str；无用户拷贝构造（字段级 RC 自动共享）；需要 struct 方法/构造/析构 + U24 + Buf。
+  - **A. 不可变值 string（struct）**：`string { Buf b; usize off; usize n; }`，Buf 是 RC class；
+    操作返回新 string；无用户拷贝构造（字段级 RC 自动共享）；需要 struct 方法/构造/析构 + U24 + Buf。
   - **B. 可变值 string（struct）**：拥有缓冲、可变方法；必须有深拷贝或 COW；
     需要 **引用/ref**、拷贝构造/赋值、移动（或 COW 的 refcount 查询）——设施最多。
   - **C. 可变引用 string（class）**：`class String { byte* data; usize n; usize cap; ~String(){free} }`；
@@ -434,11 +455,11 @@
      子串/视图需要 ref 返回或复制；
   7. **字符串 API**：从内置 `string`/`readonly char*` 构造、c_str、len/cap/empty、append/insert/replace/trim/find/split、
      UTF-8 校验/码点迭代、格式化；
-  8. **迭代协议**：`for c in s` 目前只支持内置 string/数组/切片；用户 Str 需要索引循环或迭代器协议；
+  8. **迭代协议**：`for c in s` 目前只支持内置 string/数组/切片；用户 string 需要索引循环或迭代器协议；
   9. **关键字冲突**：字段不能叫 `len`/`free` 等（`len` 已实测报错）；API 命名需绕开或允许关键字做字段名。
 - 关键陷阱：
   - 有析构器但无拷贝构造 → 值拷贝会双 owner/双重释放；有拷贝构造但无移动 → 返回/传参大量深拷贝；
-  - 拷贝构造签名需要引用（`Str(const Str&)`），没有引用就只能用指针/显式 clone，语法不自然；
+  - 拷贝构造签名需要引用（`string(const string&)`），没有引用就只能用指针/显式 clone，语法不自然；
   - 构造失败/早退时的析构与部分构造（无异常时也要规则）；返回时 RVO/move。
 - 建议：先用 **C（class String）** 把"完整功能"跑通（改动最小），再按 A 做不可变值版本（U24），
   B（可变值）留到引用/拷贝控制就绪；不要一开始同时上 struct 方法 + 拷贝控制 + COW。
@@ -451,3 +472,7 @@
 - 0.0.14：`weak` 目标销毁自动置 null（全局注册表 + 自旋锁）。
 - 0.0.15：`readonly` class 视图 / `ref` 参数 / interface 向下转换正式列为第一阶段不支持（SPEC 表 98–100）。
 - 0.0.6：`as` 向下转换（class→派生、interface→class）沿 desc 基类链运行期检查。
+
+
+
+

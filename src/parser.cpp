@@ -18,11 +18,11 @@
 
 namespace {
 
-// 与 mtypes.PRIM_NAMES | {"void", "string"} 一致（parser.py 的 PRIMS）
+// 与 mtypes.PRIM_NAMES 一致（parser.py 的 PRIMS）；`string` 已改为 core.Str 结构体
 const std::unordered_set<std::string>& prims() {
     static const std::unordered_set<std::string> s = {
         "byte",  "char",   "short", "ushort", "int",   "uint",  "long",
-        "ulong", "usize", "isize", "float",  "double", "bool",  "void",  "string",
+        "ulong", "usize", "isize", "float",  "double", "bool",  "void",
     };
     return s;
 }
@@ -64,7 +64,20 @@ TypeSpecPtr make_named_spec(const std::string& name, int line, int col) {
 class Parser {
 public:
     Parser(const std::string& src, const std::string& filename)
-        : filename_(filename), toks_(tokenize(src, filename)) {}
+        : filename_(filename), toks_(tokenize(src, filename)) {
+        // std.string 提供的字符串类型（库在 sema 前不可见）
+        type_names_.insert("string");
+    }
+
+    std::string parse_unit_name() {
+        std::string n = expect_ident("unit 名").text;
+        while (at_op(".")) {
+            advance();
+            n += ".";
+            n += expect_ident("unit 名").text;
+        }
+        return n;
+    }
 
     std::unique_ptr<Unit> parse_unit();
 
@@ -196,7 +209,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
     const Token t = peek();
     if (!at_kw("unit")) throw err("文件必须以 `unit 名字;` 开头");
     advance();
-    std::string name = expect_ident("unit 名").text;
+    std::string name = parse_unit_name();
     semicolon();
 
     auto unit = std::make_unique<Unit>();
@@ -209,7 +222,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         const Token tk = peek();
         if (at_kw("use")) {
             advance();
-            std::string uname = expect_ident("unit 名").text;
+            std::string uname = parse_unit_name();
             semicolon();
             auto use = std::make_unique<UseDecl>();
             use->unit_name = std::move(uname);

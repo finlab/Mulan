@@ -25,20 +25,21 @@ build\mulanc.exe build example.mu --emit-ir build/example.ll
 | `int` / `uint` / `enum` | `i32` |
 | `long` / `ulong` / `usize` / `isize` | `i64` |
 | `float` / `double` | `float` / `double` |
-| `string` | `%mu_string = type { ptr, i64 }` |
+| `string` | std.string 的普通 struct：`{ ptr p, i64 n, ptr owner }`（24 字节） |
 | `T[]` | `ptr`（动态数组句柄，指向 `{ i64 rc, i64 len, i64 cap, data... }`） |
 | `T[,]`/`T[,,]` | `ptr`（矩形动态数组，头部 `{ i64 rc, i64 d0, i64 d1, ... , data... }`） |
 | `T*` | `ptr`（opaque pointer） |
 | `T[N]` | `%mu_arr_<elem>_<N> = type { [N x T] }` |
 | `struct S` | `%mu_<unit>_<S>` |
 
-与 mu-lan 的类型布局约定一致（字符串 16 字节、动态数组句柄 8 字节、数组包装 struct、结构体自然对齐）。
+与 mu-lan 的类型布局约定一致（`string` 24 字节、动态数组句柄 8 字节、数组包装 struct、结构体自然对齐）。
 
 ## 降级策略
 
 - 所有局部变量用 `alloca` 承载，读写走 `load`/`store`；不手工做 SSA/phi（除 `and`/`or` 短路需要 phi）。
+- 生成 IR 后运行标准 LLVM `-O2` per-module 流水线（mem2reg/inline/instcombine 等），字符串/RC 辅助函数可被内联。
 - 控制流：`if` / `while` / `for-in` 直接映射到基本块；`break`/`continue` 用标签栈。
-- 字符串字面量：私有常量 `[N x i8]` + 常量 `%mu_string`；重复字面量缓存复用。
+- 字符串字面量：私有常量 `[N x i8]` + std.string `string` 常量 `{p, n, null}`；重复字面量缓存复用。`s[i]`/`len`/`==`/for-in 对 canonical string 布局直接降级。
 - `char[N] = "..."`：`memset` 清零后 `memcpy`。
 - 数组 → 动态数组：按嵌套维度分配 `{rc,dims...}+data` 并复制元素（元素含引用时逐元素 retain）。
 - 静态矩形 `T[m,n]`：嵌套 `%mu_arr_*`（`{[m x [n x T]]}`），连续存储；`a[i,j]` 生成多级 GEP。
@@ -47,8 +48,8 @@ build\mulanc.exe build example.mu --emit-ir build/example.ll
 - `new T[n]`：分配头部，元素零初始化；句柄按 RC 复制/释放，计数归零时逐元素 release 后 free。
 - 指针算术：`getelementptr`；指针相减：`ptrtoint`/`sub`/`sdiv sizeof(T)`。
 - `sizeof` / `alignof`：编译期常量（后端自己实现布局计算）。
-- `length`：定长数组为常量；动态数组读头部 `len`（null 句柄为 0）；字符串读 `len` 字段。
-- 字符串 `==` / `!=`：比较长度 + `memcmp`。
+- `length`：定长数组为常量；动态数组读头部 `len`（null 句柄为 0）；`string` 读 `n` 字段。
+- `string` 的 `==` / `!=`：比较长度 + `memcmp`。
 - `alloc` / `free` / `realloc` → libc `malloc` / `free` / `realloc`。
 - 结构体构造：`insertvalue` 链；零构造：`zeroinitializer`。
 - 聚合初始化：先整体清零，再逐槽位写入（与 C 语义一致）。
@@ -72,3 +73,7 @@ python tests/run_tests.py
 - `bool` 在内存中是 1 字节 `i1`，与 C `bool` 兼容；但跨语言传递结构体时的 ABI 细节未做专门测试。
 - **不要用 `-D_GLIBCXX_DEBUG` 构建链接 LLVM 的编译器**：debug 容器会改变 `std::string` 布局，
   与 LLVM 共享库 ABI 不兼容（访问冲突）。需要加强检查时用 `-D_GLIBCXX_ASSERTIONS`（不改布局）。
+
+
+
+

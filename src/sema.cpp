@@ -125,6 +125,33 @@ private:
 
     UnitInfo& info() { return infos_.at(cur_->name); }
 
+    UnitInfo* std_info() {
+        auto it = infos_.find("std.string");
+        return it == infos_.end() ? nullptr : &it->second;
+    }
+
+    // std.string 中的规范字符串结构体（名字就是 `string`）
+    TypePtr str_type() {
+        if (UnitInfo* std = std_info()) {
+            auto it = std->structs.find("string");
+            if (it != std->structs.end()) return it->second->ty;
+        }
+        return nullptr;
+    }
+
+    bool is_str(const TypePtr& t) {
+        TypePtr s = str_type();
+        return t && s && same_type(t, s);
+    }
+
+    bool implicit_ok(const TypePtr& src, const TypePtr& dst) {
+        if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->readonly &&
+            dst->elem && dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
+            return true;  // Str -> readonly char*/byte*（NUL 结尾）
+        }
+        return implicitly_convertible(src, dst);
+    }
+
     bool uses_unit(const std::string& uname) const {
         if (!cur_) return false;
         for (const auto& use : cur_->uses) {
@@ -594,7 +621,6 @@ private:
 
     TypePtr resolve_named_type(const std::string& name, Unit* u, const TypeSpec* spec) {
         if (name == "void") return t_void();
-        if (name == "string") return t_string();
         if (is_prim_name(name)) return Type::make_prim(name);
 
         const auto dot = name.find('.');
@@ -619,6 +645,16 @@ private:
         if (auto e = ui.enums.find(name); e != ui.enums.end()) return e->second->ty;
         if (auto c = ui.classes.find(name); c != ui.classes.end()) return c->second->ty;
         if (auto i = ui.interfaces.find(name); i != ui.interfaces.end()) return i->second->ty;
+        if (UnitInfo* stdn = std_info()) {
+            if (auto s = stdn->structs.find(name); s != stdn->structs.end())
+                return s->second->ty;
+            if (auto e = stdn->enums.find(name); e != stdn->enums.end())
+                return e->second->ty;
+            if (auto c = stdn->classes.find(name); c != stdn->classes.end())
+                return c->second->ty;
+            if (auto i = stdn->interfaces.find(name); i != stdn->interfaces.end())
+                return i->second->ty;
+        }
         err_ts("未知类型 `" + name + "`", spec);
     }
 
@@ -728,7 +764,8 @@ private:
                     "` 暂不能作为全局变量（无退出析构）",
                 g);
         }
-        if (g->rty->kind == TypeKind::Struct && g->rty->needs_cleanup()) {
+        if (g->rty->kind == TypeKind::Struct && g->rty->needs_cleanup() &&
+            !is_str(g->rty)) {
             err("含引用字段的 struct `" + g->rty->str() +
                     "` 暂不能作为全局变量（无退出析构）",
                 g);
@@ -1490,7 +1527,7 @@ private:
             }
             if (ty->kind == TypeKind::Array && is_char(ty->elem) &&
                 dynamic_cast<StringLit*>(e)) {
-                check_expr(e, t_string());
+                check_expr(e, str_type());
                 return;
             }
             check_assign(e, ty, what);
@@ -1617,7 +1654,7 @@ private:
         }
         if (auto ix = dynamic_cast<Index*>(t)) {
             TypePtr bt = ix->base->ty;
-            if (bt && bt->kind == TypeKind::String) err("string 不可变，不能写元素", t);
+            if (is_str(bt)) err("string 不可变，不能写元素（如需构造请用 byte[]/str_concat）", t);
             if (bt && bt->kind == TypeKind::Slice && bt->readonly)
                 err("不能通过 readonly 切片写入", t);
             if (bt && bt->kind == TypeKind::Ptr && bt->readonly)
@@ -1658,6 +1695,9 @@ private:
         if (auto ix = dynamic_cast<Index*>(s->target.get())) {
             TypePtr bt = check_expr(ix->base.get());
             if (is_user_type(bt)) {
+                if (is_str(bt))
+                    err("string 不可变，不能写元素（如需构造请用 byte[]/str_concat）",
+                        s->target.get());
                 if (ix->indices.size() != 1)
                     err("用户 `operator[]=` 只接受一个下标", s->target.get());
                 TypePtr it = check_expr(ix->indices[0].get());
@@ -1743,7 +1783,7 @@ private:
             } else if (st->kind == TypeKind::Slice) {
                 s->loop_kind = "slice";
                 s->elem_ty = st->elem;
-            } else if (st->kind == TypeKind::String) {
+            } else if (is_str(st)) {
                 s->loop_kind = "string";
                 s->elem_ty = Type::make_prim("byte");
             } else {
@@ -1822,7 +1862,7 @@ private:
     static bool is_zeroable(const TypePtr& t) {
         if (!t) return false;
         return t->kind == TypeKind::Struct || t->kind == TypeKind::Array ||
-               t->kind == TypeKind::Slice || t->kind == TypeKind::String;
+               t->kind == TypeKind::Slice;
     }
 
     static bool is_char(const TypePtr& t) {
@@ -1867,8 +1907,7 @@ private:
         }
         if (dynamic_cast<NullLit*>(e) && dst) {
             if (dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice ||
-                dst->kind == TypeKind::String || dst->kind == TypeKind::Class ||
-                dst->kind == TypeKind::Interface) {
+                dst->kind == TypeKind::Class || dst->kind == TypeKind::Interface) {
                 e->ty = dst;
                 return true;
             }
@@ -1883,7 +1922,11 @@ private:
             }
             return static_cast<int>(depth) == dst->rank && same_type(base, dst->elem);
         }
-        return implicitly_convertible(src, dst);
+        if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->readonly &&
+            dst->elem && dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
+            return true;  // Str -> readonly char*/byte*（要求 NUL 结尾）
+        }
+        return implicit_ok(src, dst);
     }
 
     // ------------------------------------------------------------ 常量表达式
@@ -1950,13 +1993,13 @@ private:
             }
             return Type::make_prim("byte");  // 字符字面量默认是字节
         }
-        if (dynamic_cast<StringLit*>(e)) return t_string();
+        if (dynamic_cast<StringLit*>(e)) return str_type();
         if (dynamic_cast<BoolLit*>(e)) return t_bool();
 
         if (dynamic_cast<NullLit*>(e)) {
             if (expected) {
                 const auto k = expected->kind;
-                if (k == TypeKind::Ptr || k == TypeKind::Slice || k == TypeKind::String ||
+                if (k == TypeKind::Ptr || k == TypeKind::Slice ||
                     k == TypeKind::Class || k == TypeKind::Interface) {
                     return expected;
                 }
@@ -2009,7 +2052,7 @@ private:
                 if (n != 1) err("指针只接受一个下标", e);
                 return bt->elem;
             }
-            if (bt->kind == TypeKind::String) {
+            if (is_str(bt)) {
                 if (n != 1) err("string 只接受一个下标", e);
                 return Type::make_prim("byte");
             }
@@ -2062,8 +2105,9 @@ private:
 
         if (auto ln = dynamic_cast<Len*>(e)) {
             TypePtr t = check_expr(ln->seq.get());
-            if (ln->dim && t && t->kind == TypeKind::String) {
-                err("string 的长度没有维度参数", ln->dim.get());
+            if (is_str(t)) {
+                if (ln->dim) err("string 的长度没有维度参数", ln->dim.get());
+                return Type::make_prim("usize");
             }
             if (ln->dim) {
                 TypePtr dt = check_expr(ln->dim.get());
@@ -2089,8 +2133,7 @@ private:
                     err("`len(seq, k)` 只能用于多维数组", ln->dim.get());
                 }
             }
-            if (t && (t->kind == TypeKind::Array || t->kind == TypeKind::Slice ||
-                      t->kind == TypeKind::String)) {
+            if (t && (t->kind == TypeKind::Array || t->kind == TypeKind::Slice)) {
                 return Type::make_prim("usize");
             }
             err("`len` 不支持 " + (t ? t->str() : "void"), e);
@@ -2307,7 +2350,7 @@ private:
         if (op == "==" || op == "!=") {
             if (lt->kind == TypeKind::Null || rt->kind == TypeKind::Null) {
                 const TypePtr& other = (lt->kind == TypeKind::Null) ? rt : lt;
-                if (other->kind == TypeKind::String) {
+                if (is_str(other)) {
                     err("string 不能与 null 比较（用 len(s) == 0 或 s == \"\"）", e);
                 }
                 if (other->kind == TypeKind::Slice) {
@@ -2319,7 +2362,7 @@ private:
                     return t_bool();
                 }
             }
-            if (lt->kind == TypeKind::String && rt->kind == TypeKind::String) return t_bool();
+            if (is_str(lt) && is_str(rt)) return t_bool();
             if (is_numeric(lt) && is_numeric(rt)) return t_bool();
             const bool eq = same_type(lt, rt);
             if ((eq && (lt->kind == TypeKind::Ptr || lt->kind == TypeKind::Enum ||
@@ -2399,7 +2442,10 @@ private:
         }
         if (src->kind == TypeKind::Ptr && is_integer(dst) && dst->bits() >= 64) return true;
         if (dst->kind == TypeKind::Ptr && is_integer(src) && src->bits() >= 64) return true;
-        if (src->kind == TypeKind::String && dst->kind == TypeKind::Ptr) return true;
+        if (is_str(src) && dst->kind == TypeKind::Ptr && dst->elem &&
+            dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
+            return true;  // Str -> readonly char*/byte*（要求 NUL 结尾）
+        }
         return false;
     }
 
@@ -2444,9 +2490,25 @@ private:
                 nm->sym = chosen;
                 target = chosen;
             } else {
-                auto s = ui.structs.find(nm->ident);
-                if (s != ui.structs.end()) {
+                bool handled = false;
+                if (UnitInfo* stdn = std_info()) {
+                    auto cf = stdn->funcs.find(nm->ident);
+                    if (cf != stdn->funcs.end() && !cf->second.empty()) {
+                        FuncDecl* chosen = choose_overload(
+                            cf->second, raw_args(c->args), "函数 `" + nm->ident + "`", c);
+                        nm->kind = "func";
+                        nm->sym = chosen;
+                        target = chosen;
+                        handled = true;
+                    }
+                }
+                if (handled) {
+                    // 已从 core 解析
+                } else if (auto s = ui.structs.find(nm->ident); s != ui.structs.end()) {
                     struct_ty = s->second->ty;
+                } else if (UnitInfo* stdn = std_info();
+                           stdn && stdn->structs.count(nm->ident)) {
+                    struct_ty = stdn->structs.at(nm->ident)->ty;
                 } else if (lookup_enum_const(nm->ident) != nullptr) {
                     err("`" + nm->ident + "` 是枚举成员，不能调用", c);
                 } else {
@@ -2584,14 +2646,13 @@ private:
         }
         if (dynamic_cast<NullLit*>(e)) {
             if (p->kind == TypeKind::Ptr || p->kind == TypeKind::Slice ||
-                p->kind == TypeKind::String || p->kind == TypeKind::Class ||
-                p->kind == TypeKind::Interface) {
+                p->kind == TypeKind::Class || p->kind == TypeKind::Interface) {
                 return 0;
             }
             return -1;
         }
         if (same_type(aty, p)) return 0;
-        if (implicitly_convertible(aty, p)) return 1;
+        if (implicit_ok(aty, p)) return 1;
         return -1;
     }
 
@@ -3024,3 +3085,5 @@ Program analyze(std::vector<std::unique_ptr<Unit>> units, const std::string& ent
 }
 
 std::string type_str(const TypePtr& t) { return t ? t->str() : std::string(); }
+
+

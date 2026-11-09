@@ -1,1 +1,2 @@
-unit e6; int main() { string s = "abc"; s[0] = 120; return 0; }
+unit e23; int main() { string s = "a"; s[0] = 'b'; return 0; }
+

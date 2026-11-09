@@ -42,7 +42,7 @@ const std::unordered_set<std::string>& keywords() {
         "as",       "sizeof",   "alignof", "len",     "alloc",    "realloc",  "free",
         "readonly", "void",     "bool",    "byte",    "char",     "short",
         "ushort",   "int",      "uint",    "long",    "ulong",    "float",    "double",
-        "usize",    "isize",    "string",  "and",     "or",       "not",
+        "usize",    "isize",    "and",     "or",       "not",
         "class",    "interface", "new",    "del",     "weak",     "this",     "super",
         "override", "operator",
     };

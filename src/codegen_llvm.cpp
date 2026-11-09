@@ -29,6 +29,8 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <llvm/Passes/OptimizationLevel.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/TargetSelect.h>
@@ -56,6 +58,12 @@ using llvm::IntegerType;
 using llvm::LLVMContext;
 using llvm::MaybeAlign;
 using llvm::Module;
+using llvm::ModuleAnalysisManager;
+using llvm::ModulePassManager;
+using llvm::PassBuilder;
+using llvm::CGSCCAnalysisManager;
+using llvm::FunctionAnalysisManager;
+using llvm::LoopAnalysisManager;
 using llvm::PHINode;
 using llvm::PointerType;
 using llvm::Target;
@@ -114,8 +122,8 @@ struct Emitter {
     IRBuilder<> b{ctx};
     IRBuilder<> ab{ctx};
 
-    LStruct* strTy = nullptr;
-    LType* sliceTy = nullptr;  // 动态数组句柄：指向 { rc, len, cap, data... }
+    TypePtr strMeta;  // std.string.string 的语义类型（惰性查找）
+    LType* sliceTy = nullptr;  // 动态数组句柄
     std::map<std::string, Function*> sliceFreeCache;  // 元素类型 -> 释放函数
     LStruct* descTy = nullptr;
     LStruct* ifaceTy = nullptr;  // {ptr obj, ptr desc}
@@ -224,12 +232,32 @@ struct Emitter {
         return mod->getOrInsertGlobal(class_desc_name(cls->unit, cls->name), descTy);
     }
 
+    // std.string.string：编译器识别的规范字符串结构体（字段 p/n/owner）
+    TypePtr strType() {
+        if (strMeta) return strMeta;
+        for (auto& u : prog.units) {
+            if (u->name != "std.string") continue;
+            for (auto& d : u->decls) {
+                auto sd = dynamic_cast<StructDecl*>(d.get());
+                if (sd && sd->name == "string" && sd->ty) {
+                    strMeta = sd->ty;
+                    return strMeta;
+                }
+            }
+        }
+        fail("std.string.string 未定义");
+    }
+
+    bool isStrType(const TypePtr& t) {
+        TypePtr s = strType();
+        return t && s && same_type(t, s);
+    }
+
     LType* lt(const TypePtr& t) {
         if (!t) return i32();
         switch (t->kind) {
             case TypeKind::Void: return LType::getVoidTy(ctx);
             case TypeKind::Prim: return primTy(t->name);
-            case TypeKind::String: return strTy;
             case TypeKind::Ptr: return ptrTy();
             case TypeKind::Slice: return sliceTy;
             case TypeKind::Array: return arrayOf(t);
@@ -253,7 +281,6 @@ struct Emitter {
                 return 8;
             }
             case TypeKind::Ptr:
-            case TypeKind::String:
             case TypeKind::Slice: return 8;
             case TypeKind::Enum: return 4;
             case TypeKind::Array: return alignOf(t->elem);
@@ -277,8 +304,7 @@ struct Emitter {
                 if (n == "int" || n == "uint" || n == "float") return 4;
                 return 8;
             }
-            case TypeKind::Ptr:
-            case TypeKind::String: return 8 * 2;
+            case TypeKind::Ptr: return 8;
             case TypeKind::Slice: return 8;  // 动态数组句柄
             case TypeKind::Interface: return 8 * 2;  // {obj, desc}
             case TypeKind::Enum: return 4;
@@ -299,7 +325,7 @@ struct Emitter {
 
     bool zeroable(const TypePtr& t) {
         return t && (t->kind == TypeKind::Struct || t->kind == TypeKind::Array ||
-                     t->kind == TypeKind::Slice || t->kind == TypeKind::String);
+                     t->kind == TypeKind::Slice);
     }
 
     // ------------------------------------------------------------ 函数/全局
@@ -319,7 +345,10 @@ struct Emitter {
         Constant* arr = ConstantDataArray::getString(ctx, bytes, true);
         auto* gv = new GlobalVariable(*mod, arr->getType(), true, GlobalValue::PrivateLinkage,
                                       arr, ".str");
-        Constant* c = ConstantStruct::get(strTy, {gv, ConstantInt::get(i64(), bytes.size())});
+        TypePtr st = strType();
+        Constant* c = ConstantStruct::get(
+            cast<LStruct>(lt(st)),
+            {gv, ConstantInt::get(i64(), bytes.size()), Constant::getNullValue(ptrTy())});
         strCache[bytes] = c;
         return c;
     }
@@ -881,6 +910,17 @@ struct Emitter {
         stmtTemps.emplace_back(tmp, ty);
     }
 
+    // owned 的 Str 右值：物化到语句临时并在语句结束释放 owner
+    Value* evalStrValue(Expr* e) {
+        Value* v = eval(e);
+        if (valueOwned(e)) {
+            auto* tmp = entryAlloca(lt(strType()), "str.tmp");
+            b.CreateStore(v, tmp);
+            stmtTemps.emplace_back(tmp, strType());
+        }
+        return v;
+    }
+
     void releaseAllScopes() {
         for (size_t i = refScopes.size(); i > 0; --i) {
             auto& scope = refScopes[i - 1];
@@ -1032,7 +1072,7 @@ struct Emitter {
         if (!ie) fail("LLVM 后端：未知初始化器");
         Expr* e = ie->expr.get();
         if (auto il = dynamic_cast<IntLit*>(e)) {
-            if (ty->kind == TypeKind::String) {
+            if (isStrType(ty)) {
                 fail("LLVM 后端：string 不能用整数初始化");
             }
             if (ty->kind == TypeKind::Slice && il->value == 0) {
@@ -1048,7 +1088,7 @@ struct Emitter {
         if (auto cl = dynamic_cast<CharLit*>(e)) return ConstantInt::get(i8(), cl->value);
         if (dynamic_cast<NullLit*>(e)) return Constant::getNullValue(ct);
         if (auto sl = dynamic_cast<StringLit*>(e)) {
-            if (ty->kind == TypeKind::String) return cast<Constant>(stringConst(sl->value));
+            if (isStrType(ty)) return cast<Constant>(stringConst(sl->value));
             if (ty->kind == TypeKind::Array && sizeOf(ty->elem) == 1) {
                 std::vector<uint8_t> buf(ty->array_size, 0);
                 for (size_t i = 0; i < sl->value.size() && i + 1 < buf.size(); ++i)
@@ -1070,7 +1110,7 @@ struct Emitter {
         LType* tt = lt(to);
         if (ft == tt) return v;
 
-        if (from->kind == TypeKind::String && to->kind == TypeKind::Ptr)
+        if (isStrType(from) && to->kind == TypeKind::Ptr)
             return b.CreateExtractValue(v, {0});
         if (from->kind == TypeKind::Null) return Constant::getNullValue(tt);
         if (from->kind == TypeKind::Class && to->kind == TypeKind::Interface) {
@@ -1191,6 +1231,12 @@ struct Emitter {
                 idxs.push_back(convertTo(eval(ie.get()), ie->ty,
                                          Type::make_prim("usize"), ix->line, ix->col));
             }
+            if (isStrType(bt)) {
+                if (idxs.size() != 1) fail("LLVM 后端：string 只接受一个下标", ix->line, ix->col);
+                Value* sv = evalStrValue(ix->base.get());
+                Value* p = b.CreateExtractValue(sv, {0});
+                return b.CreateGEP(i8(), p, idxs[0]);
+            }
             if (bt->kind == TypeKind::Array) {
                 Value* addr = addrOf(ix->base.get());
                 TypePtr curTy = bt;
@@ -1297,10 +1343,9 @@ struct Emitter {
         }
 
         // string == / !=
-        if ((op == "==" || op == "!=") && lt_->kind == TypeKind::String &&
-            rt_->kind == TypeKind::String) {
-            Value* l = eval(e->left.get());
-            Value* r = eval(e->right.get());
+        if ((op == "==" || op == "!=") && isStrType(lt_) && isStrType(rt_)) {
+            Value* l = evalStrValue(e->left.get());
+            Value* r = evalStrValue(e->right.get());
             Value* lp = b.CreateExtractValue(l, {0});
             Value* ll = b.CreateExtractValue(l, {1});
             Value* rp = b.CreateExtractValue(r, {0});
@@ -1839,6 +1884,10 @@ struct Emitter {
             TypePtr st = v->seq->ty;
             int axis = 0;
             Value* axisV = nullptr;
+            if (isStrType(st)) {
+                Value* s = evalStrValue(v->seq.get());
+                return b.CreateExtractValue(s, {1});
+            }
             if (v->dim) {
                 if (auto il = dynamic_cast<IntLit*>(v->dim.get())) {
                     axis = static_cast<int>(il->value);
@@ -3003,15 +3052,13 @@ struct Emitter {
         TargetOptions opt;
         tm.reset(target->createTargetMachine(triple, "generic", "", opt,
                                              std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_),
-                                             std::nullopt, CodeGenOptLevel::None));
+                                             std::nullopt, CodeGenOptLevel::Default));
         mod = std::make_unique<Module>("mulan", ctx);
         mod->setTargetTriple(triple);
         if (tm) mod->setDataLayout(tm->createDataLayout());
         mod->addModuleFlag(Module::Warning, "mulan.version",
                            llvm::MDString::get(ctx, MULANC_VERSION));
 
-        strTy = LStruct::create(ctx, "mu_string");
-        strTy->setBody({ptrTy(), i64()}, false);
         sliceTy = ptrTy();  // 动态数组句柄（头指针）
         descTy = LStruct::create(ctx, "mu_desc");
         descTy->setBody({i64(), ptrTy(), ptrTy(), ptrTy(), ptrTy()}, false);
@@ -3105,6 +3152,23 @@ struct Emitter {
         if (verifyModule(*mod, &os)) {
             throw MuError("LLVM 后端：生成的模块无效：" + os.str());
         }
+
+        // 标准 -O2 流水线：让 Str 的短方法/运算符与 RC 辅助函数内联。
+        {
+            LoopAnalysisManager LAM;
+            FunctionAnalysisManager FAM;
+            CGSCCAnalysisManager CGAM;
+            ModuleAnalysisManager MAM;
+            PassBuilder PB(tm.get());
+            PB.registerModuleAnalyses(MAM);
+            PB.registerCGSCCAnalyses(CGAM);
+            PB.registerFunctionAnalyses(FAM);
+            PB.registerLoopAnalyses(LAM);
+            PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+            ModulePassManager MPM =
+                PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+            MPM.run(*mod, MAM);
+        }
     }
 };
 
@@ -3137,6 +3201,8 @@ void llvm_emit_object(Program& prog, const std::string& obj_path) {
     pm.run(*em.mod);
     dest.flush();
 }
+
+
 
 
 

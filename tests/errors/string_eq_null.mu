@@ -1,1 +1,2 @@
-unit e33; int main() { string s = 0; if s == null { } return 0; }
+unit e22; int main() { string s = "a"; if s == null { return 1; } return 0; }
+
