@@ -113,6 +113,23 @@
   4. 以后若必须：设计**显式位宽**语法（类似 Zig packed struct / Rust bitfield crate），
      规定固定布局，而不是采用 C 的位域规则。
 
+### U17. C 类型映射表（互操作易错点）
+- Windows x64（LLP64）下 `long` 是 **32 位**，而本语言 `long` 是 64 位；写 `extern` 时必须映射：
+  | C（Windows x64） | 本语言 |
+  |---|---|
+  | `char` / `signed char` | `char`（i8） |
+  | `unsigned char` | `byte` |
+  | `short` | `short` |
+  | `int` / `long` | `int` |
+  | `long long` | `long` |
+  | `size_t` | `usize` |
+  | `SSIZE_T` | `isize` |
+  | `float` / `double` | `float` / `double` |
+  | `_Bool` | `bool`（需验证 ABI：i1 内存 1 字节，但寄存器传参要交叉测试） |
+  | `wchar_t`（16 位） | 暂用 `ushort`（无 `wchar` 类型） |
+- 待定：是否提供 `c_int`/`c_long`/`c_size` 之类别名（用户当前要求"不要别名"，可能只在文档给映射表）；
+  或做一个 `extern "C"` 头文件映射工具。
+
 ## 已完成（留档）
 
 - 0.0.20：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（删除 `ubyte`/`uchar` 别名）；
