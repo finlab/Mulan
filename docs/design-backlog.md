@@ -21,9 +21,15 @@
 - 是否引入 `u8'...'` / `u32'...'` 之类前缀区分字节与码点。
 
 ### U3. 字符串的码点/字节视图与迭代
-- 是否需要 `s.chars()`（按 UTF-8 解码，产出码点 + 字节偏移）。
-- 是否需要 `readonly byte[]` / `readonly u8[]` 视图（当前 `s[i]` 返回有符号 `char`，原始字节要 `as byte`）。
+- 是否需要 `s.chars()`（按 UTF-8 解码，产出码点 `int` + 字节偏移）。
+- 是否需要 `readonly byte[]` / `readonly char[]` 视图（当前 `s[i]` 返回 `byte`；`for c in s` 按字节）。
 - `for c in s` 目前按**字节**遍历；是否保留，还是改成按码点（会破坏现有语义，需谨慎）。
+
+#### B1（实现缺口，待批量修）
+- **`string` 隐式转 `readonly byte[]` / `readonly char[]`：sema 允许，但 codegen 没有转换分支**，
+  会在 `build` 时报 `无法转换 string → readonly byte[]`。
+- 修法二选一：codegen 按 `{ptr,len}` 同布局重建 slice；或在实现前先让 sema 拒绝（避免"check 通过、build 失败"）。
+- `string + string` 目前不支持（concatenation 属于 U6 `StringBuilder`/库函数范畴）。
 
 ### U4. `s[i]` 的返回类型与字符字面量
 - **已实现（0.0.20）**：
