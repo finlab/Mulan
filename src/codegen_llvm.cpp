@@ -152,7 +152,7 @@ struct Emitter {
 
     LType* primTy(const std::string& n) {
         if (n == "bool") return i1();
-        if (n == "byte" || n == "ubyte" || n == "char") return i8();
+        if (n == "byte" || n == "char") return i8();
         if (n == "short" || n == "ushort") return LType::getInt16Ty(ctx);
         if (n == "int" || n == "uint") return i32();
         if (n == "long" || n == "ulong" || n == "usize" || n == "isize") return i64();
@@ -240,7 +240,7 @@ struct Emitter {
             case TypeKind::Void: return 1;
             case TypeKind::Prim: {
                 const std::string& n = t->name;
-                if (n == "bool" || n == "byte" || n == "ubyte" || n == "char") return 1;
+                if (n == "bool" || n == "byte" || n == "char") return 1;
                 if (n == "short" || n == "ushort") return 2;
                 if (n == "int" || n == "uint" || n == "float") return 4;
                 return 8;
@@ -265,7 +265,7 @@ struct Emitter {
             case TypeKind::Void: return 0;
             case TypeKind::Prim: {
                 const std::string& n = t->name;
-                if (n == "bool" || n == "byte" || n == "ubyte" || n == "char") return 1;
+                if (n == "bool" || n == "byte" || n == "char") return 1;
                 if (n == "short" || n == "ushort") return 2;
                 if (n == "int" || n == "uint" || n == "float") return 4;
                 return 8;
@@ -2601,6 +2601,7 @@ void llvm_emit_object(Program& prog, const std::string& obj_path) {
     pm.run(*em.mod);
     dest.flush();
 }
+
 
 
 

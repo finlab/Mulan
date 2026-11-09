@@ -19,10 +19,8 @@ struct IntInfo {
     bool is_signed;
 };
 
-constexpr std::array<IntInfo, 12> kInts{{
+constexpr std::array<IntInfo, 10> kInts{{
     {"byte", 8, false},
-    {"ubyte", 8, false},
-    {"uchar", 8, false},
     {"char", 8, true},
     {"short", 16, true},
     {"ushort", 16, false},
@@ -57,17 +55,15 @@ TypePtr Type::make_void() {
 }
 
 TypePtr Type::make_prim(const std::string& name) {
-    // ubyte / uchar 是 byte 的别名（都无符号 8 位），统一成规范名，保证类型相等。
-    const std::string canon = (name == "ubyte" || name == "uchar") ? std::string("byte") : name;
     // 基本类型不可变，按名字缓存可让 `prim("int")` 与 t_int() 共享同一对象。
     // 编译器是单线程的，函数内 static 无需加锁。
     static std::unordered_map<std::string, TypePtr> cache;
-    auto it = cache.find(canon);
+    auto it = cache.find(name);
     if (it != cache.end()) return it->second;
     auto t = std::make_shared<Type>();
     t->kind = TypeKind::Prim;
-    t->name = canon;
-    cache.emplace(canon, t);
+    t->name = name;
+    cache.emplace(name, t);
     return t;
 }
 
@@ -407,7 +403,7 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         return dst->readonly || !src->readonly;
     }
 
-    // string -> readonly char* / readonly char[] | byte[] | ubyte[]
+    // string -> readonly char* / readonly char[] | byte[]
     if (src->kind == TypeKind::String) {
         if (dst->kind == TypeKind::Ptr && dst->readonly) {
             if (!dst->elem) return false;
@@ -416,8 +412,7 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         }
         if (dst->kind == TypeKind::Slice && dst->readonly) {
             if (!dst->elem || dst->elem->kind != TypeKind::Prim) return false;
-            return dst->elem->name == "char" || dst->elem->name == "byte" ||
-                   dst->elem->name == "ubyte";
+            return dst->elem->name == "char" || dst->elem->name == "byte";
         }
         return false;
     }

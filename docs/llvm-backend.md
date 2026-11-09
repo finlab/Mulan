@@ -20,7 +20,7 @@ build\mulanc.exe build example.mu --emit-ir build/example.ll
 | mu-lan | LLVM |
 |---|---|
 | `bool` | `i1` |
-| `byte` / `ubyte` / `char` | `i8` |
+| `byte` / `char` | `i8` |
 | `short` / `ushort` | `i16` |
 | `int` / `uint` / `enum` | `i32` |
 | `long` / `ulong` / `usize` / `isize` | `i64` |

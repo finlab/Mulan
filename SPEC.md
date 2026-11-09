@@ -58,7 +58,7 @@
 unit use const static auto struct enum extern class interface new del weak
 if else while for in ref break continue return
 true false null as sizeof alignof len alloc realloc free
-readonly void bool byte ubyte uchar char short ushort int uint long ulong
+readonly void bool byte char short ushort int uint long ulong
 float double usize isize string
 and or not override operator super this
 ```
@@ -70,10 +70,11 @@ and or not override operator super this
 
 - **整数**：十进制、`0x`、`0b`；允许 `_` 分隔；不支持八进制。
 - **浮点**：十进制小数点/指数；默认 `double`，`f` 后缀为 `float`。
-- **字符**：`'a'`；转义 `'\n' '\t' '\\' '\'' '\0' '\xNN'`；类型 `char`（**有符号 8 位**，值 −128–127；`char` 与被调 C 函数的 `char` 一致）。
-  - 字面量按**位模式**解释：`'\xE4'` 是 `0xE4`，赋给 `char` 后值为 −28；需要无符号字节用 `as byte`（`byte`/`ubyte`/`uchar`）。
+- **字符**：`'a'`；转义 `'\n' '\t' '\\' '\'' '\0' '\xNN'`；字面量默认类型 `byte`（无符号 8 位），按上下文适配 `char`/`byte`。
+  - `char` 是**有符号** 8 位（C 风格，−128–127）；`byte` 是**无符号** 8 位（0–255）。没有 `ubyte`/`uchar` 别名。
+  - 字面量按**位模式**解释：`'\xE4'` 默认是 `byte` 值 228；赋给 `char` 后值为 −28。需要无符号字节时用 `byte`（或 `x as byte`）。
   - 字符字面量表示**单个字节**，不是 Unicode 码点：`'a'` 即 `0x61`；`'中'` 这类多字节字符**编译报错**（第一阶段不支持非 ASCII 字面量）。
-  - Unicode 文本用 `string`（UTF-8 字节序列，见 3.3），`len(s)` 与 `s[i]` 均按字节；`s[i]` 类型是 `char`（高字节为负值），取原始字节请写 `s[i] as byte`。
+  - Unicode 文本用 `string`（UTF-8 字节序列，见 3.3），`len(s)` 与 `s[i]` 均按字节；`s[i]` 与字符串 for-in 的元素类型都是 `byte`。
   - `\u{...}` 与 Unicode 码点类型待定。
 - **字符串**：`"..."`，UTF-8，编译期静态存储，NUL 结尾；类型 `string`（内建不可变视图，见 3.3），可隐式转 `readonly char*`；`\u{...}` 待定。
 - **布尔**：`true` / `false`。
@@ -103,8 +104,8 @@ move  unsafe  typeof  match
 | 类型 | 宽度 | 说明 |
 |---|---|---|
 | `bool` | 1 | `true`/`false`；不能隐式转为整数 |
-| `byte` / `ubyte` / `uchar` | 1 | 无符号 8 位（`ubyte`、`uchar` 是 `byte` 的别名，类型相同） |
-| `char` | 1 | **有符号** 8 位（C 风格）：C 字符串/字节互操作；`'\xNN'` 为位模式 |
+| `byte` | 1 | 无符号 8 位（0–255）；字节/UTF-8 处理 |
+| `char` | 1 | **有符号** 8 位（−128–127，C 风格）：C 字符串/字节互操作；`'\xNN'` 为位模式 |
 | `short` / `ushort` | 2 | 有/无符号 16 位 |
 | `int` / `uint` | 4 | 有/无符号 32 位 |
 | `long` / `ulong` | 8 | 有/无符号 64 位 |
@@ -142,7 +143,7 @@ move  unsafe  typeof  match
 - 边界检查：待定（建议 debug 构建检查，release 可配置关闭；切片默认检查）。
 - 全零/空值用 `= 0`：`int[5] a = 0;`、`int[] s = 0;`、`string s = 0;`。
 - `string` 是内建不可变 UTF-8 视图，布局为 `{ readonly char* ptr; usize len; }`（建议）；NUL 结尾，`len` 不含 NUL。
-- `string` 可隐式转 `readonly char*`；`s[i]` 返回 `char`（有符号，高字节为负）；取原始字节写 `s[i] as byte`；`len(s)` 返回字节长度。
+- `string` 可隐式转 `readonly char*`；`s[i]` 返回 `byte`；`len(s)` 返回字节长度；`for c in s` 的 `c` 也是 `byte`。
 - `string` 可转 `readonly byte[]` / `readonly char[]` 视图（建议）。
 - `string` 的 `==` / `!=` 是**值比较**（按字节、含长度）；`string` 不能与 `null` 比较（用 `len(s) == 0` 或 `s == ""`）。
   - 零值 `string`（`= 0`）是空字符串，因此 `s == ""` 为真。
@@ -831,7 +832,7 @@ unit example;
 | 20 | 结构体构造函数 / `this` | class 构造器与 `this` 见 3.11/3.12；struct 仍用聚合构造 |
 | 21 | `elif` 是否作为语法糖 | 建议支持；与 `else if` 等价 |
 | 22 | 切片字面量的存储与生命周期 | 当前作用域匿名定长数组 |
-| 23 | `byte`/`ubyte`/`uchar`/`char` 的符号性与命名 | `byte`=u8（`ubyte`、`uchar` 为别名，类型相同）；`char`=i8（C 风格有符号） |
+| 23 | `byte`/`char` 的符号性与命名 | `byte`=u8（唯一无符号 8 位名，无别名）；`char`=i8（C 风格有符号） |
 | 24 | `const` 是否要求编译期常量 | 不要求；`constexpr` 后续 |
 | 25 | `const int* p` 的读法 | `const` 修饰绑定；目标只读用 `readonly int*` |
 | 26 | 参数列表是否允许多变量共享类型 | 建议每个参数写类型 |
@@ -909,7 +910,7 @@ unit example;
 | 98 | `readonly` class 视图 / `readonly` 方法 | 已定：第一阶段不支持（语法与调用规则未定；`readonly` 仅用于指针/切片） |
 | 99 | `ref` 参数 | 已定：第一阶段不支持（仅 `for ref` 已实现；局部/参数借用后续再做） |
 | 100 | `interface` → 派生 `interface` 向下转换 | 已定：第一阶段不支持（只允许向上；`as` 会报错） |
-| 101 | 非 ASCII 字符字面量 | 已定：第一阶段不支持（`char` 是单字节；用 `'\xNN'` 或 `string`） |
+| 101 | 非 ASCII 字符字面量 | 已定：第一阶段不支持（字面量是单字节 `byte`；用 `'\xNN'` 或 `string`） |
 
 ---
 

@@ -1517,7 +1517,7 @@ private:
                 s->elem_ty = st->elem;
             } else if (st->kind == TypeKind::String) {
                 s->loop_kind = "string";
-                s->elem_ty = Type::make_prim("char");
+                s->elem_ty = Type::make_prim("byte");
             } else {
                 err("for-in 不能遍历 " + st->str() + "（只支持区间、数组、切片、string）",
                     s->seq.get());
@@ -1580,7 +1580,7 @@ private:
 
     static bool is_char(const TypePtr& t) {
         if (!is_prim(t)) return false;
-        return t->name == "char" || t->name == "ubyte" || t->name == "byte";
+        return t->name == "char" || t->name == "byte";
     }
 
     TypePtr check_assign(Expr* e, const TypePtr& dst, const std::string& what) {
@@ -1603,6 +1603,11 @@ private:
                 il->ty = dst;  // `Cat c = 0` 等价于 null
                 return true;
             }
+        }
+        if (dynamic_cast<CharLit*>(e) && dst && is_prim(dst) && dst->is_integer() &&
+            dst->bits() == 8) {
+            e->ty = dst;  // 字符字面量适配到 char / byte
+            return true;
         }
         if (dynamic_cast<NullLit*>(e) && dst) {
             if (dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice ||
@@ -1675,7 +1680,14 @@ private:
             return Type::make_prim(fl->is_float32 ? "float" : "double");
         }
 
-        if (dynamic_cast<CharLit*>(e)) return Type::make_prim("char");
+        if (auto cl = dynamic_cast<CharLit*>(e)) {
+            (void)cl;
+            if (expected && is_prim(expected) && expected->is_integer() &&
+                expected->bits() == 8) {
+                return expected;
+            }
+            return Type::make_prim("byte");  // 字符字面量默认是字节
+        }
         if (dynamic_cast<StringLit*>(e)) return t_string();
         if (dynamic_cast<BoolLit*>(e)) return t_bool();
 
@@ -1704,7 +1716,7 @@ private:
                 bt->kind == TypeKind::Ptr) {
                 return bt->elem;
             }
-            if (bt->kind == TypeKind::String) return Type::make_prim("char");
+            if (bt->kind == TypeKind::String) return Type::make_prim("byte");
             if (is_user_type(bt)) {
                 auto cands = collect_operators("[]", {bt, it});
                 if (cands.empty()) {
@@ -2028,6 +2040,13 @@ private:
 
     void adapt_lit(Expr* e, const TypePtr& self_ty, const TypePtr& other) {
         (void)self_ty;
+        if (auto cl = dynamic_cast<CharLit*>(e)) {
+            // 字符字面量是字节：按对端的 8 位整数类型适配（char/byte）
+            if (is_prim(other) && other->is_integer() && other->bits() == 8) {
+                cl->ty = other;
+            }
+            return;
+        }
         auto il = dynamic_cast<IntLit*>(e);
         if (!il) return;
         if (is_prim(other) && other->is_numeric() && promote_int_literal(il->value, other)) {

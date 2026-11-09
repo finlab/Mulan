@@ -25,7 +25,7 @@ int main() {
     if c == 4 { puts("nested loop ok"); }
 
     int big = 300;
-    ubyte small = big as ubyte;
+    byte small = big as byte;
     if small == 44 { puts("trunc ok"); }
 
     int* p0 = &arr[0];
@@ -44,4 +44,5 @@ int main() {
     if x == 1 { puts("outer ok"); }
     return 0;
 }
+
 
