@@ -69,6 +69,22 @@
 - 泛型：单态化（未来）。
 - 并发：`spawn/await/shared/atomic` 等保留字已预留。
 
+### U13. `string` 的功能边界：内置类型 vs 标准库（建议）
+- **建议：类型内置、功能进标准库（minimal core）**。
+  - 内置（编译器必须知道）：`string` 类型与布局 `{ptr, usize}`、字面量/NUL、零值、
+    `s[i]` 读 `byte`、`len`、字符串 for-in、`==`/`!=`、C 互操作、`char[N]` 初始化；
+  - 标准库（`str` / `utf8` / `fmt` 等 unit）：find/split/trim/replace/case/format/join/parse、
+    UTF-8 编解码、`s.chars()`（码点 `int`）、字节视图、`StringBuilder`。
+- 理由：
+  - 布局必须被编译器知道（struct/class 字段、全局常量、C ABI、字面量静态存储）；
+  - 字面量与 `==`/索引需要语法/类型规则，即使做成库类也要编译器特判（Java/C# 的 `String` 就是特判）；
+  - 数据结构简单、算法易变（Unicode 表/大小写/分词），放库里升级成本低；
+  - 避免核心语言不断加关键字/方法。
+- 待定：库函数返回**新字符串**的所有权/生命周期（无 GC）：
+  调用方提供缓冲、显式 allocator、还是 `StringBuilder` 持有 `byte[]`（见 U6）。
+- 现状限制：`struct` 没有方法、`class` 是堆+RC，所以"纯库实现的 string"不可行；
+  内置视图 + 库函数是可行路线。
+
 ## 已完成（留档）
 
 - 0.0.20：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（删除 `ubyte`/`uchar` 别名）；
