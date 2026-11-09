@@ -58,7 +58,7 @@
 unit use const static auto struct enum extern class interface new del weak
 if else while for in ref break continue return
 true false null as sizeof alignof len alloc realloc free
-readonly void bool byte ubyte char short ushort int uint long ulong
+readonly void bool byte ubyte uchar char short ushort int uint long ulong
 float double usize isize string
 and or not override operator super this
 ```
@@ -70,10 +70,11 @@ and or not override operator super this
 
 - **整数**：十进制、`0x`、`0b`；允许 `_` 分隔；不支持八进制。
 - **浮点**：十进制小数点/指数；默认 `double`，`f` 后缀为 `float`。
-- **字符**：`'a'`；转义 `'\n' '\t' '\\' '\'' '\0' '\xNN'`；类型 `char`（**无符号 8 位**，值 0–255）。
+- **字符**：`'a'`；转义 `'\n' '\t' '\\' '\'' '\0' '\xNN'`；类型 `char`（**有符号 8 位**，值 −128–127；`char` 与被调 C 函数的 `char` 一致）。
+  - 字面量按**位模式**解释：`'\xE4'` 是 `0xE4`，赋给 `char` 后值为 −28；需要无符号字节用 `as byte`（`byte`/`ubyte`/`uchar`）。
   - 字符字面量表示**单个字节**，不是 Unicode 码点：`'a'` 即 `0x61`；`'中'` 这类多字节字符**编译报错**（第一阶段不支持非 ASCII 字面量）。
-  - 需要原始字节时用 `'\xE4'` 这类转义；Unicode 文本用 `string`（UTF-8 字节序列，见 3.3），`len(s)` 与 `s[i]` 均按字节。
-  - `\u{...}` 与 Unicode 码点类型（如 `char32`）待定。
+  - Unicode 文本用 `string`（UTF-8 字节序列，见 3.3），`len(s)` 与 `s[i]` 均按字节；`s[i]` 类型是 `char`（高字节为负值），取原始字节请写 `s[i] as byte`。
+  - `\u{...}` 与 Unicode 码点类型待定。
 - **字符串**：`"..."`，UTF-8，编译期静态存储，NUL 结尾；类型 `string`（内建不可变视图，见 3.3），可隐式转 `readonly char*`；`\u{...}` 待定。
 - **布尔**：`true` / `false`。
 - **空值**：`null`（不是 0）；可赋给指针与 class 引用，不能用于 struct/标量。
@@ -102,8 +103,8 @@ move  unsafe  typeof  match
 | 类型 | 宽度 | 说明 |
 |---|---|---|
 | `bool` | 1 | `true`/`false`；不能隐式转为整数 |
-| `byte` / `ubyte` | 1 | 有/无符号 8 位（建议：`byte`=i8，`ubyte`=u8） |
-| `char` | 1 | 无符号 8 位；UTF-8 字节（与 `ubyte` 同宽） |
+| `byte` / `ubyte` / `uchar` | 1 | 无符号 8 位（`ubyte`、`uchar` 是 `byte` 的别名，类型相同） |
+| `char` | 1 | **有符号** 8 位（C 风格）：C 字符串/字节互操作；`'\xNN'` 为位模式 |
 | `short` / `ushort` | 2 | 有/无符号 16 位 |
 | `int` / `uint` | 4 | 有/无符号 32 位 |
 | `long` / `ulong` | 8 | 有/无符号 64 位 |
@@ -141,7 +142,7 @@ move  unsafe  typeof  match
 - 边界检查：待定（建议 debug 构建检查，release 可配置关闭；切片默认检查）。
 - 全零/空值用 `= 0`：`int[5] a = 0;`、`int[] s = 0;`、`string s = 0;`。
 - `string` 是内建不可变 UTF-8 视图，布局为 `{ readonly char* ptr; usize len; }`（建议）；NUL 结尾，`len` 不含 NUL。
-- `string` 可隐式转 `readonly char*`；`s[i]` 返回 `char`；`len(s)` 返回字节长度。
+- `string` 可隐式转 `readonly char*`；`s[i]` 返回 `char`（有符号，高字节为负）；取原始字节写 `s[i] as byte`；`len(s)` 返回字节长度。
 - `string` 可转 `readonly byte[]` / `readonly char[]` 视图（建议）。
 - `string` 的 `==` / `!=` 是**值比较**（按字节、含长度）；`string` 不能与 `null` 比较（用 `len(s) == 0` 或 `s == ""`）。
   - 零值 `string`（`= 0`）是空字符串，因此 `s == ""` 为真。
@@ -830,7 +831,7 @@ unit example;
 | 20 | 结构体构造函数 / `this` | class 构造器与 `this` 见 3.11/3.12；struct 仍用聚合构造 |
 | 21 | `elif` 是否作为语法糖 | 建议支持；与 `else if` 等价 |
 | 22 | 切片字面量的存储与生命周期 | 当前作用域匿名定长数组 |
-| 23 | `byte`/`ubyte` 的符号性与命名 | `byte`=i8，`ubyte`=u8，`char`=u8 |
+| 23 | `byte`/`ubyte`/`uchar`/`char` 的符号性与命名 | `byte`=u8（`ubyte`、`uchar` 为别名，类型相同）；`char`=i8（C 风格有符号） |
 | 24 | `const` 是否要求编译期常量 | 不要求；`constexpr` 后续 |
 | 25 | `const int* p` 的读法 | `const` 修饰绑定；目标只读用 `readonly int*` |
 | 26 | 参数列表是否允许多变量共享类型 | 建议每个参数写类型 |

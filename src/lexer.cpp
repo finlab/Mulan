@@ -40,7 +40,7 @@ const std::unordered_set<std::string>& keywords() {
         "extern",   "if",       "else",    "elif",    "while",    "for",      "in",
         "ref",      "break",    "continue", "return", "true",     "false",    "null",
         "as",       "sizeof",   "alignof", "len",     "alloc",    "realloc",  "free",
-        "readonly", "void",     "bool",    "byte",    "ubyte",    "char",     "short",
+        "readonly", "void",     "bool",    "byte",    "ubyte",    "uchar",    "char",     "short",
         "ushort",   "int",      "uint",    "long",    "ulong",    "float",    "double",
         "usize",    "isize",    "string",  "and",     "or",       "not",
         "class",    "interface", "new",    "del",     "weak",     "this",     "super",

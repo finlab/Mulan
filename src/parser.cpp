@@ -21,8 +21,8 @@ namespace {
 // 与 mtypes.PRIM_NAMES | {"void", "string"} 一致（parser.py 的 PRIMS）
 const std::unordered_set<std::string>& prims() {
     static const std::unordered_set<std::string> s = {
-        "byte",  "ubyte", "char",   "short", "ushort", "int",   "uint",  "long",
-        "ulong", "usize", "isize",  "float", "double", "bool",  "void",  "string",
+        "byte",  "ubyte", "uchar", "char",   "short", "ushort", "int",   "uint",  "long",
+        "ulong", "usize", "isize", "float",  "double", "bool",  "void",  "string",
     };
     return s;
 }
