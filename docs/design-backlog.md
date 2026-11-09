@@ -362,6 +362,31 @@
 - 备选：若不想让 struct 变复杂，保留 struct POD，另加 `value class` 承载"值 + 引用字段"；两者语义等价，
   只是命名/关键字不同。
 
+### U25. 用现有设施实现 `struct string`：缺口清单
+- 若只是 **C 风格手工管理**（`struct Str { byte* data; usize len; usize cap; }` + 自由函数 + `alloc/realloc/free`）：
+  **现在几乎可以**，但缺少/需注意：
+  - 名字冲突：内置 `string` 是关键字，不能 `struct string`；需叫 `Str`/`StringBuf`，或改名内置类型；
+  - 无 `->`/指针自动解引用：成员访问要 `(*s).len`（缺指针成员访问语法）；
+  - 无 struct 方法/构造/析构：API 只能是自由函数（`str_init(&s)`、`str_free(&s)`）；
+  - 无自动清理：忘了 `str_free` 就泄漏；无 RAII；
+  - **按值复制 = 双 owner**：编译器逐字段拷贝，`Str b = a` 后两边都 free 会双重释放；只能约定"不要复制、用 `str_clone`"，编译器不阻止；
+  - 无 `new byte[n]`：用 `alloc/realloc/free`；
+  - 内置 `string` ↔ `Str` 无自动转换：需库函数逐字节拷贝/构造；
+  - 无 `+=`/`+` 复合/二元重载派发（struct 复合赋值不支持），append 只能函数调用；
+  - 无边界检查/UTF-8 校验，靠库。
+- 若要 **RAII / 值语义 / 动态缓冲**（U18/U20/U22 的设计），还缺：
+  1. struct 方法 / `this`（或 `ref` 参数/返回）；
+  2. struct 用户构造器/析构器 + 拷贝/移动控制（rule of 3/5）；
+  3. struct 允许 class/interface 字段 + 编译器生成逐字段 retain/release（U24）；
+  4. 受管动态缓冲/切片（owner RC）或 `new byte[n]`（U20/U22）；
+  5. 引用/`ref` 参数与返回（U8），用于无拷贝传参与子串视图；
+  6. 子串/切片语法、`clone`、`slice_from_raw`、从内置 `string` 构造；
+  7. 只读视图/const 方法（避免每次读都复制）；
+  8. 分配策略（allocator/arena）与失败处理；
+  9. C 互操作规则（struct 含引用不能过 extern；NUL 结尾策略）。
+- 建议：如果目标是"字符串库"，继续用**内置 `string` + `StringBuilder` class + 自由函数**；
+  若要把 `string` 变成用户定义的值类型，则需要上面 1–6，属于语言层改造（大版本）。
+
 ## 已完成（留档）
 
 - 0.0.20：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（删除 `ubyte`/`uchar` 别名）；
