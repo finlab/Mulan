@@ -363,10 +363,11 @@
   只是命名/关键字不同。
 
 ### U25. 用现有设施实现 `struct string`：缺口清单
-- 若只是 **C 风格手工管理**（`struct Str { byte* data; usize len; usize cap; }` + 自由函数 + `alloc/realloc/free`）：
-  **现在几乎可以**，但缺少/需注意：
+- 若只是 **C 风格手工管理**（`struct Str { byte* data; usize n; usize cap; }` + 自由函数 + `alloc/realloc/free`）：
+  **现在几乎可以**，但缺少/需注意（已实测）：
   - 名字冲突：内置 `string` 是关键字，不能 `struct string`；需叫 `Str`/`StringBuf`，或改名内置类型；
-  - 无 `->`/指针自动解引用：成员访问要 `(*s).len`（缺指针成员访问语法）；
+  - **关键字不能做字段名**：`len`/`free`/`alloc` 等是关键字，`int len;` 解析报错；用 `n`/`length`；
+  - 无 `->`/指针自动解引用：`p.n` 报"类型 S* 没有成员"，必须 `(*p).n`；
   - 无 struct 方法/构造/析构：API 只能是自由函数（`str_init(&s)`、`str_free(&s)`）；
   - 无自动清理：忘了 `str_free` 就泄漏；无 RAII；
   - **按值复制 = 双 owner**：编译器逐字段拷贝，`Str b = a` 后两边都 free 会双重释放；只能约定"不要复制、用 `str_clone`"，编译器不阻止；
