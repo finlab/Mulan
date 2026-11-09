@@ -92,6 +92,7 @@
 - 文档更新 + 版本号（0.0.3、0.0.4 正式构建 + 全量测试）
 - 明确**第一阶段不支持**（SPEC 表 98–100）：`readonly` class 视图/`readonly` 方法、
   `ref` 参数、`interface` → 派生接口向下转换；异常/泛型/并发为后续里程碑
+- 用户建议与开放设计问题统一记录在 [`design-backlog.md`](./design-backlog.md)，敲定后再批量实现
 
 ## 当前状态
 
