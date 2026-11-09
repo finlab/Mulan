@@ -306,15 +306,27 @@ std::unique_ptr<Decl> Parser::parse_struct() {
     decl->col = tk.col;
 
     while (!at_op("}")) {
+        if (at_op("~")) {
+            throw err("暂不支持 struct 析构器（后续实现）");
+        }
+        if (peek().kind == TokKind::Ident && peek().text == name && peek(1).is_op("(")) {
+            throw err_at("暂不支持 struct 构造器（后续实现）", peek());
+        }
         if (at_kw("weak")) {
             throw err("`weak` 只能用于 class 字段");
         }
         TypeSpecPtr spec = parse_type();
+        const Token name_tok = expect_ident("字段名或方法名");
+        if (at_op("(")) {
+            decl->methods.push_back(parse_method(std::move(spec), name_tok));
+            continue;
+        }
+        decl->fields.emplace_back(name_tok.text, clone_spec(*spec));
         for (;;) {
-            std::string fname = expect_ident("字段名").text;
-            decl->fields.emplace_back(std::move(fname), clone_spec(*spec));
             if (!at_op(",")) break;
             advance();
+            std::string fname = expect_ident("字段名").text;
+            decl->fields.emplace_back(std::move(fname), clone_spec(*spec));
         }
         semicolon();
     }

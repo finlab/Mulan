@@ -276,6 +276,26 @@ private:
                 fields.push_back(Field{fname, ft});
             }
             sd->ty->fields = std::move(fields);
+
+            sd->ty->methods.clear();
+            for (auto& m : sd->methods) {
+                m->rty = resolve_type(m->ret.get(), u);
+                m->pty.clear();
+                for (auto& p : m->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    m->pty.push_back(pt);
+                }
+                MethodSig sig;
+                sig.name = m->name;
+                sig.ret = m->rty;
+                sig.params = m->pty;
+                sig.is_abstract = false;
+                sig.is_override = false;
+                sig.owner = sd->ty;
+                sd->ty->methods.push_back(std::move(sig));
+                m->cname = method_cname(u->name, sd->name, m->name, m->pty);
+            }
         }
 
         // class：基类、接口、扁平字段、方法/构造器签名
@@ -605,6 +625,9 @@ private:
             if (auto c = dynamic_cast<ClassDecl*>(d.get())) check_class(c);
         }
         for (auto& d : u->decls) {
+            if (auto sd = dynamic_cast<StructDecl*>(d.get())) check_struct(sd);
+        }
+        for (auto& d : u->decls) {
             if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) check_interface(i);
         }
     }
@@ -925,6 +948,35 @@ private:
         check_block(d->body.get());
         in_dtor_ = false;
         end_member();
+    }
+
+    void check_struct_method(StructDecl* sd, MethodDecl* m) {
+        if (!m->body) {
+            err("struct 方法 `" + m->name + "` 必须有函数体", m);
+        }
+        begin_member(sd->ty, m->rty, sd->name + "." + m->name, m->line, m->col);
+        declare_params(m->param_locals, m->params, m->pty);
+        check_block(m->body.get());
+        if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
+            err("方法 `" + m->name + "` 可能执行到末尾而没有返回值", m);
+        }
+        end_member();
+    }
+
+    void check_struct(StructDecl* sd) {
+        std::unordered_set<std::string> seen;
+        for (auto& m : sd->methods) {
+            std::string key = m->name + "(";
+            for (auto& p : m->pty) key += p->str() + ",";
+            key += ")";
+            if (!seen.insert(key).second) {
+                err("struct `" + sd->name + "` 方法 `" + key + "` 重复", m.get());
+            }
+            if (sd->ty->field_type(m->name)) {
+                err("struct `" + sd->name + "` 的方法 `" + m->name + "` 与字段同名", m.get());
+            }
+            check_struct_method(sd, m.get());
+        }
     }
 
     void check_class(ClassDecl* c) {
@@ -1782,7 +1834,10 @@ private:
             err("`super` 只能用于 `super(...)` 或 `super.method(...)`", e);
         }
         if (e->ident == "this" && lookup_local("this") == nullptr) {
-            err("`this` 只能出现在 class 方法/构造器/析构器中", e);
+            err("`this` 只能出现在 class/struct 方法/构造器/析构器中", e);
+        }
+        if (e->ident == "this" && cur_class_ && cur_class_->kind == TypeKind::Struct) {
+            err("struct 方法内暂不支持显式 `this`（用字段名或隐式方法调用）", e);
         }
         if (LocalVar* lv = lookup_local(e->ident)) {
             e->kind = "local";
@@ -2093,7 +2148,8 @@ private:
                 if (!ms.empty()) {
                     auto sig = choose_method(ms, raw_args(c->args), "方法 `" + nm->ident + "`", c);
                     check_method_args(c, sig, "方法 `" + nm->ident + "`");
-                    c->callee_kind = "method";
+                    c->callee_kind =
+                        cur_class_->kind == TypeKind::Struct ? "struct_method" : "method";
                     c->method = sig;
                     return sig->ret;
                 }
@@ -2163,6 +2219,19 @@ private:
                     check_method_args(c, sig, "方法 `" + m->name + "`");
                     m->kind = "method";
                     c->callee_kind = "method";
+                    c->method = sig;
+                    return sig->ret;
+                }
+                if (ot && ot->kind == TypeKind::Struct) {
+                    std::vector<const MethodSig*> ms;
+                    collect_methods(ot, m->name, ms);
+                    if (ms.empty()) {
+                        err("struct `" + ot->str() + "` 没有方法 `" + m->name + "`", c);
+                    }
+                    auto sig = choose_method(ms, raw_args(c->args), "方法 `" + m->name + "`", c);
+                    check_method_args(c, sig, "方法 `" + m->name + "`");
+                    m->kind = "method";
+                    c->callee_kind = "struct_method";
                     c->method = sig;
                     return sig->ret;
                 }

@@ -209,6 +209,10 @@ struct Emitter {
     }
 
     Value* fieldAddr(Value* objPtr, const TypePtr& cls, int field_index) {
+        if (cls->kind == TypeKind::Struct) {
+            return b.CreateStructGEP(cast<LStruct>(lt(cls)), objPtr,
+                                     static_cast<unsigned>(field_index));
+        }
         return b.CreateStructGEP(objStruct(cls), objPtr,
                                  static_cast<unsigned>(kObjField0 + field_index));
     }
@@ -885,6 +889,11 @@ struct Emitter {
                 auto* gv = std::get_if<GlobalVar*>(&m->sym);
                 if (gv) return mod->getOrInsertGlobal((*gv)->cname, lt((*gv)->rty));
             }
+            if (auto on = dynamic_cast<Name*>(m->obj.get());
+                on && on->ident == "this" && curClassTy &&
+                curClassTy->kind == TypeKind::Struct) {
+                return fieldAddr(b.CreateLoad(ptrTy(), thisSlot), curClassTy, m->field_index);
+            }
             TypePtr ot = m->obj->ty;
             if (ot->kind == TypeKind::Class) {
                 Value* p = eval(m->obj.get());
@@ -1224,6 +1233,25 @@ struct Emitter {
                 v = b.CreateInsertValue(v, av, {static_cast<unsigned>(fi)});
             }
             return v;
+        }
+        if (c->callee_kind == "struct_method") {
+            const MethodSig* sig = c->method;
+            if (!sig || !sig->owner) fail("LLVM 后端：struct 方法缺少签名", c->line, c->col);
+            Value* recv = nullptr;
+            if (auto m = dynamic_cast<Member*>(c->callee.get())) {
+                recv = addrOf(m->obj.get());
+            } else {
+                recv = b.CreateLoad(ptrTy(), thisSlot);
+            }
+            std::vector<Expr*> rawArgs;
+            for (auto& a : c->args) rawArgs.push_back(a.get());
+            ArgPack pack = prepareArgs(rawArgs, sig->params);
+            FunctionCallee callee = methodFn(sig);
+            std::vector<Value*> vals{recv};
+            for (auto* v : pack.vals) vals.push_back(v);
+            Value* r = b.CreateCall(callee, vals);
+            releaseTemps(pack);
+            return r;
         }
         if (c->callee_kind == "method") {
             const MethodSig* sig = c->method;
@@ -2369,6 +2397,23 @@ struct Emitter {
         gv->setInitializer(ConstantStruct::get(descTy, vals));
     }
 
+    void emitStructMethod(StructDecl* sd, MethodDecl* m) {
+        if (!m->body) return;
+        std::vector<LType*> ptys{ptrTy()};
+        for (auto& t : m->pty) ptys.push_back(lt(t));
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(m->cname, FunctionType::get(lt(m->rty), ptys, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::ExternalLinkage);
+        curClassTy = sd->ty;
+        beginBody(fn, m->rty);
+        thisSlot = entryAlloca(ptrTy(), "this");
+        b.CreateStore(fn->getArg(0), thisSlot);
+        bindParams(fn, 1, m->param_locals);
+        block(m->body.get());
+        finishBody(fn, sd->name + "." + m->name);
+    }
+
     void emitInterfaceMethod(InterfaceDecl* itf, MethodDecl* m) {
         if (!m->body) return;
         std::vector<LType*> ptys{ifaceTy};
@@ -2560,6 +2605,10 @@ struct Emitter {
                 auto itf = dynamic_cast<InterfaceDecl*>(d.get());
                 if (itf && itf->ty) {
                     for (auto& m : itf->methods) emitInterfaceMethod(itf, m.get());
+                }
+                auto sd = dynamic_cast<StructDecl*>(d.get());
+                if (sd && sd->ty) {
+                    for (auto& m : sd->methods) emitStructMethod(sd, m.get());
                 }
             }
         }
