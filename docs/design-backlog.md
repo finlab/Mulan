@@ -225,6 +225,52 @@
   `&this`、`&c`、`&c.x`、`&c.d`、`&classArray[i]` 报清晰错误；struct/数组/指针变量的取址保持可用。
 - 注意：`&p`（`p` 是 `int*` 变量）应继续允许（C 的 `int**` out 参数）；它不是 class 句柄。
 
+### U22. 数组/切片语义规范（静态数组、动态数组、C 分配、取址）
+- 目标：明确"值数组 / 受管动态数组 / C 缓冲 / 裸指针"四类，避免生命周期与 RC 冲突。
+- **类型与存储**
+  - `T[N]`：**内联值数组**，N 编译期常量；放在变量/struct/class 字段里；无 owner、无 RC；
+    赋值/传参按值复制（元素级 memcpy；元素不能是 class/interface/引用数组）。
+  - `T[]`：**受管切片** `{ptr, len, owner*}`：
+    - `owner == null` → **借用视图**（静态数组、C 缓冲、栈缓冲、字段）；
+    - `owner != null` → **拥有型动态数组**（`new T[N]` 分配，RC）；
+    - 赋值复制描述符并对 owner 做 retain（null 则跳过）；覆盖/离开作用域/`del` 做 release；
+    - 子切片 `s[a..b]` 共享 owner（ptr 偏移 + 新 len），不复制；
+    - `len(s)` 是 len；`s[i]` 是元素。
+  - `T*`：**裸指针**，无长度、无 owner；只能来自 `&lvalue`、指针算术、`alloc` 转换。
+- **创建与释放**
+  - `new T[N]` → 零初始化、owner rc=1 的拥有型 `T[]`；`del s` 释放 owner（归零时释放缓冲）。
+  - 静态数组 → `T[]` 隐式借用视图（owner=null，不复制）；也可显式 `view(arr)`（待定）。
+  - C `malloc/alloc`：返回裸内存；**不能直接 `int[] b = malloc(...)`**（没有长度/类型）。
+    需显式 `T[] b = slice_from_raw(ptr, n);`（内建，按期望类型推断 T）或只用 `T*` + 长度参数。
+    该视图 owner=null（借用），必须用 `free(ptr)` 释放，**不能 `del`**。
+  - `del` 只对拥有型有意义；对 owner=null 的切片：**建议运行期报错/调试断言**（而不是静默 no-op），
+    避免把 `del` 与 `free` 混用。`del null` 仍为空操作（类句柄语义）。
+- **取址规则**
+  - ✅ `&buf[i]`（静态数组元素）、`&s[i]`（切片元素，元素非引用）、`&p`（指针变量，C `T**`）；
+  - ✅ 中间地址：`&buf[i] + k`、`&s[i] + k`；指针算术按元素大小缩放；一过尾（one-past）可形成但解引用 UB；
+  - ❌ `&buf` / `&s`（整个数组/描述符取址；不引入"指向数组/切片的指针"类型）；
+  - ❌ 对 class/interface 句柄及其成员取址（见 U21）；❌ class/interface 数组元素取址。
+- **边界检查**
+  - 静态数组：**常量下标越界编译期报错**；运行期下标建议 debug 检查（release 可关）。
+  - 切片：`s[i]` debug 边界检查（策略与 SPEC 待定项一致）；
+  - 裸指针：不做检查（C 语义，越界 UB）。
+- **复制/克隆**
+  - 静态数组赋值 = 深拷贝；切片赋值 = 共享（owner retain）；
+    `T[] d = clone(s)` 深拷贝为拥有型（内建/库函数，待定）。
+- **元素含 RC 引用**
+  - 静态 class 数组（`Cat[N]`）已支持（逐元素 retain/release）；
+  - `T[]` 切片/动态数组元素**暂限非引用类型**（class/interface 切片仍禁止）；
+    `new Cat[n]` 暂不支持，后续需定义逐元素 RC 与切片共享语义。
+- **C 互操作**
+  - 切片/数组不直接作为 C 参数（ABI 不同）：传 `&s[0]` + `len(s)`；
+  - `alloc/free` 与 `new/del` 两套内存管理**不得交叉**。
+- **待定**
+  - `del` 对借用切片是"运行期报错"还是"静默忽略"；
+  - 是否提供 `slice_from_raw`/`clone`/`view` 内建及命名；
+  - 动态数组容量/扩容（后续 `Vec<T>` class）；
+  - 切片 of class/interface 的实现（逐元素 RC + owner 释放）；
+  - 边界检查的默认策略（debug/release）。
+
 ## 已完成（留档）
 
 - 0.0.20：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（删除 `ubyte`/`uchar` 别名）；
