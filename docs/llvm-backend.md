@@ -26,12 +26,13 @@ build\mulanc.exe build example.mu --emit-ir build/example.ll
 | `long` / `ulong` / `usize` / `isize` | `i64` |
 | `float` / `double` | `float` / `double` |
 | `string` | `%mu_string = type { ptr, i64 }` |
-| `T[]` | `%mu_slice = type { ptr, i64 }` |
+| `T[]` | `ptr`（动态数组句柄，指向 `{ i64 rc, i64 len, i64 cap, data... }`） |
+| `T[,]`/`T[,,]` | `ptr`（矩形动态数组，头部 `{ i64 rc, i64 d0, i64 d1, ... , data... }`） |
 | `T*` | `ptr`（opaque pointer） |
 | `T[N]` | `%mu_arr_<elem>_<N> = type { [N x T] }` |
 | `struct S` | `%mu_<unit>_<S>` |
 
-与 mu-lan 的类型布局约定一致（字符串/切片 16 字节、数组包装 struct、结构体自然对齐）。
+与 mu-lan 的类型布局约定一致（字符串 16 字节、动态数组句柄 8 字节、数组包装 struct、结构体自然对齐）。
 
 ## 降级策略
 
@@ -39,10 +40,14 @@ build\mulanc.exe build example.mu --emit-ir build/example.ll
 - 控制流：`if` / `while` / `for-in` 直接映射到基本块；`break`/`continue` 用标签栈。
 - 字符串字面量：私有常量 `[N x i8]` + 常量 `%mu_string`；重复字面量缓存复用。
 - `char[N] = "..."`：`memset` 清零后 `memcpy`。
-- 数组 → 切片：取数组地址 + 长度，构造 `%mu_slice`（指向原存储，不做拷贝）。
+- 数组 → 动态数组：按嵌套维度分配 `{rc,dims...}+data` 并复制元素（元素含引用时逐元素 retain）。
+- 静态矩形 `T[m,n]`：嵌套 `%mu_arr_*`（`{[m x [n x T]]}`），连续存储；`a[i,j]` 生成多级 GEP。
+- 动态矩形 `T[,]`：头部存各维尺寸，`a[i,j]` 用 `i*d1+j` 线性化；`len(a,k)` 读头部。
+- 锯齿数组 `T[][]`：元素就是 `T[]` 句柄；`new T[m][]` 只分配外层，行由用户循环 `new`。
+- `new T[n]`：分配头部，元素零初始化；句柄按 RC 复制/释放，计数归零时逐元素 release 后 free。
 - 指针算术：`getelementptr`；指针相减：`ptrtoint`/`sub`/`sdiv sizeof(T)`。
 - `sizeof` / `alignof`：编译期常量（后端自己实现布局计算）。
-- `length`：数组为常量；切片/字符串读 `len` 字段。
+- `length`：定长数组为常量；动态数组读头部 `len`（null 句柄为 0）；字符串读 `len` 字段。
 - 字符串 `==` / `!=`：比较长度 + `memcmp`。
 - `alloc` / `free` / `realloc` → libc `malloc` / `free` / `realloc`。
 - 结构体构造：`insertvalue` 链；零构造：`zeroinitializer`。

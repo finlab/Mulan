@@ -10,7 +10,8 @@ std::string type_code(const TypePtr& t) {
         case TypeKind::String: return "str";
         case TypeKind::Ptr: return "p_" + type_code(t->elem);
         case TypeKind::Array: return "a" + std::to_string(t->array_size) + "_" + type_code(t->elem);
-        case TypeKind::Slice: return "s_" + type_code(t->elem);
+        case TypeKind::Slice:
+            return "s" + std::to_string(t->rank) + "_" + type_code(t->elem);
         case TypeKind::Struct: return "S_" + t->unit + "_" + t->name;
         case TypeKind::Enum: return "E_" + t->unit + "_" + t->name;
         case TypeKind::Class: return "C_" + t->unit + "_" + t->name;

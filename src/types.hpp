@@ -34,6 +34,7 @@ struct Type {
     std::string unit;
     TypePtr elem;
     size_t array_size = 0;
+    int rank = 1;               // Slice：维数（1=T[]，2=T[,]，……）
     bool readonly = false;
     std::vector<Field> fields;  // Struct/Class 用（先建占位、后填充；Class 存扁平字段）
     std::vector<MethodSig> methods;  // Class/Interface 用
@@ -48,7 +49,7 @@ struct Type {
     static TypePtr make_string();
     static TypePtr make_ptr(const TypePtr& elem, bool readonly = false);
     static TypePtr make_array(const TypePtr& elem, size_t size);
-    static TypePtr make_slice(const TypePtr& elem, bool readonly = false);
+    static TypePtr make_slice(const TypePtr& elem, bool readonly = false, int rank = 1);
     static TypePtr make_struct(const std::string& unit, const std::string& name);
     static TypePtr make_enum(const std::string& unit, const std::string& name);
     static TypePtr make_class(const std::string& unit, const std::string& name);

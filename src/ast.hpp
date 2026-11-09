@@ -25,6 +25,7 @@ struct TypeSpec {
     std::string name;          // Named: "int" / "Point" / "math.Point"
     std::unique_ptr<TypeSpec> elem;
     size_t size = 0;           // Array
+    int rank = 1;              // Slice：维数
     bool readonly = false;
     bool weak = false;         // class 字段的 weak 修饰
     int line = 0;
@@ -90,7 +91,7 @@ struct Member : Expr {
 
 struct Index : Expr {
     ExprPtr base;
-    ExprPtr index;
+    std::vector<ExprPtr> indices;  // a[i] / a[i,j] / a[i,j,k]
     // sema: 用户类型下标走运算符重载时记录选中的函数
     FuncDecl* get_func = nullptr;
 };
@@ -132,11 +133,15 @@ struct Call : Expr {
 };
 
 struct NewExpr : Expr {
-    TypeSpecPtr type;   // 目标 class 类型
+    TypeSpecPtr type;   // 目标 class 类型 / 动态数组元素类型
     std::vector<ExprPtr> args;
     std::vector<std::pair<std::string, ExprPtr>> named;
+    bool is_array = false;  // new T[..]
+    std::vector<ExprPtr> dims;  // 矩形各维尺寸（运行期表达式）
+    int jagged_rank = 0;        // new T[m][]：外层再包几层 T[]
     // sema
     TypePtr class_ty;
+    TypePtr elem_ty;                // 动态数组元素类型（最内层）
     CtorDecl* ctor = nullptr;
     bool has_ctor = false;          // class 声明了构造器（选中 ne->ctor_pty）
     std::vector<TypePtr> ctor_pty;  // 选中的构造器参数表（空 = 默认零初始化构造）
@@ -149,6 +154,7 @@ struct SizeofExpr : Expr {
 
 struct Len : Expr {
     ExprPtr seq;
+    ExprPtr dim;  // len(a, k)：可选维度
 };
 
 struct RangeExpr : Expr {

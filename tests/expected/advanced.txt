@@ -1,4 +1,5 @@
-slice ref ok
+dynarray ref ok
+array copy ok
 struct array field ok
 nested loop ok
 trunc ok

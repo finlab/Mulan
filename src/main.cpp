@@ -101,7 +101,7 @@ static void dump_expr(const Expr* e, int ind) {
     if (auto v = dynamic_cast<const Member*>(e)) { dump_expr(v->obj.get(), ind + 1); return; }
     if (auto v = dynamic_cast<const Index*>(e)) {
         dump_expr(v->base.get(), ind + 1);
-        dump_expr(v->index.get(), ind + 1);
+        for (auto& ix : v->indices) dump_expr(ix.get(), ind + 1);
         return;
     }
     if (auto v = dynamic_cast<const Unary*>(e)) { dump_expr(v->operand.get(), ind + 1); return; }

@@ -12,7 +12,7 @@
 | 主题 | 结论 |
 |---|---|
 | 循环 | 只保留 `while` 和 `for-in`；不保留 C 风格 `for`、`do-while` |
-| 遍历 | `for x in seq { }`（括号可选）；支持半开区间 `a..b`、数组、切片；`continue` 进入下一次迭代 |
+| 遍历 | `for x in seq { }`（括号可选）；支持半开区间 `a..b`、定长数组、动态数组；`continue` 进入下一次迭代 |
 | 可变性 | C# 式类型在前声明；默认可变，`const` 修饰不可变绑定；`readonly` 仅表示只读视图 |
 | 声明初始化 | 声明只用 `=`：`Point p = {1, 2}`、`Point p = 0`、`Point p = Point(1, 2)`；非声明位置用 `Point(...)` |
 | 类型推断 | 局部变量可用 `auto x = expr;`；仅局部、必须有初始化器；`dynamic`/`any` 仅预留命名 |
@@ -128,23 +128,44 @@ move  unsafe  typeof  match
 - 指针算术以 `sizeof(T)` 为单位；`void*` 不允许算术。
 - 函数指针第一阶段不支持（待定）。
 
-### 3.3 数组与切片（建议）
+### 3.3 数组与动态数组
 
 - 定长数组：`T[N]`，`N` 为编译期整数常量；**值类型**，赋值/传参复制。
-- 切片：`T[]`，描述符为 `{ T* ptr; usize len; }`；复制描述符，不复制元素。
-- 聚合初始化（仅声明初始化位置）：`{e0, e1, ...}`。
-  - 定长数组：`int[3] a = {1, 2, 3};`；元素不足补零：`int[5] b = {1, 2};`；超过长度报错。
-  - 切片：`int[] s = {1, 2, 3};` 在当前作用域创建匿名定长数组并绑定切片视图（建议；生命周期随绑定所在作用域）。
-  - 全零：`int[5] c = 0;`；空切片：`int[] d = 0;`。
-- 数组可隐式转切片：`int[] s = arr;`（建议）。
+- 动态数组：`T[]`，**带引用计数的堆数组**；句柄是一个指针，指向内部头
+  `{ i64 rc; i64 len; i64 cap; data... }`（`cap` 为将来扩容预留）。
+  - `new T[n]` 创建（`n` 为运行期整数，元素清零）；`T[] s = 0` 表示空（null 句柄）。
+  - 赋值/传参复制**句柄**（O(1)），共享同一数组；引用计数归零时销毁；
+    元素类型含 class/interface 引用时逐元素 release。
+  - 元素类型：标量、枚举、指针、struct（含引用字段）、class/interface 引用；
+    含用户析构器的 struct 暂不允许作元素（元素构造/析构规则未定）。
+  - `len(s)`：null 句柄为 0；`s[i]` 下标；`for x in s`；`for ref x in s` 可写共享数组。
+  - 聚合初始化 `T[] s = {1, 2, 3};` 分配新数组并初始化元素。
+  - `T[N]` → `T[]` 隐式转换：**分配并复制**（动态数组不再提供借用视图）。
+  - 暂不提供子切片/借用视图语法（`s[1..]` 等）。
+- **静态矩形多维数组**：`T[m,n,...]`（`m,n` 编译期常量），内存连续，值类型。
+  - `int[2,3] a = {{1, 2, 3}, {4, 5, 6}};`（嵌套花括号，缺失元素补零）。
+  - 下标 `a[i,j]`，等价于链式 `a[i][j]`；`a[i]` 得到一行 `T[n]` 的值。
+  - `len(a)` = 第 0 维，`len(a,k)` = 第 k 维（k 必须是字面量）。
+  - 可含 class/interface/struct 引用元素（逐元素 RC）；`sizeof` 为总字节数。
+- **动态矩形多维数组**：`T[,]`（只写维数 rank；尺寸由 `new` 决定）。
+  - `int[,] a = new int[m,n];`；任意 `new T[d0,d1,...]`。
+  - 下标 `a[i,j]`（必须给出全部维数；不支持取“行视图”）。
+  - `len(a)` = 第 0 维，`len(a,k)` = 第 k 维（k 可为运行期表达式，动态数组带越界检查）。
+  - `for x in a` 遍历**全部元素**（按行优先顺序）。
+  - 强制转换：`T[m,n,...] → T[,]` 分配并复制。
+- **锯齿数组**：`T[][]`（元素本身是动态数组），各行列数可不同。
+  - `new T[m][]` 创建 `m` 个空行槽（元素为 null 的 `T[]`），再循环
+    `a[i] = new T[n_i];`。
+  - `new T[m][n]` **不是**合法写法：锯齿数组一次只创建一维；矩形数组用
+    `new T[m,n]`。静态锯齿可用定长行槽 `T[][N]` 或聚合初始化。
+- 全零：`int[5] c = 0;`；空动态数组/矩形：`int[] d = 0;`、`int[,] e = 0;`。
 - 数组**不隐式衰减为指针**；取首地址写 `&arr[0]`。
-- 索引 `x[i]`；下标类型为整数，推荐 `usize`。
-- `len(x)`：定长数组返回编译期常量，切片返回运行时长度，均为 `usize`。
-- 边界检查：待定（建议 debug 构建检查，release 可配置关闭；切片默认检查）。
+- 索引 `x[i]` / `x[i,j]`；下标类型为整数，推荐 `usize`。
+- `len(x)`：定长数组返回编译期常量，动态数组返回运行时长度，均为 `usize`。
+- 边界检查：待定（建议 debug 构建检查，release 可配置关闭；动态数组默认检查）。
 - 全零/空值用 `= 0`：`int[5] a = 0;`、`int[] s = 0;`、`string s = 0;`。
-- `string` 是内建不可变 UTF-8 视图，布局为 `{ readonly char* ptr; usize len; }`（建议）；NUL 结尾，`len` 不含 NUL。
+- `string` 是内建不可变 UTF-8 视图，布局为 `{ readonly char* ptr; usize len; }`（16 字节）；NUL 结尾，`len` 不含 NUL。
 - `string` 可隐式转 `readonly char*`；`s[i]` 返回 `byte`；`len(s)` 返回字节长度；`for c in s` 的 `c` 也是 `byte`。
-- `string` 可转 `readonly byte[]` / `readonly char[]` 视图（建议）。
 - `string` 的 `==` / `!=` 是**值比较**（按字节、含长度）；`string` 不能与 `null` 比较（用 `len(s) == 0` 或 `s == ""`）。
   - 零值 `string`（`= 0`）是空字符串，因此 `s == ""` 为真。
   - `string` 与其他指针类型不能比较。
@@ -178,7 +199,7 @@ struct Point {
   - `~S()` 在作用域结束、`return`/`break`/`continue` 时自动调用（局部变量）；
 - 无继承、无虚函数、无匿名 struct/union（第一阶段）。
 - 递归只能通过指针：`struct Node { int v; Node* next; }`。
-- 字段可以是标量、指针、枚举、定长数组、嵌套 struct、`string` 视图，以及
+- 字段可以是标量、指针、枚举、定长数组、动态数组 `T[]`、嵌套 struct、`string` 视图，以及
   **class/interface 引用字段**（此时 struct 为非 POD 值类型）。
 - 含 class/interface 引用字段（含嵌套 struct/数组中的引用）的 struct 由编译器生成逐字段 RC：
   - 拷贝初始化 `S b = a;` 与按值传参：复制后对引用字段 retain；
@@ -215,7 +236,7 @@ enum Color { Red, Green, Blue }
   - 有符号小类型 → 更宽的有符号。
   - `T*` → `void*`；`T*` → `readonly T*`。
   - `T[]` → `readonly T[]`；反向（去掉 readonly）必须显式 `as`。
-  - `T[N]` → `T[]` / `readonly T[]`（数组转切片视图）。
+  - `T[N]` → `T[]`、`T[m,n,...]` → `T[,]`（数组转动态数组：分配并复制）。
 - 其余数值/指针转换必须写 `as`。
 - 整数字面量按上下文类型适配（若可表示）；字面量上限为 `2^63-1`，超出报编译错误。
 - 浮点字面量同样按上下文适配：`float f = 1.5;` 合法；但**变量/表达式**之间的 `double` → `float` 仍必须写 `as`。
@@ -246,7 +267,7 @@ readonly int* q = ...;  // 通过 q 不能写目标
 - `const` 是声明修饰符，不是类型限定符：`const int* p` 读作“p 是不可变的 `int*` 绑定”，而不是 C 的“指向 const int 的指针”；不要写 C 风格的 `int* const`。
 - `readonly T*` / `readonly T[]`：通过该视图不能写入目标；**浅层**限定，不穿透指针。
 - `readonly` 是接口契约，**不是优化承诺**；没有 `const_cast`/`mutable` 这类后门。
-- 强制检查（编译器必须拒绝）：给 `const` 绑定赋值、修改 `const` 绑定的成员/元素、通过 `readonly` 指针/切片写入、写 `string` 元素、对 `readonly` 切片或 `const` 绑定使用 `for ref`。
+- 强制检查（编译器必须拒绝）：给 `const` 绑定赋值、修改 `const` 绑定的成员/元素、通过 `readonly` 指针/动态数组写入、写 `string` 元素、对 `readonly` 动态数组或 `const` 绑定使用 `for ref`。
 - `const` 不要求编译期求值（与 C# 的 `const` 不完全相同）；真正的编译期常量后续用 `constexpr` 一类机制（待定）。
 
 ### 3.8 引用类型 `class`（RC + weak；已实现，weak 置空待办）
@@ -287,18 +308,19 @@ class Cat {
 - **class 静态数组**：`Cat[3]`、`Cat[0]` 允许（元素是句柄）；拷贝逐元素 +1、销毁逐元素 -1、
   元素赋值先 -1 旧值再 +1 新值。struct 允许含 class/interface 引用字段（非 POD，编译器生成
   逐字段 RC，见 3.4）。
-  动态数组/其他容器后续作为引用类型（class）提供；**class/interface 切片 `Cat[]` 第一阶段禁止**。
+- **class 动态数组**：`Cat[]` 允许（`new Cat[n]`）；数组持有元素句柄，销毁时逐元素 -1。动态数组
+  句柄本身按 3.3 的 RC 规则复制/释放。
 - `readonly Cat c`（**第一阶段不支持**）：通过 c 不能写对象；`const Cat c`：绑定不可重绑定；可组合
-  `const readonly Cat c`。目前 `readonly` 只支持指针/切片，readonly class 视图待语法确定后再实现；编译器会拒绝这种写法。
+  `const readonly Cat c`。目前 `readonly` 只支持指针/动态数组，readonly class 视图待语法确定后再实现；编译器会拒绝这种写法。
 - `ref` 参数（仅 struct，**第一阶段不支持**）：`void f(ref Point p)` 借用一个 struct 变量；不可存储、不可返回；
   第一阶段不允许 `ref` 局部变量。当前解析器只在 `for ref` 中接受 `ref`，参数位置会报错。
 - class 参数按借用传递（调用期间不 +1）；被调方要保存时由编译器在存储点 +1。
 - 禁止（第一阶段）：
-  - class/interface **切片** `Cat[]`（静态数组 `Cat[3]` 允许，见上）；
   - class 传给 `extern` C 函数（C 侧不参与引用计数）；
+  - 动态数组 `T[]` 传给 `extern` C 函数（内部带 RC 头，不是 C 布局）；
   - `sizeof` / `alignof` 作用于 class 类型（待定，见 12）；
   - `weak` 用于局部变量、参数、返回值；
-  - `readonly Cat` 视图与 `readonly` 方法（语法与调用规则未定，**暂缓**；`readonly` 目前只用于指针/切片）。
+  - `readonly Cat` 视图与 `readonly` 方法（语法与调用规则未定，**暂缓**；`readonly` 目前只用于指针/动态数组）。
 - 内存：原子引用计数（relaxed）；字段按声明逆序释放；弱引用不计数。
 - 线程：对象可跨线程共享；析构器在最后释放引用的线程执行，必须线程安全。
 
@@ -499,7 +521,8 @@ void g() {
     - `Pt[2] ps = {{4, 5}, {6, 7}};`（数组元素是结构体）
     - 命名字段的值也可以是花括号：`Rec r = {p = {1, 2}, name = "hi"};`
     - 定长 `char[N]` 字段可用 `string` 字面量直接初始化：`{name = "hi"}`（补 NUL 与零）。
-  - 定长数组花括号：按位置给元素；元素不足补零；超过长度报错。切片花括号：按元素个数创建匿名数组并绑定切片视图。
+  - 定长数组花括号：按位置给元素；元素不足补零；超过长度报错；多维用嵌套花括号。
+    动态数组花括号（仅一维）：按元素个数分配新数组。
   - `= 0` 是声明专用的“零值”初始化：标量→0/false，指针→null，结构体→字段递归清零，定长数组→全零，切片→空，`string`→空字符串。它不参与普通表达式转换（表达式里的 `0` 仍是 int）。
   - 多个声明符可各用不同初始化形式：`Point a = {1, 2}, b = 0, c;`，按从左到右求值。
   - 一个类型后可跟多个变量名，全部共享前面的类型。
@@ -716,7 +739,11 @@ extern int puts(readonly char* s);
 object:        [ rc | class_desc* | fields... ]
 class_desc:    { size, destroy, vtable*, itable*, base_desc* }
 interface 值:  { obj*, class_desc* }        // 16 字节；null = {null,null}
+动态数组 T[]:   { i64 rc, i64 len, i64 cap, data... }
+动态数组 T[,]:  { i64 rc, i64 d0, i64 d1, ..., data... }
 ```
+
+- 动态数组句柄就是头指针；null 表示空数组，`len` 为 0；复制句柄 +1，归零时逐元素 release 后 `free`。
 
 - `vtable`：方法槽数组，槽序为「基类已有的槽在前，派生类新方法追加」；`override` 复用基类槽。
 - `itable`：全局接口方法槽表（按全程序接口方法签名去重编号），值为 thunk（类实现或接口默认实现）。
@@ -834,7 +861,7 @@ unit example;
 | 3 | 固定宽度类型命名（C 名 vs `i32`） | 先用 C 名 |
 | 4 | `string` 的布局与 `byte[]` 转换 | 已定：内建 `string`；细节见 3.3 |
 | 5 | 数组是否隐式衰减为指针 | 不衰减 |
-| 6 | 切片是否纳入第一阶段 | 建议纳入 |
+| 6 | 动态数组是否纳入第一阶段 | 已定：纳入（`T[]` / `T[,]`，RC 堆数组） |
 | 7 | 边界检查策略 | debug 检查；release 可配 |
 | 8 | 有符号溢出 | 定义为回绕 |
 | 9 | `switch`/`match` | 第二阶段 |
@@ -850,7 +877,7 @@ unit example;
 | 19 | `string` 与 `byte[]`/`char[N]` 的转换细节 | `string` 不可变视图；`char[N]` 初始化按字节拷贝 |
 | 20 | 结构体构造函数 / `this` | class 构造器与 `this` 见 3.11/3.12；struct 仍用聚合构造 |
 | 21 | `elif` 是否作为语法糖 | 建议支持；与 `else if` 等价 |
-| 22 | 切片字面量的存储与生命周期 | 当前作用域匿名定长数组 |
+| 22 | 动态数组字面量的存储与生命周期 | `T[] a = {...}` 分配新数组（RC）；不支持借用视图 |
 | 23 | `byte`/`char` 的符号性与命名 | `byte`=u8（唯一无符号 8 位名，无别名）；`char`=i8（C 风格有符号） |
 | 24 | `const` 是否要求编译期常量 | 不要求；`constexpr` 后续 |
 | 25 | `const int* p` 的读法 | `const` 修饰绑定；目标只读用 `readonly int*` |
@@ -900,7 +927,7 @@ unit example;
 | 69 | `del` 的语义 | 强引用 -1 并置 null；`del null` 空操作；共享对象只减少自己那份 |
 | 70 | class 参数的所有权 | 借用（调用期不 +1）；存储时 +1 |
 | 71 | class 与 C 互操作 | 禁止传给 `extern`；跨语言用 struct + alloc |
-| 72 | class 数组/切片 | 第一阶段禁止（需要逐元素 retain/release） |
+| 72 | class 数组 | 已定：静态 `Cat[N]` 与动态 `Cat[]` 均支持（逐元素 RC） |
 | 73 | `sizeof`/`alignof` class | 待定（建议：句柄大小；对象大小不直接暴露） |
 | 74 | 多线程引用计数 | 待定：原子 RC 或线程本地堆（第一阶段单线程） |
 | 75 | 用户析构 `deinit` | 第一阶段不做；字段按声明逆序释放 |
@@ -913,7 +940,7 @@ unit example;
 | 82 | 运算符重载 | 已定：仅自由函数；算术/一元 `-`/比较/位运算；class `==` 身份固定 |
 | 83 | 对象布局 | 已定：`[rc][class_desc*]`；desc 含 vtable 与 itable 目录（见 8.3） |
 | 84 | 接口值布局 | 已定：`{obj*, class_desc*}` 两字；`null` 支持 |
-| 85 | class 数组/切片 | 第一阶段禁止；Widget 树用 `first_child/next_sibling` |
+| 85 | class 数组/动态数组 | 支持；Widget 树仍推荐 `first_child/next_sibling` |
 | 86 | `sizeof`/`alignof` class | 待定（建议句柄大小；对象大小不直接暴露） |
 | 87 | 多线程 RC | 待定：原子 RC 或线程本地堆 |
 | 88 | 名字修饰 | 已定：带参数类型；`extern` 原名；`main` 特殊 |
@@ -926,7 +953,7 @@ unit example;
 | 95 | 泛型路线 | 已定：单态化（未来实现） |
 | 96 | 保留字 | 已定：见 2.5 |
 | 97 | 异常展开 ABI | 待定：先做 SEH/Itanium spike |
-| 98 | `readonly` class 视图 / `readonly` 方法 | 已定：第一阶段不支持（语法与调用规则未定；`readonly` 仅用于指针/切片） |
+| 98 | `readonly` class 视图 / `readonly` 方法 | 已定：第一阶段不支持（语法与调用规则未定；`readonly` 仅用于指针/动态数组） |
 | 99 | `ref` 参数 | 已定：第一阶段不支持（仅 `for ref` 已实现；局部/参数借用后续再做） |
 | 100 | `interface` → 派生 `interface` 向下转换 | 已定：第一阶段不支持（只允许向上；`as` 会报错） |
 | 101 | 非 ASCII 字符字面量 | 已定：第一阶段不支持（字面量是单字节 `byte`；用 `'\xNN'` 或 `string`） |

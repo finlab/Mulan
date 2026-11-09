@@ -42,6 +42,7 @@ TypeSpecPtr clone_spec(const TypeSpec& s) {
     out->name = s.name;
     out->elem = s.elem ? clone_spec(*s.elem) : nullptr;
     out->size = s.size;
+    out->rank = s.rank;
     out->readonly = s.readonly;
     out->weak = s.weak;
     out->line = s.line;
@@ -143,6 +144,7 @@ private:
 
     bool is_type_start(const Token& t) const;
     TypeSpecPtr parse_type();
+    TypeSpecPtr parse_type_base();  // 不含数组后缀（供 `new T[n]` 使用）
     TypeSpecPtr type_suffixes(TypeSpecPtr spec, bool readonly, const Token& t);
 
     // ------------------------------------------------------ 语句
@@ -591,6 +593,48 @@ TypeSpecPtr Parser::parse_type() {
     return type_suffixes(make_named_spec(name, t.line, t.col), readonly, t);
 }
 
+TypeSpecPtr Parser::parse_type_base() {
+    bool readonly = false;
+    if (at_kw("readonly")) {
+        advance();
+        readonly = true;
+    }
+    const Token t = peek();
+    TypeSpecPtr spec;
+    if (t.kind == TokKind::Kw && prims().count(t.text) != 0) {
+        advance();
+        spec = make_named_spec(t.text, t.line, t.col);
+    } else if (t.kind == TokKind::Ident) {
+        advance();
+        std::string name = t.text;
+        if (at_op(".")) {
+            advance();
+            name += ".";
+            name += expect_ident("类型名").text;
+        }
+        spec = make_named_spec(name, t.line, t.col);
+    } else {
+        throw err("期望类型名，实际是 " + t.describe());
+    }
+    while (at_op("*")) {
+        const Token tok = advance();
+        auto ptr = std::make_unique<TypeSpec>();
+        ptr->kind = TypeSpec::K::Ptr;
+        ptr->elem = std::move(spec);
+        ptr->line = tok.line;
+        ptr->col = tok.col;
+        spec = std::move(ptr);
+    }
+    if (readonly) {
+        if (spec->kind == TypeSpec::K::Ptr) {
+            spec->readonly = true;
+        } else {
+            throw err_at("`readonly` 只能用于指针或切片类型", t);
+        }
+    }
+    return spec;
+}
+
 TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, bool readonly, const Token& t) {
     for (;;) {
         if (at_op("*")) {
@@ -610,23 +654,52 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, bool readonly, const Token& 
                 auto slice = std::make_unique<TypeSpec>();
                 slice->kind = TypeSpec::K::Slice;
                 slice->elem = std::move(spec);
+                slice->rank = 1;
                 slice->line = tok.line;
                 slice->col = tok.col;
                 spec = std::move(slice);
                 continue;
             }
-            const Token n = peek();
-            if (n.kind != TokKind::Int) throw err("数组长度暂只支持整数字面量");
-            advance();
-            if (n.ival <= 0) throw err_at("数组长度必须大于 0", n);
+            if (at_op(",")) {
+                int rank = 1;
+                while (at_op(",")) {
+                    advance();
+                    rank++;
+                }
+                expect_op("]");
+                auto slice = std::make_unique<TypeSpec>();
+                slice->kind = TypeSpec::K::Slice;
+                slice->elem = std::move(spec);
+                slice->rank = rank;
+                slice->line = tok.line;
+                slice->col = tok.col;
+                spec = std::move(slice);
+                continue;
+            }
+            std::vector<size_t> dims;
+            for (;;) {
+                const Token n = peek();
+                if (n.kind != TokKind::Int) throw err("数组长度暂只支持整数字面量");
+                advance();
+                if (n.ival <= 0) throw err_at("数组长度必须大于 0", n);
+                dims.push_back(static_cast<size_t>(n.ival));
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
             expect_op("]");
-            auto arr = std::make_unique<TypeSpec>();
-            arr->kind = TypeSpec::K::Array;
-            arr->elem = std::move(spec);
-            arr->size = static_cast<std::size_t>(n.ival);
-            arr->line = tok.line;
-            arr->col = tok.col;
-            spec = std::move(arr);
+            // 反向包装：int[2,3] -> Array(Array(int,3),2)
+            for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
+                auto arr = std::make_unique<TypeSpec>();
+                arr->kind = TypeSpec::K::Array;
+                arr->elem = std::move(spec);
+                arr->size = *it;
+                arr->line = tok.line;
+                arr->col = tok.col;
+                spec = std::move(arr);
+            }
             continue;
         }
         break;
@@ -1145,9 +1218,34 @@ ExprPtr Parser::parse_unary() {
     if (at_kw("new")) {
         advance();
         auto ne = std::make_unique<NewExpr>();
-        ne->type = parse_type();
+        ne->type = parse_type_base();
         ne->line = t.line;
         ne->col = t.col;
+        if (at_op("[")) {
+            const Token lb = advance();
+            if (at_op("]")) throw err_at("`new` 的动态数组需要长度", lb);
+            for (;;) {
+                ne->dims.push_back(parse_expr());
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+            expect_op("]");
+            // new T[m][]：外层数组的元素是 T[]（空槽，稍后逐行 new）
+            while (at_op("[")) {
+                if (!peek(1).is_op("]")) {
+                    throw err_at("`new T[m][n]` 不是锯齿数组语法：矩形数组用 `new T[m,n]`，锯齿数组请先 new 外层再循环填行", peek());
+                }
+                advance();
+                advance();
+                ne->jagged_rank++;
+            }
+            ne->is_array = true;
+            if (at_op("(")) throw err_at("动态数组构造不支持构造器参数", lb);
+            return parse_postfix_tail(std::move(ne));
+        }
         if (at_op("(")) {
             advance();
             while (!at_op(")")) {
@@ -1196,9 +1294,15 @@ ExprPtr Parser::parse_unary() {
         advance();
         expect_op("(");
         ExprPtr seq = parse_expr();
+        ExprPtr dim;
+        if (at_op(",")) {
+            advance();
+            dim = parse_expr();
+        }
         expect_op(")");
         auto node = std::make_unique<Len>();
         node->seq = std::move(seq);
+        node->dim = std::move(dim);
         node->line = t.line;
         node->col = t.col;
         return parse_postfix_tail(std::move(node));
@@ -1219,11 +1323,17 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
         }
         if (t.is_op("[")) {
             advance();
-            ExprPtr idx = parse_expr();
-            expect_op("]");
             auto node = std::make_unique<Index>();
+            for (;;) {
+                node->indices.push_back(parse_expr());
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+            expect_op("]");
             node->base = std::move(e);
-            node->index = std::move(idx);
             node->line = t.line;
             node->col = t.col;
             e = std::move(node);

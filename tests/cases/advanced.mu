@@ -8,7 +8,8 @@ int main() {
     int[3] arr = {1, 2, 3};
     int[] s = arr;
     for ref v in s { v *= 3; }
-    if arr[0] == 3 and arr[2] == 9 { puts("slice ref ok"); }
+    if s[0] == 3 and s[2] == 9 { puts("dynarray ref ok"); }
+    if arr[0] == 1 and arr[2] == 3 { puts("array copy ok"); }
 
     Box box = 0;
     box.v[0] = 7;

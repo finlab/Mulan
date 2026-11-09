@@ -37,7 +37,8 @@ std::string spec_text(const TypeSpec* s) {
         case TypeSpec::K::Ptr:
             return spec_text(s->elem.get()) + "*";
         case TypeSpec::K::Slice:
-            return spec_text(s->elem.get()) + "[]";
+            return spec_text(s->elem.get()) + "[" + std::string(s->rank - 1, ',') + "]" +
+                   (s->readonly ? " (readonly)" : "");
         case TypeSpec::K::Array:
             return spec_text(s->elem.get()) + "[" + std::to_string(s->size) + "]";
     }
@@ -534,6 +535,15 @@ private:
                         err("`extern` 函数 `" + f->name + "` 的参数不能是 class/interface", f);
                     }
                 }
+                if (contains_slice_type(f->rty) || [&] {
+                        for (auto& pt : f->pty)
+                            if (contains_slice_type(pt)) return true;
+                        return false;
+                    }()) {
+                    err("`extern` 函数 `" + f->name +
+                            "` 不能使用动态数组 `T[]`（内部带有 RC 头，不是 C 布局）",
+                        f);
+                }
                 f->cname = f->name;
             } else if (f->name == "main" && u->name == entry_) {
                 f->cname = "main";
@@ -558,16 +568,21 @@ private:
             }
             case TypeSpec::K::Slice: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
-                if (is_reference_type(elem)) {
-                    err_ts("暂不支持 class/interface 切片（用静态数组或容器类）", spec);
+                if (is_void(elem)) err_ts("动态数组元素不能是 void", spec);
+                if (noncopyable_struct(elem)) {
+                    err_ts("含析构器的 struct `" + elem->str() +
+                               "` 暂不能作动态数组元素",
+                           spec);
                 }
-                return Type::make_slice(elem, spec->readonly);
+                return Type::make_slice(elem, spec->readonly, spec->rank);
             }
             case TypeSpec::K::Array: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
                 if (is_void(elem)) err_ts("数组元素不能是 void", spec);
-                if (noncopyable_struct(elem)) {
-                    err_ts("含析构器的 struct `" + elem->str() +
+                TypePtr base = elem;
+                while (base && base->kind == TypeKind::Array) base = base->elem;
+                if (noncopyable_struct(base)) {
+                    err_ts("含析构器的 struct `" + base->str() +
                                "` 暂不能作为数组元素（数组析构未实现）",
                            spec);
                 }
@@ -1558,6 +1573,9 @@ private:
         }
 
         if (ty->kind == TypeKind::Slice) {
+            if (ty->rank != 1) {
+                err("动态矩形数组 `" + ty->str() + "` 请用 `new T[m,n]` 初始化", init);
+            }
             for (auto& item : items) {
                 if (!item.first.empty()) err("切片初始化不能用命名字段", init);
             }
@@ -1639,8 +1657,10 @@ private:
 
         if (auto ix = dynamic_cast<Index*>(s->target.get())) {
             TypePtr bt = check_expr(ix->base.get());
-            TypePtr it = check_expr(ix->index.get());
             if (is_user_type(bt)) {
+                if (ix->indices.size() != 1)
+                    err("用户 `operator[]=` 只接受一个下标", s->target.get());
+                TypePtr it = check_expr(ix->indices[0].get());
                 if (!is_integer(it)) err("下标必须是整数", s->target.get());
                 if (s->op != "=") err("用户下标暂只支持 `=` 赋值", s);
                 auto cands = collect_operators("[]=", {bt, it});
@@ -1649,7 +1669,8 @@ private:
                 }
                 check_writable(s->target.get());
                 s->set_func = choose_overload(cands,
-                                              {ix->base.get(), ix->index.get(), s->value.get()},
+                                              {ix->base.get(), ix->indices[0].get(),
+                                               s->value.get()},
                                               "operator[]=", s);
                 return;
             }
@@ -1785,6 +1806,19 @@ private:
         return false;
     }
 
+    static bool contains_slice_type(const TypePtr& t) {
+        if (!t) return false;
+        if (t->kind == TypeKind::Slice) return true;
+        if (t->kind == TypeKind::Array) return contains_slice_type(t->elem);
+        if (t->kind == TypeKind::Struct) {
+            for (const auto& f : t->fields) {
+                if (f.weak) continue;
+                if (contains_slice_type(f.type)) return true;
+            }
+        }
+        return false;
+    }
+
     static bool is_zeroable(const TypePtr& t) {
         if (!t) return false;
         return t->kind == TypeKind::Struct || t->kind == TypeKind::Array ||
@@ -1839,9 +1873,15 @@ private:
                 return true;
             }
         }
-        if (src && dst && src->kind == TypeKind::Array && dst->kind == TypeKind::Slice &&
-            same_type(src->elem, dst->elem)) {
-            return true;
+        if (src && dst && src->kind == TypeKind::Array && dst->kind == TypeKind::Slice) {
+            // T[N] -> T[]；T[m,n] -> T[,]（按嵌套层数匹配 rank，元素类型一致）
+            TypePtr base = src;
+            size_t depth = 0;
+            while (base && base->kind == TypeKind::Array) {
+                base = base->elem;
+                depth++;
+            }
+            return static_cast<int>(depth) == dst->rank && same_type(base, dst->elem);
         }
         return implicitly_convertible(src, dst);
     }
@@ -1929,22 +1969,57 @@ private:
 
         if (auto ix = dynamic_cast<Index*>(e)) {
             TypePtr bt = check_expr(ix->base.get());
-            TypePtr it = check_expr(ix->index.get());
-            if (!is_integer(it)) {
-                err("下标必须是整数，实际是 " + (it ? it->str() : "void"), ix->index.get());
+            if (ix->indices.empty()) err("下标不能为空", e);
+            std::vector<TypePtr> its;
+            for (auto& idxExpr : ix->indices) {
+                TypePtr it = check_expr(idxExpr.get());
+                if (!is_integer(it)) {
+                    err("下标必须是整数，实际是 " + (it ? it->str() : "void"),
+                        idxExpr.get());
+                }
+                its.push_back(it);
             }
             if (!bt) err("类型不能下标访问", e);
-            if (bt->kind == TypeKind::Array || bt->kind == TypeKind::Slice ||
-                bt->kind == TypeKind::Ptr) {
+            const size_t n = ix->indices.size();
+            if (bt->kind == TypeKind::Array) {
+                TypePtr cur = bt;
+                size_t depth = 0;
+                while (cur && cur->kind == TypeKind::Array) {
+                    cur = cur->elem;
+                    depth++;
+                }
+                if (n > depth) {
+                    err("下标过多：`" + bt->str() + "` 只有 " + std::to_string(depth) +
+                            " 维",
+                        e);
+                }
+                TypePtr r = bt;
+                for (size_t i = 0; i < n; ++i) r = r->elem;
+                return r;
+            }
+            if (bt->kind == TypeKind::Slice) {
+                if (static_cast<int>(n) != bt->rank) {
+                    err("`" + bt->str() + "` 需要 " + std::to_string(bt->rank) +
+                            " 个下标（实际 " + std::to_string(n) + " 个）",
+                        e);
+                }
                 return bt->elem;
             }
-            if (bt->kind == TypeKind::String) return Type::make_prim("byte");
+            if (bt->kind == TypeKind::Ptr) {
+                if (n != 1) err("指针只接受一个下标", e);
+                return bt->elem;
+            }
+            if (bt->kind == TypeKind::String) {
+                if (n != 1) err("string 只接受一个下标", e);
+                return Type::make_prim("byte");
+            }
             if (is_user_type(bt)) {
-                auto cands = collect_operators("[]", {bt, it});
+                if (n != 1) err("用户 `operator[]` 只接受一个下标", e);
+                auto cands = collect_operators("[]", {bt, its[0]});
                 if (cands.empty()) {
                     err("类型 `" + bt->str() + "` 不支持下标（没有 `operator[]`）", e);
                 }
-                auto f = choose_overload(cands, {ix->base.get(), ix->index.get()},
+                auto f = choose_overload(cands, {ix->base.get(), ix->indices[0].get()},
                                          "operator[]", e);
                 ix->get_func = f;
                 return f->rty;
@@ -1987,6 +2062,33 @@ private:
 
         if (auto ln = dynamic_cast<Len*>(e)) {
             TypePtr t = check_expr(ln->seq.get());
+            if (ln->dim && t && t->kind == TypeKind::String) {
+                err("string 的长度没有维度参数", ln->dim.get());
+            }
+            if (ln->dim) {
+                TypePtr dt = check_expr(ln->dim.get());
+                if (!is_integer(dt)) err("`len(seq, k)` 的维度必须是整数", ln->dim.get());
+                auto il = dynamic_cast<IntLit*>(ln->dim.get());
+                if (t && t->kind == TypeKind::Array) {
+                    if (!il) err("静态数组的维度参数必须是整数字面量", ln->dim.get());
+                    size_t depth = 0;
+                    for (TypePtr c = t; c && c->kind == TypeKind::Array; c = c->elem) depth++;
+                    if (il && (il->value < 0 ||
+                               static_cast<size_t>(il->value) >= depth)) {
+                        err("维度越界：`" + t->str() + "` 只有 " + std::to_string(depth) +
+                                " 维",
+                            ln->dim.get());
+                    }
+                } else if (t && t->kind == TypeKind::Slice) {
+                    if (il && (il->value < 0 || il->value >= t->rank)) {
+                        err("维度越界：`" + t->str() + "` 只有 " + std::to_string(t->rank) +
+                                " 维",
+                            ln->dim.get());
+                    }
+                } else if (t && t->kind != TypeKind::Array) {
+                    err("`len(seq, k)` 只能用于多维数组", ln->dim.get());
+                }
+            }
             if (t && (t->kind == TypeKind::Array || t->kind == TypeKind::Slice ||
                       t->kind == TypeKind::String)) {
                 return Type::make_prim("usize");
@@ -2293,7 +2395,7 @@ private:
         if (is_interface_type(src) && is_class_type(dst)) return true;
         if (src->kind == TypeKind::Ptr && dst->kind == TypeKind::Ptr) return true;
         if (src->kind == TypeKind::Slice && dst->kind == TypeKind::Slice) {
-            return same_type(src->elem, dst->elem);
+            return src->rank == dst->rank && same_type(src->elem, dst->elem);
         }
         if (src->kind == TypeKind::Ptr && is_integer(dst) && dst->bits() >= 64) return true;
         if (dst->kind == TypeKind::Ptr && is_integer(src) && src->bits() >= 64) return true;
@@ -2739,7 +2841,39 @@ private:
 
     TypePtr check_new(NewExpr* ne) {
         TypePtr t = resolve_type(ne->type.get(), cur_);
-        if (t->kind != TypeKind::Class) err("`new` 只能用于 class", ne);
+        if (ne->is_array) {
+            if (is_void(t)) err("动态数组元素不能是 void", ne);
+            if (ne->dims.empty()) err("动态数组缺少长度", ne);
+            for (auto& d : ne->dims) {
+                TypePtr ct = check_expr(d.get());
+                if (!(ct && ct->is_integer())) {
+                    err("动态数组长度必须是整数", d.get());
+                }
+            }
+            if (t->kind == TypeKind::Struct && t->has_dtor) {
+                err("含析构器的 struct `" + t->str() +
+                        "` 暂不能作动态数组元素（元素构造/析构未实现）",
+                    ne);
+            }
+            if (!ne->args.empty() || !ne->named.empty()) {
+                err("动态数组不能带构造器参数", ne);
+            }
+            ne->class_ty = t;
+            if (ne->jagged_rank > 0) {
+                if (ne->dims.size() != 1) {
+                    err("锯齿数组 `new T[m][]` 一次只能创建一维；"
+                        "二维请循环填行，矩形数组用 `new T[m,n]`",
+                        ne);
+                }
+                TypePtr row = t;
+                for (int i = 0; i < ne->jagged_rank; ++i) row = Type::make_slice(row);
+                ne->elem_ty = row;  // 外层数组的元素：T[]/T[][]/...
+                return Type::make_slice(row);
+            }
+            ne->elem_ty = t;
+            return Type::make_slice(t, false, static_cast<int>(ne->dims.size()));
+        }
+        if (t->kind != TypeKind::Class) err("`new` 只能用于 class 或动态数组", ne);
         if (t->is_abstract) err("抽象类 `" + t->str() + "` 不能 `new`", ne);
         if (!ne->named.empty()) err("构造器暂不支持命名参数", ne);
 

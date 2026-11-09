@@ -115,7 +115,8 @@ struct Emitter {
     IRBuilder<> ab{ctx};
 
     LStruct* strTy = nullptr;
-    LStruct* sliceTy = nullptr;
+    LType* sliceTy = nullptr;  // 动态数组句柄：指向 { rc, len, cap, data... }
+    std::map<std::string, Function*> sliceFreeCache;  // 元素类型 -> 释放函数
     LStruct* descTy = nullptr;
     LStruct* ifaceTy = nullptr;  // {ptr obj, ptr desc}
     std::map<std::string, LStruct*> named;
@@ -277,8 +278,8 @@ struct Emitter {
                 return 8;
             }
             case TypeKind::Ptr:
-            case TypeKind::String:
-            case TypeKind::Slice: return 8 * 2;
+            case TypeKind::String: return 8 * 2;
+            case TypeKind::Slice: return 8;  // 动态数组句柄
             case TypeKind::Interface: return 8 * 2;  // {obj, desc}
             case TypeKind::Enum: return 4;
             case TypeKind::Array: return sizeOf(t->elem) * t->array_size;
@@ -307,6 +308,7 @@ struct Emitter {
     }
 
     Constant* zeroConst(LType* ty, const TypePtr& mt) {
+        if (mt && mt->kind == TypeKind::Slice) return Constant::getNullValue(ty);
         if (mt && zeroable(mt)) return ConstantAggregateZero::get(ty);
         return Constant::getNullValue(ty);
     }
@@ -386,6 +388,228 @@ struct Emitter {
     void emitRelease(Value* p) {
         if (!p) return;
         b.CreateCall(ensureRelease(), {p});
+    }
+
+    // ------------------------------------------------------------ 动态数组（T[] / T[,]）
+    // rank 1：{ i64 rc; i64 len; i64 cap; data... }
+    // rank r≥2：{ i64 rc; i64 d0; ... d(r-1); data... }
+    static constexpr uint64_t kArrRc = 0;
+
+    static uint64_t sliceDataOffset(int rank) {
+        return rank <= 1 ? 24 : 8ULL * (1 + rank);
+    }
+
+    Value* sliceDataPtr(Value* h, int rank) {
+        return b.CreateGEP(i8(), h, ConstantInt::get(i64(), sliceDataOffset(rank)));
+    }
+
+    Value* sliceDimField(Value* h, int axis) {
+        return b.CreateLoad(i64(), b.CreateGEP(i8(), h, ConstantInt::get(i64(), 8ULL * (1 + axis))));
+    }
+
+    // 元素总数（rank1 用 len，rank≥2 用各维乘积）
+    Value* sliceTotalCount(Value* h, int rank) {
+        if (rank <= 1) return sliceDimField(h, 0);
+        Value* total = sliceDimField(h, 0);
+        for (int i = 1; i < rank; ++i) total = b.CreateMul(total, sliceDimField(h, i));
+        return total;
+    }
+
+    // len(a, k)：null 句柄为 0；k 为编译期常量
+    Value* emitSliceDim(Value* h, int axis) {
+        BasicBlock* nullBB = BasicBlock::Create(ctx, "alen.null", curFn);
+        BasicBlock* okBB = BasicBlock::Create(ctx, "alen.ok", curFn);
+        BasicBlock* doneBB = BasicBlock::Create(ctx, "alen.done", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), nullBB, okBB);
+        b.SetInsertPoint(nullBB);
+        b.CreateBr(doneBB);
+        b.SetInsertPoint(okBB);
+        Value* len = sliceDimField(h, axis);
+        b.CreateBr(doneBB);
+        b.SetInsertPoint(doneBB);
+        auto* phi = b.CreatePHI(i64(), 2);
+        phi->addIncoming(ConstantInt::get(i64(), 0), nullBB);
+        phi->addIncoming(len, okBB);
+        return phi;
+    }
+
+    // len(a, k)：k 为运行期表达式（带越界检查）
+    Value* emitSliceDimDynamic(Value* h, Value* axis, int rank) {
+        BasicBlock* checkBB = BasicBlock::Create(ctx, "adyn.check", curFn);
+        BasicBlock* nullBB = BasicBlock::Create(ctx, "adyn.null", curFn);
+        BasicBlock* badBB = BasicBlock::Create(ctx, "adyn.bad", curFn);
+        BasicBlock* okBB = BasicBlock::Create(ctx, "adyn.ok", curFn);
+        BasicBlock* doneBB = BasicBlock::Create(ctx, "adyn.done", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), nullBB, checkBB);
+        b.SetInsertPoint(nullBB);
+        b.CreateBr(doneBB);
+        b.SetInsertPoint(checkBB);
+        b.CreateCondBr(b.CreateICmpUGE(axis, ConstantInt::get(i64(), rank)), badBB, okBB);
+        b.SetInsertPoint(badBB);
+        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateUnreachable();
+        b.SetInsertPoint(okBB);
+        Value* off = b.CreateAdd(ConstantInt::get(i64(), 8),
+                                 b.CreateMul(axis, ConstantInt::get(i64(), 8)));
+        Value* v = b.CreateLoad(i64(), b.CreateGEP(i8(), h, off));
+        b.CreateBr(doneBB);
+        b.SetInsertPoint(doneBB);
+        auto* phi = b.CreatePHI(i64(), 2);
+        phi->addIncoming(ConstantInt::get(i64(), 0), nullBB);
+        phi->addIncoming(v, okBB);
+        return phi;
+    }
+
+    // 元素总数（null 句柄为 0）
+    Value* emitSliceTotal(Value* h, int rank) {
+        if (rank <= 1) return emitSliceDim(h, 0);
+        BasicBlock* nullBB = BasicBlock::Create(ctx, "atot.null", curFn);
+        BasicBlock* okBB = BasicBlock::Create(ctx, "atot.ok", curFn);
+        BasicBlock* doneBB = BasicBlock::Create(ctx, "atot.done", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), nullBB, okBB);
+        b.SetInsertPoint(nullBB);
+        b.CreateBr(doneBB);
+        b.SetInsertPoint(okBB);
+        Value* total = sliceDimField(h, 0);
+        for (int i = 1; i < rank; ++i) total = b.CreateMul(total, sliceDimField(h, i));
+        b.CreateBr(doneBB);
+        b.SetInsertPoint(doneBB);
+        auto* phi = b.CreatePHI(i64(), 2);
+        phi->addIncoming(ConstantInt::get(i64(), 0), nullBB);
+        phi->addIncoming(total, okBB);
+        return phi;
+    }
+
+    // 分配动态数组并清零；dims 为各维尺寸
+    Value* emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem) {
+        int rank = static_cast<int>(dims.size());
+        uint64_t es = sizeOf(elem);
+        Value* total = ConstantInt::get(i64(), 1);
+        for (Value* d : dims) total = b.CreateMul(total, d);
+        if (es != 1) total = b.CreateMul(total, ConstantInt::get(i64(), es));
+        Value* bytes = b.CreateAdd(total,
+                                   ConstantInt::get(i64(), sliceDataOffset(rank)));
+        Value* h = b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {bytes});
+        BasicBlock* okBB = BasicBlock::Create(ctx, "arr.ok", curFn);
+        BasicBlock* failBB = BasicBlock::Create(ctx, "arr.fail", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), failBB, okBB);
+        b.SetInsertPoint(failBB);
+        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateUnreachable();
+        b.SetInsertPoint(okBB);
+        b.CreateMemSet(h, ConstantInt::get(i8(), 0), bytes, MaybeAlign(8));
+        b.CreateStore(ConstantInt::get(i64(), 1),
+                      b.CreateGEP(i8(), h, ConstantInt::get(i64(), kArrRc)));
+        for (int i = 0; i < rank; ++i) {
+            b.CreateStore(dims[i],
+                          b.CreateGEP(i8(), h, ConstantInt::get(i64(), 8ULL * (1 + i))));
+        }
+        if (rank == 1) {
+            // 预留 cap，便于将来 append 扩容
+            b.CreateStore(dims[0],
+                          b.CreateGEP(i8(), h, ConstantInt::get(i64(), 16)));
+        }
+        return h;
+    }
+
+    Value* emitDynArrayAlloc(Value* n, const TypePtr& elem) {
+        return emitSliceAlloc({n}, elem);
+    }
+
+    void emitSliceRetain(Value* h) { emitRetain(h); }
+
+    // 元素释放函数：逐一 release 元素（如有引用），然后 free 头部
+    Function* ensureSliceFree(const TypePtr& elem, int rank) {
+        std::string key = type_code(elem) + "#" + std::to_string(rank);
+        for (auto& ch : key)
+            if (ch == '.') ch = '_';
+        auto it = sliceFreeCache.find(key);
+        if (it != sliceFreeCache.end()) return it->second;
+        auto* ft = FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false);
+        Function* fn = Function::Create(ft, GlobalValue::InternalLinkage,
+                                        "mu_arr_free_" + key, *mod);
+        sliceFreeCache[key] = fn;
+
+        Function* savedFn = curFn;
+        IRBuilder<>::InsertPoint savedIP = b.saveIP();
+        curFn = fn;
+        BasicBlock* entryBB = BasicBlock::Create(ctx, "entry", fn);
+        b.SetInsertPoint(entryBB);
+        Value* h = fn->getArg(0);
+        if (elem->needs_cleanup()) {
+            Value* total = sliceTotalCount(h, rank);
+            Value* data = sliceDataPtr(h, rank);
+            auto* idx = b.CreateAlloca(i64());
+            b.CreateStore(ConstantInt::get(i64(), 0), idx);
+            BasicBlock* condBB = BasicBlock::Create(ctx, "cond", fn);
+            BasicBlock* bodyBB = BasicBlock::Create(ctx, "body", fn);
+            BasicBlock* endBB = BasicBlock::Create(ctx, "end", fn);
+            b.CreateBr(condBB);
+            b.SetInsertPoint(condBB);
+            Value* i0 = b.CreateLoad(i64(), idx);
+            b.CreateCondBr(b.CreateICmpULT(i0, total), bodyBB, endBB);
+            b.SetInsertPoint(bodyBB);
+            Value* i1 = b.CreateLoad(i64(), idx);
+            Value* p = b.CreateGEP(lt(elem), data, i1);
+            emitReleaseValue(p, elem);
+            b.CreateStore(b.CreateAdd(i1, ConstantInt::get(i64(), 1)), idx);
+            b.CreateBr(condBB);
+            b.SetInsertPoint(endBB);
+        }
+        b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {h});
+        b.CreateRetVoid();
+        b.restoreIP(savedIP);
+        curFn = savedFn;
+        return fn;
+    }
+
+    void emitSliceRelease(Value* h, const TypePtr& sliceTy) {
+        if (!h) return;
+        BasicBlock* bodyBB = BasicBlock::Create(ctx, "arel.body", curFn);
+        BasicBlock* destroyBB = BasicBlock::Create(ctx, "arel.destroy", curFn);
+        BasicBlock* doneBB = BasicBlock::Create(ctx, "arel.done", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), doneBB, bodyBB);
+        b.SetInsertPoint(bodyBB);
+        Value* rcp = b.CreateGEP(i8(), h, ConstantInt::get(i64(), kArrRc));
+        Value* old = b.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, rcp,
+                                       ConstantInt::get(i64(), 1), MaybeAlign(8),
+                                       llvm::AtomicOrdering::Monotonic);
+        b.CreateCondBr(b.CreateICmpEQ(old, ConstantInt::get(i64(), 1)), destroyBB, doneBB);
+        b.SetInsertPoint(destroyBB);
+        b.CreateCall(ensureSliceFree(sliceTy->elem, sliceTy->rank), {h});
+        b.CreateBr(doneBB);
+        b.SetInsertPoint(doneBB);
+    }
+
+    // 定长数组 -> 动态数组（按嵌套维度复制；元素含引用时逐元素 retain）
+    Value* emitDynArrayFromArray(Value* arrAddr, const TypePtr& arrTy,
+                                 const TypePtr& dstTy) {
+        std::vector<uint64_t> dims;
+        TypePtr base = arrTy;
+        while (base && base->kind == TypeKind::Array) {
+            dims.push_back(base->array_size);
+            base = base->elem;
+        }
+        std::vector<Value*> dv;
+        uint64_t total = 1;
+        for (uint64_t d : dims) {
+            dv.push_back(ConstantInt::get(i64(), d));
+            total *= d;
+        }
+        Value* h = emitSliceAlloc(dv, base);
+        Value* dst = sliceDataPtr(h, static_cast<int>(dims.size()));
+        Value* src = arrAddr;  // 数组包装 struct 的唯一字段在偏移 0
+        if (base->needs_cleanup()) {
+            for (uint64_t i = 0; i < total; ++i) {
+                Value* d = b.CreateGEP(lt(base), dst, ConstantInt::get(i64(), i));
+                Value* s = b.CreateGEP(lt(base), src, ConstantInt::get(i64(), i));
+                copyMem(d, s, sizeOf(base));
+                emitRetainValue(d, base);
+            }
+        } else if (total > 0) {
+            copyMem(dst, src, total * sizeOf(base));
+        }
+        return h;
     }
 
     // ------------------------------------------------------------ weak 注册表
@@ -649,6 +873,14 @@ struct Emitter {
         }
     }
 
+    // 语句内物化的 owned 动态数组临时值：语句结束时释放
+    void trackOwnedSliceTemp(Expr* e, Value* v, const TypePtr& ty) {
+        if (!ty || ty->kind != TypeKind::Slice || !valueOwned(e)) return;
+        auto* tmp = entryAlloca(lt(ty), "owned.tmp");
+        b.CreateStore(v, tmp);
+        stmtTemps.emplace_back(tmp, ty);
+    }
+
     void releaseAllScopes() {
         for (size_t i = refScopes.size(); i > 0; --i) {
             auto& scope = refScopes[i - 1];
@@ -683,6 +915,16 @@ struct Emitter {
         return false;
     }
 
+    // 表达式结果在目标类型下是否已持有一份可转移的所有权。
+    // 定长数组 -> 动态数组的转换会在 coerce 里新建数组，因此也算 owned。
+    bool convOwns(Expr* e, const TypePtr& dst) {
+        if (dst && dst->kind == TypeKind::Slice && e && e->ty &&
+            e->ty->kind == TypeKind::Array) {
+            return true;
+        }
+        return valueOwned(e);
+    }
+
     // 返回 class 引用时把借用变成一份新的强引用
     Value* prepareReturn(Expr* e) {
         Value* v = coerce(e, curRetTy);
@@ -701,6 +943,13 @@ struct Emitter {
             // 返回值按 owned 转移：借用值先逐字段 retain，局部随后在 releaseAllScopes 释放
             if (valueOwned(e)) return v;
             auto* tmp = entryAlloca(lt(curRetTy), "ret.struct");
+            b.CreateStore(v, tmp);
+            emitRetainValue(tmp, curRetTy);
+            return b.CreateLoad(lt(curRetTy), tmp);
+        }
+        if (curRetTy && curRetTy->kind == TypeKind::Slice) {
+            if (convOwns(e, curRetTy)) return v;
+            auto* tmp = entryAlloca(lt(curRetTy), "ret.arr");
             b.CreateStore(v, tmp);
             emitRetainValue(tmp, curRetTy);
             return b.CreateLoad(lt(curRetTy), tmp);
@@ -767,10 +1016,15 @@ struct Emitter {
                 std::vector<Constant*> vals;
                 for (auto& it : ia->items) vals.push_back(constValue(ty->elem, it.second.get()));
                 auto* arrTy = LArray::get(lt(ty->elem), vals.size());
-                auto* carr = ConstantArray::get(arrTy, vals);
-                auto* gv = new GlobalVariable(*mod, arrTy, true, GlobalValue::PrivateLinkage, carr,
-                                              ".slice");
-                return ConstantStruct::get(sliceTy, {gv, ConstantInt::get(i64(), vals.size())});
+                auto* data = ConstantArray::get(arrTy, vals);
+                auto* hdrTy = LStruct::get(ctx, {i64(), i64(), i64(), arrTy}, false);
+                Constant* hdr = ConstantStruct::get(
+                    hdrTy, {ConstantInt::get(i64(), 1LL << 40),
+                            ConstantInt::get(i64(), vals.size()),
+                            ConstantInt::get(i64(), vals.size()), data});
+                auto* gv = new GlobalVariable(*mod, hdrTy, /*isConstant=*/false,
+                                              GlobalValue::PrivateLinkage, hdr, ".arr");
+                return gv;
             }
             fail("LLVM 后端：不支持的全局聚合初始化", ia->line, ia->col);
         }
@@ -780,6 +1034,9 @@ struct Emitter {
         if (auto il = dynamic_cast<IntLit*>(e)) {
             if (ty->kind == TypeKind::String) {
                 fail("LLVM 后端：string 不能用整数初始化");
+            }
+            if (ty->kind == TypeKind::Slice && il->value == 0) {
+                return Constant::getNullValue(ct);
             }
             auto* it = IntegerType::get(ctx, static_cast<unsigned>(sizeOf(ty) * 8));
             return ConstantInt::get(it, static_cast<uint64_t>(il->value), /*isSigned=*/true);
@@ -929,24 +1186,40 @@ struct Emitter {
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
             TypePtr bt = ix->base->ty;
-            Value* idx = convertTo(eval(ix->index.get()), ix->index->ty, Type::make_prim("usize"),
-                                   ix->line, ix->col);
+            std::vector<Value*> idxs;
+            for (auto& ie : ix->indices) {
+                idxs.push_back(convertTo(eval(ie.get()), ie->ty,
+                                         Type::make_prim("usize"), ix->line, ix->col));
+            }
             if (bt->kind == TypeKind::Array) {
-                Value* base = addrOf(ix->base.get());
-                auto* st = cast<LStruct>(lt(bt));
-                return gep(st, base, {ConstantInt::get(i64(), 0),
-                                              ConstantInt::get(i32(), 0), idx});
+                Value* addr = addrOf(ix->base.get());
+                TypePtr curTy = bt;
+                for (size_t k = 0; k < idxs.size(); ++k) {
+                    auto* st = cast<LStruct>(lt(curTy));
+                    addr = gep(st, addr, {ConstantInt::get(i64(), 0),
+                                          ConstantInt::get(i32(), 0), idxs[k]});
+                    curTy = curTy->elem;
+                }
+                return addr;
             }
             if (bt->kind == TypeKind::Slice) {
-                Value* sv = eval(ix->base.get());
-                return gep(lt(bt->elem), b.CreateExtractValue(sv, {0}), idx);
+                Value* h = eval(ix->base.get());
+                trackOwnedSliceTemp(ix->base.get(), h, bt);
+                Value* lin = idxs.empty() ? ConstantInt::get(i64(), 0) : idxs[0];
+                for (size_t k = 1; k < idxs.size(); ++k) {
+                    Value* dk = sliceDimField(h, static_cast<int>(k));
+                    lin = b.CreateAdd(b.CreateMul(lin, dk), idxs[k]);
+                }
+                Value* data = sliceDataPtr(h, bt->rank);
+                return b.CreateGEP(lt(bt->elem), data, lin);
             }
             if (bt->kind == TypeKind::Ptr) {
-                return gep(lt(bt->elem), eval(ix->base.get()), idx);
+                if (idxs.size() != 1) fail("LLVM 后端：指针下标数量错误", ix->line, ix->col);
+                return gep(lt(bt->elem), eval(ix->base.get()), idxs[0]);
             }
             if (bt->kind == TypeKind::String) {
                 Value* sv = eval(ix->base.get());
-                return gep(i8(), b.CreateExtractValue(sv, {0}), idx);
+                return gep(i8(), b.CreateExtractValue(sv, {0}), idxs[0]);
             }
             fail("LLVM 后端：不可下标访问", ix->line, ix->col);
         }
@@ -959,7 +1232,8 @@ struct Emitter {
         b.CreateStore(v, tmp);
         // owned 的 struct/array 右值被物化后，语句结束时要释放其引用字段
         if (e->ty && needsCleanup(e->ty) && valueOwned(e) &&
-            (e->ty->kind == TypeKind::Struct || e->ty->kind == TypeKind::Array)) {
+            (e->ty->kind == TypeKind::Struct || e->ty->kind == TypeKind::Array ||
+             e->ty->kind == TypeKind::Slice)) {
             stmtTemps.emplace_back(tmp, e->ty);
         }
         return tmp;
@@ -984,15 +1258,9 @@ struct Emitter {
 
     Value* coerce(Expr* e, const TypePtr& to) {
         if (e && to && to->kind == TypeKind::Slice && e->ty &&
-            e->ty->kind == TypeKind::Array && same_type(e->ty->elem, to->elem)) {
-            Value* base = addrOf(e);
-            auto* st = cast<LStruct>(lt(e->ty));
-            Value* inner = b.CreateGEP(st, base, {ConstantInt::get(i64(), 0),
-                                                  ConstantInt::get(i32(), 0)});
-            Value* v = UndefValue::get(sliceTy);
-            v = b.CreateInsertValue(v, inner, {0});
-            v = b.CreateInsertValue(v, ConstantInt::get(i64(), e->ty->array_size), {1});
-            return v;
+            e->ty->kind == TypeKind::Array) {
+            // 定长数组 -> 动态数组：按嵌套维度分配并复制（不再提供借用视图）
+            return emitDynArrayFromArray(addrOf(e), e->ty, to);
         }
         return convertTo(eval(e), e->ty, to);
     }
@@ -1133,7 +1401,7 @@ struct Emitter {
         for (size_t i = 0; i < args.size() && i < ptys.size(); ++i) {
             Value* v = coerce(args[i], ptys[i]);
             // 参数按借用传递（callee 不释放）；只有调用者持有所有权的实参临时值才需在调用后清理
-            if (needsCleanup(ptys[i]) && valueOwned(args[i])) {
+            if (needsCleanup(ptys[i]) && convOwns(args[i], ptys[i])) {
                 pack.owned.emplace_back(v, ptys[i]);
             }
             pack.vals.push_back(v);
@@ -1167,6 +1435,13 @@ struct Emitter {
     }
 
     Value* evalNew(NewExpr* ne) {
+        if (ne->is_array) {
+            std::vector<Value*> dims;
+            for (auto& d : ne->dims) {
+                dims.push_back(convertTo(eval(d.get()), d->ty, Type::make_prim("usize")));
+            }
+            return emitSliceAlloc(dims, ne->elem_ty);
+        }
         TypePtr cls = ne->class_ty;
         uint64_t sz = objectSize(cls);
         Value* p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}),
@@ -1520,7 +1795,9 @@ struct Emitter {
             return b.CreateLoad(lt(e->ty), addrOf(e));
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
-            if (ix->get_func) return emitUserCall(ix->get_func, {ix->base.get(), ix->index.get()});
+            if (ix->get_func) {
+                return emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
+            }
             return b.CreateLoad(lt(e->ty), addrOf(e));
         }
         if (auto u = dynamic_cast<Unary*>(e)) {
@@ -1560,8 +1837,36 @@ struct Emitter {
         }
         if (auto v = dynamic_cast<Len*>(e)) {
             TypePtr st = v->seq->ty;
-            if (st->kind == TypeKind::Array) return ConstantInt::get(i64(), st->array_size);
+            int axis = 0;
+            Value* axisV = nullptr;
+            if (v->dim) {
+                if (auto il = dynamic_cast<IntLit*>(v->dim.get())) {
+                    axis = static_cast<int>(il->value);
+                } else if (st->kind == TypeKind::Slice && st->rank > 1) {
+                    axisV = convertTo(eval(v->dim.get()), v->dim->ty,
+                                      Type::make_prim("usize"));
+                } else {
+                    fail("静态数组/一维数组的 `len(seq, k)` 维度必须是整数字面量",
+                         v->dim->line, v->dim->col);
+                }
+            }
+            if (st->kind == TypeKind::Array) {
+                TypePtr cur = st;
+                for (int i = 0; i < axis; ++i) {
+                    if (!cur || cur->kind != TypeKind::Array)
+                        fail("`len` 维度越界", v->line, v->col);
+                    cur = cur->elem;
+                }
+                if (!cur || cur->kind != TypeKind::Array)
+                    fail("`len` 维度越界", v->line, v->col);
+                return ConstantInt::get(i64(), cur->array_size);
+            }
             Value* s = eval(v->seq.get());
+            if (st->kind == TypeKind::Slice) {
+                trackOwnedSliceTemp(v->seq.get(), s, st);
+                if (axisV) return emitSliceDimDynamic(s, axisV, st->rank);
+                return emitSliceDim(s, axis);
+            }
             return b.CreateExtractValue(s, {1});
         }
         fail("LLVM 后端：未知表达式", e->line, e->col);
@@ -1697,6 +2002,12 @@ struct Emitter {
                 if (!valueOwned(e)) emitRetainValue(addr, ty);
                 return;
             }
+            if (ty->kind == TypeKind::Slice) {
+                // 借用源（另一个动态数组）：retain；new/数组转换/调用返回：所有权转移
+                storeValue(v, addr, ty);
+                if (!convOwns(e, ty)) emitRetainValue(addr, ty);
+                return;
+            }
             storeValue(v, addr, ty);
             return;
         }
@@ -1738,17 +2049,13 @@ struct Emitter {
             if (ty->kind == TypeKind::Slice) {
                 std::vector<Init*> elems;
                 for (auto& it : ia->items) elems.push_back(it.second.get());
-                auto* arrTy = LArray::get(lt(ty->elem), elems.size());
-                auto* tmp = entryAlloca(arrTy, "slice.tmp");
+                Value* h = emitDynArrayAlloc(ConstantInt::get(i64(), elems.size()), ty->elem);
+                Value* data = sliceDataPtr(h, ty->rank);
                 for (size_t i = 0; i < elems.size(); ++i) {
-                    Value* p = gep(arrTy, tmp, {ConstantInt::get(i64(), 0),
-                                                        ConstantInt::get(i64(), i)});
+                    Value* p = b.CreateGEP(lt(ty->elem), data, ConstantInt::get(i64(), i));
                     initInto(p, ty->elem, elems[i]);
                 }
-                Value* v = UndefValue::get(sliceTy);
-                v = b.CreateInsertValue(v, tmp, {0});
-                v = b.CreateInsertValue(v, ConstantInt::get(i64(), elems.size()), {1});
-                b.CreateStore(v, addr);
+                b.CreateStore(h, addr);
                 return;
             }
         }
@@ -1794,6 +2101,8 @@ struct Emitter {
                 } else if (needsCleanup(lv->rty)) {
                     zeroMem(slot, lv->rty);
                 }
+            } else if (lv->rty && lv->rty->kind == TypeKind::Slice) {
+                b.CreateStore(Constant::getNullValue(ptrTy()), slot);
             } else if (lv->rty && lv->rty->kind == TypeKind::Array && needsCleanup(lv->rty)) {
                 zeroMem(slot, lv->rty);
             }
@@ -1810,7 +2119,8 @@ struct Emitter {
                     auto* tmp = entryAlloca(lt(ty), "expr.tmp");
                     b.CreateStore(v, tmp);
                     emitReleaseValue(tmp, ty);
-                } else if (ty && ty->kind == TypeKind::Struct && needsCleanup(ty)) {
+                } else if (ty && needsCleanup(ty) &&
+                           (ty->kind == TypeKind::Struct || ty->kind == TypeKind::Slice)) {
                     auto* tmp = entryAlloca(lt(ty), "expr.tmp");
                     b.CreateStore(v, tmp);
                     emitReleaseValue(tmp, ty);
@@ -1822,7 +2132,7 @@ struct Emitter {
             if (as->set_func) {
                 auto* ix = dynamic_cast<Index*>(as->target.get());
                 emitUserCall(as->set_func,
-                             {ix->base.get(), ix->index.get(), as->value.get()});
+                             {ix->base.get(), ix->indices[0].get(), as->value.get()});
                 return;
             }
             Value* addr = addrOf(as->target.get());
@@ -1855,10 +2165,11 @@ struct Emitter {
                 }
                 TypePtr tty = as->target->ty;
                 if (!weakTarget && tty && needsCleanup(tty) &&
-                    (tty->kind == TypeKind::Array || tty->kind == TypeKind::Struct)) {
+                    (tty->kind == TypeKind::Array || tty->kind == TypeKind::Struct ||
+                     tty->kind == TypeKind::Slice)) {
                     auto* tmp = entryAlloca(lt(tty), "val.tmp");
                     b.CreateStore(nv, tmp);
-                    if (!valueOwned(as->value.get())) emitRetainValue(tmp, tty);
+                    if (!convOwns(as->value.get(), tty)) emitRetainValue(tmp, tty);
                     emitReleaseValue(addr, tty);
                     b.CreateStore(b.CreateLoad(lt(tty), tmp), addr);
                     return;
@@ -2034,6 +2345,9 @@ struct Emitter {
             Value* v = eval(s->seq.get());
             seqAddr = entryAlloca(lt(sty), "seq.tmp");
             b.CreateStore(v, seqAddr);
+            // owned 的动态数组/数组临时值：循环结束后释放
+            if (needsCleanup(sty) && valueOwned(s->seq.get()))
+                stmtTemps.emplace_back(seqAddr, sty);
         }
 
         // 长度与元素地址
@@ -2044,15 +2358,15 @@ struct Emitter {
             elemPtr = gep(cast<LStruct>(lt(sty)), seqAddr,
                                   {ConstantInt::get(i64(), 0), ConstantInt::get(i32(), 0),
                                    ConstantInt::get(i64(), 0)});
+        } else if (sty->kind == TypeKind::Slice) {
+            Value* h = b.CreateLoad(lt(sty), seqAddr);
+            len = emitSliceTotal(h, sty->rank);
+            elemPtr = sliceDataPtr(h, sty->rank);
         } else {
             Value* sv = b.CreateLoad(lt(sty), seqAddr);
             Value* data = b.CreateExtractValue(sv, {0});
             len = b.CreateExtractValue(sv, {1});
-            TypePtr et = sty->kind == TypeKind::Slice ? sty->elem : Type::make_prim("char");
-            elemPtr = data;  // 元素类型 GEP 时按 et
-            if (sty->kind == TypeKind::Slice) {
-                // 指针就是元素指针
-            }
+            elemPtr = data;  // string：byte 视图
         }
 
         auto* idx = entryAlloca(i64(), "for.idx");
@@ -2387,6 +2701,10 @@ struct Emitter {
             emitReleaseRef(b.CreateLoad(lt(ty), addr), ty);
             return;
         }
+        if (ty->kind == TypeKind::Slice) {
+            emitSliceRelease(b.CreateLoad(lt(ty), addr), ty);
+            return;
+        }
         if (ty->kind == TypeKind::Struct) {
             if (ty->has_dtor) {
                 FunctionCallee dtor = mod->getOrInsertFunction(
@@ -2418,6 +2736,10 @@ struct Emitter {
         if (!ty) return;
         if (isRefKind(ty)) {
             emitRetainRef(b.CreateLoad(lt(ty), addr), ty);
+            return;
+        }
+        if (ty->kind == TypeKind::Slice) {
+            emitSliceRetain(b.CreateLoad(lt(ty), addr));
             return;
         }
         if (ty->kind == TypeKind::Struct) {
@@ -2690,8 +3012,7 @@ struct Emitter {
 
         strTy = LStruct::create(ctx, "mu_string");
         strTy->setBody({ptrTy(), i64()}, false);
-        sliceTy = LStruct::create(ctx, "mu_slice");
-        sliceTy->setBody({ptrTy(), i64()}, false);
+        sliceTy = ptrTy();  // 动态数组句柄（头指针）
         descTy = LStruct::create(ctx, "mu_desc");
         descTy->setBody({i64(), ptrTy(), ptrTy(), ptrTy(), ptrTy()}, false);
         ifaceTy = LStruct::create(ctx, "mu_iface");

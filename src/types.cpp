@@ -89,11 +89,12 @@ TypePtr Type::make_array(const TypePtr& elem, size_t size) {
     return t;
 }
 
-TypePtr Type::make_slice(const TypePtr& elem, bool readonly) {
+TypePtr Type::make_slice(const TypePtr& elem, bool readonly, int rank) {
     auto t = std::make_shared<Type>();
     t->kind = TypeKind::Slice;
     t->elem = elem;
     t->readonly = readonly;
+    t->rank = rank < 1 ? 1 : rank;
     return t;
 }
 
@@ -162,10 +163,24 @@ std::string Type::str() const {
             std::string base = elem_str(elem) + "*";
             return readonly ? "readonly " + base : base;
         }
-        case TypeKind::Array:
-            return elem_str(elem) + "[" + std::to_string(array_size) + "]";
+        case TypeKind::Array: {
+            // 嵌套静态数组显示为 T[m,n,...]
+            std::vector<std::string> dims;
+            const Type* cur = this;
+            while (cur->kind == TypeKind::Array) {
+                dims.push_back(std::to_string(cur->array_size));
+                cur = cur->elem.get();
+            }
+            std::string base = cur ? cur->str() : std::string("void");
+            std::string out = base + "[";
+            for (size_t i = 0; i < dims.size(); ++i) {
+                if (i) out += ",";
+                out += dims[i];
+            }
+            return out + "]";
+        }
         case TypeKind::Slice: {
-            std::string base = elem_str(elem) + "[]";
+            std::string base = elem_str(elem) + "[" + std::string(rank - 1, ',') + "]";
             return readonly ? "readonly " + base : base;
         }
         case TypeKind::Struct:
@@ -223,6 +238,7 @@ bool Type::needs_cleanup() const {
             return false;
         case TypeKind::Array:
             return elem && elem->needs_cleanup();
+        case TypeKind::Slice: return true;  // 动态数组：句柄持有 RC
         default: return false;
     }
 }
@@ -313,7 +329,8 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
             return a->name == b->name;
         case TypeKind::Ptr:
         case TypeKind::Slice:
-            return a->readonly == b->readonly && same_type(a->elem, b->elem);
+            return a->readonly == b->readonly && a->rank == b->rank &&
+                   same_type(a->elem, b->elem);
         case TypeKind::Array:
             return a->array_size == b->array_size && same_type(a->elem, b->elem);
         case TypeKind::Struct:
