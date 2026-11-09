@@ -388,6 +388,35 @@
 - 建议：如果目标是"字符串库"，继续用**内置 `string` + `StringBuilder` class + 自由函数**；
   若要把 `string` 变成用户定义的值类型，则需要上面 1–6，属于语言层改造（大版本）。
 
+### U26. 用语言设施支持"完整的 string 类型"（依赖顺序）
+- 目标模型三选一：
+  - **A. 不可变值 string（struct）**：`Str { Buf b; usize off; usize n; }`，Buf 是 RC class；
+    操作返回新 Str；无用户拷贝构造（字段级 RC 自动共享）；需要 struct 方法/构造/析构 + U24 + Buf。
+  - **B. 可变值 string（struct）**：拥有缓冲、可变方法；必须有深拷贝或 COW；
+    需要 **引用/ref**、拷贝构造/赋值、移动（或 COW 的 refcount 查询）——设施最多。
+  - **C. 可变引用 string（class）**：`class String { byte* data; usize n; usize cap; ~String(){free} }`；
+    class 已有方法/构造/析构/RC，复制=共享句柄，`clone()` 深拷贝；不需要 struct 新设施，最快能做到"完整"。
+- 语言设施依赖顺序（从底层到字符串 API）：
+  1. **struct 方法 + `this`**（指针接收者；可变方法只允许 lvalue 接收者；只读方法/const 后续）；
+  2. **struct 构造器**（默认/重载；`S s;` 调用默认构造；`S s = S(args)`；与聚合初始化的关系）；
+  3. **struct 析构器 + 自动调用**（作用域/return/break/continue/数组元素/字段/临时值；现有 CleanupScope 扩展）；
+  4. **所有权与拷贝控制**：
+     - A：U24（struct 含 class 字段 + 逐字段 retain/release）即可，无需用户拷贝构造；
+     - B：U8 引用 + 拷贝构造/赋值/移动（特殊成员）或 COW refcount 查询；
+  5. **动态缓冲**：`class Buf`（byte* + cap，alloc/realloc/free，class dtor 释放）或 U20/U22 受管 slice；
+  6. **拼接/视图**：`+`/`==` free operator（已有 struct 运算符）；`[]`/`[]=`；`+=` 需要 struct 复合赋值派发；
+     子串/视图需要 ref 返回或复制；
+  7. **字符串 API**：从内置 `string`/`readonly char*` 构造、c_str、len/cap/empty、append/insert/replace/trim/find/split、
+     UTF-8 校验/码点迭代、格式化；
+  8. **迭代协议**：`for c in s` 目前只支持内置 string/数组/切片；用户 Str 需要索引循环或迭代器协议；
+  9. **关键字冲突**：字段不能叫 `len`/`free` 等（`len` 已实测报错）；API 命名需绕开或允许关键字做字段名。
+- 关键陷阱：
+  - 有析构器但无拷贝构造 → 值拷贝会双 owner/双重释放；有拷贝构造但无移动 → 返回/传参大量深拷贝；
+  - 拷贝构造签名需要引用（`Str(const Str&)`），没有引用就只能用指针/显式 clone，语法不自然；
+  - 构造失败/早退时的析构与部分构造（无异常时也要规则）；返回时 RVO/move。
+- 建议：先用 **C（class String）** 把"完整功能"跑通（改动最小），再按 A 做不可变值版本（U24），
+  B（可变值）留到引用/拷贝控制就绪；不要一开始同时上 struct 方法 + 拷贝控制 + COW。
+
 ## 已完成（留档）
 
 - 0.0.20：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（删除 `ubyte`/`uchar` 别名）；
