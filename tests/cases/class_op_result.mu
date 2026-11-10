@@ -1,6 +1,6 @@
 unit class_op_result;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 class P { int v; P(int x){v=x;live+=1;} ~P(){live-=1;} int get(){return v;} }
 P operator+(P a, P b) { return new P(a.get() + b.get()); }
 int main() {

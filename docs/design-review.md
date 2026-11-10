@@ -18,9 +18,9 @@
 |---|---|---|
 | `const_assign` | `const int y = 1; y = 2;` | §3.7 `const` 绑定不可变 |
 | `const_global_noinit` | unit 级 `const int c;` 未初始化 | §3.7 必须初始化 |
-| `readonly_ptr_write` | `readonly int* p; p[0] = 1;` | §3.7 通过 readonly 视图不能写 |
-| `readonly_slice_write` | `readonly int[] s; s[0] = 1;` | 同上 |
-| `readonly_ref_loop` | `for ref v in <readonly 切片>` | 同上 |
+| `readonly_ptr_write` | `const int* p; p[0] = 1;` | §3.7 通过 const 视图不能写 |
+| `readonly_slice_write` | `const int[] s; s[0] = 1;` | 同上 |
+| `readonly_ref_loop` | `for ref v in <const 切片>` | 同上 |
 | `string_write` | `string s = "a"; s[0] = 120;` | §3.3 string 不可变 |
 | `auto_multi_type` | `auto a = 1, b = 2.0;` | §4 多声明符必须同一类型 |
 | `enum_dup` | `enum E { A, B, A }` | §3.5 成员唯一 |
@@ -65,17 +65,17 @@ sema 递归检查，codegen 递归生成嵌套初始化。`char[N]` 字段可以
 - 其他表达式（如 `rows[idx()].v`）先求值到临时量再遍历，`idx()` 只调用一次；
 - `for ref` 的序列必须是简单左值，否则编译错误（需要可寻址）。
 
-### 4.3 枚举参与算术/比较
+### 4.3 枚举参与算术/比较 —— 已解决
 
-当前 `EnumType` 被当作 `int` 参与 `usual_arith`：
+`EnumType` 曾当作 `int` 参与 `usual_arith`（`X == Y`、`X + 1` 都合法）。现已收紧为
+**名义类型**（SPEC §3.5 / 决策 64·102）：
 
-```c
-enum A { X } enum B { Y }
-if X == Y { }      // 合法（都按 int 比较）
-int n = X + 1;     // 合法
-```
-
-C 也这样，但类型安全性弱。可选：只允许同枚举比较，跨枚举/枚举与 int 的算术需要 `as`。
+- 枚举与整数**双向无隐式转换**，必须写 `as`（`Color c = 1;`、`int n = Red;` 都报错）。
+- 比较只允许**同一枚举类型**之间，支持 `== != < <= > >=`，序 = 底层整数值的序。
+- 跨枚举比较、`c == 1`、算术/位运算、一元 `-`/`+`/`~`、复合赋值一律报错。
+- 实现：`implicitly_convertible` 去掉「枚举 → int」；`usual_arith` 直接拒绝枚举；
+  `check_binary` 前置名义判定；下标/区间端点显式拒绝枚举；codegen 比较按 `int`
+  有符号序生成 `icmp`。
 
 ### 4.4 指向数组的指针
 
@@ -104,7 +104,7 @@ C 也这样，但类型安全性弱。可选：只允许同枚举比较，跨枚
 
 1. ~~嵌套聚合初始化~~（已实现）
 2. ~~`for-in` 求值一次~~（已实现）
-3. 枚举类型安全（4.3）：只允许同枚举比较，跨枚举算术需要 `as`。
+3. ~~枚举类型安全（4.3）：只允许同枚举比较，跨枚举算术需要 `as`~~（已实现）。
 4. 数组指针（4.4）：第一阶段禁止，或明确索引语义。
 5. 警告/诊断基础设施（4.6）：切片逃逸、未初始化读、大数组按值传参。
 6. 阶段 B（LLVM）前，先补 `sizeof(expr)` 与 `main(argc, argv)` 的决定。

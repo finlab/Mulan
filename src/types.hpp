@@ -15,6 +15,7 @@ struct Field {
     std::string name;
     TypePtr type;
     bool weak = false;  // weak 字段（只用于 class）
+    bool is_public = true;  // struct 字段恒公开；class 字段默认私有
 };
 
 // 方法签名（class / interface）
@@ -24,6 +25,7 @@ struct MethodSig {
     std::vector<TypePtr> params;
     bool is_abstract = false;
     bool is_override = false;
+    bool is_public = true;  // 默认私有由 class 方法显式覆盖；struct/接口方法恒公开
     TypePtr owner;  // 声明该方法的 class/interface（sema 填）
 };
 
@@ -35,21 +37,24 @@ struct Type {
     TypePtr elem;
     size_t array_size = 0;
     int rank = 1;               // Slice：维数（1=T[]，2=T[,]，……）
-    bool readonly = false;
+    bool is_const = false;      // C 模型：该类型节点是否 const（逐层）
     std::vector<Field> fields;  // Struct/Class 用（先建占位、后填充；Class 存扁平字段）
     std::vector<MethodSig> methods;  // Class/Interface 用
     std::vector<std::vector<TypePtr>> ctors;  // Class 构造器参数表（重载）
+    std::vector<bool> ctor_is_public;        // 与 ctors 平行：构造器是否 public
     TypePtr base;               // Class 的基类
     std::vector<TypePtr> interfaces;  // Class/Interface 实现的接口
     bool is_abstract = false;   // Class 有未实现方法
     bool has_dtor = false;      // 用户声明了析构器（struct/class）
+    bool is_packed = false;     // Struct：packed（字段紧排，无内部/尾部填充，align 默认 1）
+    int align_req = 0;          // Struct：align(N) 的 N（0 = 未指定）
 
     static TypePtr make_void();
     static TypePtr make_prim(const std::string& name);
     static TypePtr make_string();
-    static TypePtr make_ptr(const TypePtr& elem, bool readonly = false);
+    static TypePtr make_ptr(const TypePtr& elem, bool is_const = false);
     static TypePtr make_array(const TypePtr& elem, size_t size);
-    static TypePtr make_slice(const TypePtr& elem, bool readonly = false, int rank = 1);
+    static TypePtr make_slice(const TypePtr& elem, bool is_const = false, int rank = 1);
     static TypePtr make_struct(const std::string& unit, const std::string& name);
     static TypePtr make_enum(const std::string& unit, const std::string& name);
     static TypePtr make_class(const std::string& unit, const std::string& name);
@@ -82,6 +87,10 @@ const std::vector<std::string>& prim_names();
 bool is_prim_name(const std::string& n);
 
 bool same_type(const TypePtr& a, const TypePtr& b);
+
+// 布局（Struct 的 packed / align(N) 只在这里实现；codegen 委托调用，避免两份布局漂移）
+size_t type_align(const TypePtr& t);
+size_t type_size(const TypePtr& t);
 bool is_class_type(const TypePtr& t);
 bool is_interface_type(const TypePtr& t);
 bool is_reference_type(const TypePtr& t);  // class / interface

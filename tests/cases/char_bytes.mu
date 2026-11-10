@@ -1,6 +1,6 @@
 unit char_bytes;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 int main() {
     // char：有符号 8 位（C 风格）

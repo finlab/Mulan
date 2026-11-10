@@ -43,7 +43,7 @@ TypeSpecPtr clone_spec(const TypeSpec& s) {
     out->elem = s.elem ? clone_spec(*s.elem) : nullptr;
     out->size = s.size;
     out->rank = s.rank;
-    out->readonly = s.readonly;
+    out->is_const = s.is_const;
     out->weak = s.weak;
     out->line = s.line;
     out->col = s.col;
@@ -67,6 +67,8 @@ public:
         : filename_(filename), toks_(tokenize(src, filename)) {
         // std.string 提供的字符串类型（库在 sema 前不可见）
         type_names_.insert("string");
+        // std.string 总是隐式依赖（字符串字面量需要它的类型）
+        module_names_.insert("std.string");
     }
 
     std::string parse_unit_name() {
@@ -136,6 +138,13 @@ private:
 
     void semicolon() { expect_op(";"); }
 
+    // `++`/`--` 没有返回值：出现在任何表达式上下文都是错误
+    void forbid_inc_expr() const {
+        if (at_op("++", "--")) {
+            throw err("`++`/`--` 没有返回值，不能出现在表达式里；只能作为独立语句");
+        }
+    }
+
     // ------------------------------------------------------ unit
 
     std::unique_ptr<Decl> parse_extern(const Token& tk);
@@ -150,15 +159,17 @@ private:
     std::vector<std::string> parse_base_list();
     std::string parse_qualified_name();
     std::vector<std::unique_ptr<GlobalVar>> parse_global();
+    std::vector<std::unique_ptr<GlobalVar>> parse_global_list(TypeSpecPtr spec, bool is_const);
     std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, const Token& tk);
     std::vector<std::unique_ptr<Param>> parse_params();
 
     // ------------------------------------------------------ 类型
 
     bool is_type_start(const Token& t) const;
+    bool is_module_prefix(const std::string& s) const;
     TypeSpecPtr parse_type();
     TypeSpecPtr parse_type_base();  // 不含数组后缀（供 `new T[n]` 使用）
-    TypeSpecPtr type_suffixes(TypeSpecPtr spec, bool readonly, const Token& t);
+    TypeSpecPtr type_suffixes(TypeSpecPtr spec, const Token& t);
 
     // ------------------------------------------------------ 语句
 
@@ -207,7 +218,14 @@ private:
 
 std::unique_ptr<Unit> Parser::parse_unit() {
     const Token t = peek();
-    if (!at_kw("unit")) throw err("文件必须以 `unit 名字;` 开头");
+    bool unit_public = false;
+    if (at_kw("public", "private")) {
+        unit_public = at_kw("public");
+        advance();
+    }
+    if (!at_kw("unit")) {
+        throw err("文件必须以 `unit 名字;`、`public unit 名字;` 或 `private unit 名字;` 开头");
+    }
     advance();
     std::string name = parse_unit_name();
     semicolon();
@@ -215,12 +233,52 @@ std::unique_ptr<Unit> Parser::parse_unit() {
     auto unit = std::make_unique<Unit>();
     unit->name = std::move(name);
     unit->filename = filename_;
+    unit->is_public = unit_public;
     unit->line = t.line;
     unit->col = t.col;
 
     while (!at_eof()) {
         const Token tk = peek();
+        bool is_pub = false;
+        // 布局修饰符（packed / align(N)）：与 public/private 同类，任意顺序、可组合
+        bool packed = false;
+        ExprPtr align_expr;
+        bool has_layout = false;
+        Token layout_tok = tk;
+        for (;;) {
+            if (at_kw("public", "private")) {
+                is_pub = at_kw("public");
+                advance();
+                continue;
+            }
+            if (at_kw("packed")) {
+                if (packed) throw err_at("重复的布局修饰符 `packed`", peek());
+                packed = true;
+                has_layout = true;
+                layout_tok = peek();
+                advance();
+                continue;
+            }
+            // `align` 保持标识符身份，只有 `align(` 形式才是布局修饰符（上下文关键字）
+            if (peek().kind == TokKind::Ident && peek().text == "align" && peek(1).is_op("(")) {
+                if (align_expr) throw err_at("重复的布局修饰符 `align(...)`", peek());
+                layout_tok = peek();
+                has_layout = true;
+                advance();  // align
+                advance();  // (
+                align_expr = parse_expr();
+                expect_op(")");
+                continue;
+            }
+            break;
+        }
+        if (at_eof()) throw err_at("修饰符后缺少声明", tk);
+
         if (at_kw("use")) {
+            if (is_pub) throw err_at("`public` 不能用于 `use`", tk);
+            if (has_layout) {
+                throw err_at("布局修饰符 `packed` / `align(N)` 只能用于 `struct` 声明", layout_tok);
+            }
             advance();
             std::string uname = parse_unit_name();
             semicolon();
@@ -234,49 +292,91 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         }
 
         if (at_kw("extern")) {
+            if (is_pub) throw err_at("`extern` 声明隐式公开，不能使用 `public`", tk);
+            if (has_layout) {
+                throw err_at("布局修饰符 `packed` / `align(N)` 只能用于 `struct` 声明", layout_tok);
+            }
             advance();
             unit->decls.push_back(parse_extern(tk));
             continue;
         }
 
         if (at_kw("struct")) {
-            unit->decls.push_back(parse_struct());
+            auto d = parse_struct();
+            d->is_public = is_pub;
+            if (auto* sd = dynamic_cast<StructDecl*>(d.get())) {
+                sd->is_packed = packed;
+                sd->align_expr = std::move(align_expr);
+            }
+            unit->decls.push_back(std::move(d));
             continue;
         }
 
         if (at_kw("enum")) {
-            unit->decls.push_back(parse_enum());
+            if (has_layout) {
+                throw err_at("`enum` 不支持布局修饰符（`packed` / `align(N)`）", layout_tok);
+            }
+            auto d = parse_enum();
+            d->is_public = is_pub;
+            unit->decls.push_back(std::move(d));
             continue;
         }
 
         if (at_kw("class")) {
-            unit->decls.push_back(parse_class());
+            if (has_layout) {
+                throw err_at("`class` 不支持布局修饰符（`packed` / `align(N)`）", layout_tok);
+            }
+            auto d = parse_class();
+            d->is_public = is_pub;
+            unit->decls.push_back(std::move(d));
             continue;
         }
 
         if (at_kw("interface")) {
-            unit->decls.push_back(parse_interface());
+            if (has_layout) {
+                throw err_at("`interface` 不支持布局修饰符（`packed` / `align(N)`）", layout_tok);
+            }
+            auto d = parse_interface();
+            d->is_public = is_pub;
+            unit->decls.push_back(std::move(d));
             continue;
         }
 
-        if (at_kw("static", "const")) {
-            for (auto& g : parse_global()) unit->decls.push_back(std::move(g));
+        if (has_layout) {
+            throw err_at("布局修饰符 `packed` / `align(N)` 只能用于 `struct` 声明", layout_tok);
+        }
+
+        if (at_kw("static")) {
+            throw err_at("`static` 已移除：unit 级变量默认 private，跨 unit 使用 `public`", tk);
+        }
+
+        if (at_kw("const")) {
+            auto globals = parse_global();
+            for (auto& g : globals) g->is_public = is_pub;
+            for (auto& g : globals) unit->decls.push_back(std::move(g));
             continue;
         }
 
         if (at_kw("auto")) throw err("unit 级变量不能使用 `auto`，必须显式写类型");
 
-        // 函数定义或（非法的）unit 级变量
+        // 函数定义或 unit 级变量
         TypeSpecPtr spec = parse_type();
         if (at_kw("operator")) {
-            unit->decls.push_back(parse_operator_func(std::move(spec), tk));
+            auto f = parse_operator_func(std::move(spec), tk);
+            f->is_public = is_pub;
+            unit->decls.push_back(std::move(f));
             continue;
         }
-        const Token name_tok = expect_ident("声明名");
-        if (at_op("(")) {
-            unit->decls.push_back(parse_func(name_tok.text, std::move(spec), name_tok));
+        if (peek().kind == TokKind::Ident && peek(1).is_op("(")) {
+            const Token name_tok = advance();
+            auto f = parse_func(name_tok.text, std::move(spec), name_tok);
+            f->is_public = is_pub;
+            unit->decls.push_back(std::move(f));
         } else {
-            throw err_at("unit 级变量必须带 `static` 或 `extern`（`const` 常量除外）", name_tok);
+            // unit 级变量：默认 private，public 由前缀控制
+            auto globals = parse_global_list(std::move(spec), false);
+            for (auto& g : globals) g->is_public = is_pub;
+            for (auto& g : globals) unit->decls.push_back(std::move(g));
         }
     }
 
@@ -300,7 +400,6 @@ std::unique_ptr<Decl> Parser::parse_extern(const Token& tk) {
     auto gv = std::make_unique<GlobalVar>();
     gv->name = name_tok.text;
     gv->spec = std::move(spec);
-    gv->is_static = false;
     gv->is_extern = true;
     gv->is_const = false;
     gv->line = tk.line;
@@ -320,8 +419,24 @@ std::unique_ptr<Decl> Parser::parse_struct() {
     decl->line = tk.line;
     decl->col = tk.col;
 
+    bool cur_pub = true;  // struct 默认 public
     while (!at_op("}")) {
+        // 分段标签：`public:` / `private:` 切换后续成员的默认可见性
+        if ((at_kw("public") || at_kw("private")) && peek(1).is_op(":")) {
+            cur_pub = at_kw("public");
+            advance();
+            advance();
+            continue;
+        }
+        bool member_pub = cur_pub;
+        bool explicit_mod = false;
+        if (at_kw("public", "private")) {
+            member_pub = at_kw("public");
+            advance();
+            explicit_mod = true;
+        }
         if (at_op("~")) {
+            if (explicit_mod) throw err("析构器不能使用 `public`/`private`");
             if (decl->dtor) throw err("struct `" + name + "` 只能有一个析构器");
             decl->dtor = parse_dtor();
             continue;
@@ -329,6 +444,7 @@ std::unique_ptr<Decl> Parser::parse_struct() {
         if (peek().kind == TokKind::Ident && peek().text == name && peek(1).is_op("(")) {
             const Token ctor_name = advance();
             decl->ctors.push_back(parse_ctor(ctor_name));
+            decl->ctors.back()->is_public = member_pub;
             continue;
         }
         if (at_kw("weak")) {
@@ -338,13 +454,16 @@ std::unique_ptr<Decl> Parser::parse_struct() {
         const Token name_tok = expect_ident("字段名或方法名");
         if (at_op("(")) {
             decl->methods.push_back(parse_method(std::move(spec), name_tok));
+            decl->methods.back()->is_public = member_pub;
             continue;
         }
         decl->fields.emplace_back(name_tok.text, clone_spec(*spec));
+        decl->field_visibility[name_tok.text] = member_pub;
         for (;;) {
             if (!at_op(",")) break;
             advance();
             std::string fname = expect_ident("字段名").text;
+            decl->field_visibility[fname] = member_pub;
             decl->fields.emplace_back(std::move(fname), clone_spec(*spec));
         }
         semicolon();
@@ -470,8 +589,24 @@ std::unique_ptr<Decl> Parser::parse_class() {
     cd->bases = parse_base_list();
 
     expect_op("{");
+    bool cur_pub = false;  // class 默认 private
     while (!at_op("}")) {
+        // 分段标签：`public:` / `private:` 切换后续成员的默认可见性
+        if ((at_kw("public") || at_kw("private")) && peek(1).is_op(":")) {
+            cur_pub = at_kw("public");
+            advance();
+            advance();
+            continue;
+        }
+        bool member_pub = cur_pub;
+        bool explicit_mod = false;
+        if (at_kw("public", "private")) {
+            member_pub = at_kw("public");
+            advance();
+            explicit_mod = true;
+        }
         if (at_op("~")) {
+            if (explicit_mod) throw err("析构器不能使用 `public`/`private`");
             if (cd->dtor) throw err("class `" + cd->name + "` 只能有一个析构器");
             cd->dtor = parse_dtor();
             continue;
@@ -485,6 +620,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
         if (t.kind == TokKind::Ident && t.text == cd->name && peek(1).is_op("(")) {
             const Token ctor_name = advance();
             cd->ctors.push_back(parse_ctor(ctor_name));
+            cd->ctors.back()->is_public = member_pub;
             continue;
         }
         bool prefix_weak = false;
@@ -499,14 +635,18 @@ std::unique_ptr<Decl> Parser::parse_class() {
             if (prefix_weak) throw err_at("`weak` 只能用于字段，不能用于方法", name_tok);
             auto m = parse_method(std::move(spec), name_tok);
             if (prefix_override) m->is_override = true;
+            m->is_public = member_pub;
             cd->methods.push_back(std::move(m));
             continue;
         }
         if (prefix_override) throw err_at("`override` 只能用于方法", name_tok);
         cd->fields.emplace_back(name_tok.text, clone_spec(*spec));
+        cd->field_visibility[name_tok.text] = member_pub;
         while (at_op(",")) {
             advance();
-            cd->fields.emplace_back(expect_ident("字段名").text, clone_spec(*spec));
+            const std::string fname = expect_ident("字段名").text;
+            cd->field_visibility[fname] = member_pub;
+            cd->fields.emplace_back(fname, clone_spec(*spec));
         }
         semicolon();
     }
@@ -528,6 +668,9 @@ std::unique_ptr<Decl> Parser::parse_interface() {
 
     expect_op("{");
     while (!at_op("}")) {
+        if (at_kw("public", "private")) {
+            throw err("`public`/`private` 不能用于 interface 方法（接口方法恒随 interface 公开）");
+        }
         TypeSpecPtr spec = parse_type();
         const Token name_tok = expect_ident("方法名");
         id->methods.push_back(parse_method(std::move(spec), name_tok));
@@ -570,47 +713,33 @@ std::unique_ptr<FuncDecl> Parser::parse_operator_func(TypeSpecPtr ret, const Tok
 bool Parser::is_type_start(const Token& t) const {
     if (t.kind == TokKind::Kw) {
         if (prims().count(t.text) != 0) return true;
-        if (t.text == "readonly") return true;
+        if (t.text == "const") return true;
         return false;
     }
     if (t.kind == TokKind::Ident) {
         if (type_names_.count(t.text) != 0) return true;
-        // 限定类型 `math.Point`
-        if (module_names_.count(t.text) != 0 && peek(1).is_op(".")) return true;
+        // 限定类型 `math.Point` / `std.string.string` / `lib.a.b.T`
+        if (peek(1).is_op(".") && is_module_prefix(t.text)) return true;
+    }
+    return false;
+}
+
+// 是否是某个已导入 unit 名（或 std.string）的点号前缀。
+bool Parser::is_module_prefix(const std::string& s) const {
+    for (const auto& m : module_names_) {
+        if (m == s) return true;
+        if (m.size() > s.size() && m.compare(0, s.size(), s) == 0 && m[s.size()] == '.') {
+            return true;
+        }
     }
     return false;
 }
 
 TypeSpecPtr Parser::parse_type() {
-    bool readonly = false;
-    if (at_kw("readonly")) {
+    bool base_const = false;
+    if (at_kw("const")) {
         advance();
-        readonly = true;
-    }
-    const Token t = peek();
-    if (t.kind == TokKind::Kw && prims().count(t.text) != 0) {
-        advance();
-        return type_suffixes(make_named_spec(t.text, t.line, t.col), readonly, t);
-    }
-    if (t.kind != TokKind::Ident) {
-        throw err("期望类型名，实际是 " + t.describe());
-    }
-    advance();
-    std::string name = t.text;
-    if (at_op(".")) {
-        advance();
-        std::string sub = expect_ident("类型名").text;
-        name += ".";
-        name += sub;
-    }
-    return type_suffixes(make_named_spec(name, t.line, t.col), readonly, t);
-}
-
-TypeSpecPtr Parser::parse_type_base() {
-    bool readonly = false;
-    if (at_kw("readonly")) {
-        advance();
-        readonly = true;
+        base_const = true;
     }
     const Token t = peek();
     TypeSpecPtr spec;
@@ -620,7 +749,7 @@ TypeSpecPtr Parser::parse_type_base() {
     } else if (t.kind == TokKind::Ident) {
         advance();
         std::string name = t.text;
-        if (at_op(".")) {
+        while (at_op(".")) {
             advance();
             name += ".";
             name += expect_ident("类型名").text;
@@ -629,6 +758,34 @@ TypeSpecPtr Parser::parse_type_base() {
     } else {
         throw err("期望类型名，实际是 " + t.describe());
     }
+    if (base_const) spec->is_const = true;
+    return type_suffixes(std::move(spec), t);
+}
+
+TypeSpecPtr Parser::parse_type_base() {
+    bool base_const = false;
+    if (at_kw("const")) {
+        advance();
+        base_const = true;
+    }
+    const Token t = peek();
+    TypeSpecPtr spec;
+    if (t.kind == TokKind::Kw && prims().count(t.text) != 0) {
+        advance();
+        spec = make_named_spec(t.text, t.line, t.col);
+    } else if (t.kind == TokKind::Ident) {
+        advance();
+        std::string name = t.text;
+        while (at_op(".")) {
+            advance();
+            name += ".";
+            name += expect_ident("类型名").text;
+        }
+        spec = make_named_spec(name, t.line, t.col);
+    } else {
+        throw err("期望类型名，实际是 " + t.describe());
+    }
+    if (base_const) spec->is_const = true;
     while (at_op("*")) {
         const Token tok = advance();
         auto ptr = std::make_unique<TypeSpec>();
@@ -638,17 +795,10 @@ TypeSpecPtr Parser::parse_type_base() {
         ptr->col = tok.col;
         spec = std::move(ptr);
     }
-    if (readonly) {
-        if (spec->kind == TypeSpec::K::Ptr) {
-            spec->readonly = true;
-        } else {
-            throw err_at("`readonly` 只能用于指针或切片类型", t);
-        }
-    }
     return spec;
 }
 
-TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, bool readonly, const Token& t) {
+TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
     for (;;) {
         if (at_op("*")) {
             const Token tok = advance();
@@ -718,15 +868,6 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, bool readonly, const Token& 
         break;
     }
 
-    if (readonly) {
-        if (spec->kind == TypeSpec::K::Ptr || spec->kind == TypeSpec::K::Slice) {
-            spec->readonly = true;
-        } else if (spec->kind == TypeSpec::K::Named) {
-            throw err_at("`readonly` 只能用于指针或切片类型", t);
-        } else {
-            throw err_at("`readonly` 只能用于最外层的指针或切片", t);
-        }
-    }
     return spec;
 }
 
@@ -738,6 +879,13 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params() {
     if (!at_op(")")) {
         for (;;) {
             const Token ptok = peek();
+            // 每个参数必须独立写 `T name`；C 式共享类型（`int a, b`）不合法。
+            // `b` 会被 parse_type 当成类型名、再在 `)` 处报「期望参数名」，因此提前给出明确诊断。
+            if (ptok.kind == TokKind::Ident && (peek(1).is_op(",") || peek(1).is_op(")"))) {
+                throw err_at(
+                    "参数必须写成 `类型 名称`；每个参数单独声明类型，不支持 `int a, b` 共享类型",
+                    ptok);
+            }
             TypeSpecPtr spec = parse_type();
             std::string pname = expect_ident("参数名").text;
             auto p = std::make_unique<Param>();
@@ -766,19 +914,7 @@ std::unique_ptr<FuncDecl> Parser::parse_func(std::string name, TypeSpecPtr ret, 
     return fn;
 }
 
-std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global() {
-    bool is_const = false;
-    bool is_static = false;
-    if (at_kw("const")) {
-        advance();
-        is_const = true;
-    }
-    if (at_kw("static")) {
-        advance();
-        is_static = true;
-    }
-    TypeSpecPtr spec = parse_type();
-
+std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global_list(TypeSpecPtr spec, bool is_const) {
     std::vector<std::unique_ptr<GlobalVar>> out;
     for (;;) {
         const Token name_tok = expect_ident("变量名");
@@ -791,7 +927,6 @@ std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global() {
         gv->name = name_tok.text;
         gv->spec = clone_spec(*spec);
         gv->init = std::move(init);
-        gv->is_static = is_static;
         gv->is_extern = false;
         gv->is_const = is_const;
         gv->line = name_tok.line;
@@ -802,6 +937,16 @@ std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global() {
     }
     semicolon();
     return out;
+}
+
+std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global() {
+    if (at_kw("static")) {
+        throw err("`static` 已移除：unit 级变量默认 private，跨 unit 使用 `public`");
+    }
+    TypeSpecPtr spec = parse_type();
+    // C 模型：无后缀的 `const T` 是变量绑定 const；`const T*` 的 const 属于 pointee
+    const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
+    return parse_global_list(std::move(spec), is_const);
 }
 
 // ---------------------------------------------------------------- 语句
@@ -865,7 +1010,10 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     if (at_kw("return")) {
         advance();
         ExprPtr value;
-        if (!at_op(";")) value = parse_expr();
+        if (!at_op(";")) {
+            value = parse_expr();
+            forbid_inc_expr();
+        }
         semicolon();
         auto s = std::make_unique<ReturnStmt>();
         s->value = std::move(value);
@@ -878,6 +1026,7 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     if (at_kw("del")) {
         const Token dt = advance();
         auto value = parse_expr();
+        forbid_inc_expr();
         semicolon();
         auto d = std::make_unique<DelStmt>();
         d->value = std::move(value);
@@ -890,8 +1039,35 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     if (at_kw("static")) {
         throw err("第一阶段不支持 `static` 局部变量");
     }
-    if (at_kw("const", "auto")) {
-        return parse_local(at_kw("const"), at_kw("auto"));
+    // 前缀 ++/--：只能作为独立语句（不产生值）
+    if (at_op("++", "--")) {
+        const Token op = advance();
+        ExprPtr target = parse_unary();
+        semicolon();
+        auto s = std::make_unique<AssignStmt>();
+        s->target = std::move(target);
+        s->op = op.text == "++" ? "+=" : "-=";
+        auto one = std::make_unique<IntLit>();
+        one->value = 1;
+        one->line = op.line;
+        one->col = op.col;
+        s->value = std::move(one);
+        s->line = op.line;
+        s->col = op.col;
+        std::vector<StmtPtr> out;
+        out.push_back(std::move(s));
+        return out;
+    }
+    if (at_kw("const") && peek(1).kind == TokKind::Kw && peek(1).text == "auto") {
+        return parse_local(true, true);
+    }
+    if (at_kw("auto")) {
+        return parse_local(false, true);
+    }
+    // `static` 已从语言移除，但保留明确提示（尤其是函数内旧写法）
+    if (t.kind == TokKind::Ident && t.text == "static" &&
+        (peek(1).kind == TokKind::Ident || peek(1).kind == TokKind::Kw)) {
+        throw err_at("`static` 已移除：局部变量不需要它；unit 级变量默认 private，跨 unit 用 `public`", t);
     }
     // 以类型关键字开头的语句一定是声明：直接按声明解析，让类型错误原样暴露
     if (t.kind == TokKind::Kw && is_type_start(t)) {
@@ -907,9 +1083,28 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     }
 
     ExprPtr expr = parse_expr();
+    // 后缀 ++/--：只能作为独立语句（不产生值）
+    if (at_op("++", "--")) {
+        const Token op = advance();
+        semicolon();
+        auto s = std::make_unique<AssignStmt>();
+        s->target = std::move(expr);
+        s->op = op.text == "++" ? "+=" : "-=";
+        auto one = std::make_unique<IntLit>();
+        one->value = 1;
+        one->line = op.line;
+        one->col = op.col;
+        s->value = std::move(one);
+        s->line = t.line;
+        s->col = t.col;
+        std::vector<StmtPtr> out;
+        out.push_back(std::move(s));
+        return out;
+    }
     if (peek().kind == TokKind::Op && assign_ops().count(peek().text) != 0) {
         std::string op = advance().text;
         ExprPtr value = parse_expr();
+        forbid_inc_expr();
         semicolon();
         auto s = std::make_unique<AssignStmt>();
         s->target = std::move(expr);
@@ -933,7 +1128,12 @@ std::vector<StmtPtr> Parser::parse_stmt() {
 
 bool Parser::looks_like_local_decl() {
     const Token t = peek();
-    if (!is_type_start(t)) return false;
+    // 类型名可能来自其他 unit（`use` 后直接可见），parser 不预先知道，
+    // 因此对任意 Ident 都做一次声明形状试探：`Type name ...`。
+    // 表达式语句不可能以「Ident(.Ident)* Ident」开头，误判方向是安全的。
+    if (t.kind != TokKind::Ident && !(t.kind == TokKind::Kw && is_type_start(t))) {
+        return false;
+    }
     const std::size_t save = pos_;
     bool ok = false;
     try {
@@ -947,7 +1147,7 @@ bool Parser::looks_like_local_decl() {
 }
 
 std::vector<StmtPtr> Parser::parse_local(bool is_const, bool is_auto) {
-    if (at_kw("const")) {
+    if (at_kw("const") && peek(1).kind == TokKind::Kw && peek(1).text == "auto") {
         advance();
         is_const = true;
     }
@@ -958,6 +1158,8 @@ std::vector<StmtPtr> Parser::parse_local(bool is_const, bool is_auto) {
 
     TypeSpecPtr spec;
     if (!is_auto) spec = parse_type();
+    // C 模型：无后缀的 `const T` 是变量绑定 const；`const T*` 的 const 属于 pointee
+    if (spec && spec->kind == TypeSpec::K::Named && spec->is_const) is_const = true;
     const int gid = ++group_counter_;
 
     std::vector<StmtPtr> out;
@@ -1012,6 +1214,7 @@ InitPtr Parser::parse_init() {
     }
     auto ie = std::make_unique<InitExpr>();
     ie->expr = parse_expr();
+    forbid_inc_expr();
     ie->line = t.line;
     ie->col = t.col;
     return ie;
@@ -1020,6 +1223,7 @@ InitPtr Parser::parse_init() {
 std::unique_ptr<Stmt> Parser::parse_if() {
     const Token tk = expect_kw("if");
     ExprPtr cond = parse_expr();
+    forbid_inc_expr();
     std::unique_ptr<Block> then = parse_block();
     StmtPtr els;
     if (at_kw("elif")) {
@@ -1053,6 +1257,7 @@ std::unique_ptr<Stmt> Parser::parse_if() {
 std::unique_ptr<Stmt> Parser::parse_while() {
     const Token tk = expect_kw("while");
     ExprPtr cond = parse_expr();
+    forbid_inc_expr();
     std::unique_ptr<Block> body = parse_block();
     auto node = std::make_unique<WhileStmt>();
     node->cond = std::move(cond);
@@ -1268,6 +1473,7 @@ ExprPtr Parser::parse_unary() {
                     ne->named.emplace_back(std::move(nm), parse_expr());
                 } else {
                     ne->args.push_back(parse_expr());
+                    forbid_inc_expr();
                 }
                 if (at_op(",")) {
                     advance();
@@ -1281,7 +1487,10 @@ ExprPtr Parser::parse_unary() {
         }
         return parse_postfix_tail(std::move(ne));
     }
-    if (t.kind == TokKind::Op && at_op("-", "+", "&", "*", "!")) {
+    if (at_op("!")) {
+        throw err("`!` 已不再使用：逻辑非用 `not`，位取反用 `~`");
+    }
+    if (t.kind == TokKind::Op && at_op("-", "+", "&", "*", "~")) {
         advance();
         ExprPtr operand = parse_unary();
         auto node = std::make_unique<Unary>();
@@ -1339,6 +1548,7 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
             auto node = std::make_unique<Index>();
             for (;;) {
                 node->indices.push_back(parse_expr());
+                forbid_inc_expr();
                 if (at_op(",")) {
                     advance();
                     continue;
@@ -1353,6 +1563,18 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
             continue;
         }
         if (t.is_op(".")) {
+            // 多段 unit 名：`lib.a.b.f` 中 `lib.a.b` 是 unit，合并成单个 Name，
+            // 避免被拆成三层成员访问。按最长已导入前缀匹配。
+            if (auto* n = dynamic_cast<Name*>(e.get());
+                n && peek(1).kind == TokKind::Ident) {
+                const std::string cand = n->ident + "." + peek(1).text;
+                if (module_names_.count(cand)) {
+                    advance();  // '.'
+                    advance();  // 成员名
+                    n->ident = cand;
+                    continue;
+                }
+            }
             advance();
             std::string nm = expect_ident("成员名").text;
             auto node = std::make_unique<Member>();
@@ -1390,6 +1612,7 @@ ExprPtr Parser::parse_call(ExprPtr callee) {
             named.emplace_back(std::move(nm), parse_expr());
         } else {
             args.push_back(parse_expr());
+            forbid_inc_expr();
         }
         if (at_op(",")) {
             advance();
@@ -1485,6 +1708,9 @@ ExprPtr Parser::parse_primary() {
     if (t.kind == TokKind::Op && t.text == "(") {
         advance();
         ExprPtr e = parse_expr();
+        if (at_op("++", "--")) {
+            throw err("`++`/`--` 没有返回值，不能出现在表达式里（只能作为独立语句）");
+        }
         expect_op(")");
         return e;
     }

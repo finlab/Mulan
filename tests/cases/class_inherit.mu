@@ -1,6 +1,6 @@
 unit class_inherit;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 interface IShape {
     int area();

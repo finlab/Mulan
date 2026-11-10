@@ -1,7 +1,7 @@
 unit class_compare_eval;
-extern int puts(readonly char* s);
-static int calls = 0;
-static int live = 0;
+extern int puts(const char* s);
+int calls = 0;
+int live = 0;
 class C { int v; C(int x){v=x;live+=1;} ~C(){live-=1;} int get(){return v;} }
 int tick() { calls += 1; return 5; }
 C make(int x) { calls += 1; return new C(x); }

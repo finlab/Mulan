@@ -1,5 +1,5 @@
 unit class_stress2;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 struct P { int x, y; }
 class Mixed {
     long big;

@@ -1,6 +1,6 @@
 unit class_nested;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 class C { int v; C(int x){v=x;live+=1;} ~C(){live-=1;} int get(){return v;} }
 class Holder { C c; Holder(C x){ c = x; } ~Holder(){} C get(){return c;} }
 class Animal { int s; Animal(int x){s=x;} ~Animal(){} int sound(){return s;} }
@@ -12,7 +12,7 @@ int main() {
     del h;
     if live != 0 { puts("holder dtor fail"); return 1; }
 
-    Animal[2] arr = 0;
+    Animal[2] arr = {};
     Dog d = new Dog();
     arr[0] = d;
     if arr[0].sound() != 7 { puts("base array virtual fail"); return 1; }

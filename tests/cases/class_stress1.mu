@@ -1,5 +1,5 @@
 unit class_stress1;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 interface I {
     int a();
     int b() { return a() + 1; }
@@ -34,7 +34,7 @@ int main() {
     }
     if outer.a() != 1 { puts("shadow fail"); return 1; }
 
-    I[2] arr = 0;
+    I[2] arr = {};
     arr[0] = new K(5);
     arr[1] = new K(6);
     int sum = 0;

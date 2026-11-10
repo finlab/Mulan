@@ -1,7 +1,7 @@
 unit foronce;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
-static int calls = 0;
+int calls = 0;
 
 int idx() {
     calls += 1;
@@ -11,7 +11,7 @@ int idx() {
 struct Row { int[3] v; }
 
 int main() {
-    Row[2] rows = 0;
+    Row[2] rows = {};
     rows[0].v[0] = 9;
     int t = 0;
     for v in rows[idx()].v {

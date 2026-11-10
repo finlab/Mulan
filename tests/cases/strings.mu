@@ -1,7 +1,7 @@
 // strings.mu — string 的 len/s[i]、char[N] 从 string 拷贝、puts(&buf[0])
 unit strings;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 extern int putchar(int c);
 
 void print_int(int v) {

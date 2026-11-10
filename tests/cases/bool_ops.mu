@@ -3,7 +3,7 @@
 //   not a == b  即  not (a == b)；not a and b 即 (not a) and b；a or b and c 即 a or (b and c)
 unit bool_ops;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 extern int putchar(int c);
 
 void print_int(int v) {

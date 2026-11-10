@@ -1,6 +1,6 @@
 unit class_extra;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 interface I {
     int get();
@@ -19,7 +19,7 @@ class Bag {
     ~Bag() { }
 }
 
-static C g = null;
+C g = null;
 
 I make(int x) { return new C(x); }
 
@@ -30,7 +30,7 @@ int main() {
     del i;
 
     // 接口数组
-    I[2] arr = 0;
+    I[2] arr = {};
     arr[0] = new C(1);
     arr[1] = new C(2);
     if arr[0].get() + arr[1].get() != 3 { puts("iface array failed"); return 1; }

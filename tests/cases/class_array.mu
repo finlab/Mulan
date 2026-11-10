@@ -1,6 +1,6 @@
 unit class_array;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 class Cell {
     int v;
@@ -21,7 +21,7 @@ int operator[](Grid g, int i) { return g.cells[i].get(); }
 void operator[]=(Grid g, int i, int x) { g.cells[i].set(x); }
 
 int main() {
-    Cell[3] cells = 0;
+    Cell[3] cells = {};
     Cell a = new Cell(1);
     Cell b = new Cell(2);
     cells[0] = a;

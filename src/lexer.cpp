@@ -36,15 +36,15 @@ bool ident_cont(int ch) { return ident_start(ch) || is_digit(ch); }
 // 关键字表（lexer.py 的 KEYWORDS）
 const std::unordered_set<std::string>& keywords() {
     static const std::unordered_set<std::string> kws = {
-        "unit",     "use",      "const",   "static",  "auto",     "struct",   "enum",
+        "unit",     "use",      "public",  "private", "const",   "auto",    "struct",   "enum",
         "extern",   "if",       "else",    "elif",    "while",    "for",      "in",
         "ref",      "break",    "continue", "return", "true",     "false",    "null",
         "as",       "sizeof",   "alignof", "len",     "alloc",    "realloc",  "free",
-        "readonly", "void",     "bool",    "byte",    "char",     "short",
+        "void",     "bool",     "byte",    "char",     "short",
         "ushort",   "int",      "uint",    "long",    "ulong",    "float",    "double",
         "usize",    "isize",    "and",     "or",       "not",
         "class",    "interface", "new",    "del",     "weak",     "this",     "super",
-        "override", "operator",
+        "override", "operator",  "packed",
     };
     return kws;
 }
@@ -52,7 +52,7 @@ const std::unordered_set<std::string>& keywords() {
 // 长的放前面，保证最长匹配（lexer.py 的 OPS3 / OPS2 / OPS1）
 const char* const OPS3[] = {"<<=", ">>="};
 const char* const OPS2[] = {"==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=",
-                            "|=", "^=", "<<", ">>", ".."};
+                            "|=", "^=", "<<", ">>", "..", "++", "--"};
 const char* const OPS1 = "+-*/%&|^!~<>=(){}[];,.?:";
 
 // 近似 Python 的 repr(ch)，用于「非法字符」提示

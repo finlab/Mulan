@@ -1,6 +1,6 @@
 unit class_iface_return;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 interface I { I clone(); int f(); bool same(I x) { return this == x; } }
 class C : I {
     int v;

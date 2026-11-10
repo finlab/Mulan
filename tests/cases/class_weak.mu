@@ -1,6 +1,6 @@
 unit class_weak;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 class Node {
     int v;

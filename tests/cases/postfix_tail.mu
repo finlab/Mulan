@@ -1,5 +1,5 @@
 unit postfix_tail;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 class C { int v; C(int x){v=x;} ~C(){} int get(){return v;} }
 int main() {
     int n = len("abc") as int;

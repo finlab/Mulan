@@ -1,7 +1,7 @@
 // charpad.mu — char[N] 由 string 初始化：拷贝内容、补 NUL、其余字节清零
 unit charpad;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 int main() {
     char[8] b = "ab";

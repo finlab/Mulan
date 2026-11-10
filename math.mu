@@ -3,11 +3,11 @@
 
 unit math;
 
-int square(int x) {
+public int square(int x) {
     return x * x;
 }
 
-int abs(int x) {
+public int abs(int x) {
     if x < 0 {
         return -x;
     }

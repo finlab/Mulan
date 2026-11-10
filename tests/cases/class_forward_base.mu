@@ -1,5 +1,5 @@
 unit class_forward_base;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 class Derived : Base {
     int d;
     Derived() { super(); d = 2; }

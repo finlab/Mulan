@@ -1,7 +1,7 @@
 unit str_struct;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
-static string G = "global";
+string G = "global";
 
 struct Box {
     string s;
@@ -32,7 +32,7 @@ int main() {
     if n != 6 { return 7; }
 
     // 零值 / 方法
-    string z = 0;
+    string z = {};
     if len(z) != 0 { return 8; }
     if not z.empty() { return 9; }
     if s.empty() { return 10; }
@@ -40,16 +40,16 @@ int main() {
     if s.at(1) != 'b' { return 12; }
 
     // 拼接 / 子串 / c_str / from_cstr
-    string t = str_concat(s, "de");
+    string t = s.concat("de");
     if t != "abcde" { return 13; }
     if t[4] != 'e' { return 14; }
-    if str_cstr(t)[5] != 0 { return 15; }
+    if t.cstr()[5] != 0 { return 15; }
     string u = s + "xyz";
-    if u.n != 6 or u != "abcxyz" { return 16; }
-    string sub = str_sub(u, 3, 3);
+    if u.length() != 6 or u != "abcxyz" { return 16; }
+    string sub = u.sub(3, 3);
     if sub != "xyz" { return 17; }
     if len(sub) != 3 { return 18; }
-    string f = str_from_cstr("cstr");
+    string f = string("cstr");
     if f != "cstr" { return 19; }
 
     // struct 字段 / 拷贝 / 返回 / class 字段

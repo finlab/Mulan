@@ -1,9 +1,9 @@
 unit class_array_return;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 class C { int v; C(int x){v=x;live+=1;} ~C(){live-=1;} int get(){return v;} }
 C[2] make() {
-    C[2] t = 0;
+    C[2] t = {};
     t[0] = new C(5);
     t[1] = new C(6);
     return t;

@@ -1,5 +1,5 @@
 unit class_downcast;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 class A { int a; A(){a=1;} ~A(){} int base(){return a;} }
 class B : A { int b; B(){super(); b=2;} ~B(){} int child(){return b;} }
 class D : A { int d; D(){super(); d=3;} ~D(){} }

@@ -1,12 +1,12 @@
 unit extra2;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 enum Color { Red, Green = 5, Blue }
 
 struct Pair { int a, b; }
 
-int sum_slice(readonly int[] s) {
+int sum_slice(const int[] s) {
     int t = 0;
     for v in s { t += v; }
     return t;
@@ -14,7 +14,8 @@ int sum_slice(readonly int[] s) {
 
 int main() {
     Color c = Green;
-    if c == 5 { puts("enum ok"); }
+    int cv = c as int;
+    if cv == 5 { puts("enum ok"); }
 
     int[4] arr = {1, 2, 3, 4};
     int[] s = arr;

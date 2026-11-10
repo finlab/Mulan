@@ -1,6 +1,6 @@
 unit multidim;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 
 class C {
     int v;
@@ -26,7 +26,7 @@ int main() {
     if sizeof(int[2,3]) != 24 { puts("static sizeof"); return 8; }
 
     // 三维静态
-    int[2,2,2] c3 = 0;
+    int[2,2,2] c3 = {};
     c3[1,0,1] = 9;
     if c3[1,0,1] != 9 { puts("static 3d"); return 9; }
     if len(c3, 2) != 2 { puts("static 3d dim"); return 10; }
@@ -59,7 +59,7 @@ int main() {
 
     // 静态矩形里的 class 引用：逐元素 RC
     {
-        C[2,2] cs = 0;
+        C[2,2] cs = {};
         cs[0,1] = new C(1);
         cs[1,0] = new C(2);
         if live != 2 { puts("static ref elems"); return 20; }
@@ -86,7 +86,7 @@ int main() {
 
     // 静态矩形里的 struct（含动态数组字段）
     {
-        S[2,2] ss = 0;
+        S[2,2] ss = {};
         ss[0,0].b = new int[2];
         ss[0,0].b[1] = 5;
         if ss[0,0].b[1] != 5 { puts("rect struct field"); return 30; }
@@ -107,7 +107,7 @@ int main() {
     if jg[2][2] != 0 { puts("jagged row zero"); return 36; }
 
     // 定长行槽的锯齿：int[][N]
-    int[][2] js = 0;
+    int[][2] js = {};
     js[0] = new int[2];
     js[1] = new int[3];
     js[1][2] = 8;

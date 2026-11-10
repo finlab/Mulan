@@ -128,6 +128,7 @@ struct Emitter {
     LStruct* descTy = nullptr;
     LStruct* ifaceTy = nullptr;  // {ptr obj, ptr desc}
     std::map<std::string, LStruct*> named;
+    std::map<std::string, std::vector<unsigned>> fieldMap;  // 结构体：模型字段索引 -> LLVM 索引
     std::map<std::string, Constant*> strCache;
 
     BasicBlock* allocaBB = nullptr;
@@ -178,10 +179,64 @@ struct Emitter {
         if (it != named.end()) return it->second;
         auto* st = LStruct::create(ctx, "mu_" + sane(t->unit) + "_" + sane(t->name));
         named[key] = st;
+        const auto& dl = mod->getDataLayout();
         std::vector<LType*> fs;
-        for (auto& f : t->fields) fs.push_back(lt(f.type));
-        st->setBody(fs, false);
+        std::vector<unsigned> map;  // 模型字段索引 -> LLVM 字段索引
+        uint64_t llvmCur = 0;       // LLVM 视角的当前偏移
+        uint64_t modelCur = 0;      // 语义层（types.cpp）的当前偏移
+        for (auto& f : t->fields) {
+            LType* ft = lt(f.type);
+            if (!ft->isSized()) {
+                fail("LLVM 后端：结构体 `" + t->str() + "` 的字段 `" + f.name + "` 不是定长类型");
+            }
+            uint64_t fsz = dl.getTypeAllocSize(ft);
+            uint64_t fa = alignOf(f.type);
+            uint64_t la = dl.getABITypeAlign(ft).value();
+            uint64_t modelOff = t->is_packed ? modelCur : (modelCur + fa - 1) / fa * fa;
+            uint64_t llvmOff = t->is_packed ? llvmCur : (llvmCur + la - 1) / la * la;
+            if (llvmOff < modelOff) {
+                // 显式填充：让 LLVM 偏移与语义层一致（align(N) 字段在嵌套结构里靠它对齐）
+                fs.push_back(LArray::get(i8(), modelOff - llvmOff));
+                llvmCur = modelOff;
+                llvmOff = modelOff;
+            } else if (llvmOff > modelOff) {
+                fail("LLVM 后端：结构体 `" + t->str() + "` 的字段 `" + f.name +
+                     "` 布局与语义层不一致");
+            }
+            map.push_back(static_cast<unsigned>(fs.size()));
+            fs.push_back(ft);
+            llvmCur = llvmOff + fsz;
+            modelCur = modelOff + sizeOf(f.type);
+        }
+        // 尾部填充：LLVM 结构体大小必须等于语义层 sizeof（数组元素跨度依赖该不变量）
+        uint64_t structAlign = 1;
+        if (!t->is_packed) {
+            for (auto* f : fs) {
+                structAlign = std::max<uint64_t>(structAlign, dl.getABITypeAlign(f).value());
+            }
+        }
+        uint64_t llvmEnd = (llvmCur + structAlign - 1) / structAlign * structAlign;
+        uint64_t modelSize = sizeOf(t);
+        if (llvmEnd < modelSize) {
+            fs.push_back(LArray::get(i8(), modelSize - llvmEnd));
+        } else if (llvmEnd > modelSize) {
+            fail("LLVM 后端：结构体 `" + t->str() + "` 的大小与语义层不一致（" +
+                 std::to_string(llvmEnd) + " / " + std::to_string(modelSize) + "）");
+        }
+        st->setBody(fs, t->is_packed);
+        fieldMap[key] = std::move(map);
         return st;
+    }
+
+    // 模型字段索引 -> LLVM 字段索引（align(N) 会在字段间插入显式 [k x i8] 填充）
+    unsigned llvmFieldIndex(const TypePtr& t, int model_idx) {
+        const char* prefix = t->kind == TypeKind::Class ? "o:" : "s:";
+        auto it = fieldMap.find(prefix + t->unit + ":" + t->name);
+        if (it == fieldMap.end() || model_idx < 0 ||
+            static_cast<size_t>(model_idx) >= it->second.size()) {
+            return static_cast<unsigned>(model_idx);
+        }
+        return it->second[static_cast<size_t>(model_idx)];
     }
 
     LStruct* arrayOf(const TypePtr& t) {
@@ -194,38 +249,113 @@ struct Emitter {
         return st;
     }
 
-    // 对象布局：{ i64 rc, ptr desc, fields... }（fields 已在 sema 扁平化，基类字段在前）
+    static uint64_t alignUp(uint64_t v, uint64_t a) {
+        return a <= 1 ? v : (v + a - 1) / a * a;
+    }
+
+    // class 对象布局（模型）：{ i64 rc, ptr desc } 固定 16 字节，字段从 16 开始按 type_align 排列。
+    static constexpr uint64_t kObjHeader = 16;
+
+    uint64_t classObjAlign(const TypePtr& cls) {
+        uint64_t a = kObjHeader;  // 堆分配至少保证 16 字节
+        for (auto& f : cls->fields) a = std::max(a, alignOf(f.type));
+        return a;
+    }
+
+    uint64_t classFieldOffset(const TypePtr& cls, int idx) {
+        uint64_t off = kObjHeader;
+        for (int i = 0; i < idx; ++i) {
+            off = alignUp(off, alignOf(cls->fields[i].type));
+            off += sizeOf(cls->fields[i].type);
+        }
+        return alignUp(off, alignOf(cls->fields[idx].type));
+    }
+
+    uint64_t classObjSize(const TypePtr& cls) {
+        uint64_t off = kObjHeader;
+        for (auto& f : cls->fields) {
+            off = alignUp(off, alignOf(f.type));
+            off += sizeOf(f.type);
+        }
+        return alignUp(off, classObjAlign(cls));
+    }
+
+    // 对象布局：{ i64 rc, ptr desc, [填充], fields... }（fields 已在 sema 扁平化，基类字段在前）
+    // 与 structOf 同样插入显式 [k x i8] 填充，保证 LLVM 偏移与语义层 type_align/type_size 一致。
     LStruct* objStruct(const TypePtr& cls) {
         std::string key = "o:" + cls->unit + ":" + cls->name;
         auto it = named.find(key);
         if (it != named.end()) return it->second;
         auto* st = LStruct::create(ctx, "mu_obj_" + sane(cls->unit) + "_" + sane(cls->name));
         named[key] = st;
+        const auto& dl = mod->getDataLayout();
         std::vector<LType*> fs{i64(), ptrTy()};
-        for (auto& f : cls->fields) fs.push_back(lt(f.type));
+        std::vector<unsigned> map;  // 模型字段索引 -> LLVM 字段索引
+        uint64_t llvmCur = kObjHeader;
+        uint64_t modelCur = kObjHeader;
+        for (auto& f : cls->fields) {
+            LType* ft = lt(f.type);
+            if (!ft->isSized()) {
+                fail("LLVM 后端：class `" + cls->str() + "` 的字段 `" + f.name + "` 不是定长类型");
+            }
+            uint64_t fsz = dl.getTypeAllocSize(ft);
+            uint64_t fa = alignOf(f.type);
+            uint64_t la = dl.getABITypeAlign(ft).value();
+            uint64_t modelOff = alignUp(modelCur, fa);
+            uint64_t llvmOff = alignUp(llvmCur, la);
+            if (llvmOff < modelOff) {
+                // 显式填充：让字段偏移满足 align(N)（LLVM 自身只按类型的自然对齐排布）
+                fs.push_back(LArray::get(i8(), modelOff - llvmOff));
+                llvmCur = modelOff;
+                llvmOff = modelOff;
+            } else if (llvmOff > modelOff) {
+                fail("LLVM 后端：class `" + cls->str() + "` 的字段 `" + f.name +
+                     "` 布局与语义层不一致");
+            }
+            map.push_back(static_cast<unsigned>(fs.size()));
+            fs.push_back(ft);
+            llvmCur = llvmOff + fsz;
+            modelCur = modelOff + sizeOf(f.type);
+        }
+        // 尾部补齐到对象对齐（不要依赖 LLVM 结构的自然对齐：字段全是 8 字节类型时它只有 8）
+        uint64_t modelSize = alignUp(modelCur, classObjAlign(cls));
+        if (llvmCur < modelSize) {
+            fs.push_back(LArray::get(i8(), modelSize - llvmCur));
+        } else if (llvmCur > modelSize) {
+            fail("LLVM 后端：class `" + cls->str() + "` 的大小与语义层不一致（" +
+                 std::to_string(llvmCur) + " / " + std::to_string(modelSize) + "）");
+        }
         st->setBody(fs, false);
+        if (dl.getTypeAllocSize(st) != modelSize) {
+            fail("LLVM 后端：class `" + cls->str() + "` 的 LLVM 大小与语义层不一致（" +
+                 std::to_string(dl.getTypeAllocSize(st)) + " / " + std::to_string(modelSize) +
+                 "）");
+        }
+        fieldMap[key] = std::move(map);
         return st;
     }
 
     static constexpr unsigned kObjRc = 0;
     static constexpr unsigned kObjDesc = 1;
-    static constexpr unsigned kObjField0 = 2;
 
-    uint64_t objectSize(const TypePtr& cls) {
-        return mod->getDataLayout().getTypeAllocSize(objStruct(cls));
-    }
+    uint64_t objectSize(const TypePtr& cls) { return classObjSize(cls); }
 
-    uint64_t objectAlign(const TypePtr& cls) {
-        return mod->getDataLayout().getABITypeAlign(objStruct(cls)).value();
-    }
+    uint64_t objectAlign(const TypePtr& cls) { return classObjAlign(cls); }
+
+    // align(N) > 16 的 class 对象要显式对齐分配（malloc 只保证 16 字节）；释放时必须配对
+    bool classNeedsAlignedAlloc(const TypePtr& cls) { return classObjAlign(cls) > 16; }
 
     Value* fieldAddr(Value* objPtr, const TypePtr& cls, int field_index) {
         if (cls->kind == TypeKind::Struct) {
-            return b.CreateStructGEP(cast<LStruct>(lt(cls)), objPtr,
-                                     static_cast<unsigned>(field_index));
+            // 先取 LLVM 类型（可能触发 structOf 填充字段映射表），再查映射
+            LStruct* st = cast<LStruct>(lt(cls));
+            unsigned idx = llvmFieldIndex(cls, field_index);
+            return b.CreateStructGEP(st, objPtr, idx);
         }
-        return b.CreateStructGEP(objStruct(cls), objPtr,
-                                 static_cast<unsigned>(kObjField0 + field_index));
+        // 先建对象类型（填充 fieldMap），再按映射索引（align(N) 字段前有显式填充）
+        LStruct* st = objStruct(cls);
+        unsigned idx = llvmFieldIndex(cls, field_index);
+        return b.CreateStructGEP(st, objPtr, idx);
     }
 
     Value* descOf(const TypePtr& cls) {
@@ -269,59 +399,9 @@ struct Emitter {
     }
 
     // ------------------------------------------------------------ 布局
-    uint64_t alignOf(const TypePtr& t) {
-        if (!t) return 1;
-        switch (t->kind) {
-            case TypeKind::Void: return 1;
-            case TypeKind::Prim: {
-                const std::string& n = t->name;
-                if (n == "bool" || n == "byte" || n == "char") return 1;
-                if (n == "short" || n == "ushort") return 2;
-                if (n == "int" || n == "uint" || n == "float") return 4;
-                return 8;
-            }
-            case TypeKind::Ptr:
-            case TypeKind::Slice: return 8;
-            case TypeKind::Enum: return 4;
-            case TypeKind::Array: return alignOf(t->elem);
-            case TypeKind::Struct: {
-                uint64_t a = 1;
-                for (auto& f : t->fields) a = std::max(a, alignOf(f.type));
-                return a;
-            }
-            default: return 8;
-        }
-    }
-
-    uint64_t sizeOf(const TypePtr& t) {
-        if (!t) return 0;
-        switch (t->kind) {
-            case TypeKind::Void: return 0;
-            case TypeKind::Prim: {
-                const std::string& n = t->name;
-                if (n == "bool" || n == "byte" || n == "char") return 1;
-                if (n == "short" || n == "ushort") return 2;
-                if (n == "int" || n == "uint" || n == "float") return 4;
-                return 8;
-            }
-            case TypeKind::Ptr: return 8;
-            case TypeKind::Slice: return 8;  // 动态数组句柄
-            case TypeKind::Interface: return 8 * 2;  // {obj, desc}
-            case TypeKind::Enum: return 4;
-            case TypeKind::Array: return sizeOf(t->elem) * t->array_size;
-            case TypeKind::Struct: {
-                uint64_t off = 0, a = 1;
-                for (auto& f : t->fields) {
-                    uint64_t fa = alignOf(f.type);
-                    a = std::max(a, fa);
-                    off = (off + fa - 1) / fa * fa;
-                    off += sizeOf(f.type);
-                }
-                return (off + a - 1) / a * a;
-            }
-            default: return 8;
-        }
-    }
+    // 唯一实现在 types.cpp（type_align/type_size），这里只做转接，避免两份布局漂移。
+    uint64_t alignOf(const TypePtr& t) { return type_align(t); }
+    uint64_t sizeOf(const TypePtr& t) { return type_size(t); }
 
     bool zeroable(const TypePtr& t) {
         return t && (t->kind == TypeKind::Struct || t->kind == TypeKind::Array ||
@@ -905,7 +985,7 @@ struct Emitter {
     // 语句内物化的 owned 动态数组临时值：语句结束时释放
     void trackOwnedSliceTemp(Expr* e, Value* v, const TypePtr& ty) {
         if (!ty || ty->kind != TypeKind::Slice || !valueOwned(e)) return;
-        auto* tmp = entryAlloca(lt(ty), "owned.tmp");
+        auto* tmp = entryAlloca(lt(ty), "owned.tmp", alignOf(ty));
         b.CreateStore(v, tmp);
         stmtTemps.emplace_back(tmp, ty);
     }
@@ -914,7 +994,7 @@ struct Emitter {
     Value* evalStrValue(Expr* e) {
         Value* v = eval(e);
         if (valueOwned(e)) {
-            auto* tmp = entryAlloca(lt(strType()), "str.tmp");
+            auto* tmp = entryAlloca(lt(strType()), "str.tmp", alignOf(strType()));
             b.CreateStore(v, tmp);
             stmtTemps.emplace_back(tmp, strType());
         }
@@ -974,7 +1054,7 @@ struct Emitter {
         }
         if (curRetTy && curRetTy->kind == TypeKind::Array && needsCleanup(curRetTy)) {
             if (valueOwned(e)) return v;
-            auto* tmp = entryAlloca(lt(curRetTy), "ret.arr");
+            auto* tmp = entryAlloca(lt(curRetTy), "ret.arr", alignOf(curRetTy));
             b.CreateStore(v, tmp);
             emitRetainValue(tmp, curRetTy);
             return b.CreateLoad(lt(curRetTy), tmp);
@@ -982,14 +1062,14 @@ struct Emitter {
         if (curRetTy && curRetTy->kind == TypeKind::Struct && needsCleanup(curRetTy)) {
             // 返回值按 owned 转移：借用值先逐字段 retain，局部随后在 releaseAllScopes 释放
             if (valueOwned(e)) return v;
-            auto* tmp = entryAlloca(lt(curRetTy), "ret.struct");
+            auto* tmp = entryAlloca(lt(curRetTy), "ret.struct", alignOf(curRetTy));
             b.CreateStore(v, tmp);
             emitRetainValue(tmp, curRetTy);
             return b.CreateLoad(lt(curRetTy), tmp);
         }
         if (curRetTy && curRetTy->kind == TypeKind::Slice) {
             if (convOwns(e, curRetTy)) return v;
-            auto* tmp = entryAlloca(lt(curRetTy), "ret.arr");
+            auto* tmp = entryAlloca(lt(curRetTy), "ret.arr", alignOf(curRetTy));
             b.CreateStore(v, tmp);
             emitRetainValue(tmp, curRetTy);
             return b.CreateLoad(lt(curRetTy), tmp);
@@ -998,10 +1078,13 @@ struct Emitter {
     }
 
     // ------------------------------------------------------------ 分配
-    AllocaInst* entryAlloca(LType* ty, const std::string& name) {
+    // model_align：语义层对齐（align(N) 可能大于 LLVM 类型的自然对齐）
+    AllocaInst* entryAlloca(LType* ty, const std::string& name, uint64_t model_align = 0) {
         IRBuilder<>::InsertPointGuard g(ab);
         if (allocaBB) ab.SetInsertPoint(allocaBB);
-        return ab.CreateAlloca(ty, nullptr, name);
+        auto* a = ab.CreateAlloca(ty, nullptr, name);
+        if (model_align > 1) a->setAlignment(llvm::Align(model_align));
+        return a;
     }
 
     AllocaInst* slotFor(const LocalVar* lv) {
@@ -1009,7 +1092,7 @@ struct Emitter {
         if (it != slots.end()) return it->second;
         LType* ty = lt(lv->rty);
         if (lv->by_ref) ty = ptrTy();
-        auto* a = entryAlloca(ty, sane(lv->name));
+        auto* a = entryAlloca(ty, sane(lv->name), alignOf(lv->rty));
         slots[lv] = a;
         return a;
     }
@@ -1020,6 +1103,7 @@ struct Emitter {
         if (!init) return zeroConst(ct, ty);
         if (is_zero_literal(init)) return zeroConst(ct, ty);
         if (auto ia = dynamic_cast<InitAggregate*>(init)) {
+            if (ia->items.empty() && zeroable(ty)) return zeroConst(ct, ty);
             if (ty->kind == TypeKind::Struct) {
                 std::vector<Constant*> vals(ty->fields.size(), nullptr);
                 bool named = false;
@@ -1039,7 +1123,16 @@ struct Emitter {
                 for (size_t i = 0; i < vals.size(); ++i) {
                     if (!vals[i]) vals[i] = zeroConst(lt(ty->fields[i].type), ty->fields[i].type);
                 }
-                return ConstantStruct::get(cast<LStruct>(ct), vals);
+                // LLVM 结构体可能有显式填充字段（packed / align(N)），按映射表展开
+                auto* st = cast<LStruct>(ct);
+                std::vector<Constant*> out(st->getNumElements(), nullptr);
+                for (size_t i = 0; i < vals.size(); ++i) {
+                    out[llvmFieldIndex(ty, static_cast<int>(i))] = vals[i];
+                }
+                for (size_t i = 0; i < out.size(); ++i) {
+                    if (!out[i]) out[i] = Constant::getNullValue(st->getElementType(i));
+                }
+                return ConstantStruct::get(st, out);
             }
             if (ty->kind == TypeKind::Array) {
                 std::vector<Constant*> vals;
@@ -1156,6 +1249,54 @@ struct Emitter {
         return false;
     }
 
+    // 该表达式的地址是否可能未满足其类型的自然对齐（packed 结构链上的字段/数组元素）。
+    // 保守判定：取不到时按自然对齐处理（规范里 `&p.field` 的解引用本身就是 UB）。
+    bool unalignedExpr(Expr* e) {
+        if (!e) return false;
+        if (auto m = dynamic_cast<Member*>(e)) {
+            TypePtr ot = m->obj->ty;
+            if (ot && ot->kind == TypeKind::Struct) {
+                if (ot->is_packed) return true;
+                return unalignedExpr(m->obj.get());
+            }
+            if (ot && ot->kind == TypeKind::Class && m->field_index >= 0 &&
+                m->field_index < static_cast<int>(ot->fields.size())) {
+                // class 字段按模型对齐排布；若该字段仍落在未满足自身对齐的偏移上（理论上不该发生），
+                // 保守按未对齐处理（例如含 packed 结构体字段时其成员访问）。
+                uint64_t fa = alignOf(ot->fields[m->field_index].type);
+                if (fa > 1 && classFieldOffset(ot, m->field_index) % fa != 0) return true;
+                return unalignedExpr(m->obj.get());
+            }
+            return false;
+        }
+        if (auto ix = dynamic_cast<Index*>(e)) {
+            TypePtr bt = ix->base->ty;
+            if (!bt) return false;
+            if (bt->kind == TypeKind::Array || bt->kind == TypeKind::Ptr) {
+                TypePtr el = bt->elem;
+                if (el && el->kind == TypeKind::Struct && el->is_packed) return true;
+                return unalignedExpr(ix->base.get());
+            }
+            if (bt->kind == TypeKind::Slice) {
+                TypePtr el = bt->elem;
+                return el && el->kind == TypeKind::Struct && el->is_packed;
+            }
+            return false;
+        }
+        if (auto n = dynamic_cast<Name*>(e)) {
+            // struct 方法内直接访问字段：this 指向的 packed 结构可能未对齐
+            if (n->kind == "field" && n->implicit_this) {
+                return curClassTy && curClassTy->kind == TypeKind::Struct && curClassTy->is_packed;
+            }
+            return false;
+        }
+        if (auto u = dynamic_cast<Unary*>(e)) {
+            if (u->op == "*" || u->op == "&") return unalignedExpr(u->operand.get());
+            return false;
+        }
+        return false;
+    }
+
     // 带校验的 GEP：把 LLVM 的断言错误变成可读的诊断。
     // 注意：第 0 个下标是"指针步进"，从第 1 个下标起才按聚合类型逐层索引。
     Value* gep(LType* ty, Value* ptr, std::initializer_list<Value*> idxs, int line = 0,
@@ -1222,7 +1363,7 @@ struct Emitter {
             if (ot->kind != TypeKind::Struct)
                 fail("LLVM 后端：成员访问的基类型不是结构体", m->line, m->col);
             auto* st = cast<LStruct>(lt(ot));
-            return b.CreateStructGEP(st, base, static_cast<unsigned>(m->field_index));
+            return b.CreateStructGEP(st, base, llvmFieldIndex(ot, m->field_index));
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
             TypePtr bt = ix->base->ty;
@@ -1274,7 +1415,7 @@ struct Emitter {
         }
         // 其它表达式：先求值到临时量
         Value* v = eval(e);
-        auto* tmp = entryAlloca(v->getType(), "tmp");
+        auto* tmp = entryAlloca(v->getType(), "tmp", e->ty ? alignOf(e->ty) : 0);
         b.CreateStore(v, tmp);
         // owned 的 struct/array 右值被物化后，语句结束时要释放其引用字段
         if (e->ty && needsCleanup(e->ty) && valueOwned(e) &&
@@ -1404,6 +1545,13 @@ struct Emitter {
             if (same_type(lt_, rt_) && lt_->kind == TypeKind::Prim && lt_->is_bool()) {
                 return compareOp(op, l, r, false, false);
             }
+            // 枚举：只与同一枚举比较，按底层 int 的有符号序比较（SPEC §3.5）
+            if (lt_->kind == TypeKind::Enum && rt_->kind == TypeKind::Enum &&
+                same_type(lt_, rt_)) {
+                l = convertTo(l, lt_, Type::make_prim("int"));
+                r = convertTo(r, rt_, Type::make_prim("int"));
+                return compareOp(op, l, r, true, false);
+            }
             TypePtr common = usual_arith(lt_, rt_);
             if (!common) fail("LLVM 后端：比较操作数类型不一致", e->line, e->col);
             l = convertTo(l, lt_, common);
@@ -1459,7 +1607,7 @@ struct Emitter {
             if (isRefKind(ty)) {
                 emitReleaseRef(v, ty);
             } else if (ty && needsCleanup(ty)) {
-                auto* tmp = entryAlloca(lt(ty), "arg.tmp");
+                auto* tmp = entryAlloca(lt(ty), "arg.tmp", alignOf(ty));
                 b.CreateStore(v, tmp);
                 emitReleaseValue(tmp, ty);
             }
@@ -1489,9 +1637,16 @@ struct Emitter {
         }
         TypePtr cls = ne->class_ty;
         uint64_t sz = objectSize(cls);
-        Value* p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}),
-                                {ConstantInt::get(i64(), sz)});
-        // malloc 失败直接 abort（语言无异常）
+        Value* p = nullptr;
+        if (classNeedsAlignedAlloc(cls)) {
+            // _aligned_malloc(size, alignment)：对象对齐超过 malloc 的 16 字节保证（对应 _aligned_free）
+            p = b.CreateCall(libFn("_aligned_malloc", ptrTy(), {i64(), i64()}),
+                             {ConstantInt::get(i64(), sz),
+                              ConstantInt::get(i64(), objectAlign(cls))});
+        } else {
+            p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {ConstantInt::get(i64(), sz)});
+        }
+        // 分配失败直接 abort（语言无异常）
         BasicBlock* okBB = BasicBlock::Create(ctx, "new.ok", curFn);
         BasicBlock* failBB = BasicBlock::Create(ctx, "new.fail", curFn);
         b.CreateCondBr(b.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), failBB, okBB);
@@ -1575,14 +1730,14 @@ struct Emitter {
                 int fi = c->field_order[i];
                 Expr* arg = i < c->args.size() ? c->args[i].get() : c->named[i].second.get();
                 Value* av = coerce(arg, c->ctor->fields[fi].type);
-                v = b.CreateInsertValue(v, av, {static_cast<unsigned>(fi)});
+                v = b.CreateInsertValue(v, av, {llvmFieldIndex(c->ctor, fi)});
             }
             return v;
         }
         if (c->callee_kind == "struct_ctor") {
             TypePtr st = c->ctor;
             const auto* cpty = c->ctor_pty;
-            auto* tmp = entryAlloca(lt(st), "ctor.tmp");
+            auto* tmp = entryAlloca(lt(st), "ctor.tmp", alignOf(st));
             if (st->needs_cleanup()) zeroMem(tmp, st);
             std::vector<LType*> ptys{ptrTy()};
             for (auto& t : *cpty) ptys.push_back(lt(t));
@@ -1827,9 +1982,14 @@ struct Emitter {
                                         true);
             }
             if (n->kind == "func") fail("LLVM 后端：函数不能作为值", e->line, e->col);
-            return b.CreateLoad(lt(e->ty), addrOf(e));
+            return loadAt(lt(e->ty), addrOf(e), unalignedExpr(e));
         }
         if (auto m = dynamic_cast<Member*>(e)) {
+            if (m->kind == "enum_const") {
+                auto* ec = std::get_if<EnumConst*>(&m->sym);
+                if (!ec) fail("LLVM 后端：缺少枚举常量", e->line, e->col);
+                return ConstantInt::get(i32(), static_cast<uint64_t>((*ec)->value), true);
+            }
             if (m->kind == "field" && m->obj->ty && m->obj->ty->kind == TypeKind::Class) {
                 Value* p = eval(m->obj.get());
                 Value* addr = fieldAddr(p, m->obj->ty, m->field_index);
@@ -1837,18 +1997,18 @@ struct Emitter {
                 if (ownsReference(m->obj.get())) emitReleaseRef(p, m->obj->ty);
                 return v;
             }
-            return b.CreateLoad(lt(e->ty), addrOf(e));
+            return loadAt(lt(e->ty), addrOf(e), unalignedExpr(e));
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
             if (ix->get_func) {
                 return emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
             }
-            return b.CreateLoad(lt(e->ty), addrOf(e));
+            return loadAt(lt(e->ty), addrOf(e), unalignedExpr(e));
         }
         if (auto u = dynamic_cast<Unary*>(e)) {
             if (u->op_func) return emitUserCall(u->op_func, {u->operand.get()});
             if (u->op == "&") return addrOf(u->operand.get());
-            if (u->op == "*") return b.CreateLoad(lt(e->ty), eval(u->operand.get()));
+            if (u->op == "*") return loadAt(lt(e->ty), eval(u->operand.get()), unalignedExpr(e));
             Value* v = eval(u->operand.get());
             if (u->op == "-") {
                 if (e->ty->kind == TypeKind::Prim && e->ty->is_float())
@@ -1856,7 +2016,7 @@ struct Emitter {
                 return b.CreateSub(ConstantInt::get(lt(e->ty), 0), v);
             }
             if (u->op == "+") return v;
-            if (u->op == "!")
+            if (u->op == "~")
                 return b.CreateXor(v, ConstantInt::get(lt(e->ty), static_cast<uint64_t>(-1), true));
         }
         if (auto v = dynamic_cast<NotExpr*>(e)) {
@@ -1956,9 +2116,9 @@ struct Emitter {
                 fail("LLVM 后端：sizeof/alignof 未知类型 " + spec->name);
             }
             case TypeSpec::K::Ptr:
-                return Type::make_ptr(specType(spec->elem.get()), spec->readonly);
+                return Type::make_ptr(specType(spec->elem.get()), spec->is_const);
             case TypeSpec::K::Slice:
-                return Type::make_slice(specType(spec->elem.get()), spec->readonly);
+                return Type::make_slice(specType(spec->elem.get()), spec->is_const);
             case TypeSpec::K::Array:
                 return Type::make_array(specType(spec->elem.get()), spec->size);
         }
@@ -1967,25 +2127,40 @@ struct Emitter {
     void curSpecUnitFix() {}
 
     // ------------------------------------------------------------ 语句
-    void storeValue(Value* v, Value* addr, const TypePtr& ty) {
+    // 访问对齐：packed 结构链上的字段/元素只保证 1 字节对齐，必须把 load/store
+    // 的 align 显式降到 1，否则 LLVM 会按脚点类型对齐生成错误的非对齐访问。
+    void storeAt(Value* v, Value* addr, bool unaligned = false) {
         if (!v) return;
-        if (ty->kind == TypeKind::Void) return;
-        b.CreateStore(v, addr);
+        auto* si = b.CreateStore(v, addr);
+        if (unaligned) si->setAlignment(llvm::Align(1));
     }
 
-    void zeroMem(Value* addr, const TypePtr& ty) {
+    Value* loadAt(LType* ty, Value* addr, bool unaligned = false) {
+        auto* li = b.CreateLoad(ty, addr);
+        if (unaligned) li->setAlignment(llvm::Align(1));
+        return li;
+    }
+
+    void storeValue(Value* v, Value* addr, const TypePtr& ty, bool unaligned = false) {
+        if (!v) return;
+        if (ty->kind == TypeKind::Void) return;
+        storeAt(v, addr, unaligned);
+    }
+
+    void zeroMem(Value* addr, const TypePtr& ty, bool unaligned = false) {
         uint64_t n = sizeOf(ty);
         if (n == 0) return;
         b.CreateMemSet(addr, ConstantInt::get(i8(), 0), ConstantInt::get(i64(), n),
-                       MaybeAlign(alignOf(ty)));
+                       MaybeAlign(unaligned ? 1ULL : static_cast<uint64_t>(alignOf(ty))));
     }
 
     void copyMem(Value* dst, Value* src, uint64_t n) {
         if (n == 0) return;
-        b.CreateMemCpy(dst, MaybeAlign(8), src, MaybeAlign(8), ConstantInt::get(i64(), n));
+        // 只承诺 1 字节对齐：源/目的可能是 packed 结构里的字段
+        b.CreateMemCpy(dst, MaybeAlign(1), src, MaybeAlign(1), ConstantInt::get(i64(), n));
     }
 
-    void initInto(Value* addr, const TypePtr& ty, Init* init) {
+    void initInto(Value* addr, const TypePtr& ty, Init* init, bool unaligned = false) {
         if (std::getenv("MULANC_LLVM_TRACE"))
             std::cerr << "[llvm]     init " << (ty ? ty->str() : "?")
                       << (dynamic_cast<InitAggregate*>(init) ? " agg" : " expr") << "\n";
@@ -2005,7 +2180,7 @@ struct Emitter {
                 TypePtr st = call->ctor;
                 const auto* cpty = call->ctor_pty;
                 // 构造器可能不写全部引用字段：先清零，保证析构时不会释放垃圾指针
-                if (st->needs_cleanup()) zeroMem(addr, st);
+                if (st->needs_cleanup()) zeroMem(addr, st, unaligned);
                 std::vector<LType*> ptys{ptrTy()};
                 for (auto& t : *cpty) ptys.push_back(lt(t));
                 FunctionCallee callee = mod->getOrInsertFunction(
@@ -2028,41 +2203,46 @@ struct Emitter {
                 Value* sp = b.CreateExtractValue(s, {0});
                 Value* sl = b.CreateExtractValue(s, {1});
                 if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       B\n";
-                zeroMem(addr, ty);
+                zeroMem(addr, ty, unaligned);
                 if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       C\n";
-                b.CreateMemCpy(addr, MaybeAlign(alignOf(ty)), sp, MaybeAlign(1), sl);
+                b.CreateMemCpy(addr, MaybeAlign(unaligned ? 1 : alignOf(ty)), sp, MaybeAlign(1), sl);
                 if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       D\n";
                 return;
             }
             Value* v = coerce(e, ty);
             if (isRefKind(ty)) {
                 if (!ownsReference(e)) emitRetainRef(v, ty);
-                storeValue(v, addr, ty);
+                storeValue(v, addr, ty, unaligned);
                 return;
             }
             if (ty->kind == TypeKind::Array && needsCleanup(ty)) {
-                storeValue(v, addr, ty);
-                if (!valueOwned(e)) emitRetainValue(addr, ty);
+                storeValue(v, addr, ty, unaligned);
+                if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
                 return;
             }
             if (ty->kind == TypeKind::Struct && needsCleanup(ty)) {
                 // 借用源：逐字段 retain；owned 源（调用返回/构造结果）：所有权转移
-                storeValue(v, addr, ty);
-                if (!valueOwned(e)) emitRetainValue(addr, ty);
+                storeValue(v, addr, ty, unaligned);
+                if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
                 return;
             }
             if (ty->kind == TypeKind::Slice) {
                 // 借用源（另一个动态数组）：retain；new/数组转换/调用返回：所有权转移
-                storeValue(v, addr, ty);
-                if (!convOwns(e, ty)) emitRetainValue(addr, ty);
+                storeValue(v, addr, ty, unaligned);
+                if (!convOwns(e, ty)) emitRetainValue(addr, ty, unaligned);
                 return;
             }
-            storeValue(v, addr, ty);
+            storeValue(v, addr, ty, unaligned);
             return;
         }
         if (auto ia = dynamic_cast<InitAggregate*>(init)) {
+            // 空花括号 `{}`：聚合零初始化（等价于旧的 `= 0`）
+            if (ia->items.empty()) {
+                zeroMem(addr, ty, unaligned);
+                return;
+            }
             // 与 C 一致：聚合初始化未覆盖的部分清零
-            zeroMem(addr, ty);
+            zeroMem(addr, ty, unaligned);
             if (ty->kind == TypeKind::Struct) {
                 std::vector<std::pair<int, Init*>> slot;
                 bool named = false;
@@ -2080,8 +2260,9 @@ struct Emitter {
                 }
                 auto* st = cast<LStruct>(lt(ty));
                 for (auto& [idx, sub] : slot) {
-                    Value* fp = b.CreateStructGEP(st, addr, static_cast<unsigned>(idx));
-                    initInto(fp, ty->fields[idx].type, sub);
+                    Value* fp =
+                        b.CreateStructGEP(st, addr, llvmFieldIndex(ty, idx));
+                    initInto(fp, ty->fields[idx].type, sub, unaligned || ty->is_packed);
                 }
                 return;
             }
@@ -2091,7 +2272,7 @@ struct Emitter {
                                                        ConstantInt::get(i32(), 0)});
                 for (size_t i = 0; i < ia->items.size() && i < ty->array_size; ++i) {
                     Value* p = gep(lt(ty->elem), inner, ConstantInt::get(i64(), i));
-                    initInto(p, ty->elem, ia->items[i].second.get());
+                    initInto(p, ty->elem, ia->items[i].second.get(), unaligned);
                 }
                 return;
             }
@@ -2102,9 +2283,9 @@ struct Emitter {
                 Value* data = sliceDataPtr(h, ty->rank);
                 for (size_t i = 0; i < elems.size(); ++i) {
                     Value* p = b.CreateGEP(lt(ty->elem), data, ConstantInt::get(i64(), i));
-                    initInto(p, ty->elem, elems[i]);
+                    initInto(p, ty->elem, elems[i], unaligned);
                 }
-                b.CreateStore(h, addr);
+                storeAt(h, addr, unaligned);
                 return;
             }
         }
@@ -2165,12 +2346,12 @@ struct Emitter {
                 if (isRefKind(ty)) {
                     emitReleaseRef(v, ty);
                 } else if (ty && ty->kind == TypeKind::Array && needsCleanup(ty)) {
-                    auto* tmp = entryAlloca(lt(ty), "expr.tmp");
+                    auto* tmp = entryAlloca(lt(ty), "expr.tmp", alignOf(ty));
                     b.CreateStore(v, tmp);
                     emitReleaseValue(tmp, ty);
                 } else if (ty && needsCleanup(ty) &&
                            (ty->kind == TypeKind::Struct || ty->kind == TypeKind::Slice)) {
-                    auto* tmp = entryAlloca(lt(ty), "expr.tmp");
+                    auto* tmp = entryAlloca(lt(ty), "expr.tmp", alignOf(ty));
                     b.CreateStore(v, tmp);
                     emitReleaseValue(tmp, ty);
                 }
@@ -2185,6 +2366,7 @@ struct Emitter {
                 return;
             }
             Value* addr = addrOf(as->target.get());
+            const bool una = unalignedExpr(as->target.get());
             if (as->op == "=") {
                 Value* nv = coerce(as->value.get(), as->target->ty);
                 bool weakTarget = false;
@@ -2206,34 +2388,34 @@ struct Emitter {
                     return;
                 }
                 if (isRefKind(as->target->ty)) {
-                    Value* old = b.CreateLoad(lt(as->target->ty), addr);
+                    Value* old = loadAt(lt(as->target->ty), addr, una);
                     if (!ownsReference(as->value.get())) emitRetainRef(nv, as->target->ty);
                     emitReleaseRef(old, as->target->ty);
-                    b.CreateStore(nv, addr);
+                    storeAt(nv, addr, una);
                     return;
                 }
                 TypePtr tty = as->target->ty;
                 if (!weakTarget && tty && needsCleanup(tty) &&
                     (tty->kind == TypeKind::Array || tty->kind == TypeKind::Struct ||
                      tty->kind == TypeKind::Slice)) {
-                    auto* tmp = entryAlloca(lt(tty), "val.tmp");
+                    auto* tmp = entryAlloca(lt(tty), "val.tmp", alignOf(tty));
                     b.CreateStore(nv, tmp);
                     if (!convOwns(as->value.get(), tty)) emitRetainValue(tmp, tty);
-                    emitReleaseValue(addr, tty);
-                    b.CreateStore(b.CreateLoad(lt(tty), tmp), addr);
+                    emitReleaseValue(addr, tty, una);
+                    storeAt(b.CreateLoad(lt(tty), tmp), addr, una);
                     return;
                 }
-                b.CreateStore(nv, addr);
+                storeAt(nv, addr, una);
                 return;
             }
             Value* v = eval(as->value.get());
             std::string op = as->op.substr(0, as->op.size() - 1);
-            Value* old = b.CreateLoad(lt(as->target->ty), addr);
+            Value* old = loadAt(lt(as->target->ty), addr, una);
             TypePtr rt = as->target->ty;
             if (rt->kind == TypeKind::Ptr) {
                 Value* n = convertTo(v, as->value->ty, Type::make_prim("isize"));
                 Value* np = gep(lt(rt->elem), old, op == "+" ? n : b.CreateNeg(n));
-                b.CreateStore(np, addr);
+                storeAt(np, addr, una);
                 return;
             }
             Value* rv = convertTo(v, as->value->ty, rt);
@@ -2250,7 +2432,7 @@ struct Emitter {
             else if (op == "^") res = b.CreateXor(old, rv);
             else if (op == "<<") res = b.CreateShl(old, rv);
             else if (op == ">>") res = b.CreateAShr(old, rv);
-            b.CreateStore(res, addr);
+            storeAt(res, addr, una);
             return;
         }
         if (auto is = dynamic_cast<IfStmt*>(s)) {
@@ -2388,11 +2570,13 @@ struct Emitter {
             while (auto m = dynamic_cast<Member*>(e)) e = m->obj.get();
             simple = dynamic_cast<Name*>(e) != nullptr;
         }
+        bool seqUnaligned = false;
         if (simple) {
             seqAddr = addrOf(s->seq.get());
+            seqUnaligned = unalignedExpr(s->seq.get());
         } else {
             Value* v = eval(s->seq.get());
-            seqAddr = entryAlloca(lt(sty), "seq.tmp");
+            seqAddr = entryAlloca(lt(sty), "seq.tmp", alignOf(sty));
             b.CreateStore(v, seqAddr);
             // owned 的动态数组/数组临时值：循环结束后释放
             if (needsCleanup(sty) && valueOwned(s->seq.get()))
@@ -2431,7 +2615,7 @@ struct Emitter {
         if (s->by_ref) {
             b.CreateStore(ep, varSlot);
         } else {
-            b.CreateStore(b.CreateLoad(lt(et), ep), varSlot);
+            b.CreateStore(loadAt(lt(et), ep, seqUnaligned), varSlot);
         }
         loops.push_back({incBB, endBB});
         loopScopeDepth.push_back(refScopes.size());
@@ -2680,7 +2864,7 @@ struct Emitter {
         size_t i = first;
         for (auto& pl : pls) {
             if (i >= fn->arg_size()) break;
-            auto* slot = entryAlloca(lt(pl->rty), sane(pl->name));
+            auto* slot = entryAlloca(lt(pl->rty), sane(pl->name), alignOf(pl->rty));
             slots[pl.get()] = slot;
             IRBuilder<>::InsertPointGuard g(b);
             b.SetInsertPoint(bodyBB);
@@ -2696,7 +2880,8 @@ struct Emitter {
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(m->cname, FunctionType::get(lt(m->rty), ptys, false))
                 .getCallee());
-        fn->setLinkage(GlobalValue::ExternalLinkage);
+        fn->setLinkage((c->is_public && m->is_public) ? GlobalValue::ExternalLinkage
+                                                      : GlobalValue::InternalLinkage);
         curClassTy = c->ty;
         beginBody(fn, m->rty);
         curThis = fn->getArg(0);
@@ -2714,7 +2899,8 @@ struct Emitter {
             mod->getOrInsertFunction(ctor->cname,
                                      FunctionType::get(LType::getVoidTy(ctx), ptys, false))
                 .getCallee());
-        fn->setLinkage(GlobalValue::ExternalLinkage);
+        fn->setLinkage((c->is_public && ctor->is_public) ? GlobalValue::ExternalLinkage
+                                                        : GlobalValue::InternalLinkage);
         curClassTy = c->ty;
         beginBody(fn);
         curThis = fn->getArg(0);
@@ -2744,14 +2930,14 @@ struct Emitter {
         finishBody(fn, c->name + " 构造器");
     }
 
-    void emitReleaseValue(Value* addr, const TypePtr& ty) {
+    void emitReleaseValue(Value* addr, const TypePtr& ty, bool unaligned = false) {
         if (!ty) return;
         if (isRefKind(ty)) {
-            emitReleaseRef(b.CreateLoad(lt(ty), addr), ty);
+            emitReleaseRef(loadAt(lt(ty), addr, unaligned), ty);
             return;
         }
         if (ty->kind == TypeKind::Slice) {
-            emitSliceRelease(b.CreateLoad(lt(ty), addr), ty);
+            emitSliceRelease(loadAt(lt(ty), addr, unaligned), ty);
             return;
         }
         if (ty->kind == TypeKind::Struct) {
@@ -2762,11 +2948,12 @@ struct Emitter {
                 b.CreateCall(dtor, {addr});
                 return;
             }
+            bool inner = unaligned || ty->is_packed;
             for (size_t k = ty->fields.size(); k > 0; --k) {
                 size_t idx = k - 1;
                 if (ty->fields[idx].weak) continue;
                 emitReleaseValue(fieldAddr(addr, ty, static_cast<int>(idx)),
-                                 ty->fields[idx].type);
+                                 ty->fields[idx].type, inner);
             }
             return;
         }
@@ -2776,26 +2963,27 @@ struct Emitter {
                 Value* ep = b.CreateGEP(st, addr, {ConstantInt::get(i64(), 0),
                                                    ConstantInt::get(i32(), 0),
                                                    ConstantInt::get(i64(), i)});
-                emitReleaseValue(ep, ty->elem);
+                emitReleaseValue(ep, ty->elem, unaligned);
             }
         }
     }
 
-    void emitRetainValue(Value* addr, const TypePtr& ty) {
+    void emitRetainValue(Value* addr, const TypePtr& ty, bool unaligned = false) {
         if (!ty) return;
         if (isRefKind(ty)) {
-            emitRetainRef(b.CreateLoad(lt(ty), addr), ty);
+            emitRetainRef(loadAt(lt(ty), addr, unaligned), ty);
             return;
         }
         if (ty->kind == TypeKind::Slice) {
-            emitSliceRetain(b.CreateLoad(lt(ty), addr));
+            emitSliceRetain(loadAt(lt(ty), addr, unaligned));
             return;
         }
         if (ty->kind == TypeKind::Struct) {
+            bool inner = unaligned || ty->is_packed;
             for (size_t i = 0; i < ty->fields.size(); ++i) {
                 if (ty->fields[i].weak) continue;
                 emitRetainValue(fieldAddr(addr, ty, static_cast<int>(i)),
-                                ty->fields[i].type);
+                                ty->fields[i].type, inner);
             }
             return;
         }
@@ -2805,7 +2993,7 @@ struct Emitter {
                 Value* ep = b.CreateGEP(st, addr, {ConstantInt::get(i64(), 0),
                                                    ConstantInt::get(i32(), 0),
                                                    ConstantInt::get(i64(), i)});
-                emitRetainValue(ep, ty->elem);
+                emitRetainValue(ep, ty->elem, unaligned);
             }
         }
     }
@@ -2815,7 +3003,8 @@ struct Emitter {
             mod->getOrInsertFunction(dtor_cname(c->ty->unit, c->name),
                                      FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
                 .getCallee());
-        fn->setLinkage(GlobalValue::ExternalLinkage);
+        fn->setLinkage(c->is_public ? GlobalValue::ExternalLinkage
+                                    : GlobalValue::InternalLinkage);
         curClassTy = c->ty;
         beginBody(fn);
         curThis = fn->getArg(0);
@@ -2850,7 +3039,7 @@ struct Emitter {
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(nm, FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
                 .getCallee());
-        fn->setLinkage(GlobalValue::ExternalLinkage);
+        fn->setLinkage(GlobalValue::InternalLinkage);
         beginBody(fn);
         Value* p = fn->getArg(0);
         // 先把指向本对象的所有 weak 引用置 null
@@ -2859,7 +3048,11 @@ struct Emitter {
             dtor_cname(c->ty->unit, c->name),
             FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
         b.CreateCall(dtor, {p});
-        b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {p});
+        if (classNeedsAlignedAlloc(c->ty)) {
+            b.CreateCall(libFn("_aligned_free", LType::getVoidTy(ctx), {ptrTy()}), {p});
+        } else {
+            b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {p});
+        }
         finishBody(fn, c->name + " 销毁函数");
     }
 
@@ -2898,7 +3091,8 @@ struct Emitter {
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(m->cname, FunctionType::get(lt(m->rty), ptys, false))
                 .getCallee());
-        fn->setLinkage(GlobalValue::ExternalLinkage);
+        fn->setLinkage((sd->is_public && m->is_public) ? GlobalValue::ExternalLinkage
+                                                       : GlobalValue::InternalLinkage);
         curClassTy = sd->ty;
         beginBody(fn, m->rty);
         thisSlot = entryAlloca(ptrTy(), "this");
@@ -2915,7 +3109,8 @@ struct Emitter {
             mod->getOrInsertFunction(ctor->cname,
                                      FunctionType::get(LType::getVoidTy(ctx), ptys, false))
                 .getCallee());
-        fn->setLinkage(GlobalValue::ExternalLinkage);
+        fn->setLinkage((sd->is_public && ctor->is_public) ? GlobalValue::ExternalLinkage
+                                                         : GlobalValue::InternalLinkage);
         curClassTy = sd->ty;
         beginBody(fn);
         thisSlot = entryAlloca(ptrTy(), "this");
@@ -2931,7 +3126,8 @@ struct Emitter {
             mod->getOrInsertFunction(sd->dtor->cname,
                                      FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
                 .getCallee());
-        fn->setLinkage(GlobalValue::ExternalLinkage);
+        fn->setLinkage(sd->is_public ? GlobalValue::ExternalLinkage
+                                    : GlobalValue::InternalLinkage);
         curClassTy = sd->ty;
         beginBody(fn);
         thisSlot = entryAlloca(ptrTy(), "this");
@@ -2943,7 +3139,7 @@ struct Emitter {
             if (sd->ty->fields[idx].weak) continue;
             emitReleaseValue(fieldAddr(b.CreateLoad(ptrTy(), thisSlot), sd->ty,
                                        static_cast<int>(idx)),
-                             sd->ty->fields[idx].type);
+                             sd->ty->fields[idx].type, sd->ty->is_packed);
         }
         finishBody(fn, sd->name + " 析构器");
     }
@@ -2955,7 +3151,8 @@ struct Emitter {
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(m->cname, FunctionType::get(lt(m->rty), ptys, false))
                 .getCallee());
-        fn->setLinkage(GlobalValue::ExternalLinkage);
+        fn->setLinkage(itf->is_public ? GlobalValue::ExternalLinkage
+                                      : GlobalValue::InternalLinkage);
         curClassTy = itf->ty;
         beginBody(fn, m->rty);
         thisSlot = entryAlloca(ifaceTy, "this");
@@ -2972,7 +3169,9 @@ struct Emitter {
         for (auto& t : f->pty) ptys.push_back(lt(t));
         auto* ft = FunctionType::get(lt(f->rty), ptys, false);
         Function* fn = cast<Function>(mod->getOrInsertFunction(f->cname, ft).getCallee());
-        fn->setLinkage(GlobalValue::ExternalLinkage);
+        fn->setLinkage((f->is_extern || f->is_public || f->name == "main")
+                           ? GlobalValue::ExternalLinkage
+                           : GlobalValue::InternalLinkage);
         if (f->is_extern) return;
 
         curClassTy = nullptr;
@@ -2992,7 +3191,7 @@ struct Emitter {
         for (auto& a : fn->args()) {
             LocalVar* pl = i < f->param_locals.size() ? f->param_locals[i].get() : nullptr;
             if (pl) {
-                auto* slot = entryAlloca(lt(pl->rty), sane(pl->name));
+                auto* slot = entryAlloca(lt(pl->rty), sane(pl->name), alignOf(pl->rty));
                 slots[pl] = slot;
                 b.SetInsertPoint(bodyBB);
                 b.CreateStore(&a, slot);
@@ -3034,10 +3233,12 @@ struct Emitter {
                 LType* ty = lt(g->rty);
                 Constant* init = g->init ? constValue(g->rty, g->init.get())
                                          : zeroConst(ty, g->rty);
-                auto linkage = (g->is_static || g->is_const) ? GlobalValue::InternalLinkage
-                                                             : GlobalValue::ExternalLinkage;
+                auto linkage = g->is_public ? GlobalValue::ExternalLinkage
+                                            : GlobalValue::InternalLinkage;
                 auto* gv = new GlobalVariable(*mod, ty, g->is_const, linkage, init, g->cname);
                 if (g->is_const) gv->setConstant(true);
+                uint64_t ga = alignOf(g->rty);
+                if (ga > 1) gv->setAlignment(llvm::Align(ga));
             }
         }
     }

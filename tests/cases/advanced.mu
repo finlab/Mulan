@@ -1,6 +1,6 @@
 unit adv;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 struct Box { int[3] v; }
 
@@ -11,7 +11,7 @@ int main() {
     if s[0] == 3 and s[2] == 9 { puts("dynarray ref ok"); }
     if arr[0] == 1 and arr[2] == 3 { puts("array copy ok"); }
 
-    Box box = 0;
+    Box box = {};
     box.v[0] = 7;
     if box.v[0] == 7 { puts("struct array field ok"); }
 

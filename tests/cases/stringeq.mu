@@ -1,10 +1,10 @@
 unit stringeq;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 int main() {
     string a = "abc";
     string b = "abc";
     string c = "abd";
-    string z = 0;
+    string z = {};
     if a == b { puts("eq ok"); }
     if a != c { puts("ne ok"); }
     if z == "" { puts("zero eq empty ok"); }

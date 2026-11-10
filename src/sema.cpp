@@ -5,6 +5,7 @@
 // 所有解析结果直接写回 AST 节点（契约见 ast.hpp 顶部）。
 #include "sema.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <deque>
 #include <functional>
@@ -26,6 +27,9 @@ bool is_integer(const TypePtr& t) { return t && t->is_integer(); }
 bool is_numeric(const TypePtr& t) { return t && t->is_numeric(); }
 bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
 bool is_prim(const TypePtr& t) { return t && t->kind == TypeKind::Prim; }
+bool is_enum_t(const TypePtr& t) { return t && t->kind == TypeKind::Enum; }
+// 枚举只允许与「真正的整数类型」显式互转（bool 与枚举都不算）
+bool is_plain_int(const TypePtr& t) { return is_prim(t) && t->is_integer(); }
 
 // 类型语法文本化。ast.hpp 里声明了 TypeSpec::str()，但它的定义属于 parser.cpp；
 // 这里自带一份，避免 sema 对 parser 的链接期依赖（只在错误信息里用）。
@@ -38,7 +42,7 @@ std::string spec_text(const TypeSpec* s) {
             return spec_text(s->elem.get()) + "*";
         case TypeSpec::K::Slice:
             return spec_text(s->elem.get()) + "[" + std::string(s->rank - 1, ',') + "]" +
-                   (s->readonly ? " (readonly)" : "");
+                   (s->is_const ? " (const)" : "");
         case TypeSpec::K::Array:
             return spec_text(s->elem.get()) + "[" + std::to_string(s->size) + "]";
     }
@@ -65,8 +69,10 @@ public:
         collect();
         place_structs();
         for (auto& u : units_) resolve_unit_types(u.get());
+        check_layouts();
         check_hierarchy_cycles();
         compute_abstract_all();
+        check_public_signatures();
         for (auto& u : units_) check_unit(u.get());
         check_entry();
 
@@ -145,8 +151,9 @@ private:
     }
 
     bool implicit_ok(const TypePtr& src, const TypePtr& dst) {
-        if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->readonly &&
-            dst->elem && dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
+        if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->elem &&
+            dst->elem->is_const &&
+            dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
             return true;  // Str -> readonly char*/byte*（NUL 结尾）
         }
         return implicitly_convertible(src, dst);
@@ -158,6 +165,74 @@ private:
             if (use->unit_name == uname) return true;
         }
         return false;
+    }
+
+    // std.string 始终作为隐式依赖加载，等价于已 `use`。
+    bool unit_imported(const std::string& uname) const {
+        return uname == "std.string" || uses_unit(uname);
+    }
+
+    // ------------------------------------------------------------ 可见性
+    //
+    // 库边界 = unit 名的第一段（`std.string` → `std`；无点号的 unit 属于根库）。
+    // 两档：默认仅本 unit 可见；`public` 跨 unit 可见。跨库还需要目标 unit 本身 `public unit`。
+
+    static std::string lib_of(const std::string& unit_name) {
+        const auto dot = unit_name.find('.');
+        return dot == std::string::npos ? std::string() : unit_name.substr(0, dot);
+    }
+
+    // 目标 unit 是否可被当前 unit 引用：同库总是可以；跨库要求 `public unit`。
+    bool unit_visible(const std::string& target) const {
+        auto it = infos_.find(target);
+        if (it == infos_.end()) return false;
+        if (cur_ && lib_of(target) == lib_of(cur_->name)) return true;
+        return it->second.unit && it->second.unit->is_public;
+    }
+
+    // 声明级可见性：本 unit 内全可见；其他 unit 要求声明为 public。
+    bool decl_visible(const std::string& owner_unit, bool is_public) const {
+        if (!cur_ || owner_unit == cur_->name) return true;
+        if (!unit_visible(owner_unit)) return false;
+        return is_public;
+    }
+
+    bool type_is_public(const TypePtr& t) const {
+        if (!t) return true;
+        auto it = infos_.find(t->unit);
+        if (it == infos_.end()) return true;  // 内建类型
+        const UnitInfo& ui = it->second;
+        switch (t->kind) {
+            case TypeKind::Struct: {
+                auto p = ui.structs.find(t->name);
+                return p != ui.structs.end() && p->second->is_public;
+            }
+            case TypeKind::Enum: {
+                auto p = ui.enums.find(t->name);
+                return p != ui.enums.end() && p->second->is_public;
+            }
+            case TypeKind::Class: {
+                auto p = ui.classes.find(t->name);
+                return p != ui.classes.end() && p->second->is_public;
+            }
+            case TypeKind::Interface: {
+                auto p = ui.interfaces.find(t->name);
+                return p != ui.interfaces.end() && p->second->is_public;
+            }
+            default: return true;
+        }
+    }
+
+    // 类型声明可见性（带类型名，用于报错）。
+    void require_type_visible(const TypePtr& t, const TypeSpec* spec) const {
+        if (!t) return;
+        if (cur_ && t->unit == cur_->name) return;
+        if (!unit_visible(t->unit)) {
+            err_ts("unit `" + t->unit + "` 仅在库内可见，跨库使用需要 `public unit`", spec);
+        }
+        if (!type_is_public(t)) {
+            err_ts("类型 `" + t->unit + "." + t->name + "` 未声明为 public", spec);
+        }
     }
 
     // ------------------------------------------------------------ 主流程
@@ -238,6 +313,91 @@ private:
                 if (!infos_.count(use->unit_name)) {
                     err("找不到 unit `" + use->unit_name + "`", use.get());
                 }
+                if (!unit_visible(use->unit_name)) {
+                    err("unit `" + use->unit_name +
+                            "` 仅在库内可见，跨库使用需要 `public unit`",
+                        use.get());
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ public 签名连锁检查
+    //
+    // public 声明对外暴露的类型也必须 public，且其 unit 必须可见；否则外部拿到签名却无法命名类型。
+
+    void check_exposed_type(const TypePtr& t, const std::string& what, const Node* at) {
+        if (!t) return;
+        TypePtr b = t;
+        while (b && (b->kind == TypeKind::Ptr || b->kind == TypeKind::Array ||
+                     b->kind == TypeKind::Slice)) {
+            b = b->elem;
+        }
+        if (!b) return;
+        if (b->kind != TypeKind::Struct && b->kind != TypeKind::Class &&
+            b->kind != TypeKind::Interface && b->kind != TypeKind::Enum) {
+            return;
+        }
+        if (cur_ && b->unit == cur_->name) {
+            if (!type_is_public(b)) {
+                err(what + " 不能使用非 public 类型 `" + b->str() + "`", at);
+            }
+            return;
+        }
+        if (!unit_visible(b->unit)) {
+            err(what + " 不能使用不可见 unit `" + b->unit + "` 的类型 `" + b->str() + "`", at);
+        }
+        if (!type_is_public(b)) {
+            err(what + " 不能使用非 public 类型 `" + b->str() + "`", at);
+        }
+    }
+
+    void check_public_signatures() {
+        for (auto& u : units_) {
+            cur_ = u.get();
+            for (auto& d : u->decls) {
+                if (!d->is_public) continue;
+                if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
+                    if (f->is_extern) continue;
+                    const std::string what = "public 函数 `" + f->name + "`";
+                    check_exposed_type(f->rty, what, f);
+                    for (auto& p : f->pty) check_exposed_type(p, what, f);
+                } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
+                    const std::string what = "public class `" + c->name + "`";
+                    if (c->ty->base) check_exposed_type(c->ty->base, what + " 的基类", c);
+                    for (auto& i : c->ty->interfaces) {
+                        check_exposed_type(i, what + " 的接口", c);
+                    }
+                    for (auto& fd : c->ty->fields) {
+                        if (fd.is_public) {
+                            check_exposed_type(fd.type, what + " 的 public 字段 `" + fd.name + "`", c);
+                        }
+                    }
+                    for (auto& m : c->ty->methods) {
+                        if (!m.is_public) continue;
+                        const std::string mw = what + " 的 public 方法 `" + m.name + "`";
+                        check_exposed_type(m.ret, mw, c);
+                        for (auto& p : m.params) check_exposed_type(p, mw, c);
+                    }
+                } else if (auto sd = dynamic_cast<StructDecl*>(d.get())) {
+                    const std::string what = "public struct `" + sd->name + "`";
+                    for (auto& fd : sd->ty->fields) {
+                        check_exposed_type(fd.type, what + " 的字段 `" + fd.name + "`", sd);
+                    }
+                    for (auto& m : sd->ty->methods) {
+                        if (!m.is_public) continue;
+                        const std::string mw = what + " 的 public 方法 `" + m.name + "`";
+                        check_exposed_type(m.ret, mw, sd);
+                        for (auto& p : m.params) check_exposed_type(p, mw, sd);
+                    }
+                } else if (auto itf = dynamic_cast<InterfaceDecl*>(d.get())) {
+                    const std::string what = "public interface `" + itf->name + "`";
+                    for (auto& m : itf->ty->methods) {
+                        const std::string mw = what + " 的方法 `" + m.name + "`";
+                        check_exposed_type(m.ret, mw, itf);
+                        for (auto& p : m.params) check_exposed_type(p, mw, itf);
+                    }
+                }
             }
         }
     }
@@ -279,9 +439,136 @@ private:
                         "` 暂不能作为字段（字段析构未实现）",
                     c);
             }
-            fields.push_back(Field{fname, ft, spec->weak});
+            bool field_pub = false;  // class 默认 private
+            if (auto vit = c->field_visibility.find(fname); vit != c->field_visibility.end()) {
+                field_pub = vit->second;
+            }
+            fields.push_back(Field{fname, ft, spec->weak, field_pub});
         }
         c->ty->fields = std::move(fields);
+    }
+
+    // ------------------------------------------------------------ 布局修饰符
+    //
+    // packed / align(N) 的最终布局由 types.cpp 的 type_align/type_size 计算；
+    // 这里只负责求值 N、校验 N 与自然对齐的关系，以及 packed 的字段类型限制。
+
+    bool eval_const_int(Expr* e, long long& out) {
+        if (!e) return false;
+        if (auto il = dynamic_cast<IntLit*>(e)) {
+            out = il->value;
+            return true;
+        }
+        if (auto cl = dynamic_cast<CharLit*>(e)) {
+            out = cl->value;
+            return true;
+        }
+        if (auto u = dynamic_cast<Unary*>(e)) {
+            long long v = 0;
+            if (!eval_const_int(u->operand.get(), v)) return false;
+            if (u->op == "-") {
+                out = -v;
+                return true;
+            }
+            if (u->op == "+") {
+                out = v;
+                return true;
+            }
+            return false;
+        }
+        if (auto c = dynamic_cast<Cast*>(e)) return eval_const_int(c->expr.get(), out);
+        if (auto b = dynamic_cast<Binary*>(e)) {
+            long long l = 0, r = 0;
+            if (!eval_const_int(b->left.get(), l) || !eval_const_int(b->right.get(), r)) {
+                return false;
+            }
+            const std::string& op = b->op;
+            if (op == "+") out = l + r;
+            else if (op == "-") out = l - r;
+            else if (op == "*") out = l * r;
+            else if (op == "/") {
+                if (r == 0) return false;
+                out = l / r;
+            } else if (op == "%") {
+                if (r == 0) return false;
+                out = l % r;
+            } else if (op == "<<") {
+                if (r < 0 || r > 62) return false;
+                out = l << r;
+            } else if (op == ">>") {
+                if (r < 0 || r > 63) return false;
+                out = l >> r;
+            } else if (op == "&") out = l & r;
+            else if (op == "|") out = l | r;
+            else if (op == "^") out = l ^ r;
+            else return false;
+            return true;
+        }
+        return false;
+    }
+
+    static bool is_pow2(long long n) { return n > 0 && (n & (n - 1)) == 0; }
+
+    void check_layouts() {
+        // 第一遍：求值 align(N)，校验正整数 + 2 的幂
+        for (auto& u : units_) {
+            cur_ = u.get();
+            for (auto& d : u->decls) {
+                auto sd = dynamic_cast<StructDecl*>(d.get());
+                if (!sd || !sd->ty) continue;
+                sd->ty->is_packed = sd->is_packed;
+                if (!sd->align_expr) continue;
+                long long n = 0;
+                if (!eval_const_int(sd->align_expr.get(), n)) {
+                    err("align(N) 的 N 必须是编译期整型常量", sd);
+                }
+                if (!is_pow2(n) || n > 65536) {
+                    err("align(N) 的 N 必须是 2 的幂（当前为 " + std::to_string(n) + "）", sd);
+                }
+                sd->ty->align_req = static_cast<int>(n);
+            }
+        }
+        // 第二遍：N 与自然对齐比较 + packed 字段类型限制（此时所有 unit 的字段都已解析）
+        for (auto& u : units_) {
+            cur_ = u.get();
+            for (auto& d : u->decls) {
+                auto sd = dynamic_cast<StructDecl*>(d.get());
+                if (!sd || !sd->ty) continue;
+                const TypePtr& ty = sd->ty;
+                if (ty->align_req > 0 && !ty->is_packed) {
+                    size_t natural = 1;
+                    for (auto& f : ty->fields) natural = std::max(natural, type_align(f.type));
+                    if (static_cast<size_t>(ty->align_req) < natural) {
+                        err("align(" + std::to_string(ty->align_req) + ") 小于结构体 `" +
+                                sd->name + "` 的自然对齐 " + std::to_string(natural) +
+                                "；降对齐请用 `packed`",
+                            sd);
+                    }
+                }
+                if (!ty->is_packed) continue;
+                for (auto& f : ty->fields) {
+                    // 数组按元素类型检查
+                    TypePtr base = f.type;
+                    while (base && base->kind == TypeKind::Array) base = base->elem;
+                    if (!base) continue;
+                    if (is_str(base)) {
+                        err("packed 结构 `" + sd->name + "` 的字段 `" + f.name +
+                                "` 不能是 string（未对齐指针访问）",
+                            sd);
+                    }
+                    if (base->kind == TypeKind::Slice) {
+                        err("packed 结构 `" + sd->name + "` 的字段 `" + f.name +
+                                "` 不能是动态数组 `" + base->str() + "`（未对齐指针访问）",
+                            sd);
+                    }
+                    if (is_reference_type(base)) {
+                        err("packed 结构 `" + sd->name + "` 的字段 `" + f.name +
+                                "` 不能是 class/interface 引用（未对齐指针访问）",
+                            sd);
+                    }
+                }
+            }
+        }
     }
 
     void resolve_unit_types(Unit* u) {
@@ -292,6 +579,7 @@ private:
             auto sd = dynamic_cast<StructDecl*>(d.get());
             if (!sd) continue;
             if (!sd->ty) sd->ty = Type::make_struct(u->name, sd->name);
+            sd->ty->is_packed = sd->is_packed;  // align_req 在 check_layouts 里求值
             std::vector<Field> fields;
             std::unordered_set<std::string> fnames;
             for (auto& [fname, spec] : sd->fields) {
@@ -309,7 +597,12 @@ private:
                             "` 暂不能作为字段（字段析构未实现）",
                         sd);
                 }
-                fields.push_back(Field{fname, ft});
+                bool field_pub = true;  // struct 默认 public
+                if (auto vit = sd->field_visibility.find(fname);
+                    vit != sd->field_visibility.end()) {
+                    field_pub = vit->second;
+                }
+                fields.push_back(Field{fname, ft, false, field_pub});
             }
             sd->ty->fields = std::move(fields);
 
@@ -338,6 +631,7 @@ private:
                 sig.params = m->pty;
                 sig.is_abstract = false;
                 sig.is_override = false;
+                sig.is_public = m->is_public;
                 sig.owner = sd->ty;
                 sd->ty->methods.push_back(std::move(sig));
                 m->cname = method_cname(u->name, sd->name, m->name, m->pty);
@@ -357,6 +651,7 @@ private:
                 }
                 ctor->cname = ctor_cname(u->name, sd->name, ctor->pty);
                 sd->ty->ctors.push_back(ctor->pty);
+                sd->ty->ctor_is_public.push_back(ctor->is_public);
             }
             sd->ty->has_dtor = sd->dtor != nullptr;
             if (sd->dtor) sd->dtor->cname = dtor_cname(u->name, sd->name);
@@ -418,6 +713,7 @@ private:
                 sig.params = m->pty;
                 sig.is_abstract = !m->body;
                 sig.is_override = m->is_override;
+                sig.is_public = m->is_public;
                 sig.owner = c->ty;
                 c->ty->methods.push_back(std::move(sig));
                 m->cname = method_cname(u->name, c->name, m->name, m->pty);
@@ -437,6 +733,7 @@ private:
                 }
                 ctor->cname = ctor_cname(u->name, c->name, ctor->pty);
                 c->ty->ctors.push_back(ctor->pty);
+                c->ty->ctor_is_public.push_back(ctor->is_public);
             }
             if (c->dtor) c->dtor->cname = dtor_cname(u->name, c->name);
         }
@@ -584,14 +881,22 @@ private:
     TypePtr resolve_type(const TypeSpec* spec, Unit* u) {
         if (!spec) err("缺少类型");
         switch (spec->kind) {
-            case TypeSpec::K::Named:
-                return resolve_named_type(spec->name, u, spec);
+            case TypeSpec::K::Named: {
+                TypePtr t = resolve_named_type(spec->name, u, spec);
+                // C 模型：prim 的 const 需要独立类型节点（prim 工厂有单例缓存，不能就地改）
+                if (spec->is_const && t && t->kind == TypeKind::Prim) {
+                    auto c = std::make_shared<Type>(*t);
+                    c->is_const = true;
+                    return c;
+                }
+                return t;
+            }
             case TypeSpec::K::Ptr: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
                 if (is_reference_type(elem)) {
                     err_ts("暂不支持指向 class/interface 的指针（引用类型本身已是句柄）", spec);
                 }
-                return Type::make_ptr(elem, spec->readonly);
+                return Type::make_ptr(elem, spec->is_const);
             }
             case TypeSpec::K::Slice: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
@@ -601,7 +906,7 @@ private:
                                "` 暂不能作动态数组元素",
                            spec);
                 }
-                return Type::make_slice(elem, spec->readonly, spec->rank);
+                return Type::make_slice(elem, spec->is_const, spec->rank);
             }
             case TypeSpec::K::Array: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
@@ -619,48 +924,176 @@ private:
         err_ts("未知类型 " + spec_text(spec), spec);
     }
 
+    // 在指定 unit 中按名字找类型；require_pub 时只返回 public 声明。
+    TypePtr find_type_named(const std::string& unit, const std::string& name,
+                            bool require_pub) const {
+        auto it = infos_.find(unit);
+        if (it == infos_.end()) return nullptr;
+        const UnitInfo& ui = it->second;
+        auto ok = [&](bool is_pub) { return !require_pub || is_pub; };
+        if (auto s = ui.structs.find(name); s != ui.structs.end()) {
+            return ok(s->second->is_public) ? s->second->ty : nullptr;
+        }
+        if (auto e = ui.enums.find(name); e != ui.enums.end()) {
+            return ok(e->second->is_public) ? e->second->ty : nullptr;
+        }
+        if (auto c = ui.classes.find(name); c != ui.classes.end()) {
+            return ok(c->second->is_public) ? c->second->ty : nullptr;
+        }
+        if (auto i = ui.interfaces.find(name); i != ui.interfaces.end()) {
+            return ok(i->second->is_public) ? i->second->ty : nullptr;
+        }
+        return nullptr;
+    }
+
     TypePtr resolve_named_type(const std::string& name, Unit* u, const TypeSpec* spec) {
         if (name == "void") return t_void();
         if (is_prim_name(name)) return Type::make_prim(name);
 
-        const auto dot = name.find('.');
-        if (dot != std::string::npos) {
-            const std::string un = name.substr(0, dot);
-            const std::string tn = name.substr(dot + 1);
+        // 多段 unit 名：从最长前缀开始匹配（`lib.a.b.T` → unit `lib.a.b` + 类型 `T`）
+        for (std::size_t pos = name.rfind('.'); pos != std::string::npos;) {
+            const std::string un = name.substr(0, pos);
+            const std::string tn = name.substr(pos + 1);
             auto it = infos_.find(un);
-            if (it == infos_.end()) err_ts("未导入的 unit `" + un + "`", spec);
-            if (un != u->name && !uses_unit(un)) {
-                err_ts("未通过 `use` 导入 unit `" + un + "`", spec);
+            if (it != infos_.end()) {
+                if (un != u->name && !unit_imported(un)) {
+                    err_ts("未通过 `use` 导入 unit `" + un + "`", spec);
+                }
+                if (!unit_visible(un)) {
+                    err_ts("unit `" + un + "` 仅在库内可见，跨库使用需要 `public unit`", spec);
+                }
+                UnitInfo& ui = it->second;
+                auto need_pub = [&](bool is_pub) {
+                    if (un != u->name && !is_pub) {
+                        err_ts("类型 `" + un + "." + tn + "` 未声明为 public", spec);
+                    }
+                };
+                if (auto s = ui.structs.find(tn); s != ui.structs.end()) {
+                    need_pub(s->second->is_public);
+                    return s->second->ty;
+                }
+                if (auto e = ui.enums.find(tn); e != ui.enums.end()) {
+                    need_pub(e->second->is_public);
+                    return e->second->ty;
+                }
+                if (auto c = ui.classes.find(tn); c != ui.classes.end()) {
+                    need_pub(c->second->is_public);
+                    return c->second->ty;
+                }
+                if (auto i = ui.interfaces.find(tn); i != ui.interfaces.end()) {
+                    need_pub(i->second->is_public);
+                    return i->second->ty;
+                }
+                err_ts("unit `" + un + "` 中没有类型 `" + tn + "`", spec);
             }
-            UnitInfo& ui = it->second;
-            if (auto s = ui.structs.find(tn); s != ui.structs.end()) return s->second->ty;
-            if (auto e = ui.enums.find(tn); e != ui.enums.end()) return e->second->ty;
-            if (auto c = ui.classes.find(tn); c != ui.classes.end()) return c->second->ty;
-            if (auto i = ui.interfaces.find(tn); i != ui.interfaces.end()) return i->second->ty;
-            err_ts("unit `" + un + "` 中没有类型 `" + tn + "`", spec);
+            if (pos == 0) break;
+            pos = name.rfind('.', pos - 1);
         }
 
-        UnitInfo& ui = infos_.at(u->name);
-        if (auto s = ui.structs.find(name); s != ui.structs.end()) return s->second->ty;
-        if (auto e = ui.enums.find(name); e != ui.enums.end()) return e->second->ty;
-        if (auto c = ui.classes.find(name); c != ui.classes.end()) return c->second->ty;
-        if (auto i = ui.interfaces.find(name); i != ui.interfaces.end()) return i->second->ty;
+        // 当前 unit 优先（含私有类型，本地遮蔽导入）
+        if (TypePtr t = find_type_named(u->name, name, false)) return t;
+
+        // 直接 use 的 unit：只收 public 类型；多个来源同名 → 使用点报歧义
+        TypePtr found;
+        std::string found_unit;
+        for (auto& use : u->uses) {
+            if (!unit_visible(use->unit_name)) continue;
+            TypePtr t = find_type_named(use->unit_name, name, true);
+            if (!t) continue;
+            if (found) {
+                err_ts("类型 `" + name + "` 有歧义：`" + found_unit + "." + name + "` 与 `" +
+                           use->unit_name + "." + name + "`；请写限定名",
+                       spec);
+            }
+            found = t;
+            found_unit = use->unit_name;
+        }
+        if (found) return found;
         if (UnitInfo* stdn = std_info()) {
-            if (auto s = stdn->structs.find(name); s != stdn->structs.end())
+            if (auto s = stdn->structs.find(name); s != stdn->structs.end()) {
+                if (!s->second->is_public)
+                    err_ts("类型 `std.string." + name + "` 未声明为 public", spec);
                 return s->second->ty;
-            if (auto e = stdn->enums.find(name); e != stdn->enums.end())
+            }
+            if (auto e = stdn->enums.find(name); e != stdn->enums.end()) {
+                if (!e->second->is_public)
+                    err_ts("类型 `std.string." + name + "` 未声明为 public", spec);
                 return e->second->ty;
-            if (auto c = stdn->classes.find(name); c != stdn->classes.end())
+            }
+            if (auto c = stdn->classes.find(name); c != stdn->classes.end()) {
+                if (!c->second->is_public)
+                    err_ts("类型 `std.string." + name + "` 未声明为 public", spec);
                 return c->second->ty;
-            if (auto i = stdn->interfaces.find(name); i != stdn->interfaces.end())
+            }
+            if (auto i = stdn->interfaces.find(name); i != stdn->interfaces.end()) {
+                if (!i->second->is_public)
+                    err_ts("类型 `std.string." + name + "` 未声明为 public", spec);
                 return i->second->ty;
+            }
         }
         err_ts("未知类型 `" + name + "`", spec);
     }
 
+    // 表达式里的类型名解析（当前 unit → use 的 public 类型 → std.string），
+    // 用于 `Color.Red` 这类枚举限定引用。找不到返回 nullptr。
+    TypePtr find_type_in_expr(const std::string& name, const Node* at) {
+        if (TypePtr t = find_type_named(cur_->name, name, false)) return t;
+        TypePtr found;
+        std::string found_unit;
+        for (auto& use : cur_->uses) {
+            if (!unit_visible(use->unit_name)) continue;
+            TypePtr t = find_type_named(use->unit_name, name, true);
+            if (!t) continue;
+            if (found && !same_type(found, t)) {
+                err("类型 `" + name + "` 有歧义：`" + found_unit + "." + name + "` 与 `" +
+                        use->unit_name + "." + name + "`；请写限定名",
+                    at);
+            }
+            if (!found) {
+                found = t;
+                found_unit = use->unit_name;
+            }
+        }
+        if (found) return found;
+        if (UnitInfo* stdn = std_info()) {
+            if (auto e = stdn->enums.find(name); e != stdn->enums.end() && e->second->is_public) {
+                return e->second->ty;
+            }
+        }
+        return nullptr;
+    }
+
+    // 在指定枚举里按名字找成员（顺序与声明一致，显式赋值后继续递增）。
+    EnumConst* find_enum_member(const TypePtr& et, const std::string& member) {
+        if (!et || et->kind != TypeKind::Enum) return nullptr;
+        auto it = infos_.find(et->unit);
+        if (it == infos_.end() || !it->second.unit) return nullptr;
+        for (auto& d : it->second.unit->decls) {
+            auto ed = dynamic_cast<EnumDecl*>(d.get());
+            if (!ed || ed->name != et->name) continue;
+            long long value = 0;
+            bool has = false;
+            for (auto& [m, v] : ed->members) {
+                if (v.has_value()) {
+                    value = *v;
+                    has = true;
+                } else if (!has) {
+                    value = 0;
+                    has = true;
+                } else {
+                    value += 1;
+                }
+                if (m == member) {
+                    return intern_enum_const(it->second.unit->name, ed->name, m, value,
+                                             ed->ty ? ed->ty : et);
+                }
+            }
+        }
+        return nullptr;
+    }
+
     // ------------------------------------------------------------ 作用域
     void push() { scopes_.emplace_back(); }
-
     void pop() {
         if (!scopes_.empty()) scopes_.pop_back();
     }
@@ -680,11 +1113,15 @@ private:
         sc[lv->name] = lv;
     }
 
-    EnumConst* lookup_enum_const(const std::string& name) {
+    EnumConst* lookup_enum_const_in(const std::string& unit_name, const std::string& name,
+                                    bool require_pub) {
+        auto it = infos_.find(unit_name);
+        if (it == infos_.end()) return nullptr;
         // 按声明顺序遍历（Python 的 dict 保留插入顺序）
-        for (auto& d : cur_->decls) {
+        for (auto& d : it->second.unit->decls) {
             auto ed = dynamic_cast<EnumDecl*>(d.get());
             if (!ed) continue;
+            if (require_pub && !ed->is_public) continue;
             long long value = 0;
             bool has = false;
             for (auto& [m, v] : ed->members) {
@@ -697,10 +1134,14 @@ private:
                 } else {
                     value += 1;
                 }
-                if (m == name) return intern_enum_const(cur_->name, ed->name, m, value, ed->ty);
+                if (m == name) return intern_enum_const(unit_name, ed->name, m, value, ed->ty);
             }
         }
         return nullptr;
+    }
+
+    EnumConst* lookup_enum_const(const std::string& name) {
+        return lookup_enum_const_in(cur_->name, name, false);
     }
 
     // ------------------------------------------------------------ unit 检查
@@ -779,15 +1220,6 @@ private:
             g->zero = true;
             return;
         }
-        if (auto ie = dynamic_cast<InitExpr*>(g->init.get())) {
-            if (auto il = dynamic_cast<IntLit*>(ie->expr.get())) {
-                if (il->value == 0 && is_zeroable(g->rty)) {
-                    g->zero = true;
-                    il->ty = t_int();
-                    return;
-                }
-            }
-        }
         if (!is_const_expr(g->init.get())) {
             err("unit 级变量 `" + g->name + "` 的初始化器必须是编译期常量", g);
         }
@@ -812,7 +1244,9 @@ private:
         const std::string sym = f->name.substr(8);
         const size_t n = f->pty.size();
         const bool unary_or_binary = (sym == "-" || sym == "+");
-        if (sym == "[]") {
+        if (sym == "~") {
+            if (n != 1) err("`operator~` 需要 1 个参数", f);
+        } else if (sym == "[]") {
             if (n != 2) err("`operator[]` 需要 2 个参数（容器, 索引）", f);
         } else if (sym == "[]=") {
             if (n != 3) err("`operator[]=` 需要 3 个参数（容器, 索引, 值）", f);
@@ -1477,17 +1911,22 @@ private:
     void check_decl_init(bool& zero_flag, const TypePtr& ty, Init* init, const std::string& what,
                          const Node* node) {
         if (!init) err("缺少初始化器", node);
+        if (auto ia = dynamic_cast<InitAggregate*>(init)) {
+            if (ia->items.empty()) {
+                if (!is_zeroable(ty)) {
+                    err("类型 `" + ty->str() +
+                            "` 不能用 `{}` 初始化；只有聚合类型（struct/数组/切片/string）可用 `{}`，"
+                            "标量请用各自的常量值（0、0.0、false、null）",
+                        node);
+                }
+                zero_flag = true;
+                return;
+            }
+        }
         if (auto ie = dynamic_cast<InitExpr*>(init)) {
             if (auto il = dynamic_cast<IntLit*>(ie->expr.get())) {
                 if (il->value == 0 && is_zeroable(ty)) {
-                    if (ty->kind == TypeKind::Struct && !ty->ctors.empty()) {
-                        err("有构造器的 struct `" + ty->str() +
-                                "` 不能用 `= 0` 初始化（调用构造器）",
-                            node);
-                    }
-                    zero_flag = true;
-                    il->ty = t_int();
-                    return;
+                    err("聚合类型 `" + ty->str() + "` 的零初始化请用 `{}`，不再支持 `= 0`", node);
                 }
             }
         }
@@ -1498,18 +1937,23 @@ private:
     void check_init_into(const TypePtr& ty, Init* init, const std::string& what,
                          const Node* node) {
         if (!init) err("缺少初始化器", node);
+        if (auto ia0 = dynamic_cast<InitAggregate*>(init)) {
+            if (ia0->items.empty()) {
+                if (!is_zeroable(ty)) {
+                    err("类型 `" + ty->str() +
+                            "` 不能用 `{}` 初始化；只有聚合类型（struct/数组/切片/string）可用 `{}`，"
+                            "标量请用各自的常量值（0、0.0、false、null）",
+                        node);
+                }
+                return;
+            }
+        }
         if (auto ie = dynamic_cast<InitExpr*>(init)) {
             Expr* e = ie->expr.get();
             if (!e) err("缺少初始化表达式", node);
             if (auto il = dynamic_cast<IntLit*>(e)) {
                 if (il->value == 0 && is_zeroable(ty)) {
-                    if (ty->kind == TypeKind::Struct && !ty->ctors.empty()) {
-                        err("有构造器的 struct `" + ty->str() +
-                                "` 不能用 `= 0` 初始化（调用构造器）",
-                            node);
-                    }
-                    il->ty = t_int();
-                    return;
+                    err("聚合类型 `" + ty->str() + "` 的零初始化请用 `{}`，不再支持 `= 0`", node);
                 }
             }
             if (auto call = dynamic_cast<Call*>(e);
@@ -1549,6 +1993,16 @@ private:
 
         if (ty->kind == TypeKind::Struct) {
             const auto& fields = ty->fields;
+            // 跨 unit 的聚合初始化要求字段全部 public
+            if (cur_ && cur_->name != ty->unit) {
+                for (auto& f : fields) {
+                    if (!f.is_public) {
+                        err("struct `" + ty->str() + "` 的字段 `" + f.name +
+                                "` 未声明为 public，不能从其他 unit 聚合初始化",
+                            init);
+                    }
+                }
+            }
             bool any_positional = false;
             bool any_named = false;
             for (auto& item : items) {
@@ -1610,6 +2064,7 @@ private:
         }
 
         if (ty->kind == TypeKind::Slice) {
+            if (type_align(ty->elem) > 8) err_slice_elem_align(ty->elem, init);
             if (ty->rank != 1) {
                 err("动态矩形数组 `" + ty->str() + "` 请用 `new T[m,n]` 初始化", init);
             }
@@ -1655,18 +2110,18 @@ private:
         if (auto ix = dynamic_cast<Index*>(t)) {
             TypePtr bt = ix->base->ty;
             if (is_str(bt)) err("string 不可变，不能写元素（如需构造请用 byte[]/str_concat）", t);
-            if (bt && bt->kind == TypeKind::Slice && bt->readonly)
-                err("不能通过 readonly 切片写入", t);
-            if (bt && bt->kind == TypeKind::Ptr && bt->readonly)
-                err("不能通过 readonly 指针写入", t);
+            if (bt && bt->kind == TypeKind::Slice && bt->elem && bt->elem->is_const)
+                err("不能通过 const 切片写入", t);
+            if (bt && bt->kind == TypeKind::Ptr && bt->elem && bt->elem->is_const)
+                err("不能通过 const 指针写入", t);
             if (root_is_const(ix->base.get())) err("不能修改 const 绑定的元素", t);
             return;
         }
         if (auto u = dynamic_cast<Unary*>(t)) {
             if (u->op == "*") {
                 TypePtr ot = u->operand->ty;
-                if (ot && ot->kind == TypeKind::Ptr && ot->readonly)
-                    err("不能通过 readonly 指针写入", t);
+                if (ot && ot->kind == TypeKind::Ptr && ot->elem && ot->elem->is_const)
+                    err("不能通过 const 指针写入", t);
             }
         }
     }
@@ -1717,10 +2172,19 @@ private:
         }
 
         TypePtr tt = check_expr(s->target.get());
+        if (auto m = dynamic_cast<Member*>(s->target.get()); m && m->kind == "enum_const") {
+            err("枚举成员是常量，不能赋值", s);
+        }
         check_writable(s->target.get());
         if (s->op == "=") {
             check_assign(s->value.get(), tt, "赋值");
             return;
+        }
+        if (is_enum_t(tt)) {
+            err("枚举 `" + tt->str() + "` 不支持 `" + s->op +
+                    "`（请写 `x = (x as int " + s->op.substr(0, s->op.size() - 1) +
+                    " y) as " + tt->name + "`）",
+                s);
         }
         const std::string op = s->op.empty() ? std::string() : s->op.substr(0, s->op.size() - 1);
         TypePtr vt = check_expr(s->value.get(), tt);
@@ -1767,6 +2231,9 @@ private:
         if (auto r = dynamic_cast<RangeExpr*>(s->seq.get())) {
             TypePtr lt = check_expr(r->lo.get());
             TypePtr ht = check_expr(r->hi.get());
+            if (is_enum_t(lt) || is_enum_t(ht)) {
+                err("区间端点不能是枚举（请写 `x as int`）", r);
+            }
             if (!is_integer(lt) || !is_integer(ht)) err("区间两端必须是整数", r);
             TypePtr vt = usual_arith(lt, ht);
             if (!vt) vt = t_int();
@@ -1802,8 +2269,9 @@ private:
         if (s->by_ref && s->elem_ty && is_reference_type(s->elem_ty)) {
             err("暂不支持对 class/interface 元素使用 `for ref`（用值绑定句柄）", s);
         }
-        if (s->by_ref && s->seq_ty && s->seq_ty->kind == TypeKind::Slice && s->seq_ty->readonly) {
-            err("不能对 readonly 切片使用 `for ref`", s->seq.get());
+        if (s->by_ref && s->seq_ty && s->seq_ty->kind == TypeKind::Slice && s->seq_ty->elem &&
+            s->seq_ty->elem->is_const) {
+            err("不能对 const 切片使用 `for ref`", s->seq.get());
         }
         if (s->by_ref && root_is_const(s->seq.get())) {
             err("不能对 const 绑定使用 `for ref`", s->seq.get());
@@ -1882,12 +2350,23 @@ private:
         }
         TypePtr src = check_expr(e, dst);
         if (assignable(e, src, dst)) return src;
+        if (is_enum_t(src) || is_enum_t(dst)) {
+            err(what + "：不能把 " + (src ? src->str() : "void") + " 赋给 " +
+                    (dst ? dst->str() : "void") + "（枚举与整数之间没有隐式转换，请写 `as`）",
+                e);
+        }
         err(what + "：不能把 " + (src ? src->str() : "void") + " 赋给 " +
                 (dst ? dst->str() : "void"),
             e);
     }
 
     bool assignable(Expr* e, const TypePtr& src, const TypePtr& dst) {
+        // C 模型：const 只能放宽，不能收紧（same_type 忽略 const，必须先拦）
+        if (src && dst && src->kind == dst->kind &&
+            (src->kind == TypeKind::Ptr || src->kind == TypeKind::Slice) &&
+            src->elem && dst->elem && src->elem->is_const && !dst->elem->is_const) {
+            return false;
+        }
         if (same_type(src, dst)) return true;
         if (auto il = dynamic_cast<IntLit*>(e)) {
             if (promote_int_literal(il->value, dst)) {
@@ -1920,10 +2399,15 @@ private:
                 base = base->elem;
                 depth++;
             }
-            return static_cast<int>(depth) == dst->rank && same_type(base, dst->elem);
+            if (static_cast<int>(depth) == dst->rank && same_type(base, dst->elem)) {
+                if (type_align(base) > 8) err_slice_elem_align(base, e);
+                return true;
+            }
+            return false;
         }
-        if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->readonly &&
-            dst->elem && dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
+        if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->elem &&
+            dst->elem->is_const &&
+            dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
             return true;  // Str -> readonly char*/byte*（要求 NUL 结尾）
         }
         return implicit_ok(src, dst);
@@ -2016,6 +2500,9 @@ private:
             std::vector<TypePtr> its;
             for (auto& idxExpr : ix->indices) {
                 TypePtr it = check_expr(idxExpr.get());
+                if (is_enum_t(it)) {
+                    err("下标不能是枚举 `" + it->str() + "`（请写 `x as int`）", idxExpr.get());
+                }
                 if (!is_integer(it)) {
                     err("下标必须是整数，实际是 " + (it ? it->str() : "void"),
                         idxExpr.get());
@@ -2183,6 +2670,56 @@ private:
             e->sym = ec;
             return ec->ty;
         }
+
+        // 从直接 use 的 unit 导入（符号直接可见；多个来源同名时报歧义要求限定名）
+        GlobalVar* imp_g = nullptr;
+        std::string imp_g_unit;
+        EnumConst* imp_ec = nullptr;
+        std::string imp_ec_unit;
+        FuncDecl* imp_f = nullptr;
+        for (auto& use : cur_->uses) {
+            if (!unit_visible(use->unit_name)) continue;
+            auto it = infos_.find(use->unit_name);
+            if (it == infos_.end()) continue;
+            UnitInfo& o = it->second;
+            if (auto g = o.globals.find(e->ident); g != o.globals.end() && g->second->is_public) {
+                if (imp_g) {
+                    err("`" + e->ident + "` 有歧义：`" + imp_g_unit + "." + e->ident + "` 与 `" +
+                            use->unit_name + "." + e->ident + "`；请写限定名",
+                        e);
+                }
+                imp_g = g->second;
+                imp_g_unit = use->unit_name;
+            }
+            if (auto f = o.funcs.find(e->ident);
+                f != o.funcs.end() && !f->second.empty() && f->second.front()->is_public) {
+                if (!imp_f) imp_f = f->second.front();
+            }
+            if (EnumConst* ec = lookup_enum_const_in(use->unit_name, e->ident, true)) {
+                if (imp_ec) {
+                    err("`" + e->ident + "` 有歧义：`" + imp_ec_unit + "." + e->ident + "` 与 `" +
+                            use->unit_name + "." + e->ident + "`；请写限定名",
+                        e);
+                }
+                imp_ec = ec;
+                imp_ec_unit = use->unit_name;
+            }
+        }
+        if (imp_g) {
+            e->kind = "global";
+            e->sym = imp_g;
+            return imp_g->rty;
+        }
+        if (imp_f) {
+            e->kind = "func";
+            e->sym = imp_f;
+            err("函数 `" + e->ident + "` 不能作为值使用", e);
+        }
+        if (imp_ec) {
+            e->kind = "enum_const";
+            e->sym = imp_ec;
+            return imp_ec->ty;
+        }
         err("未定义的标识符 `" + e->ident + "`", e);
     }
 
@@ -2194,7 +2731,10 @@ private:
             const std::string uname = nm->ident;
             auto it = infos_.find(uname);
             if (it != infos_.end() && uname != cur_->name) {
-                if (!uses_unit(uname)) err("未通过 `use` 导入 unit `" + uname + "`", e);
+                if (!unit_imported(uname)) err("未通过 `use` 导入 unit `" + uname + "`", e);
+                if (!unit_visible(uname)) {
+                    err("unit `" + uname + "` 仅在库内可见，跨库使用需要 `public unit`", e);
+                }
                 UnitInfo& ui = it->second;
                 nm->kind = "unit";
                 nm->ty = Type::make_module(uname);
@@ -2204,11 +2744,63 @@ private:
                     err("函数 `" + uname + "." + e->name + "` 不能作为值使用", e);
                 }
                 if (auto g = ui.globals.find(e->name); g != ui.globals.end()) {
+                    if (!g->second->is_public) {
+                        err("`" + uname + "." + e->name + "` 未声明为 public", e);
+                    }
                     e->kind = "global";
                     e->sym = g->second;
                     return g->second->rty;
                 }
                 err("unit `" + uname + "` 中没有 `" + e->name + "`", e);
+            }
+        }
+
+        // 枚举限定引用：`Color.Red` / `unit.Color.Red`
+        {
+            Expr* base = e->obj.get();
+            TypePtr et;
+            if (auto nm = dynamic_cast<Name*>(base)) {
+                if (lookup_local(nm->ident) == nullptr &&
+                    info().globals.find(nm->ident) == info().globals.end()) {
+                    et = find_type_in_expr(nm->ident, e);
+                    if (et) nm->ty = et;
+                }
+            } else if (auto inner = dynamic_cast<Member*>(base)) {
+                auto un = dynamic_cast<Name*>(inner->obj.get());
+                if (un && lookup_local(un->ident) == nullptr) {
+                    auto it = infos_.find(un->ident);
+                    if (it != infos_.end() && un->ident != cur_->name) {
+                        if (!unit_imported(un->ident)) {
+                            err("未通过 `use` 导入 unit `" + un->ident + "`", e);
+                        }
+                        if (!unit_visible(un->ident)) {
+                            err("unit `" + un->ident +
+                                    "` 仅在库内可见，跨库使用需要 `public unit`",
+                                e);
+                        }
+                        TypePtr t = find_type_named(un->ident, inner->name, false);
+                        if (!t) {
+                            err("unit `" + un->ident + "` 中没有类型 `" + inner->name + "`", e);
+                        }
+                        if (!type_is_public(t)) {
+                            err("类型 `" + un->ident + "." + inner->name +
+                                    "` 未声明为 public",
+                                e);
+                        }
+                        et = t;
+                        inner->ty = et;
+                    }
+                }
+            }
+            if (et) {
+                if (et->kind != TypeKind::Enum) {
+                    err("`" + et->str() + "` 不是枚举，不能用 `类型.成员` 引用", e);
+                }
+                EnumConst* ec = find_enum_member(et, e->name);
+                if (!ec) err("枚举 `" + et->str() + "` 没有成员 `" + e->name + "`", e);
+                e->kind = "enum_const";
+                e->sym = ec;
+                return et;
             }
         }
 
@@ -2221,6 +2813,13 @@ private:
                 }
                 err("类型 `" + ot->str() + "` 没有字段 `" + e->name + "`", e);
             }
+            for (auto& f : ot->fields) {
+                if (f.name != e->name) continue;
+                if (!f.is_public && (!cur_ || cur_->name != ot->unit)) {
+                    err("字段 `" + e->name + "` 未声明为 public（类型 `" + ot->str() + "`）", e);
+                }
+                break;
+            }
             e->kind = "field";
             e->field_index = ot->field_index(e->name);
             return ft;
@@ -2232,23 +2831,42 @@ private:
         if (e->op == "&") {
             if (!is_lvalue(e->operand.get())) err("`&` 需要一个可寻址的对象", e);
             TypePtr t = check_expr(e->operand.get());
+            if (auto m = dynamic_cast<Member*>(e->operand.get()); m && m->kind == "enum_const") {
+                err("枚举成员不是可寻址的对象，不能取地址", e);
+            }
             return Type::make_ptr(t);
         }
 
         TypePtr t = check_expr(e->operand.get());
 
+        // 枚举不是算术类型：一元运算（`~`/`-`/`+`）需要显式 `as int`
+        if (is_enum_t(t) && (e->op == "~" || e->op == "-" || e->op == "+")) {
+            err("枚举 `" + t->str() + "` 不支持一元 `" + e->op + "`（请写 `x as int`）", e);
+        }
+
         if (e->op == "*") {
             if (t && t->kind == TypeKind::Ptr) return t->elem;
             err("`*` 需要指针，实际是 " + (t ? t->str() : "void"), e);
         }
-        if (e->op == "!") {
-            if (!is_integer(t)) {
-                const std::string hint = (is_prim(t) && t->name == "bool")
-                                             ? "（对 bool 取逻辑非请用 `not`）"
-                                             : "";
-                err("`!` 是按位取反，需要整数" + hint, e);
+        if (e->op == "~") {
+            if (is_integer(t)) return t;
+            if (is_user_type(t)) {
+                auto cands = collect_operators("~", {t});
+                std::vector<FuncDecl*> unary;
+                for (auto* f : cands) {
+                    if (f->pty.size() == 1) unary.push_back(f);
+                }
+                if (unary.empty()) {
+                    err("类型 `" + t->str() + "` 没有一元 `~` 运算符重载", e);
+                }
+                auto f = choose_overload(unary, {e->operand.get()}, "operator~", e);
+                e->op_func = f;
+                return f->rty;
             }
-            return t;
+            const std::string hint = (is_prim(t) && t->name == "bool")
+                                         ? "（对 bool 取逻辑非请用 `not`）"
+                                         : "";
+            err("`~` 是按位取反，需要整数" + hint, e);
         }
         if (e->op == "-" || e->op == "+") {
             if (is_numeric(t)) return t;
@@ -2300,6 +2918,21 @@ private:
                 e->op_func = f;
                 return f->rty;
             }
+        }
+
+        // 枚举是名义类型：只与同一枚举类型比较；与整数之间没有隐式转换（双向都要 `as`）
+        if (is_enum_t(lt) || is_enum_t(rt)) {
+            if (!(is_enum_t(lt) && is_enum_t(rt)) || !same_type(lt, rt)) {
+                const TypePtr& en = is_enum_t(lt) ? lt : rt;
+                err("枚举 `" + en->str() + "` 只能与同一枚举类型的值比较/运算；枚举与整数" +
+                        "之间没有隐式转换（请写 `as`）",
+                    e);
+            }
+            if (op != "==" && op != "!=" && op != "<" && op != "<=" && op != ">" &&
+                op != ">=") {
+                err("枚举 `" + lt->str() + "` 只支持 == != < <= > >=（算术/位运算请先 `as int`）", e);
+            }
+            return t_bool();
         }
 
         if (op == "+" || op == "-") {
@@ -2427,6 +3060,11 @@ private:
     bool can_cast(const TypePtr& src, const TypePtr& dst) {
         if (!src || !dst) return false;
         if (same_type(src, dst)) return true;
+        // 枚举是名义类型：只与整数（非枚举）显式互转，且不与浮点互换
+        if (src->kind == TypeKind::Enum || dst->kind == TypeKind::Enum) {
+            if (src->kind == TypeKind::Enum && dst->kind == TypeKind::Enum) return false;
+            return src->kind == TypeKind::Enum ? is_plain_int(dst) : is_plain_int(src);
+        }
         if (is_numeric(src) && is_numeric(dst)) return true;
         // 引用类型：向上/向下转换（向下在运行期检查，失败得 null）
         if (is_class_type(src) && is_class_type(dst)) {
@@ -2443,6 +3081,7 @@ private:
         if (src->kind == TypeKind::Ptr && is_integer(dst) && dst->bits() >= 64) return true;
         if (dst->kind == TypeKind::Ptr && is_integer(src) && src->bits() >= 64) return true;
         if (is_str(src) && dst->kind == TypeKind::Ptr && dst->elem &&
+            dst->elem->is_const &&
             dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
             return true;  // Str -> readonly char*/byte*（要求 NUL 结尾）
         }
@@ -2481,34 +3120,60 @@ private:
             if (lookup_local(nm->ident) != nullptr) {
                 err("`" + nm->ident + "` 是变量，不是函数", c);
             }
+            // 候选：当前 unit + 直接 use 的 unit（只收 public）+ std.string（隐式）
+            std::vector<FuncDecl*> cands;
+            auto add_funcs = [&](UnitInfo& o, bool require_pub) {
+                auto f = o.funcs.find(nm->ident);
+                if (f == o.funcs.end()) return;
+                for (auto* fd : f->second) {
+                    if (!require_pub || fd->is_public) cands.push_back(fd);
+                }
+            };
             UnitInfo& ui = info();
-            auto f = ui.funcs.find(nm->ident);
-            if (f != ui.funcs.end() && !f->second.empty()) {
-                FuncDecl* chosen = choose_overload(f->second, raw_args(c->args),
+            add_funcs(ui, false);
+            // 本地有同名函数时完全遮蔽导入（与本地类型/变量一致）
+            if (cands.empty()) {
+                for (auto& use : cur_->uses) {
+                    if (use->unit_name == "std.string") continue;  // 下面统一按隐式导入加入
+                    if (!unit_visible(use->unit_name)) continue;
+                    auto it = infos_.find(use->unit_name);
+                    if (it != infos_.end()) add_funcs(it->second, true);
+                }
+                if (UnitInfo* stdn = std_info(); stdn && cur_->name != "std.string") {
+                    add_funcs(*stdn, true);
+                }
+            }
+
+            if (!cands.empty()) {
+                FuncDecl* chosen = choose_overload(cands, raw_args(c->args),
                                                    "函数 `" + nm->ident + "`", c);
                 nm->kind = "func";
                 nm->sym = chosen;
                 target = chosen;
             } else {
-                bool handled = false;
-                if (UnitInfo* stdn = std_info()) {
-                    auto cf = stdn->funcs.find(nm->ident);
-                    if (cf != stdn->funcs.end() && !cf->second.empty()) {
-                        FuncDecl* chosen = choose_overload(
-                            cf->second, raw_args(c->args), "函数 `" + nm->ident + "`", c);
-                        nm->kind = "func";
-                        nm->sym = chosen;
-                        target = chosen;
-                        handled = true;
+                // struct 构造：当前 unit 优先，再找 use 的 unit 的 public 类型
+                TypePtr st = find_type_named(cur_->name, nm->ident, false);
+                if (!st) {
+                    std::string src;
+                    for (auto& use : cur_->uses) {
+                        if (!unit_visible(use->unit_name)) continue;
+                        TypePtr t = find_type_named(use->unit_name, nm->ident, true);
+                        if (!t) continue;
+                        if (st) {
+                            err("类型 `" + nm->ident + "` 有歧义：`" + src + "` 与 `" +
+                                    use->unit_name + "`；请写限定名",
+                                c);
+                        }
+                        st = t;
+                        src = use->unit_name;
                     }
                 }
-                if (handled) {
-                    // 已从 core 解析
-                } else if (auto s = ui.structs.find(nm->ident); s != ui.structs.end()) {
-                    struct_ty = s->second->ty;
-                } else if (UnitInfo* stdn = std_info();
-                           stdn && stdn->structs.count(nm->ident)) {
-                    struct_ty = stdn->structs.at(nm->ident)->ty;
+                if (!st && std_info()) st = find_type_named("std.string", nm->ident, true);
+                if (st) {
+                    if (st->kind != TypeKind::Struct) {
+                        err("`" + nm->ident + "` 不是 struct，不能按值构造", c);
+                    }
+                    struct_ty = st;
                 } else if (lookup_enum_const(nm->ident) != nullptr) {
                     err("`" + nm->ident + "` 是枚举成员，不能调用", c);
                 } else {
@@ -2527,6 +3192,9 @@ private:
                 auto sig = choose_method(ms, raw_args(c->args), "方法 `" + m->name + "`", c);
                 if (sig->is_abstract) {
                     err("不能通过 `super` 调用抽象方法 `" + m->name + "`", c);
+                }
+                if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
+                    err("方法 `" + m->name + "` 未声明为 public，不能从其他 unit 调用", c);
                 }
                 check_method_args(c, sig, "方法 `" + m->name + "`");
                 m->kind = "method";
@@ -2550,6 +3218,9 @@ private:
                         err("类型 `" + ot->str() + "` 没有方法 `" + m->name + "`", c);
                     }
                     auto sig = choose_method(ms, raw_args(c->args), "方法 `" + m->name + "`", c);
+                    if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
+                        err("方法 `" + m->name + "` 未声明为 public，不能从其他 unit 调用", c);
+                    }
                     check_method_args(c, sig, "方法 `" + m->name + "`");
                     m->kind = "method";
                     c->callee_kind = "method";
@@ -2563,6 +3234,9 @@ private:
                         err("struct `" + ot->str() + "` 没有方法 `" + m->name + "`", c);
                     }
                     auto sig = choose_method(ms, raw_args(c->args), "方法 `" + m->name + "`", c);
+                    if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
+                        err("方法 `" + m->name + "` 未声明为 public，不能从其他 unit 调用", c);
+                    }
                     check_method_args(c, sig, "方法 `" + m->name + "`");
                     m->kind = "method";
                     c->callee_kind = "struct_method";
@@ -2571,7 +3245,10 @@ private:
                 }
                 err("`" + m->name + "` 不是函数", c);
             }
-            if (!uses_unit(uname)) err("未通过 `use` 导入 unit `" + uname + "`", c);
+            if (!unit_imported(uname)) err("未通过 `use` 导入 unit `" + uname + "`", c);
+            if (!unit_visible(uname)) {
+                err("unit `" + uname + "` 仅在库内可见，跨库使用需要 `public unit`", c);
+            }
 
             UnitInfo& ui = infos_.at(uname);
             auto f = ui.funcs.find(m->name);
@@ -2580,6 +3257,9 @@ private:
             }
             FuncDecl* chosen = choose_overload(f->second, raw_args(c->args),
                                                "函数 `" + uname + "." + m->name + "`", c);
+            if (!chosen->is_public) {
+                err("函数 `" + uname + "." + m->name + "` 未声明为 public", c);
+            }
             auto nm = dynamic_cast<Name*>(obj);
             nm->kind = "unit";
             nm->ty = Type::make_module(uname);
@@ -2598,6 +3278,11 @@ private:
                 }
                 const auto* chosen = choose_ctor(struct_ty->ctors, raw_args(c->args),
                                                  "struct `" + struct_ty->str() + "`", c);
+                const size_t ci = static_cast<size_t>(chosen - struct_ty->ctors.data());
+                if (ci < struct_ty->ctor_is_public.size() && !struct_ty->ctor_is_public[ci] &&
+                    (!cur_ || cur_->name != struct_ty->unit)) {
+                    err("构造器未声明为 public，不能从其他 unit 调用", c);
+                }
                 for (size_t i = 0; i < c->args.size(); ++i) {
                     check_assign(c->args[i].get(), (*chosen)[i], "构造参数");
                 }
@@ -2900,6 +3585,13 @@ private:
         return t_void();
     }
 
+    [[noreturn]] void err_slice_elem_align(const TypePtr& elem, const Node* node) const {
+        err("类型 `" + elem->str() + "` 的 align(" + std::to_string(type_align(elem)) +
+                ") 超过 8：动态数组数据区在 24 字节头部之后，元素最多 8 字节对齐；"
+                "请改用定长数组/指针，或降低 align(N)",
+            node);
+    }
+
     TypePtr check_new(NewExpr* ne) {
         TypePtr t = resolve_type(ne->type.get(), cur_);
         if (ne->is_array) {
@@ -2931,6 +3623,7 @@ private:
                 ne->elem_ty = row;  // 外层数组的元素：T[]/T[][]/...
                 return Type::make_slice(row);
             }
+            if (type_align(t) > 8) err_slice_elem_align(t, ne);
             ne->elem_ty = t;
             return Type::make_slice(t, false, static_cast<int>(ne->dims.size()));
         }
@@ -2944,6 +3637,11 @@ private:
             if (!ne->args.empty()) err("class `" + t->str() + "` 没有匹配的构造器", ne);
         } else {
             const auto* chosen = choose_ctor(ctors, raw_args(ne->args), "class `" + t->str() + "`", ne);
+            const size_t idx = static_cast<size_t>(chosen - ctors.data());
+            if (idx < t->ctor_is_public.size() && !t->ctor_is_public[idx] &&
+                (!cur_ || cur_->name != t->unit)) {
+                err("构造器未声明为 public，不能从其他 unit `new`", ne);
+            }
             for (size_t i = 0; i < ne->args.size(); ++i) {
                 check_assign(ne->args[i].get(), (*chosen)[i], "构造参数");
             }
@@ -2955,6 +3653,17 @@ private:
 
     void check_ctor_args(Call* c, const TypePtr& ty) {
         const auto& fields = ty->fields;
+
+        // 跨 unit 的 `S(...)` 构造要求字段全部 public
+        if (cur_ && cur_->name != ty->unit) {
+            for (auto& f : fields) {
+                if (!f.is_public) {
+                    err("struct `" + ty->str() + "` 的字段 `" + f.name +
+                            "` 未声明为 public，不能从其他 unit 构造",
+                        c);
+                }
+            }
+        }
 
         if (c->args.empty() && c->named.empty()) {
             c->field_order.clear();

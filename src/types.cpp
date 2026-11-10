@@ -4,6 +4,7 @@
 // （对应 Python 版 StructType 的两阶段构造），因此这里不用 const。
 #include "types.hpp"
 
+#include <algorithm>
 #include <array>
 #include <string>
 #include <unordered_map>
@@ -73,11 +74,11 @@ TypePtr Type::make_string() {
     return t;
 }
 
-TypePtr Type::make_ptr(const TypePtr& elem, bool readonly) {
+TypePtr Type::make_ptr(const TypePtr& elem, bool is_const) {
     auto t = std::make_shared<Type>();
     t->kind = TypeKind::Ptr;
     t->elem = elem;
-    t->readonly = readonly;
+    t->is_const = is_const;
     return t;
 }
 
@@ -89,11 +90,11 @@ TypePtr Type::make_array(const TypePtr& elem, size_t size) {
     return t;
 }
 
-TypePtr Type::make_slice(const TypePtr& elem, bool readonly, int rank) {
+TypePtr Type::make_slice(const TypePtr& elem, bool is_const, int rank) {
     auto t = std::make_shared<Type>();
     t->kind = TypeKind::Slice;
     t->elem = elem;
-    t->readonly = readonly;
+    t->is_const = is_const;
     t->rank = rank < 1 ? 1 : rank;
     return t;
 }
@@ -156,12 +157,12 @@ std::string Type::str() const {
         case TypeKind::Void:
             return "void";
         case TypeKind::Prim:
-            return name;
+            return is_const ? "const " + name : name;
         case TypeKind::String:
             return "string";
         case TypeKind::Ptr: {
             std::string base = elem_str(elem) + "*";
-            return readonly ? "readonly " + base : base;
+            return is_const ? "const " + base : base;
         }
         case TypeKind::Array: {
             // 嵌套静态数组显示为 T[m,n,...]
@@ -181,7 +182,7 @@ std::string Type::str() const {
         }
         case TypeKind::Slice: {
             std::string base = elem_str(elem) + "[" + std::string(rank - 1, ',') + "]";
-            return readonly ? "readonly " + base : base;
+            return is_const ? "const " + base : base;
         }
         case TypeKind::Struct:
         case TypeKind::Enum:
@@ -259,6 +260,85 @@ int Type::field_index(const std::string& fname) const {
     return -1;
 }
 
+// ---------------------------------------------------------------- 布局
+//
+// packed / align(N) 的唯一实现（codegen 的 alignOf / sizeOf 委托到这里）。
+// 递归带深度上限，避免畸形类型（不存在的按值环）把编译器递归爆栈。
+
+namespace {
+
+size_t align_up(size_t v, size_t a) { return a ? (v + a - 1) / a * a : v; }
+
+size_t align_impl(const TypePtr& t, int depth) {
+    if (!t || depth > 64) return 1;
+    switch (t->kind) {
+        case TypeKind::Void: return 1;
+        case TypeKind::Prim: {
+            const std::string& n = t->name;
+            if (n == "bool" || n == "byte" || n == "char") return 1;
+            if (n == "short" || n == "ushort") return 2;
+            if (n == "int" || n == "uint" || n == "float") return 4;
+            return 8;
+        }
+        case TypeKind::Ptr:
+        case TypeKind::Slice: return 8;
+        case TypeKind::Enum: return 4;
+        case TypeKind::Array: return align_impl(t->elem, depth + 1);
+        case TypeKind::Struct: {
+            if (t->is_packed) return t->align_req > 0 ? static_cast<size_t>(t->align_req) : 1;
+            size_t natural = 1;
+            for (const auto& f : t->fields) natural = std::max(natural, align_impl(f.type, depth + 1));
+            // align(N) 要求 N >= 自然对齐（sema 已校验）；这里取 max 保证不塌陷
+            if (t->align_req > 0) return std::max(natural, static_cast<size_t>(t->align_req));
+            return natural;
+        }
+        default: return 8;
+    }
+}
+
+size_t size_impl(const TypePtr& t, int depth) {
+    if (!t || depth > 64) return 0;
+    switch (t->kind) {
+        case TypeKind::Void: return 0;
+        case TypeKind::Prim: {
+            const std::string& n = t->name;
+            if (n == "bool" || n == "byte" || n == "char") return 1;
+            if (n == "short" || n == "ushort") return 2;
+            if (n == "int" || n == "uint" || n == "float") return 4;
+            return 8;
+        }
+        case TypeKind::Ptr:
+        case TypeKind::Slice: return 8;
+        case TypeKind::Interface: return 16;
+        case TypeKind::Enum: return 4;
+        case TypeKind::Array: return size_impl(t->elem, depth + 1) * t->array_size;
+        case TypeKind::Struct: {
+            size_t off = 0, natural = 1;
+            for (const auto& f : t->fields) {
+                size_t fa = align_impl(f.type, depth + 1);
+                natural = std::max(natural, fa);
+                // packed：字段连续累加，无内部填充
+                if (!t->is_packed) off = align_up(off, fa);
+                off += size_impl(f.type, depth + 1);
+            }
+            if (t->is_packed) {
+                // 无尾部填充；只有 align(N) 才补齐到 N 的倍数
+                if (t->align_req > 0) off = align_up(off, static_cast<size_t>(t->align_req));
+                return off;
+            }
+            size_t a = natural;
+            if (t->align_req > 0) a = std::max(a, static_cast<size_t>(t->align_req));
+            return align_up(off, a);
+        }
+        default: return 8;
+    }
+}
+
+}  // namespace
+
+size_t type_align(const TypePtr& t) { return align_impl(t, 0); }
+size_t type_size(const TypePtr& t) { return size_impl(t, 0); }
+
 // ---------------------------------------------------------------- 单例
 
 TypePtr t_void() {
@@ -329,8 +409,8 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
             return a->name == b->name;
         case TypeKind::Ptr:
         case TypeKind::Slice:
-            return a->readonly == b->readonly && a->rank == b->rank &&
-                   same_type(a->elem, b->elem);
+            // C 模型：const 只是视图限定，不改变类型的相等性
+            return a->rank == b->rank && same_type(a->elem, b->elem);
         case TypeKind::Array:
             return a->array_size == b->array_size && same_type(a->elem, b->elem);
         case TypeKind::Struct:
@@ -405,6 +485,14 @@ bool widens_int(const TypePtr& src, const TypePtr& dst) {
 }
 
 bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
+    // C 模型：const 只能放宽，不能收紧（same_type 忽略 const，必须先拦）
+    if (src && dst && src->kind == dst->kind) {
+        if (src->kind == TypeKind::Ptr || src->kind == TypeKind::Slice) {
+            if (src->elem && dst->elem && src->elem->is_const && !dst->elem->is_const) {
+                return false;
+            }
+        }
+    }
     if (same_type(src, dst)) return true;
     if (!src || !dst) return false;
 
@@ -419,9 +507,11 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
     if (is_subclass_of(src, dst)) return true;
     if (implements_interface(src, dst)) return true;
 
-    // 指针：T* -> void*；T* -> readonly T*；去掉 readonly 必须显式 as
+    // 指针：T* -> const T*；去掉 const 必须显式 as
     if (src->kind == TypeKind::Ptr && dst->kind == TypeKind::Ptr) {
-        if (!(dst->readonly || !src->readonly)) return false;
+        if (src->elem && src->elem->is_const && !(dst->elem && dst->elem->is_const)) {
+            return false;
+        }
         if (dst->elem && dst->elem->kind == TypeKind::Void) return true;
         return same_type(src->elem, dst->elem);
     }
@@ -431,21 +521,23 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         return same_type(src->elem, dst->elem);
     }
 
-    // 切片：T[] -> readonly T[]；反过来必须显式 as
+    // 切片：T[] -> const T[]；反过来必须显式 as
     if (src->kind == TypeKind::Slice && dst->kind == TypeKind::Slice) {
         if (!same_type(src->elem, dst->elem)) return false;
-        return dst->readonly || !src->readonly;
+        if (src->elem && src->elem->is_const && !(dst->elem && dst->elem->is_const)) {
+            return false;
+        }
+        return true;
     }
 
-    // string -> readonly char* / readonly char[] | byte[]
+    // string -> const char* / const char[] | const byte[]
     if (src->kind == TypeKind::String) {
-        if (dst->kind == TypeKind::Ptr && dst->readonly) {
-            if (!dst->elem) return false;
+        if (dst->kind == TypeKind::Ptr && dst->elem && dst->elem->is_const) {
             if (dst->elem->kind == TypeKind::Void) return true;
             return dst->elem->kind == TypeKind::Prim && dst->elem->name == "char";
         }
-        if (dst->kind == TypeKind::Slice && dst->readonly) {
-            if (!dst->elem || dst->elem->kind != TypeKind::Prim) return false;
+        if (dst->kind == TypeKind::Slice && dst->elem && dst->elem->is_const) {
+            if (dst->elem->kind != TypeKind::Prim) return false;
             return dst->elem->name == "char" || dst->elem->name == "byte";
         }
         return false;
@@ -460,8 +552,8 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         return false;
     }
 
-    // 枚举 -> int
-    if (src->kind == TypeKind::Enum && dst->kind == TypeKind::Prim) return dst->name == "int";
+    // 枚举是名义类型：与整数之间没有隐式转换，双向都必须显式 `as`。
+    // （见 SPEC §3.5；判定放在这里意味着参数/返回值/赋值/字面量适配都不接受枚举）
 
     return false;
 }
@@ -489,10 +581,10 @@ bool promote_int_literal(long long v, const TypePtr& dst) {
 
 TypePtr usual_arith(const TypePtr& a_in, const TypePtr& b_in) {
     if (!a_in || !b_in) return nullptr;
+    // 枚举不参与算术/位运算（同类型比较除外，见 sema 的 check_binary）。
+    if (a_in->kind == TypeKind::Enum || b_in->kind == TypeKind::Enum) return nullptr;
     TypePtr a = a_in;
     TypePtr b = b_in;
-    if (a->kind == TypeKind::Enum) a = t_int();
-    if (b->kind == TypeKind::Enum) b = t_int();
     if (!a->is_numeric() || !b->is_numeric()) return nullptr;
     if (a->kind != TypeKind::Prim || b->kind != TypeKind::Prim) return nullptr;
 

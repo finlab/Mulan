@@ -1,5 +1,5 @@
 unit class_stress3;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 class A {
     int base_val;
     A(int v) { base_val = v; }

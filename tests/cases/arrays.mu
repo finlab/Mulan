@@ -1,7 +1,7 @@
 // arrays.mu — int[N] 聚合初始化与补零、len、for-in 值绑定与 ref 绑定
 unit arrays;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 extern int putchar(int c);
 
 void print_int(int v) {

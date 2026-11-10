@@ -1,8 +1,8 @@
 unit class_basic;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
-static int live = 0;
+int live = 0;
 
 class Counter {
     int v;

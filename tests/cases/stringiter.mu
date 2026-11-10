@@ -1,6 +1,6 @@
 unit adv2;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 extern int putchar(int c);
 
 struct P { int x, y; }
@@ -21,7 +21,7 @@ int main() {
     show("hi");
 
     // 空切片
-    int[] e = 0;
+    int[] e = {};
     int n = 0;
     for v in e { n += 1; }
     if len(e) == 0 and n == 0 { puts("empty slice ok"); }

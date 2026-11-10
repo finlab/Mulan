@@ -1,5 +1,5 @@
 unit adv3;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 int main() {
     if len("abc") == 3 { puts("len literal ok"); }
     int n = 0;

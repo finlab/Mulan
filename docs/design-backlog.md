@@ -47,8 +47,8 @@
 - 标准库 `StringBuilder`（内部 `byte[]`，`append(string/char/int)`、`build() -> string`）。
 - 从 `byte[]` 构造 `string` 的入口：校验 UTF-8 还是允许 `unsafe` 显式构造。
 
-### U7. readonly class 视图 / readonly 方法
-- SPEC 表 98 已标"第一阶段不支持"；是否重新启用、语法如何写（`readonly Cat`、`readonly int f()` 与方法调用的交互）。
+### U7. const class 视图 / const 方法
+- SPEC 表 98 已标"第一阶段不支持"；是否重新启用、语法如何写（`const Cat`、`const int f()` 与方法调用的交互）。
 
 ### U8. `ref` 参数
 - SPEC 表 99 已标"第一阶段不支持"；语法 `void f(ref Point p)`，只借 struct、不可存储/返回。
@@ -100,10 +100,40 @@
   - 读写非最后写入的成员 = 未定义行为（C 语义），文档注明；可考虑 `unsafe` 标记，但先不加。
 - 未定：是否支持匿名 union（C11，`u.i` 直接访问）；是否允许 union 嵌套在 class 字段中（布局上可以）。
 
-### U15. C 互操作：packed / align
-- 网络协议、部分 C API 需要 `#pragma pack(1)`。建议后续加 **`packed struct`**（或 `align(N)` 属性）：
-  布局规则明确（无填充、align 1），比位域安全得多。
-- 与 C 侧 `__attribute__((packed))` 的 ABI 需交叉测试。
+### U15. C 互操作：packed / align（**已实现，0.0.42**）
+- 需求：网络协议、部分 C API 需要 `#pragma pack(1)`；SIMD / 缓存行 / 原子类型需要过对齐。
+- **结论：用语言关键字修饰符 `packed` / `align(N)`**，完整语义见 `SPEC.md` 3.4：
+  - `packed` **不带参数**：无内部填充、无尾部填充，`alignof` 默认 1
+    （= `#pragma pack(1)` / `__attribute__((packed))`）；
+  - `align(N)`：2 的幂的编译期常量，覆盖整体对齐，`sizeof` 补齐到 N 的倍数
+    （恒有 `sizeof % alignof == 0`），不改变字段偏移；
+  - 两者**正交**、顺序无关、可组合（`packed align(8)`）；
+  - `N` 只与**自然对齐**比较：`N ≥ 自然对齐` 合法（含 `N > sizeof`，只补尾部），
+    `N < 自然对齐` 编译报错——降对齐只有 `packed` 一条路。
+- 否掉的备选：
+
+  | 备选 | 否掉的理由 |
+  |---|---|
+  | `#layout(packed, align=8)` 指令 | SPEC 9 明确「无预处理器」；行首指令语法无法与声明同行组合、延伸不到字段级；为单个特性造第二套语法类别 |
+  | `@packed` / `[packed]` 属性 | 为一个特性付整套属性语法成本（参数、多属性、与 `public`/`private` 的先后与优先级）；`[]` 已承载 `T[N]`/`T[]`/`a[i,j]`，冲突严重 |
+  | `packed(N)`（=`#pragma pack(N)`） | 与 `align(N)` 变成两个都能改对齐的参数，交互矩阵爆炸；`pack(2)`/`pack(4)` 用 `packed` + 显式填充字段即可表达且更可预测（与 U16 否掉位域同理）。将来若确需，另加独立 `pack(N)`，不重载 `packed` |
+  | `pack(1, 8)` 合并为位置参数 | `pack(8, 1)` 同样能编译，却静默产生不同 ABI（只在和 C 对 `offsetof` 时暴露）；`pack(8)` 有「级别 8／对齐 8」两解；`align(N)` 在非 packed 的过对齐场景（SIMD、cache line）必须独立存在，合并会造成同一概念两种拼写，并把 `pack(N)` 从后门放回 |
+
+- 实现要点（0.0.42）：
+  - 布局**单一真源**：`src/types.cpp` 的 `type_align` / `type_size`，sema 校验与 codegen（`alignOf`/`sizeOf`）
+    都委托它，避免两份实现漂移；
+  - `packed` → LLVM packed struct 类型 `<{ ... }>`（普通 struct 不变，保持既有按值调用约定与 C ABI）；
+  - `align(N)` → 在字段之间/尾部插入显式 `[k x i8]` 填充，使 LLVM 偏移与模型一致（嵌套/数组跨度都对），
+    并在 `alloca`、全局变量、class 对象上显式设置对齐；
+  - 对齐访问：packed 链上的 load/store/memcpy 一律 `align 1`（`unalignedExpr` 判定），其余按模型对齐；
+  - `class` 对象布局改为同源「模型布局 + 填充」，对象对齐 = `max(16, 字段最大对齐)`，
+    `> 16` 用 `_aligned_malloc`/`_aligned_free`；
+  - 动态数组数据区在 24 字节头之后，只保证 8 字节：元素 `align(N) > 8` 在所有切片分配点编译报错。
+- 遗留：
+  - **C 侧 ABI 交叉测试未做**：尚未用真实 C 头（`__attribute__((packed))` / `#pragma pack(1)` / `_Alignas`）
+    比对 `sizeof`/`offsetof`。语言内的断言（`sizeof`/`alignof`/字节偏移）已覆盖，但跨语言验证待补。
+  - `align(N)` 只接受可常量折叠的字面量/常量表达式，符号常量（`const` 变量、枚举成员）暂不支持。
+  - `packed` + 位宽字段（U16 的显式位宽语法）未涉及，`packed` 目前只是字节级。
 
 ### U16. C 互操作：位域（bit-fields）
 - **建议第一阶段不支持**。原因：C 位域的分配顺序/跨单元边界是**实现定义**的（MSVC 与 GCC 不同），
@@ -464,8 +494,36 @@
 - 建议：先用 **C（class String）** 把"完整功能"跑通（改动最小），再按 A 做不可变值版本（U24），
   B（可变值）留到引用/拷贝控制就绪；不要一开始同时上 struct 方法 + 拷贝控制 + COW。
 
+### U27. 过对齐类型与堆分配（`alloc_aligned`）
+- 背景：`align(N)` 让类型可能要求 > 16 字节对齐，而 `alloc` 只保证 16 字节（SPEC 8.1）。
+- **已落地（0.0.42）**：
+  - `class` 对象由编译器分配，对象对齐 = `max(16, 字段最大对齐)`；`> 16` 时 `new` 走 `_aligned_malloc`、
+    销毁走 `_aligned_free`（Windows CRT；跨平台移植时需换 `posix_memalign`/`aligned_alloc`）。
+  - 动态数组（`T[]` 及所有切片分配点）元素 `align > 8` 直接编译报错（数据区在 24 字节头之后），
+    不做运行时对齐。
+- 仍待定：
+  1. `alloc_aligned(size, align)` 新内建（或给 `alloc` 加第二参数），让用户能显式要过对齐内存。
+     Windows 用 `_aligned_malloc` + `_aligned_free`（与 `free` 不可混用，必须在 SPEC 写清所有权）；
+     POSIX 用 `posix_memalign`/`aligned_alloc`；跨平台统一实现可「多分配 `align + sizeof(void*)`，
+     返回前存原始指针」。
+  2. `realloc` 在过对齐下的语义（退化为新分配 + 拷贝 + 释放，或直接禁用）。
+  3. 是否把 `alloc` 统一改成「按请求对齐、未指定时 16」的单一实现（实现简单，极小分配略多花字节）。
+  4. 若将来想让 > 8 对齐的元素进动态数组：需要把数据区偏移存进头部（或按元素对齐整体分配），
+     属于运行时头布局变更，暂不做。
+- 与之无关但易混：`alloc` 返回「至少 16 字节对齐」是**下界保证**，不是上限；栈/全局/字段对齐由后端负责。
+
 ## 已完成（留档）
 
+- 2026-11-10（0.0.42）：**布局修饰符 `packed` / `align(N)` 已实现并全量回归**
+  （`packed` 无参数 = `pack(1)`；`align(N)` 覆盖整体对齐、与自然对齐比较；二者正交可组合；
+  拒绝 `packed(N)`、`pack(1, 8)`、`#layout`、`@`/`[]` 属性）。规则见 `SPEC.md` 3.4，决策与备选理由见 U15。
+  实现中发现并修掉两个对齐缺口：class 字段/对象基址未按模型对齐（改用同源「模型布局 + 填充」，
+  >16 用 `_aligned_malloc`）、动态数组元素只到 8 字节对齐（切片分配点拒绝 `align > 8`）。
+  遗留：C 侧 ABI 交叉测试、`alloc_aligned`（U27）。
+
+- 2026-11-10：**可见性方案已定并已实现（0.0.30）**（默认 unit 内可见 + `public` 放宽；`private`/`public`
+  两个修饰符 + `public:`/`private:` 分段标签；不做 `protected`/`friend`）；
+  完整规则、连锁检查、后端 linkage 见 [`visibility-design.md`](./visibility-design.md)。
 - 0.0.20：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（删除 `ubyte`/`uchar` 别名）；
   `s[i]`/字符串 for-in 返回 `byte`；字符字面量默认 `byte` 且按上下文适配 `char`/`byte`。
 - 0.0.19：`char` 改为有符号 8 位（C 风格）；`byte` 改为无符号 8 位；`'\xNN'` 按位模式解释。

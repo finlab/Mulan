@@ -1,6 +1,6 @@
 unit class_big_stress;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 interface IShape { int area(); int id(); }
 class Shape : IShape {
     int sid;

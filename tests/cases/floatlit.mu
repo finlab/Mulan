@@ -1,5 +1,5 @@
 unit floatlit;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 int main() {
     float f = 1.5;        // 字面量按上下文适配为 float
     double d = 2.5;

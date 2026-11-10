@@ -1,5 +1,5 @@
 unit class_ctor_dispatch;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 class A {
     int seen;
     A() { seen = probe(); }

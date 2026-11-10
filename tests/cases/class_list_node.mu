@@ -1,6 +1,6 @@
 unit class_list_node;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 class Node {
     int v;
     Node next;

@@ -1,11 +1,11 @@
 unit class_iface_array;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 interface I { int f(); }
 class C : I { int v; C(int x){v=x;live+=1;} ~C(){live-=1;} override int f(){return v;} }
 class Holder { I[2] items; Holder(){ items[0]=null; items[1]=null; } ~Holder(){} }
 I[2] make2() {
-    I[2] t = 0;
+    I[2] t = {};
     t[0] = new C(1);
     t[1] = new C(2);
     return t;

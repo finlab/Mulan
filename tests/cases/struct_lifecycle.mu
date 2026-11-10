@@ -1,6 +1,6 @@
 unit struct_lifecycle;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 struct S {
     int v;
     S() { init(); live += 1; }

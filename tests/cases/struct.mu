@@ -2,7 +2,7 @@
 // 注意：`struct` 是关键字，所以 unit 名用 struct_case（文件名保持 struct.mu）。
 unit struct_case;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 extern int putchar(int c);
 
 struct Point {
@@ -57,8 +57,8 @@ int main() {
     print_int(r.y); putchar(' ');
     print_int(s.x); putchar('\n');   // 2 8
 
-    // ---------- 零值初始化 {T z = 0} ----------
-    Point z = 0;
+    // ---------- 零值初始化 {T z = {}} ----------
+    Point z = {};
     print_int(z.x); putchar(' ');
     print_int(z.y); putchar('\n');   // 0 0
 

@@ -1,9 +1,9 @@
 unit class_array_copy;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 class C { int v; C(int x){v=x;live+=1;} ~C(){live-=1;} int get(){return v;} }
 int main() {
-    C[2] a = 0;
+    C[2] a = {};
     a[0] = new C(1);
     a[1] = new C(2);
     C[2] b = a;              // 逐元素 retain

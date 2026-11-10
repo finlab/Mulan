@@ -1,1 +1,1 @@
-不能把 readonly int* 赋给 int*
+不能把 const int* 赋给 int*

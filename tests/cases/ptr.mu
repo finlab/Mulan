@@ -1,7 +1,7 @@
-// ptr.mu — &x / *p、指针参数、p[i]、alloc/free、null 判断、readonly int*
+// ptr.mu — &x / *p、指针参数、p[i]、alloc/free、null 判断、const int*
 unit ptr;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 extern int putchar(int c);
 
 struct Point {
@@ -42,7 +42,7 @@ void swap(int* a, int* b) {
 }
 
 // 只读指针参数：接口契约
-int sum_readonly(readonly int* p, int n) {
+int sum_readonly(const int* p, int n) {
     int s = 0;
     for i in 0..n {
         s += p[i];
@@ -75,7 +75,7 @@ int main() {
     p[0] += 1;                           // 指向数组本体，写穿透
     print_int(arr[0]); putchar('\n');    // 6
 
-    // ---------- readonly int* ----------
+    // ---------- const int* ----------
     print_int(sum_readonly(&arr[0], 4)); putchar('\n');   // 6+6+7+8 = 27
 
     // ---------- alloc / free + null 检查 ----------

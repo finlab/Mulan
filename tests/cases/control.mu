@@ -1,7 +1,7 @@
 // control.mu — if/elif/else、while + break/continue、for i in 0..n
 unit control;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 extern int putchar(int c);
 
 void print_int(int v) {

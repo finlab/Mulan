@@ -1,5 +1,5 @@
 unit struct_methods;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 struct Counter {
     int v;
     void inc() { v += 1; }
@@ -19,10 +19,10 @@ int main() {
     if c.pick(1) != 5 { puts("overload int failed"); return 1; }
     long big = 1;
     if c.pick(big) != 6 { puts("overload long failed"); return 1; }
-    Counter[2] arr = 0;
+    Counter[2] arr = {};
     arr[1].add(7);
     if arr[1].get() != 7 { puts("array receiver failed"); return 1; }
-    Box b = 0;
+    Box b = {};
     b.c.add(9);
     if b.c.get() != 9 { puts("field receiver failed"); return 1; }
     puts("struct methods ok");

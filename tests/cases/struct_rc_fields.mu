@@ -1,7 +1,7 @@
 unit struct_rc_fields;
-extern int puts(readonly char* s);
-static int live = 0;
-static int dtor_runs = 0;
+extern int puts(const char* s);
+int live = 0;
+int dtor_runs = 0;
 
 interface I { int get(); }
 
@@ -86,7 +86,7 @@ int main() {
         if p.n != 3 { puts("bad return field"); return 12; }
         P q = p;
         if q.n != 3 { puts("bad copy of return"); return 13; }
-        Wrap w = 0;
+        Wrap w = {};
         w.p = P(c, 6);
         w.tag = 9;
         Wrap w2 = w;
@@ -118,7 +118,7 @@ int main() {
     if live != 1 { puts("bad class field cleanup"); return 26; }
 
     {
-        S s = 0;
+        S s = {};
         fill_s(&s, c);
         if s.i.get() != 5 { puts("bad interface field"); return 27; }
         if s.c.get() != 5 { puts("bad class field in dtor struct"); return 28; }

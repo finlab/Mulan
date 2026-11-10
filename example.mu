@@ -7,8 +7,8 @@ unit example;
 use math;
 
 // ---------- C ABI 互操作 ----------
-// extern 声明的函数由 C 运行时提供；readonly 只影响语言层的写检查，不影响 ABI。
-extern int puts(readonly char* s);
+// extern 声明的函数由 C 运行时提供；const 只影响语言层的写检查，不影响 ABI。
+extern int puts(const char* s);
 extern int putchar(int c);
 
 // ---------- 值类型结构体 ----------
@@ -17,8 +17,8 @@ struct Point {
     int x, y;
 }
 
-// unit 级变量必须带 static；未初始化时零初始化。
-static int calls;
+// unit 级变量默认 private；未初始化时零初始化。
+int calls;
 
 // ---------- 函数 ----------
 // 返回类型必须写；无返回值必须显式写 void；空参数列表写 ()。
@@ -49,8 +49,8 @@ int count_down(int n) {
     return count;
 }
 
-// readonly int*：通过 p 不能写入；仅作接口契约，不承诺优化。
-int sum_ptr(readonly int* p, usize n) {
+// const int*：通过 p 不能写入；仅作接口契约，不承诺优化。
+int sum_ptr(const int* p, usize n) {
     int s = 0;
     for i in 0..n {
         s += p[i];
@@ -98,7 +98,7 @@ int main() {
     const string greeting = "hello, mu-lan";
     puts(greeting);
 
-    calls += 1;                // unit 级 static 变量，零初始化后从 0 开始
+    calls += 1;                // unit 级变量，零初始化后从 0 开始
     print_int(calls); putchar('\n');
 
     // const：不可变绑定；一整条声明中的变量都可以带初始化器。
@@ -124,11 +124,11 @@ int main() {
         puts("struct init ok");
     }
 
-    // 零值初始化：声明中 T x = 0 表示全零/空值。
-    Point z = 0;
+    // 零值初始化：聚合类型（数组/结构体/切片/string）用 {}，标量用各自常量（0 / null 等）。
+    Point z = {};
     int zeroed = 0;
-    int[3] zeroarr = 0;
-    string empty_text = 0;
+    int[3] zeroarr = {};
+    string empty_text = {};
     if z.x == 0 and z.y == 0 and zeroed == 0 and zeroarr[2] == 0 and len(empty_text) == 0 {
         puts("zero-init ok");
     }
@@ -176,7 +176,7 @@ int main() {
         puts("auto inference ok");
     }
 
-    // readonly 视图：arr 以只读指针传入。
+    // const 视图：arr 以只读指针传入。
     print_int(sum_ptr(&arr[0], len(arr)));
     putchar('\n');
 

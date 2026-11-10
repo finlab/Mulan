@@ -1,7 +1,7 @@
 // arith.mu — 四则、取模、移位、优先级（含位运算 vs 比较）、while 累加
 unit arith;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 extern int putchar(int c);
 
 void print_int(int v) {

@@ -1,5 +1,5 @@
 unit structs3;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 struct Pt { int x, y; }
 struct Box { int[3] v; }

@@ -6,6 +6,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -26,7 +28,7 @@ struct TypeSpec {
     std::unique_ptr<TypeSpec> elem;
     size_t size = 0;           // Array
     int rank = 1;              // Slice：维数
-    bool readonly = false;
+    bool is_const = false;  // C 模型：该类型节点是否 const（前缀 const 修饰基类型，`* const` 修饰指针层）
     bool weak = false;         // class 字段的 weak 修饰
     int line = 0;
     int col = 0;
@@ -182,6 +184,9 @@ struct InitAggregate : Init {
 // ---------------------------------------------------------------- 声明
 
 struct Decl : Node {
+    // 可见性：默认仅在所属 unit 内可见；public 表示跨 unit 可见。
+    // unit 的可见性见 Unit::is_public（`public unit foo;`）。
+    bool is_public = false;
     virtual ~Decl() = default;
 };
 
@@ -198,7 +203,6 @@ struct GlobalVar : Decl {
     std::string name;
     TypeSpecPtr spec;
     InitPtr init;
-    bool is_static = false;
     bool is_extern = false;
     bool is_const = false;
     // sema
@@ -210,9 +214,14 @@ struct GlobalVar : Decl {
 struct StructDecl : Decl {
     std::string name;
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
+    // 字段的最终可见性（parser 在解析时按默认值/分段标签/成员前缀算好）
+    std::unordered_map<std::string, bool> field_visibility;
     std::vector<std::unique_ptr<MethodDecl>> methods;  // 值类型方法（静态派发）
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
+    // 布局修饰符
+    bool is_packed = false;
+    ExprPtr align_expr;  // align(N) 的 N（parser 保留原始表达式，sema 求值）
     TypePtr ty;  // sema: 结构体类型（占位后填充 fields）
 };
 
@@ -302,6 +311,7 @@ struct MethodDecl : Node {
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;  // nullptr = 抽象方法
     bool is_override = false;
+    bool is_public = false;  // 默认仅 unit 内可见
     // sema
     TypePtr rty;
     std::vector<TypePtr> pty;
@@ -312,6 +322,7 @@ struct MethodDecl : Node {
 struct CtorDecl : Node {
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;
+    bool is_public = false;  // 默认仅 unit 内可见
     // sema
     std::vector<TypePtr> pty;
     std::vector<std::unique_ptr<LocalVar>> param_locals;
@@ -328,6 +339,7 @@ struct ClassDecl : Decl {
     std::string name;
     std::vector<std::string> bases;  // 第一个是基类，其余是接口
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
+    std::unordered_map<std::string, bool> field_visibility;  // 字段的最终可见性
     std::vector<std::unique_ptr<MethodDecl>> methods;
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
@@ -359,6 +371,7 @@ struct FuncDecl : Decl {
 struct Unit : Node {
     std::string name;
     std::string filename;
+    bool is_public = false;  // `public unit foo;`：跨库可见
     std::vector<std::unique_ptr<UseDecl>> uses;
     std::vector<std::unique_ptr<Decl>> decls;
 };

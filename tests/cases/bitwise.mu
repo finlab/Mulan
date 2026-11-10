@@ -1,7 +1,7 @@
-// bitwise.mu — & | ^ !（按位取反）、<< >>、复合赋值 &= |= ^= <<= >>=
+// bitwise.mu — & | ^ ~（按位取反）、<< >>、复合赋值 &= |= ^= <<= >>=
 unit bitwise;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 extern int putchar(int c);
 
 void print_int(int v) {
@@ -46,9 +46,9 @@ int main() {
     print_int(a | b); putchar('\n');     // 14 (1110)
     print_int(a ^ b); putchar('\n');     //  6 (0110)
 
-    // ! 是按位取反（~）：!12 = ~12 = -13（32 位补码）
-    print_int(!a); putchar('\n');        // -13
-    print_int(!0); putchar('\n');        // -1
+    // ~ 是按位取反：~12 = -13（32 位补码）
+    print_int(~a); putchar('\n');        // -13
+    print_int(~0); putchar('\n');        // -1
 
     print_bits(a); putchar('\n');        // 00001100
     print_bits(a & b); putchar('\n');    // 00001000
@@ -75,7 +75,7 @@ int main() {
     flags |= 1 << 2;                       // 置位 bit2 -> 4
     flags |= 1 << 5;                       // 置位 bit5 -> 36
     print_int(flags); putchar('\n');       // 36
-    flags &= !(1 << 5);                    // 清 bit5 -> 4
+    flags &= ~(1 << 5);                    // 清 bit5 -> 4
     print_int(flags); putchar('\n');       // 4
     flags ^= 1 << 2;                       // 翻转 bit2 -> 0
     print_int(flags); putchar('\n');       // 0

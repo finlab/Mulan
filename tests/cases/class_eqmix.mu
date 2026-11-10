@@ -1,5 +1,5 @@
 unit class_eqmix;
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 interface I1 { int f(); }
 interface I2 : I1 { }
 class C : I2 { int v; C(int x){v=x;} override int f(){return v;} }

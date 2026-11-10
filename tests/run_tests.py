@@ -89,8 +89,10 @@ class ErrCase:
 
 
 def collect_error_cases() -> list[ErrCase]:
+    # 以 lib_ 开头的文件是多 unit 报错用例的依赖库，不作为独立用例
     return [ErrCase(s.stem, s, ERRORS_DIR / f"{s.stem}.err")
-            for s in sorted(ERRORS_DIR.glob("*.mu"))]
+            for s in sorted(ERRORS_DIR.glob("*.mu"))
+            if not s.stem.startswith("lib_")]
 
 
 class CheckCase:

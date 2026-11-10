@@ -1,6 +1,6 @@
 unit dynarray;
-extern int puts(readonly char* s);
-static int live = 0;
+extern int puts(const char* s);
+int live = 0;
 
 class C {
     int v;
@@ -32,7 +32,7 @@ int main() {
     if (new byte[2])[0] != 0 { puts("temp index failed"); return 4; }
 
     // 零值
-    int[] z = 0;
+    int[] z = {};
     if len(z) != 0 { puts("zero slice failed"); return 5; }
     int n = 0;
     for v in z { n += 1; }
@@ -97,7 +97,7 @@ int main() {
 
     // 借用参数存进字段 -> retain；实参临时数组在调用后释放
     {
-        Box2 box = 0;
+        Box2 box = {};
         keep(&box, a);
         if len(box.b) != 3 or box.b[1] != 2 { puts("borrow store failed"); return 24; }
         box.b[0] = 33;

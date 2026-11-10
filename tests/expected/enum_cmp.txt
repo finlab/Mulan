@@ -1,0 +1,7 @@
+eq ok
+lt ok
+gt ok
+not ok
+5
+roundtrip ok
+7

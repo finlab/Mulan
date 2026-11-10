@@ -1,6 +1,6 @@
 unit structs2;
 
-extern int puts(readonly char* s);
+extern int puts(const char* s);
 
 struct Inner { int a, b; }
 struct Outer { Inner inner; string name; int[3] nums; }
@@ -8,7 +8,7 @@ struct Outer { Inner inner; string name; int[3] nums; }
 int sum(Inner x) { return x.a + x.b; }
 
 int main() {
-    Outer o = 0;
+    Outer o = {};
     o.inner.a = 1;
     o.inner.b = 2;
     o.name = "hi";
