@@ -316,6 +316,21 @@ size_t size_impl(const TypePtr& t, int depth) {
         case TypeKind::Enum: return 4;
         case TypeKind::Array: return size_impl(t->elem, depth + 1) * t->array_size;
         case TypeKind::Struct: {
+            if (t->is_union) {
+                // union：所有成员偏移 0，size = max(成员 size)
+                size_t maxsz = 0, natural = 1;
+                for (const auto& f : t->fields) {
+                    natural = std::max(natural, align_impl(f.type, depth + 1));
+                    maxsz = std::max(maxsz, size_impl(f.type, depth + 1));
+                }
+                if (t->is_packed) {
+                    if (t->align_req > 0) maxsz = align_up(maxsz, static_cast<size_t>(t->align_req));
+                    return maxsz;
+                }
+                size_t a = natural;
+                if (t->align_req > 0) a = std::max(a, static_cast<size_t>(t->align_req));
+                return align_up(maxsz, a);
+            }
             size_t off = 0, natural = 1;
             for (const auto& f : t->fields) {
                 size_t fa = align_impl(f.type, depth + 1);

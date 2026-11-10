@@ -151,7 +151,7 @@ private:
     // ------------------------------------------------------ unit
 
     std::unique_ptr<Decl> parse_extern(const Token& tk);
-    std::unique_ptr<Decl> parse_struct();
+    std::unique_ptr<Decl> parse_struct(bool is_union = false);
     std::unique_ptr<Decl> parse_enum();
     std::unique_ptr<Decl> parse_class();
     std::unique_ptr<Decl> parse_interface();
@@ -282,7 +282,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         if (at_kw("use")) {
             if (is_pub) throw err_at("`public` cannot be used with `use`", tk);
             if (has_layout) {
-                throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` declaration", layout_tok);
+                throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` or `union` declaration", layout_tok);
             }
             advance();
             std::string uname = parse_unit_name();
@@ -299,18 +299,20 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         if (at_kw("extern")) {
             if (is_pub) throw err_at("`extern` declarations are implicitly public; `public` cannot be used", tk);
             if (has_layout) {
-                throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` declaration", layout_tok);
+                throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` or `union` declaration", layout_tok);
             }
             advance();
             unit->decls.push_back(parse_extern(tk));
             continue;
         }
 
-        if (at_kw("struct")) {
-            auto d = parse_struct();
+        if (at_kw("struct") || at_kw("union")) {
+            const bool is_union = at_kw("union");
+            auto d = parse_struct(is_union);
             d->is_public = is_pub;
             if (auto* sd = dynamic_cast<StructDecl*>(d.get())) {
                 sd->is_packed = packed;
+                sd->is_union = is_union;
                 sd->align_expr = std::move(align_expr);
             }
             unit->decls.push_back(std::move(d));
@@ -348,7 +350,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         }
 
         if (has_layout) {
-            throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` declaration", layout_tok);
+            throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` or `union` declaration", layout_tok);
         }
 
         if (at_kw("static")) {
@@ -413,9 +415,10 @@ std::unique_ptr<Decl> Parser::parse_extern(const Token& tk) {
     return gv;
 }
 
-std::unique_ptr<Decl> Parser::parse_struct() {
-    const Token tk = expect_kw("struct");
-    std::string name = expect_ident("struct name").text;
+std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
+    const char* kw = is_union ? "union" : "struct";
+    const Token tk = expect_kw(kw);
+    std::string name = expect_ident(std::string(kw) + " name").text;
     type_names_.insert(name);
     expect_op("{");
 
@@ -423,11 +426,15 @@ std::unique_ptr<Decl> Parser::parse_struct() {
     decl->name = name;
     decl->line = tk.line;
     decl->col = tk.col;
+    decl->is_union = is_union;
 
     bool cur_pub = true;  // struct 默认 public
     while (!at_op("}")) {
         // 分段标签：`public:` / `private:` 切换后续成员的默认可见性
         if ((at_kw("public") || at_kw("private")) && peek(1).is_op(":")) {
+            if (is_union) {
+                throw err("union members are always public; `public:` / `private:` sections are not allowed in a union");
+            }
             cur_pub = at_kw("public");
             advance();
             advance();
@@ -436,17 +443,22 @@ std::unique_ptr<Decl> Parser::parse_struct() {
         bool member_pub = cur_pub;
         bool explicit_mod = false;
         if (at_kw("public", "private")) {
+            if (is_union) {
+                throw err("union members are always public; remove `public` / `private`");
+            }
             member_pub = at_kw("public");
             advance();
             explicit_mod = true;
         }
         if (at_op("~")) {
             if (explicit_mod) throw err("destructor cannot use `public`/`private`");
+            if (is_union) throw err("union `" + name + "` cannot have a destructor");
             if (decl->dtor) throw err("struct `" + name + "` can only have one destructor");
             decl->dtor = parse_dtor();
             continue;
         }
         if (peek().kind == TokKind::Ident && peek().text == name && peek(1).is_op("(")) {
+            if (is_union) throw err("union `" + name + "` cannot have a constructor");
             const Token ctor_name = advance();
             decl->ctors.push_back(parse_ctor(ctor_name));
             decl->ctors.back()->is_public = member_pub;
@@ -458,6 +470,7 @@ std::unique_ptr<Decl> Parser::parse_struct() {
         TypeSpecPtr spec = parse_type();
         const Token name_tok = expect_ident("field or method name");
         if (at_op("(")) {
+            if (is_union) throw err("union `" + name + "` cannot have methods");
             decl->methods.push_back(parse_method(std::move(spec), name_tok));
             decl->methods.back()->is_public = member_pub;
             continue;

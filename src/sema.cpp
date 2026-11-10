@@ -546,11 +546,12 @@ private:
                 auto sd = dynamic_cast<StructDecl*>(d.get());
                 if (!sd || !sd->ty) continue;
                 const TypePtr& ty = sd->ty;
+                const std::string kw = sd->is_union ? "union" : "struct";
                 if (ty->align_req > 0 && !ty->is_packed) {
                     size_t natural = 1;
                     for (auto& f : ty->fields) natural = std::max(natural, type_align(f.type));
                     if (static_cast<size_t>(ty->align_req) < natural) {
-                        err("align(" + std::to_string(ty->align_req) + ") is less than the natural alignment of struct `" +
+                        err("align(" + std::to_string(ty->align_req) + ") is less than the natural alignment of " + kw + " `" +
                                 sd->name + "` (" + std::to_string(natural) + ")" +
                                 "; use `packed` to lower the alignment",
                             sd);
@@ -563,17 +564,17 @@ private:
                     while (base && base->kind == TypeKind::Array) base = base->elem;
                     if (!base) continue;
                     if (is_str(base)) {
-                        err("field `" + f.name + "` of packed struct `" + sd->name +
+                        err("field `" + f.name + "` of packed " + kw + " `" + sd->name +
                                 "` cannot be `string` (unaligned pointer access)",
                             sd);
                     }
                     if (base->kind == TypeKind::Slice) {
-                        err("field `" + f.name + "` of packed struct `" + sd->name +
+                        err("field `" + f.name + "` of packed " + kw + " `" + sd->name +
                                 "` cannot be a dynamic array `" + base->str() + "` (unaligned pointer access)",
                             sd);
                     }
                     if (is_reference_type(base)) {
-                        err("field `" + f.name + "` of packed struct `" + sd->name +
+                        err("field `" + f.name + "` of packed " + kw + " `" + sd->name +
                                 "` cannot be a `class` or `interface` reference (unaligned pointer access)",
                             sd);
                     }
@@ -591,18 +592,25 @@ private:
             if (!sd) continue;
             if (!sd->ty) sd->ty = Type::make_struct(u->name, sd->name);
             sd->ty->is_packed = sd->is_packed;  // align_req 在 check_layouts 里求值
+            sd->ty->is_union = sd->is_union;
+            const std::string kw = sd->is_union ? "union" : "struct";
             std::vector<Field> fields;
             std::unordered_set<std::string> fnames;
             for (auto& [fname, spec] : sd->fields) {
                 if (!fnames.insert(fname).second) {
-                    err("duplicate field `" + fname + "` in struct `" + sd->name + "`", sd);
+                    err("duplicate field `" + fname + "` in " + kw + " `" + sd->name + "`", sd);
                 }
                 TypePtr ft = resolve_type(spec.get(), u);
-                if (is_void(ft)) err("field of struct `" + sd->name + "` cannot be void", sd);
+                if (is_void(ft)) err("field of " + kw + " `" + sd->name + "` cannot be void", sd);
                 if (same_type(ft, sd->ty)) {
-                    err("struct `" + sd->name + "` cannot contain itself by value", sd);
+                    err(kw + " `" + sd->name + "` cannot contain itself by value", sd);
                 }
                 if (spec->weak) err("`weak` can only be used on class fields", sd);
+                if (sd->is_union && (is_str(ft) || ft->needs_cleanup())) {
+                    err("field `" + fname + "` of union `" + sd->name + "` cannot be `" + ft->str() +
+                            "`: union members cannot hold values that need reference counting",
+                        sd);
+                }
                 if (noncopyable_struct(ft)) {
                     err("struct `" + ft->str() +
                             "` has a destructor and cannot be used as a field (field destruction is not implemented)",
@@ -616,6 +624,9 @@ private:
                 fields.push_back(Field{fname, ft, false, field_pub});
             }
             sd->ty->fields = std::move(fields);
+            if (sd->is_union && sd->ty->fields.empty()) {
+                err("union `" + sd->name + "` must have at least one member", sd);
+            }
 
             sd->ty->methods.clear();
             for (auto& m : sd->methods) {
@@ -1968,6 +1979,24 @@ private:
 
     void check_aggregate(InitAggregate* init, const TypePtr& ty, const std::string& what) {
         auto& items = init->items;
+
+        if (ty->kind == TypeKind::Struct && ty->is_union) {
+            // union：只允许「恰好一个具名成员」；不提供位置初始化（显式优于隐式）
+            if (items.size() != 1 || items[0].first.empty()) {
+                err("union `" + ty->str() +
+                        "` must be initialized with exactly one named member, e.g. `{ member = value }`",
+                    init);
+            }
+            const Field* target = nullptr;
+            for (auto& f : ty->fields) {
+                if (f.name == items[0].first) target = &f;
+            }
+            if (!target) {
+                err("union `" + ty->str() + "` has no member `" + items[0].first + "`", init);
+            }
+            check_init_into(target->type, items[0].second.get(), what, init);
+            return;
+        }
 
         if (ty->kind == TypeKind::Struct && !ty->ctors.empty()) {
             err("struct `" + ty->str() + "` has a constructor and cannot use aggregate initialization", init);
@@ -3570,6 +3599,9 @@ private:
         }
 
         if (struct_ty) {
+            if (struct_ty->is_union) {
+                err("union `" + struct_ty->str() + "` cannot be constructed with `T(...)`; use `{ member = value }`", c);
+            }
             if (!struct_ty->ctors.empty()) {
                 if (!c->named.empty()) err("struct constructors do not support named arguments", c);
                 if (struct_ty->has_dtor && c != direct_init_expr_) {

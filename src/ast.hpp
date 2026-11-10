@@ -231,6 +231,7 @@ struct StructDecl : Decl {
     std::unique_ptr<DtorDecl> dtor;
     // 布局修饰符
     bool is_packed = false;
+    bool is_union = false;  // union 声明（布局：所有成员偏移 0）
     ExprPtr align_expr;  // align(N) 的 N（parser 保留原始表达式，sema 求值）
     TypePtr ty;  // sema: 结构体类型（占位后填充 fields）
 };

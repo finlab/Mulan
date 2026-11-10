@@ -26,7 +26,7 @@
 | 条件表达式 | `cond ? a : b`（右结合；条件必须 `bool`；只求值一个分支；两侧取同一类型 / 隐式加宽 / `null` 适配） |
 | 条件括号 | 可选，规范写法省略（`if cond { }`）；C 式 `if (cond)` 仍合法 |
 | 结构体构造 | `Point(x = 1, y = 2)` 命名参数，或 `Point(1, 2)` 位置参数；两者不可混用 |
-| C 能力 | 指针、结构体、数组、函数、枚举、C ABI 互操作；`goto/union/varargs/函数指针` 待定 |
+| C 能力 | 指针、结构体、联合体（`union`）、数组、函数、枚举、C ABI 互操作；`goto/varargs/函数指针` 待定 |
 | 后端（非规范） | LLVM C++ API 直接生成 COFF；C99 后端已在 0.0.2 移除；Windows x64 为一等目标 |
 
 ---
@@ -57,7 +57,7 @@
 ### 2.3 关键字
 
 ```
-unit use public private const auto struct enum extern class interface new weak packed
+unit use public private const auto struct enum extern class interface new weak packed union
 if else while for in switch ref break continue return
 true false null as sizeof alignof len alloc realloc free
 void bool byte char short ushort int uint long ulong
@@ -67,7 +67,7 @@ and or not override operator super this
 
 > `del` 已在 0.0.47 移除（保留为关键字只为给出迁移诊断）：释放引用写 `x = null;`。
 
-> `goto/union/typedef/fn` 暂不纳入。`len/sizeof/alloc/realloc/free/alignof` 等是内建标识符，
+> `goto/typedef/fn` 暂不纳入。`len/sizeof/alloc/realloc/free/alignof` 等是内建标识符，
 > **禁止被用户声明遮蔽**（已实现：把它们用作变量/参数/字段名会直接报错）。
 > `dynamic` / `any` 预留给后续动态类型/顶层类型，不作为第一阶段关键字。
 > `packed` 是**硬关键字**（布局修饰符，见 3.4，已实现）；`align` 是**上下文关键字**——仅当它出现在类型声明起始位置
@@ -233,7 +233,7 @@ struct Point {
   - `S(...)` 构造器可重载；`S s;` 调用无参构造器；`S s = S(args);` 直接就地构造；
     有构造器时禁止非空聚合初始化；零值用 `{}`（不调用构造器，直接清零）；
   - `~S()` 在作用域结束、`return`/`break`/`continue` 时自动调用（局部变量）；
-- 无继承、无虚函数、无匿名 struct/union（第一阶段）。
+- 无继承、无虚函数、无匿名 struct/union **成员**（联合体本身见 3.4.1）。
 - 递归只能通过指针：`struct Node { int v; Node* next; }`。
 - 字段可以是标量、指针、枚举、定长数组、动态数组 `T[]`、嵌套 struct、`string` 字段，以及
   **class/interface 引用字段**（此时 struct 为非 POD 值类型）。
@@ -299,6 +299,30 @@ struct Point {
     - 手工 `alloc` + `as` 得到的 struct 堆实例只保证 16 字节：`align(N) > 16` 的类型不要这样放（UB）。
   - 与 C 侧 `__attribute__((packed))` / `#pragma pack(1)` / `aligned(N)` 的 ABI **尚未做交叉测试**：
     语言内已用 `sizeof`/`alignof`/字节偏移断言覆盖，跨语言 `sizeof`/`offsetof` 比对待补（backlog U15）。
+
+### 3.4.1 联合体 `union`（已实现）
+
+```c
+union Value {
+    int i;
+    float f;
+    byte[8] raw;
+}
+```
+
+- 值类型，与 `struct` 同一类型命名空间；**所有成员偏移 0**，`sizeof = max(成员 sizeof)` 向上对齐到最大成员对齐。
+- `packed` / `align(N)` 与 3.4 同规则：`packed union` 对齐 1、`sizeof` 不按自然对齐补齐；`align(N)` 覆盖整体对齐。
+- **成员限于 POD**：标量、指针、枚举、定长数组、POD struct / union。
+  禁止需要引用计数的类型——`string`、动态数组 `T[]`、`class`/`interface` 引用、含引用字段的 struct、
+  含用户析构器的 struct（联合体无法按成员逐一 retain/release）。没有成员的 union 是编译错误。
+- 无方法、无构造器、无析构器、无继承；不支持 `public:` / `private:` 分段（成员恒 public）。
+- 初始化：
+  - `U u = {};` 零初始化；
+  - `U u = { member = value };` 具名初始化，必须**恰好指定一个成员**；
+  - 不提供位置初始化 `= { value }`，也不提供 `U(...)` 构造——选哪个成员不该由位置隐式决定。
+- 访问 `u.member`；读**非最后写入**的成员与 C 一致：按字节重解释（值需可表示），不做运行期检查。
+- 可赋值、传参、返回、作数组元素 / 全局变量 / struct 或 class 字段；可取址（POD，不受「含引用字段 struct 不可取址」的限制）。
+- C ABI：成员同址、`sizeof`/`alignof` 与 C 一致，可直接对接 `INPUT`、`VARIANT`、`VkClearColorValue` 等。
 
 ### 3.5 枚举（建议）
 
@@ -1133,7 +1157,7 @@ unit example;
 | 7 | 边界检查策略 | debug 检查；release 可配 |
 | 8 | 有符号溢出 | 已定（已实现）：二进制补码回绕（后端不发 `nsw`/`nuw`） |
 | 9 | `switch`/`match` | 已定（0.0.45）：只有 `switch`（无 fallthrough、`模式: { }`、多值、半开区间、枚举穷尽）；`match` 不再保留，表达式形式/守卫/绑定/类型分支待定 |
-| 10 | `goto`/`union`/`typedef`/函数指针/varargs | 第二阶段或不做 |
+| 10 | `goto`/`typedef`/函数指针/varargs | 第二阶段或不做（`union` 已定并实现，见 3.4.1） |
 | 11 | `for-in` 的索引形态 / `ref` / 默认拷贝 | **已定（索引形态已实现）**：值绑定 + `ref`（仅内置）；`for i, x` 提供 `usize` 下标/序号（6.4.4）；用户类型走 6.4.1/6.4.2 的迭代形态；`for ref` 不对用户类型开放；**多维数组禁止 `for-in`** |
 | 12 | range 的 `..=` / `step` / 倒序 | 先只支持 `..`（switch 分支区间同此口径） |
 | 13 | 局部类型推断 | 已定：`auto x = expr;`；仅局部、必须有初始化器；多声明符类型一致 |

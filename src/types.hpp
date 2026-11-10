@@ -50,6 +50,7 @@ struct Type {
     bool is_abstract = false;   // Class 有未实现方法
     bool has_dtor = false;      // 用户声明了析构器（struct/class）
     bool is_packed = false;     // Struct：packed（字段紧排，无内部/尾部填充，align 默认 1）
+    bool is_union = false;      // Struct：union（所有成员偏移 0，size = max(成员)）
     int align_req = 0;          // Struct：align(N) 的 N（0 = 未指定）
 
     static TypePtr make_void();

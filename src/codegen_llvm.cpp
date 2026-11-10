@@ -187,6 +187,38 @@ struct Emitter {
         std::vector<unsigned> map;  // 模型字段索引 -> LLVM 字段索引
         uint64_t llvmCur = 0;       // LLVM 视角的当前偏移
         uint64_t modelCur = 0;      // 语义层（types.cpp）的当前偏移
+
+        if (t->is_union) {
+            // LLVM 没有 union 类型：用一个「对齐载体 + 尾部 i8 填充」的 struct 表示，
+            // 使 ABI 的 size / align 与语义层一致；所有成员都从偏移 0 读取（fieldAddr 特判）。
+            uint64_t sz = sizeOf(t);
+            uint64_t al = alignOf(t);
+            if (sz == 0) fail("LLVM backend: union `" + t->str() + "` has no members");
+            if (t->is_packed) {
+                fs.push_back(LArray::get(i8(), sz));
+                st->setBody(fs, true);  // packed：对齐 1
+            } else {
+                LType* carrier = i8();
+                uint64_t csz = 1;
+                if (al >= 8 && sz >= 8) {
+                    carrier = i64();
+                    csz = 8;
+                } else if (al >= 4 && sz >= 4) {
+                    carrier = i32();
+                    csz = 4;
+                } else if (al >= 2 && sz >= 2) {
+                    carrier = LType::getInt16Ty(ctx);
+                    csz = 2;
+                }
+                fs.push_back(carrier);
+                if (sz > csz) fs.push_back(LArray::get(i8(), sz - csz));
+                st->setBody(fs, false);
+            }
+            map.push_back(0);
+            fieldMap[key] = std::move(map);
+            return st;
+        }
+
         for (auto& f : t->fields) {
             LType* ft = lt(f.type);
             if (!ft->isSized()) {
@@ -348,12 +380,20 @@ struct Emitter {
     // align(N) > 16 的 class 对象要显式对齐分配（malloc 只保证 16 字节）；释放时必须配对
     bool classNeedsAlignedAlloc(const TypePtr& cls) { return classObjAlign(cls) > 16; }
 
+    // 字段地址：union 的所有成员落在偏移 0（LLVM 类型是「载体 + 填充」，字段 0 即基址）
+    Value* fieldSlot(LStruct* st, const TypePtr& ty, Value* base, int idx) {
+        if (ty->kind == TypeKind::Struct && ty->is_union) {
+            (void)idx;
+            return b.CreateStructGEP(st, base, 0);
+        }
+        return b.CreateStructGEP(st, base, llvmFieldIndex(ty, idx));
+    }
+
     Value* fieldAddr(Value* objPtr, const TypePtr& cls, int field_index) {
         if (cls->kind == TypeKind::Struct) {
             // 先取 LLVM 类型（可能触发 structOf 填充字段映射表），再查映射
             LStruct* st = cast<LStruct>(lt(cls));
-            unsigned idx = llvmFieldIndex(cls, field_index);
-            return b.CreateStructGEP(st, objPtr, idx);
+            return fieldSlot(st, cls, objPtr, field_index);
         }
         // 先建对象类型（填充 fieldMap），再按映射索引（align(N) 字段前有显式填充）
         LStruct* st = objStruct(cls);
@@ -1374,7 +1414,7 @@ struct Emitter {
             if (ot->kind != TypeKind::Struct)
                 fail("LLVM backend: base type of member access is not a struct", m->line, m->col);
             auto* st = cast<LStruct>(lt(ot));
-            return b.CreateStructGEP(st, base, llvmFieldIndex(ot, m->field_index));
+            return fieldSlot(st, ot, base, m->field_index);
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
             TypePtr bt = ix->base->ty;
@@ -2343,8 +2383,7 @@ struct Emitter {
                 }
                 auto* st = cast<LStruct>(lt(ty));
                 for (auto& [idx, sub] : slot) {
-                    Value* fp =
-                        b.CreateStructGEP(st, addr, llvmFieldIndex(ty, idx));
+                    Value* fp = fieldSlot(st, ty, addr, idx);
                     initInto(fp, ty->fields[idx].type, sub, unaligned || ty->is_packed);
                 }
                 return;

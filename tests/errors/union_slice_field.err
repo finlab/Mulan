@@ -1,0 +1,1 @@
+field `xs` of union `U` cannot be `int[]`

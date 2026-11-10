@@ -1,0 +1,1 @@
+field `s` of union `U` cannot be `std.string.string`

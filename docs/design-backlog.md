@@ -87,18 +87,21 @@
 - 现状限制：`struct` 没有方法、`class` 是堆+RC，所以"纯库实现的 string"不可行；
   内置视图 + 库函数是可行路线。
 
-### U14. C 互操作：`union`
-- 结论（建议）：**值得加 `union` 值类型**，优先级高于位域。
-- 典型 C API：Win32 `INPUT`、`VARIANT`/`PROPVARIANT`，Vulkan `VkClearColorValue`，
-  以及很多「tag + union」的 tagged union 结构。
-- 设计建议：
-  - `union` 与 `struct` 同属 unit 级值类型，无方法/构造/析构；
-  - 所有成员偏移 0，size = max(成员) 向上对齐到最大 align；
-  - 成员限 POD：标量、指针、枚举、POD struct、定长数组；**禁止 class/interface**（同 struct 的理由）；
-    第一阶段建议也禁止 `string`/切片（视图重叠语义易错），后续再议；
-  - `= 0` 全零；聚合初始化先只支持 `= 0` + 显式成员赋值（C 的"初始化第一个成员"语义待定）；
-  - 读写非最后写入的成员 = 未定义行为（C 语义），文档注明；可考虑 `unsafe` 标记，但先不加。
-- 未定：是否支持匿名 union（C11，`u.i` 直接访问）；是否允许 union 嵌套在 class 字段中（布局上可以）。
+### U14. C 互操作：`union`（**已实现，0.0.54**）
+- 结论：**支持裸 `union` 值类型**（POD 成员），优先级高于位域。C API 需要它：Win32 `INPUT`、
+  `VARIANT`/`PROPVARIANT`、Vulkan `VkClearColorValue`，以及大量「tag + union」结构。
+  Tagged union 的安全封装仍交给库层（`Variant`/`Any`，见 SPEC 10.1），语言层只给裸 union。
+- 已定规则（完整条文见 `SPEC.md` 3.4.1）：
+  - 所有成员偏移 0，`size = max(成员)` 向上对齐；`packed` / `align(N)` 与 struct 同规则；
+  - 成员限于 POD：**禁止** `string`、动态数组 `T[]`、class/interface 引用、
+    含引用字段或含用户析构器的 struct（union 无法按成员逐一 retain/release）；
+  - 无方法 / 构造器 / 析构器 / 继承；不分段可见性（成员恒 public）；
+  - 初始化只有 `{}` 与具名 `{ member = value }`（恰好一个成员）；
+    不提供位置初始化与 `T(...)` 构造（2026-11-10 定案：显式优于隐式）；
+  - 读非活跃成员按 C 语义字节重解释，不做运行期检查。
+- 仍不做：**匿名 union/struct 成员**（C11 字段提升）。它会侵入名字解析（`s.i` 穿透）、
+  重复名检测、聚合初始化与「字段与方法同名」等诊断，而 Win32 / Vulkan 用的都是具名成员。
+  真实需求出现时再评估；当前写法是给成员起名（`s.u.i`）。
 
 ### U15. C 互操作：packed / align（**已实现，0.0.42**）
 - 需求：网络协议、部分 C API 需要 `#pragma pack(1)`；SIMD / 缓存行 / 原子类型需要过对齐。
