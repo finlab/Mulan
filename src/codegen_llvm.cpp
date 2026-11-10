@@ -1227,6 +1227,21 @@ struct Emitter {
             return ConstantInt::get(i1(), static_cast<BoolLit*>(e)->value ? 1 : 0);
         if (auto cl = dynamic_cast<CharLit*>(e)) return ConstantInt::get(i8(), cl->value);
         if (dynamic_cast<NullLit*>(e)) return Constant::getNullValue(ct);
+        if (auto u = dynamic_cast<Unary*>(e)) {
+            // 常量初值支持一元 +/-：`const int EOF = -1;` 这类很常见
+            if (u->op == "-" || u->op == "+") {
+                const double sign = (u->op == "-") ? -1.0 : 1.0;
+                if (auto il = dynamic_cast<IntLit*>(u->operand.get())) {
+                    const long long v = (u->op == "-") ? -il->value : il->value;
+                    if (ty->kind == TypeKind::Prim && ty->is_float())
+                        return ConstantFP::get(ct, static_cast<double>(v));
+                    auto* it = IntegerType::get(ctx, static_cast<unsigned>(sizeOf(ty) * 8));
+                    return ConstantInt::get(it, static_cast<uint64_t>(v), /*isSigned=*/true);
+                }
+                if (auto fl = dynamic_cast<FloatLit*>(u->operand.get()))
+                    return ConstantFP::get(ct, sign * fl->value);
+            }
+        }
         if (auto sl = dynamic_cast<StringLit*>(e)) {
             if (isStrType(ty)) return cast<Constant>(stringConst(sl->value));
             if (ty->kind == TypeKind::Array && sizeOf(ty->elem) == 1) {
@@ -1703,6 +1718,24 @@ struct Emitter {
         return pack;
     }
 
+    // C 默认实参提升：比 int 小的整型 → int，float → double，其余原样（C varargs ABI 要求）
+    Value* promoteVararg(Value* v, const TypePtr& t) {
+        if (!t) return v;
+        if (isStrType(t)) {
+            // `string` 视图按 C 语义传底层 `const char*`（printf 的 %s）
+            return b.CreateExtractValue(v, {0});
+        }
+        if (t->kind == TypeKind::Prim) {
+            const std::string& n = t->name;
+            if (n == "float") return b.CreateFPExt(v, LType::getDoubleTy(ctx));
+            if (n == "bool" || n == "byte" || n == "char" || n == "ushort") {
+                return b.CreateZExt(v, i32());
+            }
+            if (n == "short") return b.CreateSExt(v, i32());
+        }
+        return v;
+    }
+
     void releaseTemps(ArgPack& pack) {
         for (auto& [v, ty] : pack.owned) {
             if (isRefKind(ty)) {
@@ -1796,8 +1829,14 @@ struct Emitter {
         std::vector<LType*> ptys;
         for (auto& t : f->pty) ptys.push_back(lt(t));
         FunctionCallee callee =
-            mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, false));
-        ArgPack pack = prepareArgs(args, f->pty);
+            mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
+        std::vector<Expr*> named(args.begin(), args.begin() + std::min(args.size(), f->pty.size()));
+        ArgPack pack = prepareArgs(named, f->pty);
+        if (f->is_varargs) {
+            for (size_t i = f->pty.size(); i < args.size(); ++i) {
+                pack.vals.push_back(promoteVararg(eval(args[i]), args[i]->ty));
+            }
+        }
         Value* r = b.CreateCall(callee, pack.vals);
         releaseTemps(pack);
         return r;
@@ -2021,10 +2060,18 @@ struct Emitter {
         std::vector<LType*> ptys;
         for (auto& t : f->pty) ptys.push_back(lt(t));
         FunctionCallee callee = mod->getOrInsertFunction(
-            f->cname, FunctionType::get(lt(f->rty), ptys, false));
+            f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
         std::vector<Expr*> rawArgs;
         for (auto& a : c->args) rawArgs.push_back(a.get());
-        ArgPack pack = prepareArgs(rawArgs, f->pty);
+        std::vector<Expr*> namedArgs(rawArgs.begin(),
+                                     rawArgs.begin() + std::min(rawArgs.size(), f->pty.size()));
+        ArgPack pack = prepareArgs(namedArgs, f->pty);
+        if (f->is_varargs) {
+            for (size_t i = f->pty.size(); i < rawArgs.size(); ++i) {
+                Expr* a = rawArgs[i];
+                pack.vals.push_back(promoteVararg(eval(a), a->ty));
+            }
+        }
         Value* r = b.CreateCall(callee, pack.vals);
         releaseTemps(pack);
         return r;
@@ -3582,7 +3629,7 @@ struct Emitter {
                         std::vector<LType*> ptys;
                         for (auto& t : f->pty) ptys.push_back(lt(t));
                         mod->getOrInsertFunction(
-                            f->cname, FunctionType::get(lt(f->rty), ptys, false));
+                            f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
                     }
                 }
             }

@@ -72,4 +72,6 @@
 
 | 0.0.54 | 2026-11-10 | **联合体 `union`**：POD 值类型，所有成员偏移 0，`sizeof = max(成员)` 向上对齐到最大成员对齐；支持 `packed` / `align(N)`（与 struct 同规则）；成员限于 POD——禁止 `string`、动态数组 `T[]`、class/interface 引用、含引用字段或含用户析构器的 struct；无方法/构造器/析构器/继承，成员恒 public；初始化只有 `{}` 零初始化与具名 `{ member = value }`（恰好一个成员），不提供位置初始化与 `T(...)` 构造；读非活跃成员按 C 语义字节重解释。LLVM 侧用「对齐载体 + 尾部填充」表示、成员访问统一走偏移 0。新增 union_basic 成功用例与 11 个报错用例；SPEC 新增 3.4.1，backlog U14 关闭 | 278/278（66 成功 + 199 报错 + 13 check）；冷编译零 warning |
 
+| 0.0.55 | 2026-11-11 | **C 可变参数调用（`extern` 的 `...`）+ `std.cstdio`**：`extern` 声明可带 `...`（必须最后、至少一个命名参数），实参按 C 默认提升（`float→double`、小于 `int` 的整型→`int`、枚举→底层整型），`string` 自动传底层 `const char*`；含 RC 的实参编译错误；Mulan 内不支持自定义 varargs。codegen 用 `FunctionType::isVarArg` + `promoteVararg()`，ABI 由 LLVM 处理。另：`extern` 声明现在隐式 `public`（此前跨 unit 调用会被判未公开）；常量初值支持一元 `+`/`-`（`const int EOF = -1;`）；新增 `libs/std/cstdio.mu`（stdio 函数与常量绑定）。新增 varargs / cstdio 成功用例与 5 个报错用例；SPEC 新增 7.1，backlog U31 | 285/285（68 成功 + 204 报错 + 13 check）；冷编译零 warning |
+
 > 后续条目只递增 build 号，例如 0.0.2、0.0.3……；主/次版本变更会单独注明。

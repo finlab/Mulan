@@ -579,6 +579,30 @@
   `[](int)` 签名不符、缺 `current`、map（`[](string)`）落到游标、`for ref` 拒绝用户类型。
 - 关联：SPEC 6.4.1–6.4.4、3.10、8.1；U26.8；§12 #11。
 
+### U31. 可变参数：`extern` 调用（**已实现，0.0.55**）与 `va_list`（不做）
+- 分档（2026-11-11 讨论定案）：
+
+  | 档 | 内容 | 状态 |
+  |---|---|---|
+  | A | `extern` 声明带 `...`，调用 C 的可变参数函数 | **已实现**（SPEC 7.1） |
+  | B | `va_list` + `va_start`/`va_arg`/`va_end`，可从 Mulan 转发给 `vprintf` 族 | 不做，等真实需求 |
+  | C | Mulan 内自定义 varargs 函数（`int sum(int n, ...)`） | 不做 |
+  | D | 同型变参 `T...`（Go 风格，编译期打包成 `T[]`） | 暂不做（无泛型，价值有限） |
+
+- A 的实现要点：
+  - `...` 只在 `extern` 声明里合法，必须是最后一个参数、前面至少一个命名参数；
+  - 实参按 C 默认提升：`float→double`、小于 `int` 的整型→`int`、枚举→底层整型；`string` 传底层 `const char*`；
+  - 含 RC 的实参（class/interface 引用、动态数组、含引用字段或含用户析构器的 struct）编译错误——
+    `...` 不参与引用计数，callee 也无从知道类型去 release；
+  - codegen：`FunctionType::isVarArg` + `promoteVararg()`；ABI 细节（SysV 的 `%al`、Win64 的 32 字节影子空间
+    复制）全部交给 LLVM，无需手写寄存器溢出；
+  - 声明与调用点必须用同一个 `is_varargs` 构造 `FunctionType`，否则 LLVM verifier 报类型不匹配。
+- 为什么不做 B/C：`va_arg` 式读取类型不安全，与原则 4「编译期能查的错不留到运行期」冲突；
+  唯一正当场景是「转发 `vprintf` 族」或「向 C 提供 varargs 函数」，目前没有需求。
+  真要做时 B 与 C 应**一起**加（单独的 B 没有接入点：没有 `...` 定义语法就用不上 `va_list`）。
+- Mulan 内部的安全变参：用 `Value[]`（tagged union，SPEC 10.1）。`union` 已实现（0.0.54）后 `Variant` 可直接写出，
+  `switch` 对枚举强制穷尽，漏分支是编译错误——比 C# 的 `object[]` 更强，且不需要新的语言特性。
+
 ## 已完成（留档）
 
 - 2026-11-10（0.0.47）：**参数改为拥有型局部变量 + 移除 `del`**

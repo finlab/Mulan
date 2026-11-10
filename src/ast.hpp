@@ -399,6 +399,7 @@ struct FuncDecl : Decl {
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;
     bool is_extern = false;
+    bool is_varargs = false;  // extern 函数的 `...`（C varargs）
     bool is_operator = false;
     // sema
     TypePtr rty;

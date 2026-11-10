@@ -54,7 +54,7 @@ const std::unordered_set<std::string>& keywords() {
 }
 
 // 长的放前面，保证最长匹配（lexer.py 的 OPS3 / OPS2 / OPS1）
-const char* const OPS3[] = {"<<=", ">>="};
+const char* const OPS3[] = {"<<=", ">>=", "..."};
 const char* const OPS2[] = {"==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=",
                             "|=", "^=", "<<", ">>", "..", "++", "--"};
 const char* const OPS1 = "+-*/%&|^!~<>=(){}[];,.?:";

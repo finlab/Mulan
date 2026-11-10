@@ -164,7 +164,7 @@ private:
     std::vector<std::unique_ptr<GlobalVar>> parse_global();
     std::vector<std::unique_ptr<GlobalVar>> parse_global_list(TypeSpecPtr spec, bool is_const);
     std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, const Token& tk);
-    std::vector<std::unique_ptr<Param>> parse_params();
+    std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr);
 
     // ------------------------------------------------------ 类型
 
@@ -397,8 +397,9 @@ std::unique_ptr<Decl> Parser::parse_extern(const Token& tk) {
         auto fn = std::make_unique<FuncDecl>();
         fn->name = name_tok.text;
         fn->ret = std::move(spec);
-        fn->params = parse_params();
+        fn->params = parse_params(&fn->is_varargs);
         fn->is_extern = true;
+        fn->is_public = true;  // `extern` 声明隐式公开（parser 已禁止与 public 同写）
         fn->line = tk.line;
         fn->col = tk.col;
         semicolon();
@@ -891,11 +892,24 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
 
 // ---------------------------------------------------------------- 函数
 
-std::vector<std::unique_ptr<Param>> Parser::parse_params() {
+std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs) {
     expect_op("(");
     std::vector<std::unique_ptr<Param>> params;
+    bool saw_varargs = false;
     if (!at_op(")")) {
         for (;;) {
+            if (at_op("...")) {
+                const Token dots = advance();
+                if (!varargs) throw err_at("only `extern` functions can be variadic", dots);
+                if (params.empty()) {
+                    throw err_at("variadic function needs at least one named parameter before `...`", dots);
+                }
+                saw_varargs = true;
+                if (!at_op(")")) {
+                    throw err_at("`...` must be the last parameter", peek());
+                }
+                break;
+            }
             const Token ptok = peek();
             // 每个参数必须独立写 `T name`；C 式共享类型（`int a, b`）不合法。
             // `b` 会被 parse_type 当成类型名、再在 `)` 处报「期望参数名」，因此提前给出明确诊断。
@@ -917,6 +931,7 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params() {
         }
     }
     expect_op(")");
+    if (saw_varargs) *varargs = true;
     return params;
 }
 

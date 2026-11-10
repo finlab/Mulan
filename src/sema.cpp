@@ -3636,13 +3636,33 @@ private:
         if (!c->named.empty()) {
             err("function calls do not support named arguments (only struct construction does)", c);
         }
-        if (c->args.size() != params.size()) {
+        if (c->args.size() != params.size() && !target->is_varargs) {
             err("function `" + target->name + "` expects " + std::to_string(params.size()) +
                     " arguments, but " + std::to_string(c->args.size()) + " were given",
                 c);
         }
-        for (size_t i = 0; i < c->args.size(); ++i) {
+        if (target->is_varargs && c->args.size() < params.size()) {
+            err("variadic function `" + target->name + "` expects at least " +
+                    std::to_string(params.size()) + " arguments, but " +
+                    std::to_string(c->args.size()) + " were given",
+                c);
+        }
+        for (size_t i = 0; i < params.size() && i < c->args.size(); ++i) {
             check_assign(c->args[i].get(), params[i], "argument of call to `" + target->name + "`");
+        }
+        if (target->is_varargs) {
+            // `...` 的实参没有静态类型：只要求 ABI 可传递（标量 / 指针 / POD）。
+            // `string` 按 C 语义传底层 `const char*`（对应 printf 的 %s）。
+            for (size_t i = params.size(); i < c->args.size(); ++i) {
+                TypePtr at = c->args[i]->ty;
+                if (!at) continue;
+                if (is_str(at)) continue;
+                if (at->needs_cleanup() || is_reference_type(at)) {
+                    err("variadic argument " + std::to_string(i + 1) + " cannot be `" + at->str() +
+                            "`: `...` cannot carry values that need reference counting",
+                        c->args[i].get());
+                }
+            }
         }
         return target->rty;
     }
@@ -3749,10 +3769,10 @@ private:
         std::vector<FuncDecl*> ok;
         std::vector<std::vector<int>> ranks;
         for (auto* f : cands) {
-            if (f->pty.size() != args.size()) continue;
+            if (f->is_varargs ? f->pty.size() > args.size() : f->pty.size() != args.size()) continue;
             std::vector<int> r;
             bool good = true;
-            for (size_t i = 0; i < args.size(); ++i) {
+            for (size_t i = 0; i < f->pty.size(); ++i) {
                 int k = rank_arg(args[i], atys[i], f->pty[i]);
                 if (k < 0) { good = false; break; }
                 r.push_back(k);
