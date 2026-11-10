@@ -474,7 +474,7 @@
   - **C. 可变引用 string（class）**：`class String { byte* data; usize n; usize cap; ~String(){free} }`；
     class 已有方法/构造/析构/RC，复制=共享句柄，`clone()` 深拷贝；不需要 struct 新设施，最快能做到"完整"。
 - 语言设施依赖顺序（从底层到字符串 API）：
-  1. **struct 方法 + `this`**（指针接收者；可变方法只允许 lvalue 接收者；只读方法/const 后续）；
+  1. **struct 方法 + `this`**（引用接收者：`this` 是对象本身的左值别名，非指针；可变方法只允许 lvalue 接收者；只读方法/const 后续）；
   2. **struct 构造器**（默认/重载；`S s;` 调用默认构造；`S s = S(args)`；与聚合初始化的关系）；
   3. **struct 析构器 + 自动调用**（作用域/return/break/continue/数组元素/字段/临时值；现有 CleanupScope 扩展）；
   4. **所有权与拷贝控制**：

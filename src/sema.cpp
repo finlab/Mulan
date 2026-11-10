@@ -6,9 +6,11 @@
 #include "sema.hpp"
 
 #include <algorithm>
+#include <climits>
 #include <cstddef>
 #include <deque>
 #include <functional>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -120,6 +122,14 @@ private:
         const int line = node ? node->line : 0;
         const int col = node ? node->col : 0;
         throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string());
+    }
+
+    // 警告不中止编译，只打到 stderr（格式与错误一致，前缀 warning）。
+    void warn(const std::string& msg, const Node* node) const {
+        const int line = node ? node->line : 0;
+        const int col = node ? node->col : 0;
+        std::cerr << (cur_ ? cur_->filename : std::string()) << ":" << line << ":" << col
+                  << ": warning: " << msg << "\n";
     }
 
     // TypeSpec 不是 Node（自带 line/col），单独一个报错入口。
@@ -1237,6 +1247,15 @@ private:
             if (!i->els) return false;
             return guarantees_return(i->then.get()) && guarantees_return(i->els.get());
         }
+        // 值域覆盖全部时，switch 的所有分支都返回才算保证返回
+        if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
+            if (!sw->has_else && !sw->enum_exhaustive) return false;
+            if (sw->arms.empty()) return false;
+            for (auto& a : sw->arms) {
+                if (!guarantees_return(a->body.get())) return false;
+            }
+            return true;
+        }
         return false;
     }
 
@@ -1815,6 +1834,8 @@ private:
             --loop_depth_;
         } else if (auto fs = dynamic_cast<ForInStmt*>(s)) {
             check_for(fs);
+        } else if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
+            check_switch(sw);
         } else if (dynamic_cast<BreakStmt*>(s)) {
             if (loop_depth_ == 0) err("`break` 只能出现在循环中", s);
         } else if (dynamic_cast<ContinueStmt*>(s)) {
@@ -2222,6 +2243,183 @@ private:
         TypePtr t = check_expr(e);
         if (!(is_prim(t) && t->name == "bool")) {
             err(what + "必须是 bool，实际是 " + (t ? t->str() : "void"), e);
+        }
+    }
+
+    // switch 分支模式求值：只接受编译期常量（字面量 / 枚举成员）
+    long long checked_int_pattern(long long v, const TypePtr& st, Expr* e) {
+        if (!promote_int_literal(v, st)) {
+            err("switch 模式值 " + std::to_string(v) + " 超出 " + st->str() + " 的取值范围", e);
+        }
+        return v;
+    }
+
+    long long pattern_value(Expr* e, const TypePtr& st) {
+        if (st->kind == TypeKind::Enum) {
+            // 成员名直接按被匹配的枚举解析（`Red` 不必写前缀）
+            if (auto* n = dynamic_cast<Name*>(e)) {
+                if (EnumConst* ec = find_enum_member(st, n->ident)) {
+                    n->kind = "enum_const";
+                    n->sym = ec;
+                    n->ty = st;
+                    return ec->value;
+                }
+                err("枚举 `" + st->str() + "` 没有成员 `" + n->ident + "`", e);
+            }
+            if (auto* m = dynamic_cast<Member*>(e)) {
+                TypePtr pt = check_expr(e);
+                auto* ec = std::get_if<EnumConst*>(&m->sym);
+                if (!ec || !*ec || !pt || !same_type(pt, st)) {
+                    err("switch 模式类型与被匹配值不一致：期望 " + st->str(), e);
+                }
+                return (*ec)->value;
+            }
+            err("枚举 switch 的模式必须是 " + st->str() + " 的成员", e);
+        }
+
+        if (auto* il = dynamic_cast<IntLit*>(e)) return checked_int_pattern(il->value, st, e);
+        if (auto* cl = dynamic_cast<CharLit*>(e)) return checked_int_pattern(cl->value, st, e);
+        if (auto* u = dynamic_cast<Unary*>(e); u && (u->op == "-" || u->op == "+")) {
+            if (auto* il = dynamic_cast<IntLit*>(u->operand.get())) {
+                const long long v = u->op == "-" ? -il->value : il->value;
+                return checked_int_pattern(v, st, e);
+            }
+        }
+        if (auto* n = dynamic_cast<Name*>(e)) {
+            check_expr(e);  // 解析成变量 / 枚举成员，好给出更准的错误
+            if (std::get_if<EnumConst*>(&n->sym)) {
+                err("模式 `" + n->ident + "` 是枚举成员，不能匹配 " + st->str(), e);
+            }
+            err("switch 分支的模式必须是编译期常量：`" + n->ident +
+                    "` 是变量；请用字面量或枚举成员",
+                e);
+        }
+        err("switch 分支的模式必须是编译期常量（整数字面量、字符字面量或枚举成员）", e);
+    }
+
+    std::vector<std::pair<std::string, long long>> enum_members_of(const TypePtr& et) {
+        std::vector<std::pair<std::string, long long>> out;
+        auto it = infos_.find(et->unit);
+        if (it == infos_.end() || !it->second.unit) return out;
+        for (auto& d : it->second.unit->decls) {
+            auto* ed = dynamic_cast<EnumDecl*>(d.get());
+            if (!ed || ed->name != et->name) continue;
+            long long value = 0;
+            bool has = false;
+            for (auto& [m, v] : ed->members) {
+                if (v.has_value()) {
+                    value = *v;
+                    has = true;
+                } else if (!has) {
+                    value = 0;
+                    has = true;
+                } else {
+                    value += 1;
+                }
+                out.emplace_back(m, value);
+            }
+        }
+        return out;
+    }
+
+    void check_switch(SwitchStmt* s) {
+        ScopeGuard guard(*this);
+        TypePtr st = check_expr(s->scrut.get());
+        if (!st) err("switch 缺少被匹配的表达式", s);
+        const bool enum_sw = st->kind == TypeKind::Enum;
+        if (!enum_sw && !(is_prim(st) && is_integer(st))) {
+            err("switch 的被匹配值必须是整数或枚举（实际是 " + st->str() + "）", s->scrut.get());
+        }
+        s->sty = st;
+
+        // 重叠检测：按 [lo, hi) 区间合并，top = 覆盖到类型的最大值
+        struct Iv {
+            long long lo = 0;
+            long long hi = 0;
+            bool top = false;
+            const Node* node = nullptr;
+        };
+        std::vector<Iv> ivs;
+
+        for (auto& up : s->arms) {
+            SwitchArm* arm = up.get();
+            if (arm->is_else) {
+                if (s->has_else) err("switch 只能有一个 `else` 分支", s);
+                s->has_else = true;
+            }
+            if (arm->pats.empty() && !arm->is_else) {
+                err("switch 分支缺少模式", s);
+            }
+            for (auto& p : arm->pats) {
+                p.vlo = pattern_value(p.lo.get(), st);
+                Iv iv;
+                iv.lo = p.vlo;
+                iv.node = p.lo.get();
+                if (p.is_range) {
+                    if (enum_sw) {
+                        err("枚举 switch 不支持区间分支（枚举成员没有数值序）；请逐个列出成员",
+                            p.lo.get());
+                    }
+                    p.vhi = pattern_value(p.hi.get(), st);
+                    if (p.vlo >= p.vhi) {
+                        err("switch 区间 `" + std::to_string(p.vlo) + ".." +
+                                std::to_string(p.vhi) +
+                                "` 为空：半开区间的上界必须大于下界",
+                            p.lo.get());
+                    }
+                    iv.hi = p.vhi;
+                } else {
+                    if (p.vlo == LLONG_MAX) {
+                        iv.hi = p.vlo;
+                        iv.top = true;
+                        p.vhi = p.vlo;  // 仅内部使用；+1 会溢出
+                    } else {
+                        iv.hi = p.vlo + 1;
+                        p.vhi = p.vlo + 1;  // 仅内部使用（p.vlo 是唯一命中值）
+                    }
+                }
+                ivs.push_back(iv);
+            }
+            check_block(arm->body.get());
+        }
+
+        std::sort(ivs.begin(), ivs.end(),
+                  [](const Iv& a, const Iv& b) { return a.lo < b.lo; });
+        for (size_t i = 1; i < ivs.size(); ++i) {
+            const Iv& prev = ivs[i - 1];
+            const Iv& cur = ivs[i];
+            if (prev.top || cur.lo < prev.hi) {
+                err("switch 分支重叠：值 " + std::to_string(cur.lo) +
+                        " 已被前面的分支覆盖（区间半开，`a..b` 不含 b）",
+                    cur.node);
+            }
+        }
+
+        if (enum_sw) {
+            auto members = enum_members_of(st);
+            std::string missing;
+            for (auto& [name, v] : members) {
+                bool covered = false;
+                for (auto& up : s->arms) {
+                    for (auto& p : up->pats) {
+                        if (!p.is_range && p.vlo == v) covered = true;
+                    }
+                }
+                if (!covered) {
+                    if (!missing.empty()) missing += ", ";
+                    missing += name;
+                }
+            }
+            if (!s->has_else) {
+                if (!missing.empty()) {
+                    err("switch 没有覆盖枚举 " + st->str() + " 的全部成员（缺少 " + missing +
+                            "）；补分支或写 `else:`",
+                        s);
+                }
+                s->enum_exhaustive = true;
+            } else if (missing.empty()) {
+                warn("`else` 分支不可达：已覆盖枚举 `" + st->str() + "` 的全部成员", s);
+            }
         }
     }
 
@@ -2638,9 +2836,6 @@ private:
         if (e->ident == "this" && lookup_local("this") == nullptr) {
             err("`this` 只能出现在 class/struct 方法/构造器/析构器中", e);
         }
-        if (e->ident == "this" && cur_class_ && cur_class_->kind == TypeKind::Struct) {
-            err("struct 方法内暂不支持显式 `this`（用字段名或隐式方法调用）", e);
-        }
         if (LocalVar* lv = lookup_local(e->ident)) {
             e->kind = "local";
             e->sym = lv;
@@ -2829,6 +3024,10 @@ private:
 
     TypePtr check_unary(Unary* e) {
         if (e->op == "&") {
+            if (auto nm = dynamic_cast<Name*>(e->operand.get());
+                nm && nm->ident == "this" && lookup_local("this") != nullptr) {
+                err("不能对 `this` 取地址：`this` 是当前对象的引用", e);
+            }
             if (!is_lvalue(e->operand.get())) err("`&` 需要一个可寻址的对象", e);
             TypePtr t = check_expr(e->operand.get());
             if (auto m = dynamic_cast<Member*>(e->operand.get()); m && m->kind == "enum_const") {

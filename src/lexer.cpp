@@ -38,6 +38,7 @@ const std::unordered_set<std::string>& keywords() {
     static const std::unordered_set<std::string> kws = {
         "unit",     "use",      "public",  "private", "const",   "auto",    "struct",   "enum",
         "extern",   "if",       "else",    "elif",    "while",    "for",      "in",
+        "switch",
         "ref",      "break",    "continue", "return", "true",     "false",    "null",
         "as",       "sizeof",   "alignof", "len",     "alloc",    "realloc",  "free",
         "void",     "bool",     "byte",    "char",     "short",

@@ -1288,6 +1288,9 @@ struct Emitter {
             if (n->kind == "field" && n->implicit_this) {
                 return curClassTy && curClassTy->kind == TypeKind::Struct && curClassTy->is_packed;
             }
+            if (n->ident == "this") {
+                return curClassTy && curClassTy->kind == TypeKind::Struct && curClassTy->is_packed;
+            }
             return false;
         }
         if (auto u = dynamic_cast<Unary*>(e)) {
@@ -1329,7 +1332,13 @@ struct Emitter {
 
     Value* addrOf(Expr* e) {
         if (auto n = dynamic_cast<Name*>(e)) {
-            if (n->ident == "this") return thisSlot;
+            if (n->ident == "this") {
+                // `this` 是当前对象的引用：struct 的接收者本身是对象地址，
+                // class/interface 的接收者是句柄（值），定位到句柄槽即可。
+                if (curClassTy && curClassTy->kind == TypeKind::Struct)
+                    return b.CreateLoad(ptrTy(), thisSlot);
+                return thisSlot;
+            }
             if (n->kind == "field" && n->implicit_this) {
                 if (!curClassTy || !thisSlot) fail("LLVM 后端：隐式字段访问缺少 this", n->line, n->col);
                 return fieldAddr(b.CreateLoad(ptrTy(), thisSlot), curClassTy, n->field_index);
@@ -1348,11 +1357,6 @@ struct Emitter {
             if (m->kind == "global") {
                 auto* gv = std::get_if<GlobalVar*>(&m->sym);
                 if (gv) return mod->getOrInsertGlobal((*gv)->cname, lt((*gv)->rty));
-            }
-            if (auto on = dynamic_cast<Name*>(m->obj.get());
-                on && on->ident == "this" && curClassTy &&
-                curClassTy->kind == TypeKind::Struct) {
-                return fieldAddr(b.CreateLoad(ptrTy(), thisSlot), curClassTy, m->field_index);
             }
             TypePtr ot = m->obj->ty;
             if (ot->kind == TypeKind::Class) {
@@ -2477,6 +2481,10 @@ struct Emitter {
             emitFor(fs);
             return;
         }
+        if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
+            emitSwitch(sw);
+            return;
+        }
         if (auto d = dynamic_cast<DelStmt*>(s)) {
             if (d->value->ty && d->value->ty->kind == TypeKind::Null) return;  // del null
             Value* addr = addrOf(d->value.get());
@@ -2627,6 +2635,69 @@ struct Emitter {
         Value* ci3 = b.CreateLoad(i64(), idx);
         b.CreateStore(b.CreateAdd(ci3, ConstantInt::get(i64(), 1)), idx);
         b.CreateBr(condBB);
+        b.SetInsertPoint(endBB);
+    }
+
+    // switch：值分支走 LLVM switch（跳表），区间分支走比较链，else 兜底。
+    void emitSwitch(SwitchStmt* s) {
+        Value* sv = eval(s->scrut.get());
+        LType* sty = sv->getType();
+        BasicBlock* endBB = BasicBlock::Create(ctx, "switch.end", curFn);
+
+        std::vector<BasicBlock*> bodyBB;
+        bodyBB.reserve(s->arms.size());
+        for (size_t i = 0; i < s->arms.size(); ++i) {
+            bodyBB.push_back(BasicBlock::Create(ctx, "switch.arm", curFn));
+        }
+
+        int elseIdx = -1;
+        std::vector<std::pair<ConstantInt*, BasicBlock*>> cases;
+        std::vector<std::pair<SwitchPat*, BasicBlock*>> ranges;
+        for (size_t i = 0; i < s->arms.size(); ++i) {
+            if (s->arms[i]->is_else) elseIdx = static_cast<int>(i);
+            for (auto& p : s->arms[i]->pats) {
+                if (p.is_range) {
+                    ranges.push_back({&p, bodyBB[i]});
+                } else {
+                    cases.push_back({ConstantInt::get(llvm::cast<IntegerType>(sty),
+                                                      static_cast<uint64_t>(p.vlo), true),
+                                     bodyBB[i]});
+                }
+            }
+        }
+
+        BasicBlock* fallback = elseIdx >= 0 ? bodyBB[elseIdx] : endBB;
+        BasicBlock* defBB = BasicBlock::Create(ctx, "switch.default", curFn);
+        if (cases.empty()) {
+            b.CreateBr(defBB);
+        } else {
+            auto* sw = b.CreateSwitch(sv, defBB, static_cast<unsigned>(cases.size()));
+            for (auto& entry : cases) sw->addCase(entry.first, entry.second);
+        }
+
+        // 默认路径：按源码顺序测试区间分支，最后落到 else 或 switch.end
+        b.SetInsertPoint(defBB);
+        const bool unsig = s->sty && !s->sty->is_signed();
+        for (size_t k = 0; k < ranges.size(); ++k) {
+            BasicBlock* next = (k + 1 < ranges.size())
+                                   ? BasicBlock::Create(ctx, "switch.next", curFn)
+                                   : fallback;
+            Value* lo = ConstantInt::get(llvm::cast<IntegerType>(sty),
+                                         static_cast<uint64_t>(ranges[k].first->vlo), true);
+            Value* hi = ConstantInt::get(llvm::cast<IntegerType>(sty),
+                                         static_cast<uint64_t>(ranges[k].first->vhi), true);
+            Value* ge = unsig ? b.CreateICmpUGE(sv, lo) : b.CreateICmpSGE(sv, lo);
+            Value* lt = unsig ? b.CreateICmpULT(sv, hi) : b.CreateICmpSLT(sv, hi);
+            b.CreateCondBr(b.CreateAnd(ge, lt), ranges[k].second, next);
+            if (k + 1 < ranges.size()) b.SetInsertPoint(next);
+        }
+        if (ranges.empty()) b.CreateBr(fallback);
+
+        for (size_t i = 0; i < s->arms.size(); ++i) {
+            b.SetInsertPoint(bodyBB[i]);
+            block(s->arms[i]->body.get());
+            if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
+        }
         b.SetInsertPoint(endBB);
     }
 
@@ -3402,6 +3473,8 @@ void llvm_emit_object(Program& prog, const std::string& obj_path) {
     pm.run(*em.mod);
     dest.flush();
 }
+
+
 
 
 

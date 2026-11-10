@@ -181,6 +181,7 @@ private:
     std::unique_ptr<Stmt> parse_if();
     std::unique_ptr<Stmt> parse_while();
     std::unique_ptr<Stmt> parse_for();
+    std::unique_ptr<Stmt> parse_switch();
 
     // ------------------------------------------------------ 表达式
 
@@ -987,6 +988,11 @@ std::vector<StmtPtr> Parser::parse_stmt() {
         out.push_back(parse_for());
         return out;
     }
+    if (at_kw("switch")) {
+        std::vector<StmtPtr> out;
+        out.push_back(parse_switch());
+        return out;
+    }
     if (at_kw("break")) {
         advance();
         semicolon();
@@ -1302,6 +1308,54 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     node->body = std::move(body);
     node->line = tk.line;
     node->col = tk.col;
+    return node;
+}
+
+std::unique_ptr<Stmt> Parser::parse_switch() {
+    const Token tk = expect_kw("switch");
+    ExprPtr scrut = parse_expr();
+    forbid_inc_expr();
+    expect_op("{");
+    auto node = std::make_unique<SwitchStmt>();
+    node->scrut = std::move(scrut);
+    node->line = tk.line;
+    node->col = tk.col;
+    bool saw_else = false;
+    while (!at_op("}")) {
+        if (at_eof()) throw err_at("switch 没有闭合", tk);
+        const Token at = peek();
+        auto arm = std::make_unique<SwitchArm>();
+        arm->line = at.line;
+        arm->col = at.col;
+        if (at_kw("else")) {
+            advance();
+            if (saw_else) throw err_at("switch 只能有一个 `else` 分支", at);
+            arm->is_else = true;
+            saw_else = true;
+        } else {
+            if (saw_else) throw err_at("`else:` 必须是 switch 的最后一个分支", at);
+            for (;;) {
+                SwitchPat pat;
+                pat.lo = parse_expr();
+                if (at_op("..")) {
+                    advance();
+                    pat.is_range = true;
+                    pat.hi = parse_expr();
+                }
+                arm->pats.push_back(std::move(pat));
+                if (!at_op(",")) break;
+                advance();
+            }
+        }
+        if (!at_op(":")) {
+            throw err_at("switch 分支需要以 `:` 结尾（模式列表后写 `:`，分支体必须是 `{ }`）",
+                         peek());
+        }
+        advance();  // :
+        arm->body = parse_block();
+        node->arms.push_back(std::move(arm));
+    }
+    expect_op("}");
     return node;
 }
 

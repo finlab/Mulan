@@ -292,6 +292,33 @@ struct ForInStmt : Stmt {
     std::unique_ptr<LocalVar> lvar;  // 循环变量的符号（codegen 用其 cname/by_ref）
 };
 
+// switch 分支模式：单值或半开区间 [vlo, vhi)
+struct SwitchPat {
+    ExprPtr lo;
+    ExprPtr hi;  // 区间上界（is_range 时非空）
+    bool is_range = false;
+    // sema
+    long long vlo = 0;
+    long long vhi = 0;
+};
+
+struct SwitchArm {
+    std::vector<SwitchPat> pats;
+    bool is_else = false;
+    std::unique_ptr<Block> body;
+    int line = 0;
+    int col = 0;
+};
+
+struct SwitchStmt : Stmt {
+    ExprPtr scrut;
+    std::vector<std::unique_ptr<SwitchArm>> arms;
+    // sema
+    TypePtr sty;
+    bool has_else = false;
+    bool enum_exhaustive = false;  // 枚举已覆盖全部成员（没有 else 也算穷尽）
+};
+
 struct BreakStmt : Stmt {};
 struct ContinueStmt : Stmt {};
 

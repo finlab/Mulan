@@ -56,14 +56,14 @@
 
 ```
 unit use public private const auto struct enum extern class interface new del weak packed
-if else while for in ref break continue return
+if else while for in switch ref break continue return
 true false null as sizeof alignof len alloc realloc free
 void bool byte char short ushort int uint long ulong
 float double usize isize
 and or not override operator super this
 ```
 
-> `switch/goto/union/typedef/fn` 暂不纳入。`len/sizeof/alloc/...` 是内建标识符，禁止被用户声明遮蔽（建议）。
+> `goto/union/typedef/fn` 暂不纳入。`len/sizeof/alloc/...` 是内建标识符，禁止被用户声明遮蔽（建议）。
 > `dynamic` / `any` 预留给后续动态类型/顶层类型，不作为第一阶段关键字。
 > `packed` 是**硬关键字**（布局修饰符，见 3.4，已实现）；`align` 是**上下文关键字**——仅当它出现在类型声明起始位置
 > 且紧跟 `(` 时按修饰符解析（`align(8) struct S {...}`），其他位置仍可作标识符（`int align = 4;` 合法）。
@@ -90,13 +90,14 @@ and or not override operator super this
 ```
 where  try  catch  throw  finally
 async  await  spawn  shared  atomic
-move  unsafe  typeof  match
+move  unsafe  typeof
 ```
 
 - 泛型：`where`；
 - 异常：`try/catch/throw/finally`；
 - 并发：`async/await/spawn/shared/atomic`；
-- 其他：`move/unsafe/typeof/match`。
+- 其他：`move/unsafe/typeof`。
+  > `match` 不再是保留字：分发构造只保留 `switch`（见 6.6），将来由它吸收模式匹配。
 
 ---
 
@@ -211,7 +212,8 @@ struct Point {
 - `Point(...)` 是值构造，不是堆分配；不引入 `new`（保留给将来的堆分配）。
 - 语义分析阶段解析：被调名是类型则按结构体构造，是函数则按函数调用；类型名与同作用域的函数/变量名不得冲突。
 - 可声明**方法**（`ret name(params) { ... }`）：静态派发、无 vtable、无继承/虚函数；
-  `this` 隐式可用（字段/隐式方法调用），显式 `this` 暂不支持；方法可重载，不能与字段同名。
+  `this` 是当前对象的引用（非指针），隐式可用，也可显式写 `this` 访问字段/调用方法；
+  方法可重载，不能与字段同名。
   方法不改变 C 布局（字段顺序/对齐仍与 C 一致）。
 - 可声明**构造器/析构器**：
   - `S(...)` 构造器可重载；`S s;` 调用无参构造器；`S s = S(args);` 直接就地构造；
@@ -288,7 +290,7 @@ enum Color { Red, Green, Blue }
 ```
 
 - 底层类型 `int`；默认从 0 递增；可显式赋值 `Red = 1`。
-- 仅命名常量，不是和类型；没有 `match` 穷尽检查（待定）。
+- 仅命名常量，不是和类型；`switch` 对枚举做编译期穷尽检查（见 6.6）。
 - 成员名在同一枚举内必须唯一。
 - **引用方式**：成员可无前缀使用（`Red`，本 unit 与 `use` 导入的 unit 都适用），
   也可写限定名 `Color.Red`；跨 unit 用 `unit.Color.Red`。`类型.成员` 只对枚举成立；
@@ -461,7 +463,8 @@ class Button : Widget, IFocusable { ... }     // 第一个是类，其余是接�
 
 ### 3.11 方法、重载与运算符
 
-- 类方法：`ret name(params) { ... }`；`this` 是隐式借用的当前对象句柄，需要消歧时写 `this`。
+- 类方法：`ret name(params) { ... }`；`this` 是当前对象的引用（class 为对象句柄，struct 为对象本身的左值别名），
+  隐式可用，需要消歧时显式写 `this`；`this` 不是指针，不能取地址。
 - 方法内可直接访问字段；`this` 不可重绑定；`const` 方法（**暂缓**，语法未定）不能写字段。
 - 方法默认虚；`override` 必须与基类/接口方法签名一致。
 
@@ -740,8 +743,38 @@ for ref x in seq { ... }   // x 是元素的可变引用
 - `return expr;` / `return;`（void）。
 - `del c;`：释放一次 class 强引用并把句柄置 null（见 3.8 / 8.3）。
 - 不提供 `do-while`、C 风格 `for`、`goto`。
-- `switch` 第一阶段不实现；用 `if/else if`；后续讨论无 fallthrough 的 `switch` 或 `match`。
+- `switch` 见 6.6：无 fallthrough，分支体必须带花括号。
 - 无异常、无 `try/catch`；致命错误用 `abort()`（libc）或返回错误码。
+
+### 6.6 switch（已实现 0.0.45）
+
+```mu
+switch code {
+    0:         { return 0; }
+    1, 2:      { return 1; }
+    3..10:     { return 2; }      // 半开区间：[3, 10)
+    Color.Red: { return 3; }
+    else:      { return -1; }
+}
+```
+
+- 形式：`switch expr { 分支* }`。`expr` 的括号**可选**（与 `if/while/for` 一致，规范写法省略）；`}` 后不加 `;`。
+- 分支：`模式列表 : { 语句* }` 或 `else : { 语句* }`。分支体**必须**是花括号块（与项目“花括号强制”一致），每个分支体是独立块作用域。
+- `else` 至多一个，且必须是最后一个分支。空分支写 `{}`。
+- **无 fallthrough**，也不需要 `break`；同一个分支要匹配多个值直接写 `,`。
+- 模式必须是**编译期常量**：整数字面量、字符字面量、带一元 `-`/`+` 的字面量、枚举成员。变量（包括运行期初始化的 `const`）不能作模式。
+- 区间 `a..b` 为**半开区间**（含 `a`，不含 `b`），端点须为同类型常量且 `a < b`，否则编译错误。只支持 `..`，不支持 `..=`、`...`、`step`（与 for-in 区间口径一致）。
+- **枚举**：
+  - 分支只接受该枚举的成员：可省略前缀（`Red`），也可写 `Color.Red` / `unit.Color.Red`；不做整数隐式转换（`0` 匹配 `Color` 是错误）。
+  - 不支持区间分支（枚举成员没有数值序）。
+  - **必须穷尽**：覆盖全部成员，否则编译错误并列出缺少的成员；写 `else` 等于放弃穷尽保证（此时若已覆盖全部成员，`else` 不可达，给 warning）。
+- **整型 / `char` / `byte`**：`else` 可选；未命中的值直接跳过，不是错误。
+- 被匹配值的类型仅限整型与枚举；`bool`、浮点、指针、class、interface、`string`、struct、数组都是编译错误。
+- 被匹配表达式只求值一次；分支按源码顺序匹配。模式重复或重叠（区间相交、值与区间相交）是编译错误，因此顺序不影响语义，后端可自由重排。
+- `break` / `continue` **不属于** `switch`：始终作用于最近的循环；没有外层循环时按既有规则报错。`switch` 不能作为 `break` 的目标。
+- 枚举被 `as` 造出未声明的值、且没有 `else` 时，落空是 **UB**（与 `as` 不做校验一致）；debug 构建可 trap。
+- 实现：密集整数/枚举值走 LLVM `switch`（跳表），区间分支走比较链，`else` 作默认分支。
+- 尚未支持（后续与和类型一起评估）：`switch` 表达式形式、守卫（`if` 子句）、绑定（`x @ p`）、or 模式、类型分支、struct/元组解构。
 
 ---
 
@@ -939,7 +972,8 @@ unit example;
 | 位运算优先级 | 低于比较 | 高于比较 |
 | `not` 优先级 | 一元，最高档 | 低优先级，仅高于 `and`/`or` |
 | 预处理 | 有 | 无 |
-| goto/switch | 有 | 待定/暂不实现 |
+| goto | 有 | 不提供 |
+| switch | 有 fallthrough、`case` 标签 | 有；无 fallthrough、无 `case`、`模式列表 : { }`、枚举必须穷尽（6.6） |
 | 结构体构造 | `(struct S){...}` | 声明 `S s = {x=..., y=...}`；表达式 `S(...)` |
 | 堆对象 | `malloc/free` | `new/del` + 引用计数（无 GC） |
 | 引用 | 指针 + `->` | `class` 句柄，自动解引用；struct 用 `ref` 参数 |
@@ -963,10 +997,10 @@ unit example;
 | 6 | 动态数组是否纳入第一阶段 | 已定：纳入（`T[]` / `T[,]`，RC 堆数组） |
 | 7 | 边界检查策略 | debug 检查；release 可配 |
 | 8 | 有符号溢出 | 定义为回绕 |
-| 9 | `switch`/`match` | 第二阶段 |
+| 9 | `switch`/`match` | 已定（0.0.45）：只有 `switch`（无 fallthrough、`模式: { }`、多值、半开区间、枚举穷尽）；`match` 不再保留，表达式形式/守卫/绑定/类型分支待定 |
 | 10 | `goto`/`union`/`typedef`/函数指针/varargs | 第二阶段或不做 |
 | 11 | `for-in` 的索引形态 / `ref` / 默认拷贝 | 先 `x` + `ref x`；索引形态后加 |
-| 12 | range 的 `..=` / `step` / 倒序 | 先只支持 `..` |
+| 12 | range 的 `..=` / `step` / 倒序 | 先只支持 `..`（switch 分支区间同此口径） |
 | 13 | 局部类型推断 | 已定：`auto x = expr;`；仅局部、必须有初始化器；多声明符类型一致 |
 | 14 | 参数默认可变性 | 可变（C 语义） |
 | 15 | `main` 带参数 | 第一阶段只 `int main()` |
