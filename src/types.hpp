@@ -1,4 +1,7 @@
-// mu-lan 类型模型
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
+// Mulan 类型模型
 #pragma once
 
 #include <cstddef>

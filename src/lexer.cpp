@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
 // 词法分析
 //
 // 与 Python 版的行为保持一致：关键字表、数字字面量（十进制 / 0x / 0b / 浮点 + f 后缀）、

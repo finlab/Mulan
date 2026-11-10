@@ -1,4 +1,7 @@
-// mu-lan 类型模型
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
+// Mulan 类型模型
 //
 // 设计：TypePtr 指向不可变的值对象；Struct 的 fields 在先建占位、后填充
 // （对应 Python 版 StructType 的两阶段构造），因此这里不用 const。

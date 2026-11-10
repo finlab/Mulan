@@ -1,4 +1,7 @@
-// mulanc 命令行入口
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
+// muc 命令行入口
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

@@ -1,5 +1,5 @@
-mu-lan (Mu_Lan)
-Copyright 2026 ooaa
+Mulan (木兰)
+Copyright 2026 Zhang Guolong
 
 This product is licensed under the Apache License, Version 2.0.
 See the LICENSE file for the full text of the license.
@@ -18,10 +18,10 @@ built with LLVM enabled, links against LLVM libraries.
   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
   The LLVM Exceptions to the Apache 2.0 License are applicable to the
-  LLVM components listed above and do not extend to mu-lan itself.
+  LLVM components listed above and do not extend to Mulan itself.
 
 -------------------------------------------------------------------------------
 
-Programs written in the mu-lan language, and the object files or executables
-produced by the mu-lan compiler from such programs, are not derivative works
+Programs written in the Mulan language, and the object files or executables
+produced by muc from such programs, are not derivative works
 of the compiler and may be distributed under terms of your choosing.

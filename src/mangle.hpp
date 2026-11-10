@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
 // 符号修饰：sema 与 codegen 共享，保证两侧算出的名字一致。
 #pragma once
 

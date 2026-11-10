@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
 // unit 加载
 //
 // 默认库搜索路径：
 //   1. 入口文件所在目录
 //   2. 命令行 -I 指定的目录
-//   3. 环境变量 MULANC_LIBS（`;` 或 `:` 分隔）
+//   3. 环境变量 MUC_LIBS（`;` 或 `:` 分隔）
 //   4. 当前目录及其祖先目录下的 libs / libs/std
 //
 // 标准库 unit 用点号分层：`unit std.string;` 对应 `libs/std/string.mu`。

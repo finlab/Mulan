@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
 // 语法分析
 //
 // 递归下降；优先级层次与 Python 版完全一致（高 → 低）：

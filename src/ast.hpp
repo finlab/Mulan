@@ -1,4 +1,7 @@
-// mu-lan AST
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
+// Mulan AST
 //
 // 设计：与 Python 版一一对应，语义分析把结果直接写回节点字段。
 #pragma once

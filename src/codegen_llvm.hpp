@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
 // LLVM 后端（阶段 B）：LLVM C++ API 生成 COFF 目标文件
 #pragma once
 

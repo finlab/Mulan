@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
 // 语义分析：名字解析、类型检查、类型注解
 //
 // 流程与 Python 版一致：

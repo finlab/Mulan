@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
 // LLVM 后端：用 LLVM C++ API 直接构造 IR，产出 COFF 目标文件（由 gcc 链接）。
 //
 // 策略：所有局部变量用 alloca 承载（配合 -O 时可被 mem2reg 优化）。

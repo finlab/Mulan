@@ -1,4 +1,7 @@
-// mu-lan 编译器 —— 公共基础设施（错误、字符串工具）
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
+// muc（Mulan 语言编译器）—— 公共基础设施（错误、字符串工具）
 #pragma once
 
 #include <stdexcept>
