@@ -59,12 +59,13 @@ const char* const OPS2[] = {"==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%="
                             "|=", "^=", "<<", ">>", "..", "++", "--"};
 const char* const OPS1 = "+-*/%&|^!~<>=(){}[];,.?:";
 
-// 近似 Python 的 repr(ch)，用于「非法字符」提示
+// 用于「非法字符」提示；与其它诊断一致，代码片段用反引号包裹
 std::string quote_char(int ch) {
-    if (ch == '\'') return "\"'\"";
-    if (ch >= 0x20 && ch < 0x7F) return std::string("'") + static_cast<char>(ch) + "'";
+    if (ch == '`') return "`\\``";
+    if (ch == '\\') return "`\\\\`";
+    if (ch >= 0x20 && ch < 0x7F) return std::string("`") + static_cast<char>(ch) + "`";
     char buf[16];
-    std::snprintf(buf, sizeof(buf), "'\\x%02x'", static_cast<unsigned>(ch) & 0xFFu);
+    std::snprintf(buf, sizeof(buf), "`\\x%02x`", static_cast<unsigned>(ch) & 0xFFu);
     return buf;
 }
 

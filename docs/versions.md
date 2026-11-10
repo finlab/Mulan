@@ -68,4 +68,6 @@
 
 | 0.0.52 | 2026-11-10 | **诊断消息与 CLI 输出全部英文化**：`src/` 中 787 处字符串字面量（lexer/parser/sema/codegen/main/loader）改为英文，风格对齐 clang/rustc——小写开头、不加句号、`cannot`/`expected X but got Y`/`unknown`/`invalid` 等惯用表达，代码标识符仍用反引号；`--help` 重写为 `Usage:` / `build options:` / `Environment:` 三段式；代码注释保持中文不变。`tests/errors/*.err` 187 个期望文件同步为对应的英文消息片段（按原「第 N 条诊断」一一映射，`strings` 等成功用例不受影响） | 265/265（65 成功 + 187 报错 + 13 check）；冷编译零 warning |
 
+| 0.0.53 | 2026-11-10 | **非法字符提示改用反引号**：`quote_char()` 输出由 `'x'` 改为 `` `x` ``，与其它诊断的代码片段风格统一；反斜杠 / 反引号本身 / 控制字符分别输出 `` `\` ``、`` `\`` ``、`` `\x0b` ``。新增 `invalid_char` 报错用例（此前该诊断无覆盖） | 266/266（65 成功 + 188 报错 + 13 check）；冷编译零 warning |
+
 > 后续条目只递增 build 号，例如 0.0.2、0.0.3……；主/次版本变更会单独注明。
