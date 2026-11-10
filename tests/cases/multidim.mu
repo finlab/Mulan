@@ -48,8 +48,16 @@ int main() {
     b2[0,0] = 5;
     if b[0,0] != 5 { puts("dyn share"); return 16; }
     int sum = 0;
-    for x in b { sum += x; }
-    if sum != 12 { puts("dyn for"); return 17; }
+    int r = 0;
+    while r < 2 {
+        int c = 0;
+        while c < 3 {
+            sum += b[r,c];
+            c += 1;
+        }
+        r += 1;
+    }
+    if sum != 12 { puts("dyn sum"); return 17; }
 
     // 动态三维
     int[,,] d3 = new int[2,2,2];

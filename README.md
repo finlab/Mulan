@@ -150,3 +150,14 @@ int main() {
 - 编译器自身在 `-D_GLIBCXX_ASSERTIONS -fstack-protector-strong` 下重编后跑同一套测试（两个后端）全绿；
   注意 `-D_GLIBCXX_DEBUG` 与 LLVM 共享库 ABI 不兼容，不能用于链接 LLVM 的构建。
 - 冷编译 `--clean-first` 零 warning（`-Wall -Wextra`）。
+
+## 许可
+
+本项目（编译器、运行时与工具链）以 **Apache License 2.0** 授权，全文见 [`LICENSE`](LICENSE)，
+第三方组件声明见 [`NOTICE`](NOTICE)。
+
+- 使用、修改、再分发均须遵守 Apache-2.0：保留版权与许可声明、随附 `NOTICE`、标注修改过的文件。
+- 提供**显式专利授权**及专利报复条款；Apache-2.0 **不授予商标权**。
+- 用木澜语法编写的程序，及 `mulanc` 由其生成的目标文件 / 可执行文件，**不是**编译器的衍生作品，
+  可按你自己的条款分发（Apache-2.0 对"仅链接 / 经由接口调用"的部分不视为衍生作品）。
+- 以 LLVM 为后端分发时，须同时遵守 LLVM 的 `Apache-2.0 WITH LLVM-exception`（见 `NOTICE`）。

@@ -2381,6 +2381,56 @@ private:
         }
     }
 
+    // 索引形态（SPEC 6.4.1）：length() -> usize  +  operator[](C, usize) -> T
+    void resolve_index_shape(ForInStmt* s, const TypePtr& st) {
+        TypePtr us = Type::make_prim("usize");
+        const MethodSig* len = find_method(st, "length", 0);
+        if (!len) {
+            err("`for-in` 不能遍历 " + st->str() +
+                    "：索引形态需要方法 `length() -> usize`（没有找到 `length()`）",
+                s->seq.get());
+        }
+        if (!same_type(len->ret, us)) {
+            err("`" + st->str() + "::length()` 必须返回 `usize`（实际是 `" +
+                    (len->ret ? len->ret->str() : "void") + "`）",
+                s->seq.get());
+        }
+
+        FuncDecl* picked = nullptr;
+        std::string saw_index;
+        for (auto* c : collect_operators("[]", {st, us})) {
+            if (c->pty.size() != 2) continue;
+            bool recv_ok = same_type(c->pty[0], st) ||
+                           (c->pty[0] && c->pty[0]->kind == TypeKind::Ptr &&
+                            same_type(c->pty[0]->elem, st));
+            if (!recv_ok) continue;
+            if (!same_type(c->pty[1], us)) {
+                if (saw_index.empty() && c->pty[1]) saw_index = c->pty[1]->str();
+                continue;
+            }
+            if (picked) {
+                err("`" + st->str() + "` 有多个 `operator[](" + st->str() +
+                        ", usize)` 重载，`for-in` 无法选择",
+                    s->seq.get());
+            }
+            picked = c;
+        }
+        if (!picked) {
+            std::string msg = "`for-in` 不能遍历 " + st->str() + "：索引形态还需要 `operator[](" +
+                              st->str() + ", usize) -> T`";
+            if (!saw_index.empty()) {
+                msg += "（找到的 `operator[]` 索引类型是 `" + saw_index + "`，需要 `usize`）";
+            }
+            err(msg, s->seq.get());
+        }
+
+        s->loop_kind = "index";
+        s->seq_ty = st;
+        s->elem_ty = picked->rty;
+        s->len_sig = len;
+        s->idx_fn = picked;
+    }
+
     void check_for(ForInStmt* s) {
         ScopeGuard guard(*this);
 
@@ -2401,16 +2451,30 @@ private:
             TypePtr st = check_expr(s->seq.get());
             if (!st) err("for-in 缺少序列", s);
             if (st->kind == TypeKind::Array) {
+                if (st->elem && st->elem->kind == TypeKind::Array) {
+                    err("`for-in` 不支持多维数组 `" + st->str() +
+                            "`：用下标循环，或先取一行再遍历",
+                        s->seq.get());
+                }
                 s->loop_kind = "array";
                 s->elem_ty = st->elem;
             } else if (st->kind == TypeKind::Slice) {
+                if (st->rank > 1) {
+                    err("`for-in` 不支持多维数组 `" + st->str() +
+                            "`：用下标循环（各维长度用 `len(a, k)`）",
+                        s->seq.get());
+                }
                 s->loop_kind = "slice";
                 s->elem_ty = st->elem;
             } else if (is_str(st)) {
                 s->loop_kind = "string";
                 s->elem_ty = Type::make_prim("byte");
+            } else if (st->kind == TypeKind::Struct || st->kind == TypeKind::Class) {
+                resolve_index_shape(s, st);
             } else {
-                err("for-in 不能遍历 " + st->str() + "（只支持区间、数组、切片、string）",
+                err("for-in 不能遍历 " + st->str() +
+                        "（支持区间、数组、切片、string；用户类型需提供 `length() -> usize` 与 "
+                        "`operator[](C, usize)`）",
                     s->seq.get());
             }
             s->seq_ty = st;
@@ -2418,6 +2482,10 @@ private:
 
         if (s->by_ref && s->loop_kind == "string") {
             err("string 不可变，不能用 `for ref` 遍历", s);
+        }
+        if (s->by_ref && s->loop_kind == "index") {
+            err("用户类型不支持 `for ref`（`operator[]` 返回的是值）；改用 `for i, x` + `c[i] = ...`",
+                s->seq.get());
         }
         if (s->by_ref && s->loop_kind == "range") {
             err("区间循环不能用 `for ref`", s);
@@ -2446,6 +2514,19 @@ private:
         declare_local(lv.get());
         s->var_ty = vt;
         s->lvar = std::move(lv);
+
+        if (s->has_idx) {
+            TypePtr us = Type::make_prim("usize");
+            auto ilv = std::make_unique<LocalVar>();
+            ilv->name = s->idx_name;
+            ilv->rty = us;
+            ilv->is_const = true;
+            ilv->line = s->line;
+            ilv->col = s->col;
+            declare_local(ilv.get());
+            s->idx_ty = us;
+            s->idx_lvar = std::move(ilv);
+        }
 
         ++loop_depth_;
         check_block(s->body.get());

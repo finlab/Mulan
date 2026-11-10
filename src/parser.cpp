@@ -1278,7 +1278,22 @@ std::unique_ptr<Stmt> Parser::parse_for() {
         by_ref = true;
     }
     if (peek().kind != TokKind::Ident) throw err("for-in 需要一个循环变量名");
-    std::string var = advance().text;
+    std::string first = advance().text;
+    bool has_idx = false;
+    std::string idx_name;
+    if (at_op(",")) {
+        if (by_ref) throw err("`for ref i, x` 不合法：索引形态写成 `for i, ref x in seq`（`ref` 紧贴元素变量）");
+        advance();  // ,
+        if (at_kw("ref")) {
+            advance();
+            by_ref = true;
+        }
+        if (peek().kind != TokKind::Ident) throw err("for-in 需要一个循环变量名");
+        idx_name = std::move(first);
+        first = advance().text;
+        has_idx = true;
+    }
+    std::string var = std::move(first);
     expect_kw("in");
     ExprPtr seq = parse_expr();
     if (at_op("..")) {
@@ -1296,6 +1311,8 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     auto node = std::make_unique<ForInStmt>();
     node->by_ref = by_ref;
     node->var = std::move(var);
+    node->has_idx = has_idx;
+    node->idx_name = std::move(idx_name);
     node->seq = std::move(seq);
     node->body = std::move(body);
     node->line = tk.line;

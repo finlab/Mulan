@@ -56,5 +56,6 @@ python tests/run_tests.py --keep-c        # 保留生成的中间产物（默认
 | `control` | `if/elif/else`、`while` + `break/continue`（含 `while true`）、`for i in 0..n`、区间端点表达式、嵌套循环 |
 | `struct` | 值语义（拷贝/传参互不影响）、`{x = 1, y = 2}`、`{3, 4}`、`= 0` 零初始化、`Point(...)`、`Point()` |
 | `arrays` | `int[N]` 聚合初始化补零、值语义拷贝与传参、`len`、`for v in arr`、`for ref v in arr` 改元素 |
+| `forin_index` | 索引形态用户容器（`length()` + `operator[](C, usize)`，struct/class）、`for i, x`（数组真实下标、区间相对偏移）、临时容器只求值一次、空容器 |
 | `strings` | `len`/`s[i]`（含下标字面量、for-in 遍历）、`char[N] = "..."` 拷贝+NUL、`puts(&buf[0])`、写 NUL 截断 |
 | `ptr` | `&x`/`*p`（含复合赋值）、指针参数、`p[i]` 与指针算术、`alloc/free`、`null` 判断、`readonly int*`、`(*pp).field` |

@@ -288,13 +288,19 @@ struct WhileStmt : Stmt {
 struct ForInStmt : Stmt {
     bool by_ref = false;
     std::string var;
+    bool has_idx = false;      // `for i, x in seq`
+    std::string idx_name;
     ExprPtr seq;
     std::unique_ptr<Block> body;
     // sema
-    std::string loop_kind;  // "range" | "array" | "slice" | "string"
+    std::string loop_kind;  // "range" | "array" | "slice" | "string" | "index"
     TypePtr elem_ty;
     TypePtr seq_ty;
     TypePtr var_ty;
+    TypePtr idx_ty;                      // `for i, x` 的 i：usize
+    std::unique_ptr<LocalVar> idx_lvar;  // 索引变量符号（codegen 用其 cname）
+    const MethodSig* len_sig = nullptr;  // 索引形态：length() -> usize
+    FuncDecl* idx_fn = nullptr;          // 索引形态：operator[](C, usize) -> T
     std::string cname;
     std::unique_ptr<LocalVar> lvar;  // 循环变量的符号（codegen 用其 cname/by_ref）
 };

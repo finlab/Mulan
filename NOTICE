@@ -1,0 +1,27 @@
+mu-lan (Mu_Lan)
+Copyright 2026 ooaa
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full text of the license.
+
+-------------------------------------------------------------------------------
+Third-party software
+-------------------------------------------------------------------------------
+
+This product compiles to native code using the LLVM toolchain and, when
+built with LLVM enabled, links against LLVM libraries.
+
+  LLVM
+  Copyright 2003-2026 The LLVM Project
+  Licensed under the Apache License v2.0 with LLVM Exceptions.
+  See https://llvm.org/LICENSE.txt for license information.
+  SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+  The LLVM Exceptions to the Apache 2.0 License are applicable to the
+  LLVM components listed above and do not extend to mu-lan itself.
+
+-------------------------------------------------------------------------------
+
+Programs written in the mu-lan language, and the object files or executables
+produced by the mu-lan compiler from such programs, are not derivative works
+of the compiler and may be distributed under terms of your choosing.

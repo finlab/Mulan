@@ -1673,6 +1673,81 @@ struct Emitter {
         pack.owned.clear();
     }
 
+    // 方法调用（recv 约定：class = 句柄值；struct = 对象地址）
+    Value* emitMethodCallVals(const MethodSig* sig, Value* recv, const TypePtr& recvTy,
+                              const std::vector<Value*>& args, Node* at) {
+        std::vector<LType*> ptys{ptrTy()};
+        for (auto& t : sig->params) ptys.push_back(lt(t));
+        auto* fnTy = FunctionType::get(lt(sig->ret), ptys, false);
+
+        bool ifaceCall = (recvTy && recvTy->kind == TypeKind::Interface) ||
+                         (sig->owner && sig->owner->kind == TypeKind::Interface);
+        if (ifaceCall) {
+            auto it = islotIndex.find(sigKey(*sig));
+            if (it == islotIndex.end()) {
+                fail("LLVM 后端：接口方法未进入 itable", at->line, at->col);
+            }
+            int slot = it->second;
+            Value* obj = nullptr;
+            Value* dsc = nullptr;
+            if (recvTy && recvTy->kind == TypeKind::Interface) {
+                obj = b.CreateExtractValue(recv, {0});
+                dsc = b.CreateExtractValue(recv, {1});
+            } else {
+                // 类变量上调用接口默认方法：现场构造接口值
+                obj = recv;
+                Value* dpp = b.CreateGEP(i8(), recv, ConstantInt::get(i64(), 8));
+                dsc = b.CreateLoad(ptrTy(), dpp);
+            }
+            Value* itp = b.CreateGEP(i8(), dsc, ConstantInt::get(i64(), 24));
+            Value* itab = b.CreateLoad(ptrTy(), itp);
+            Value* fnp = b.CreateGEP(ptrTy(), itab, ConstantInt::get(i64(), slot));
+            Value* fn = b.CreateLoad(ptrTy(), fnp);
+            std::vector<LType*> ip{ptrTy(), ptrTy()};
+            for (auto& t : sig->params) ip.push_back(lt(t));
+            auto* ifnTy = FunctionType::get(lt(sig->ret), ip, false);
+            std::vector<Value*> iargs{obj, dsc};
+            iargs.insert(iargs.end(), args.begin(), args.end());
+            return b.CreateCall(ifnTy, fn, iargs);
+        }
+
+        int slot = slotOf(recvTy, sig);
+        if (slot >= 0) {
+            Value* dp = b.CreateGEP(i8(), recv, ConstantInt::get(i64(), 8));
+            Value* desc = b.CreateLoad(ptrTy(), dp);
+            Value* vtp = b.CreateGEP(i8(), desc, ConstantInt::get(i64(), 16));
+            Value* vt = b.CreateLoad(ptrTy(), vtp);
+            Value* fnp = b.CreateGEP(ptrTy(), vt, ConstantInt::get(i64(), slot));
+            Value* fn = b.CreateLoad(ptrTy(), fnp);
+            std::vector<Value*> vals{recv};
+            vals.insert(vals.end(), args.begin(), args.end());
+            return b.CreateCall(fnTy, fn, vals);
+        }
+        // 未进虚表：静态调用声明处实现
+        FunctionCallee callee = methodFn(sig);
+        std::vector<Value*> vals{recv};
+        vals.insert(vals.end(), args.begin(), args.end());
+        return b.CreateCall(callee, vals);
+    }
+
+    // 用户 operator[]（自由函数）：容器按 class 句柄 / struct 地址 / struct 值传参
+    Value* emitOperatorIndexCall(FuncDecl* f, Value* seqAddr, const TypePtr& sty, Value* idxVal,
+                                 bool unaligned) {
+        std::vector<LType*> ptys;
+        for (auto& t : f->pty) ptys.push_back(lt(t));
+        FunctionCallee callee =
+            mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, false));
+        Value* cArg = nullptr;
+        if (sty->kind == TypeKind::Class) {
+            cArg = b.CreateLoad(lt(sty), seqAddr);
+        } else if (!f->pty.empty() && f->pty[0] && f->pty[0]->kind == TypeKind::Ptr) {
+            cArg = seqAddr;
+        } else {
+            cArg = loadAt(lt(sty), seqAddr, unaligned);
+        }
+        return b.CreateCall(callee, {cArg, idxVal});
+    }
+
     // 调用自由函数/运算符/方法（静态派发）
     Value* emitUserCall(FuncDecl* f, const std::vector<Expr*>& args) {
         std::vector<LType*> ptys;
@@ -1844,67 +1919,10 @@ struct Emitter {
                 recvTy = curClassTy;
                 recv = b.CreateLoad(lt(recvTy), thisSlot);
             }
-            std::vector<LType*> ptys{ptrTy()};
-            for (auto& t : sig->params) ptys.push_back(lt(t));
-            auto* fnTy = FunctionType::get(lt(sig->ret), ptys, false);
             std::vector<Expr*> rawArgs;
             for (auto& a : c->args) rawArgs.push_back(a.get());
             ArgPack pack = prepareArgs(rawArgs, sig->params);
-
-            bool ifaceCall = (recvTy && recvTy->kind == TypeKind::Interface) ||
-                             (sig->owner && sig->owner->kind == TypeKind::Interface);
-            if (ifaceCall) {
-                auto it = islotIndex.find(sigKey(*sig));
-                if (it == islotIndex.end()) {
-                    fail("LLVM 后端：接口方法未进入 itable", c->line, c->col);
-                }
-                int idx = it->second;
-                Value* obj = nullptr;
-                Value* dsc = nullptr;
-                if (recvTy && recvTy->kind == TypeKind::Interface) {
-                    obj = b.CreateExtractValue(recv, {0});
-                    dsc = b.CreateExtractValue(recv, {1});
-                } else {
-                    // 类变量上调用接口默认方法：现场构造接口值
-                    obj = recv;
-                    Value* dpp = b.CreateGEP(i8(), recv, ConstantInt::get(i64(), 8));
-                    dsc = b.CreateLoad(ptrTy(), dpp);
-                }
-                Value* itp = b.CreateGEP(i8(), dsc, ConstantInt::get(i64(), 24));
-                Value* itab = b.CreateLoad(ptrTy(), itp);
-                Value* fnp = b.CreateGEP(ptrTy(), itab, ConstantInt::get(i64(), idx));
-                Value* fn = b.CreateLoad(ptrTy(), fnp);
-                std::vector<LType*> ip{ptrTy(), ptrTy()};
-                for (auto& t : sig->params) ip.push_back(lt(t));
-                auto* ifnTy = FunctionType::get(lt(sig->ret), ip, false);
-                std::vector<Value*> iargs{obj, dsc};
-                for (auto* v : pack.vals) iargs.push_back(v);
-                Value* r = b.CreateCall(ifnTy, fn, iargs);
-                releaseTemps(pack);
-                if (recvOwned) emitReleaseRef(recv, recvTy);
-                return r;
-            }
-
-            int idx = slotOf(recvTy, sig);
-            if (idx >= 0) {
-                Value* dp = b.CreateGEP(i8(), recv, ConstantInt::get(i64(), 8));
-                Value* desc = b.CreateLoad(ptrTy(), dp);
-                Value* vtp = b.CreateGEP(i8(), desc, ConstantInt::get(i64(), 16));
-                Value* vt = b.CreateLoad(ptrTy(), vtp);
-                Value* fnp = b.CreateGEP(ptrTy(), vt, ConstantInt::get(i64(), idx));
-                Value* fn = b.CreateLoad(ptrTy(), fnp);
-                std::vector<Value*> vals{recv};
-                for (auto* v : pack.vals) vals.push_back(v);
-                Value* r = b.CreateCall(fnTy, fn, vals);
-                releaseTemps(pack);
-                if (recvOwned) emitReleaseRef(recv, recvTy);
-                return r;
-            }
-            // 未进虚表：静态调用声明处实现
-            FunctionCallee callee = methodFn(sig);
-            std::vector<Value*> vals{recv};
-            for (auto* v : pack.vals) vals.push_back(v);
-            Value* r = b.CreateCall(callee, vals);
+            Value* r = emitMethodCallVals(sig, recv, recvTy, pack.vals, c);
             releaseTemps(pack);
             if (recvOwned) emitReleaseRef(recv, recvTy);
             return r;
@@ -2588,6 +2606,7 @@ struct Emitter {
         BasicBlock* endBB = BasicBlock::Create(ctx, "for.end", curFn);
 
         AllocaInst* varSlot = slotFor(s->lvar.get());
+        AllocaInst* idxSlot = (s->has_idx && s->idx_lvar) ? slotFor(s->idx_lvar.get()) : nullptr;
 
         if (s->loop_kind == "range") {
             auto* re = dynamic_cast<RangeExpr*>(s->seq.get());
@@ -2600,6 +2619,12 @@ struct Emitter {
             Value* cur = b.CreateLoad(lt(vt), varSlot);
             b.CreateCondBr(b.CreateICmpSLT(cur, hi), bodyBB2, endBB);
             b.SetInsertPoint(bodyBB2);
+            if (idxSlot) {
+                TypePtr us = Type::make_prim("usize");
+                Value* curv = b.CreateLoad(lt(vt), varSlot);
+                Value* diff = b.CreateSub(curv, lo);
+                b.CreateStore(convertTo(diff, vt, us), idxSlot);
+            }
             loops.push_back({incBB, endBB});
             loopScopeDepth.push_back(refScopes.size());
             block(s->body.get());
@@ -2639,6 +2664,45 @@ struct Emitter {
                 stmtTemps.emplace_back(seqAddr, sty);
         }
 
+        // 索引形态（SPEC 6.4.1）：length() 一次 + operator[](C, usize) 每轮
+        if (s->loop_kind == "index") {
+            TypePtr us = Type::make_prim("usize");
+            Value* recv =
+                (sty->kind == TypeKind::Class) ? b.CreateLoad(lt(sty), seqAddr) : seqAddr;
+            Value* n = emitMethodCallVals(s->len_sig, recv, sty, {}, s);
+            n = convertTo(n, s->len_sig->ret, us);
+
+            auto* idx = entryAlloca(i64(), "for.idx");
+            b.CreateStore(ConstantInt::get(i64(), 0), idx);
+            b.CreateBr(condBB);
+            b.SetInsertPoint(condBB);
+            Value* ci = b.CreateLoad(i64(), idx);
+            b.CreateCondBr(b.CreateICmpULT(ci, n), bodyBB2, endBB);
+            b.SetInsertPoint(bodyBB2);
+            Value* ci2 = b.CreateLoad(i64(), idx);
+            if (idxSlot) b.CreateStore(ci2, idxSlot);
+            b.CreateStore(emitOperatorIndexCall(s->idx_fn, seqAddr, sty, ci2, seqUnaligned),
+                          varSlot);
+            // 调用结果是 owned 值：本轮结束（正常/break/continue）时释放
+            const bool ownVar = needsCleanup(s->elem_ty);
+            const size_t outerDepth = refScopes.size();
+            loops.push_back({incBB, endBB});
+            pushRefScope();
+            if (ownVar) refScopes.back().push_back(s->lvar.get());
+            loopScopeDepth.push_back(outerDepth);
+            block(s->body.get());
+            loopScopeDepth.pop_back();
+            loops.pop_back();
+            popRefScope();
+            if (!hasTerm(b.GetInsertBlock())) b.CreateBr(incBB);
+            b.SetInsertPoint(incBB);
+            Value* ci3 = b.CreateLoad(i64(), idx);
+            b.CreateStore(b.CreateAdd(ci3, ConstantInt::get(i64(), 1)), idx);
+            b.CreateBr(condBB);
+            b.SetInsertPoint(endBB);
+            return;
+        }
+
         // 长度与元素地址
         Value* len = nullptr;
         Value* elemPtr = nullptr;
@@ -2666,6 +2730,7 @@ struct Emitter {
         b.CreateCondBr(b.CreateICmpULT(ci, len), bodyBB2, endBB);
         b.SetInsertPoint(bodyBB2);
         Value* ci2 = b.CreateLoad(i64(), idx);
+        if (idxSlot) b.CreateStore(ci2, idxSlot);
         TypePtr et = s->elem_ty;
         Value* ep = gep(lt(et), elemPtr, ci2);
         if (s->by_ref) {

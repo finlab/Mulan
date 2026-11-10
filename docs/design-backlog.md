@@ -317,7 +317,7 @@
   - 暂缓：子切片/借用视图、`del`、`clone`、扩容接口、边界检查策略；
   - 矩形多维：静态 `T[m,n]`（嵌套定长数组，连续存储，`a[i,j]`/`a[i][j]`，`len(a,k)`
     要求字面量）；动态 `T[,]` + `new T[m,n]`（头部存各维尺寸，`a[i,j]` 线性化，
-    `len(a,k)` 可运行期，`for` 遍历全部元素）；`T[m,n]→T[,]` 分配复制；
+    `len(a,k)` 可运行期；**已改（用户拍板）：多维数组禁止 `for-in`**，见 U30）；`T[m,n]→T[,]` 分配复制；
   - 锯齿：`T[][]`，`new T[m][]` 一次只分配外层空行槽，行由循环 `new`；`new T[m][n]`
     明确报错；静态锯齿可用 `T[][N]` 定长行槽或嵌套聚合初始化；
   - 与旧设计的差异：不再有 `owner` 第 3 字段（句柄即头指针），不再支持 class/interface 切片禁用；
@@ -487,7 +487,8 @@
      子串/视图需要 ref 返回或复制；
   7. **字符串 API**：从内置 `string`/`readonly char*` 构造、c_str、len/cap/empty、append/insert/replace/trim/find/split、
      UTF-8 校验/码点迭代、格式化；
-  8. **迭代协议**：`for c in s` 目前只支持内置 string/数组/切片；用户 string 需要索引循环或迭代器协议；
+  8. **迭代协议**：`for c in s` 目前只支持内置 string/数组/切片；用户 string 需要索引循环或迭代器协议
+     （**已定方案见 U30**：索引形态 `length()` + `operator[](usize)` 优先，游标形态兜底）；
   9. **关键字冲突**：字段不能叫 `len`/`free` 等（`len` 已实测报错）；API 命名需绕开或允许关键字做字段名。
 - 关键陷阱：
   - 有析构器但无拷贝构造 → 值拷贝会双 owner/双重释放；有拷贝构造但无移动 → 返回/传参大量深拷贝；
@@ -528,6 +529,43 @@
   （注意初始化顺序与循环依赖）。
 - 影响：纯前端（sema + codegen 的 constValue）；与「unit 级 const 必须编译期常量」的规则一致。
 - 关联：SPEC §12 #107。
+
+### U30. `for-in` 的迭代形态（索引 / 游标）—— 已定，未实现
+- 背景：`for-in` 目前只认内置序列（区间/数组/切片/多维数组/`string`），用户容器只能手写索引循环，
+  无法抽象；同时 3.10 的 `IEnumerable`/`IEnumerator` 示意在**无泛型**时表达不了元素类型
+  （`current()` 没有可返回的 `T`），所以"接口驱动 for-in"当前写不出来。
+- **决策（用户拍板）**：
+  1. 迭代契约是**结构性形态**，不是接口；接口留作将来的动态/异构通道（依赖泛型）。
+  2. 长度成员统一用 **`length()`**（与 std.string 一致）；**`len(e)` 只服务内置类型，不分派到用户类型**。
+  3. 索引形态**优先**于游标形态；两者同时满足时用索引并给 warning。
+  4. `for ref` 不对用户类型开放（无 `ref` 返回）；可变遍历用 `for i, x` + `c[i] = ...`。
+  5. **多维数组一律禁止 `for-in`**（`T[m,n]` 与 `T[,]` 都算）：原先静态多维按行、动态多维平铺，
+     两者语义不统一且都容易误用；用下标循环（`len(a, k)` 取各维长度）。`multidim` 用例中的平铺遍历已改写。
+- 契约：
+  - 索引形态：方法 `length() -> usize` + 自由函数运算符 `operator[](C, usize) -> T`；
+    降级为 `usize n = c.length();` + 索引循环；元素类型 = `[]` 返回类型；不识别代理。
+  - 游标形态：方法 `iterator() -> It`，`It` 有 `bool next()` + `T current()`；
+    降级为 `auto it = c.iterator(); while it.next() { T x = it.current(); ... }`；
+    游标是按值返回的 struct（零分配、静态派发，含引用字段按 U24 清理）。
+  - `for i, x in seq`：`i` 为 `usize`（内置=顺序号/偏移；索引形态=真实下标；游标形态=迭代序号）。
+- 已知坑（要写进 SPEC，已写）：
+  - `operator[](C, usize)` 是普通调用，`C` 为 struct 时**每轮整份拷贝**（引用字段 RC 抖动）→ 建议 class 或 `ref`/指针接收；
+  - 不支持 proxy/引用包装（`vector<bool>` 式）；
+  - `length()` 必须等于 `[]` 的有效下标域，不一致靠 debug 越界检查兜底；
+  - 遍历期间增删元素仍按 UB（debug 可加版本号断言）。
+- 实现清单：
+  1. ~~parser：`for i, x in seq`~~（**已完成**）；
+  2. ~~sema `check_for`：索引形态识别~~（**已完成**）；游标形态待做；
+  3. ~~codegen `emitFor`：索引分支~~（**已完成**，`length()` 走 `emitMethodCallVals`、`operator[]` 走
+     `emitOperatorIndexCall`）；游标分支待建；
+  4. `len` 保持只认内置（`check_len` 未动，错误信息未改）。
+- 已实现范围（本次）：索引形态 + `for i, x`（内置序列/索引/区间）；新增用例
+  `cases/forin_index`、`errors/forin_{nolen,badidx,badlen,ref}`、`errors/forin_idx_const`；
+  全量 253/253。
+- 待做：游标形态（`iterator()/next()/current()`）、两者并存 warning、游标形态的 `for i, x` 序号。
+- 测试：索引值遍历、`for i,x`（索引/游标/内置）、游标遍历、两者并存 warning、缺 `length`、
+  `[](int)` 签名不符、缺 `current`、map（`[](string)`）落到游标、`for ref` 拒绝用户类型。
+- 关联：SPEC 6.4.1–6.4.4、3.10、8.1；U26.8；§12 #11。
 
 ## 已完成（留档）
 
