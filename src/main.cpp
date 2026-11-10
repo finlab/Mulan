@@ -20,17 +20,17 @@
 
 namespace fs = std::filesystem;
 
-#ifndef MULANC_VERSION
-#define MULANC_VERSION "0.0.0"
+#ifndef MUC_VERSION
+#define MUC_VERSION "0.0.0"
 #endif
 
-static const char* USAGE = R"(mulanc - mu-lan 编译器（LLVM 后端）
+static const char* USAGE = R"(muc - Mulan 语言编译器（LLVM 后端）
 
 用法:
-  mulanc check <entry.mu>            只做语义检查
-  mulanc dump  <entry.mu>            打印 AST（调试）
-  mulanc build <entry.mu> [选项]     编译并链接
-  mulanc -V | --version              输出版本号
+  muc check <entry.mu>            只做语义检查
+  muc dump  <entry.mu>            打印 AST（调试）
+  muc build <entry.mu> [选项]     编译并链接
+  muc -V | --version              输出版本号
 
 build 选项:
   -o <path>        输出可执行文件（默认 build/<entry>.exe）
@@ -41,7 +41,7 @@ build 选项:
   --run            编译成功后立即运行
 
 环境变量:
-  MULANC_BACKEND   默认后端（仅 llvm）
+  MUC_BACKEND   默认后端（仅 llvm）
 )";
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
@@ -241,7 +241,7 @@ struct BuildArgs {
 static BuildArgs parse_build_args(const std::vector<std::string>& args) {
     BuildArgs b;
     if (const char* cc = std::getenv("CC")) b.cc = cc;
-    if (const char* bk = std::getenv("MULANC_BACKEND")) b.backend = bk;
+    if (const char* bk = std::getenv("MUC_BACKEND")) b.backend = bk;
     size_t i = 0;
     if (args.empty()) throw MuError("缺少入口文件");
     b.entry = args[0];
@@ -325,7 +325,7 @@ static int cmd_build(const std::vector<std::string>& args) {
 int main(int argc, char** argv) {
     std::vector<std::string> args(argv + 1, argv + argc);
     if (!args.empty() && (args[0] == "-V" || args[0] == "--version")) {
-        std::cout << "mulanc " MULANC_VERSION "\n";
+        std::cout << "muc " MUC_VERSION "\n";
         return 0;
     }
     if (args.empty() || args[0] == "-h" || args[0] == "--help" || args[0] == "help") {

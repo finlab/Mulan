@@ -1,11 +1,11 @@
-# mu-lan
+# Mulan（木兰）
 
 精巧、现代的类 C 小语言。保留 C 的硬能力（值语义、指针运算、手动内存、struct、C ABI），
 去掉历史包袱（预处理器、隐式收窄、整数真值、`do-while`、C 风格 `for`）。
 
 # 版本
 
-当前版本：**0.0.41**（版本规则与每次 build 的记录见 [`docs/versions.md`](docs/versions.md)）
+当前版本：**0.0.50**（版本规则与每次 build 的记录见 [`docs/versions.md`](docs/versions.md)）
 
 - 语言规范：[`SPEC.md`](SPEC.md)（草案 v0.1，逐条标注「已定 / 建议 / 待定」）
 - 语法示例：[`example.mu`](example.mu)、[`math.mu`](math.mu)
@@ -45,7 +45,7 @@ C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm mingw-w64-x86_64-llvm"
 ```powershell
 python -m cmake -S . -B build -G Ninja
 python -m cmake --build build
-# 产物：build/mulanc.exe
+# 产物：build/muc.exe
 ```
 
 > 若 `cmake`/`ninja` 已在 PATH，直接 `cmake -S . -B build -G Ninja && cmake --build build` 即可。
@@ -54,19 +54,19 @@ python -m cmake --build build
 
 ```powershell
 # 语义检查
-build\mulanc.exe check example.mu
+build\muc.exe check example.mu
 
 # 查看 AST
-build\mulanc.exe dump math.mu
+build\muc.exe dump math.mu
 
 # 编译 + 运行（生成 .ll + COFF .o，再用 gcc 链接）
-build\mulanc.exe build example.mu --run
+build\muc.exe build example.mu --run
 
 # 保留生成的 IR
-build\mulanc.exe build example.mu --emit-ir build/example.ll
+build\muc.exe build example.mu --emit-ir build/example.ll
 
 # 回归测试
-$env:MULANC_CMD = "build/mulanc.exe"
+$env:MUC_CMD = "build/muc.exe"
 python tests/run_tests.py
 ```
 
@@ -88,7 +88,7 @@ tests/
   cases/*.mu       成功用例（编译 + 运行 + 比对期望输出）
   expected/*.txt
   errors/*.mu      必须被拒绝的用例，*.err 每行一个必须出现的错误子串
-  run_tests.py     测试运行器（MULANC_CMD 可配置）
+  run_tests.py     测试运行器（MUC_CMD 可配置）
 build/             生成物（.c / .exe / .obj），可随时删除
 ```
 
@@ -122,7 +122,7 @@ int main() {
 
 ## 与 C 的关键差异
 
-| 主题 | C | mu-lan |
+| 主题 | C | Mulan |
 |---|---|---|
 | 逻辑运算 | `&& \|\| !` | `and` / `or` / `not`（`not` 是低优先级） |
 | 位取反 | `~` | `~`（与 C 相同；逻辑非用 `not`） |

@@ -1028,7 +1028,7 @@ unit example;
 - `use other;` 导入其他 unit，以 `other.symbol` 访问；循环依赖禁止。
 - **unit 名与文件映射**（已实现）：unit 名可含点号，`unit std.string` 对应 `libs/std/string.mu`
   （点号映射为目录分隔）。库搜索路径依次为：入口文件所在目录、`-I` 指定目录（可多次）、
-  环境变量 `MULANC_LIBS`、当前目录及其祖先目录下的 `libs` 与 `libs/std`。
+  环境变量 `MUC_LIBS`、当前目录及其祖先目录下的 `libs` 与 `libs/std`。
 - 可见性（**已实现（0.0.30）**，详见 [`docs/visibility-design.md`](docs/visibility-design.md)）：
   - 两个修饰符：`private` = 本 unit 内可见；`public` = 跨 unit 可见。
   - 默认值：顶层声明 `private`；struct 成员 `public`；class 成员 `private`。

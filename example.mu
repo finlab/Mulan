@@ -1,4 +1,4 @@
-// example.mu — mu-lan 第一阶段语法示例（草案）
+// example.mu — Mulan 第一阶段语法示例（草案）
 // 设计目标：精巧、现代的类 C 语言；值语义；手动内存管理。
 // 本文件使用规范草案 v0.1 中「已定/建议」的特性，尚未保证可编译。
 
@@ -95,7 +95,7 @@ int main() {
     // int* p, q;       // p、q 都是 int*
     // int[5] x, y;     // x、y 都是 int[5]
     // 条件和循环头的括号可选；规范写法省略。C 式 if (cond) 仍然合法。
-    const string greeting = "hello, mu-lan";
+    const string greeting = "hello, Mulan";
     puts(greeting);
 
     calls += 1;                // unit 级变量，零初始化后从 0 开始
@@ -135,11 +135,11 @@ int main() {
 
     // 字符串：内建 string 视图；字符串字面量可直接用于 string 参数。
     print_string("string view: ");
-    print_string("mu-lan");
+    print_string("Mulan");
     putchar('\n');
 
     // 定长 char[N] 从 string 初始化：字节拷贝 + NUL。
-    char[20] namebuf = "mu-lan";
+    char[20] namebuf = "Mulan";
     puts(&namebuf[0]);
 
     // 多变量共享类型：指针和数组都一样（与 C 的声明符规则不同）。

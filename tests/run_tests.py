@@ -1,11 +1,11 @@
-"""mu-lan 回归测试运行器。
+"""Mulan 回归测试运行器。
 
 对每个用例执行
-    <MULANC_CMD> build <case> -o build/tests/<name>.exe --run
+    <MUC_CMD> build <case> -o build/tests/<name>.exe --run
 把 stdout 与 tests/expected/<name>.txt 比较后给出 PASS/FAIL。
 
-编译器命令通过环境变量 MULANC_CMD 配置（默认 `mulanc`），例如：
-    $env:MULANC_CMD = "build/mulanc.exe"; python tests/run_tests.py   (PowerShell)
+编译器命令通过环境变量 MUC_CMD 配置（默认 `muc`），例如：
+    $env:MUC_CMD = "build/muc.exe"; python tests/run_tests.py   (PowerShell)
 
 用法:
     python tests/run_tests.py                 # 全部用例（含根目录 example.mu）
@@ -14,7 +14,7 @@
     python tests/run_tests.py --keep-c        # 保留生成的 .c（默认编完即删）
 
 已知限制:
-  * `mulanc build --run` 会把编译器状态行（`+ gcc ...`、`ok: <exe>`）
+  * `muc build --run` 会把编译器状态行（`+ gcc ...`、`ok: <exe>`）
     与程序 stdout 混在一起，运行器会剔除以 `+ `、`ok: ` 开头的行再比较。
     因此用例自身不要输出以这两个前缀开头的行。
   * 只用标准库；在仓库根目录下直接 `python tests/run_tests.py` 运行。
@@ -37,9 +37,9 @@ ERRORS_DIR = ROOT / "tests" / "errors"
 CHECKS_DIR = ROOT / "tests" / "check"
 BUILD_DIR = ROOT / "build" / "tests"
 
-# 编译器命令：<MULANC_CMD> build <case.mu> -o <exe> --run
-# 默认 `mulanc`（即编译出来的 mulanc.exe）。
-DEFAULT_COMPILER = "mulanc"
+# 编译器命令：<MUC_CMD> build <case.mu> -o <exe> --run
+# 默认 `muc`（即编译出来的 muc.exe）。
+DEFAULT_COMPILER = "muc"
 
 # 编译器自身打到 stdout 的状态行前缀（与被剔除）
 COMPILER_PREFIXES = ("+ ", "ok: ", "error: ")
@@ -47,14 +47,14 @@ RUN_TIMEOUT = 120  # 秒
 
 
 def resolve_compiler() -> list[str]:
-    """把 MULANC_CMD 拆成命令 token 列表。
+    """把 MUC_CMD 拆成命令 token 列表。
 
     支持三种写法：
-      * 不含空格（如 `mulanc`、`build\\mulanc.exe`）→ 单 token；
+      * 不含空格（如 `muc`、`build\\muc.exe`）→ 单 token；
       * 是当前机器上存在的单个文件路径（允许含空格）→ 单 token；
       * 含空格且不是文件路径（如带参数的包装脚本）→ shlex 拆分。
     """
-    raw = (os.environ.get("MULANC_CMD") or DEFAULT_COMPILER).strip()
+    raw = (os.environ.get("MUC_CMD") or DEFAULT_COMPILER).strip()
     if " " not in raw:
         return [raw]
     as_path = Path(raw)
@@ -166,7 +166,7 @@ def run_case(case: Case, keep_c: bool, verbose: bool) -> tuple[bool, str]:
     except subprocess.TimeoutExpired:
         return False, f"超时（>{RUN_TIMEOUT}s）: " + " ".join(cmd)
     except OSError as e:
-        return False, f"无法执行编译器 `{cmd[0]}`（{e}）；可用 MULANC_CMD 指定，如 `build/mulanc.exe`"
+        return False, f"无法执行编译器 `{cmd[0]}`（{e}）；可用 MUC_CMD 指定，如 `build/muc.exe`"
 
     if not case.expected.is_file():
         return False, f"缺少期望文件 {case.expected}"
@@ -244,7 +244,7 @@ def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="mu-lan 回归测试运行器")
+    ap = argparse.ArgumentParser(description="Mulan 回归测试运行器")
     ap.add_argument("--filter", help="只跑用例名包含该子串的用例")
     ap.add_argument("-v", "--verbose", action="store_true", help="失败时打印完整实际输出")
     ap.add_argument("--keep-c", action="store_true", help="保留生成的 C 源码与 exe")

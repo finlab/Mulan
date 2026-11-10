@@ -41,5 +41,5 @@ std::string mangle(const std::string& unit, const std::string& name);
 // 失败时抛 SemaError
 Program analyze(std::vector<std::unique_ptr<Unit>> units, const std::string& entry);
 
-// 供 codegen 使用：把 Type 转成 mu-lan 源码写法
+// 供 codegen 使用：把 Type 转成 Mulan 源码写法
 std::string type_str(const TypePtr& t);

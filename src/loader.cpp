@@ -80,7 +80,7 @@ fs::path executable_dir() {
 
 // 当前目录、可执行文件目录及其祖先目录中的 libs / libs/std
 void add_default_lib_dirs(std::vector<std::string>& dirs) {
-    if (const char* env = std::getenv("MULANC_LIBS")) {
+    if (const char* env = std::getenv("MUC_LIBS")) {
         std::string s = env;
         std::string cur;
         for (char c : s) {

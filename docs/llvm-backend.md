@@ -4,8 +4,8 @@
 这是编译器当前的唯一后端（0.0.2 起移除了 C99 后端，代码保留在 git 历史 `cf3af48`）。
 
 ```powershell
-build\mulanc.exe build example.mu --run
-build\mulanc.exe build example.mu --emit-ir build/example.ll
+build\muc.exe build example.mu --run
+build\muc.exe build example.mu --emit-ir build/example.ll
 ```
 
 ## 环境
@@ -17,7 +17,7 @@ build\mulanc.exe build example.mu --emit-ir build/example.ll
 
 ## 类型映射
 
-| mu-lan | LLVM |
+| Mulan | LLVM |
 |---|---|
 | `bool` | `i1` |
 | `byte` / `char` | `i8` |
@@ -32,7 +32,7 @@ build\mulanc.exe build example.mu --emit-ir build/example.ll
 | `T[N]` | `%mu_arr_<elem>_<N> = type { [N x T] }` |
 | `struct S` | `%mu_<unit>_<S>` |
 
-与 mu-lan 的类型布局约定一致（`string` 24 字节、动态数组句柄 8 字节、数组包装 struct、结构体自然对齐）。
+与 Mulan 的类型布局约定一致（`string` 24 字节、动态数组句柄 8 字节、数组包装 struct、结构体自然对齐）。
 
 ## 降级策略
 
@@ -59,7 +59,7 @@ build\mulanc.exe build example.mu --emit-ir build/example.ll
 `tests/run_tests.py` 的 58 个用例全绿，`example.mu` 输出与 `tests/expected/example.txt` 逐行一致：
 
 ```powershell
-$env:MULANC_CMD = "build/mulanc.exe"
+$env:MUC_CMD = "build/muc.exe"
 python tests/run_tests.py
 ```
 

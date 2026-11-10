@@ -1,4 +1,4 @@
-hello, mu-lan
+hello, Mulan
 1
 3628800
 4950
@@ -6,8 +6,8 @@ hello, mu-lan
 struct is a value type
 struct init ok
 zero-init ok
-string view: mu-lan
-mu-lan
+string view: Mulan
+Mulan
 multi-declarator ok
 15
 2 4 6 8 10

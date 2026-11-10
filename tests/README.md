@@ -1,17 +1,17 @@
-# mu-lan 回归测试
+# Mulan 回归测试
 
 `run_tests.py` 对每个用例执行：
 
 ```
-<MULANC_CMD> build <case.mu> -o build/tests/<name>.exe --run
+<MUC_CMD> build <case.mu> -o build/tests/<name>.exe --run
 ```
 
 把程序的 stdout 与 `tests/expected/<name>.txt` 比较后给出 PASS/FAIL。
 只用 Python 标准库；在**仓库根目录**运行：
 
 ```powershell
-# 编译器命令由环境变量 MULANC_CMD 决定（默认 mulanc）
-$env:MULANC_CMD = "build/mulanc.exe"
+# 编译器命令由环境变量 MUC_CMD 决定（默认 muc）
+$env:MUC_CMD = "build/muc.exe"
 python tests/run_tests.py                 # 全部用例
 python tests/run_tests.py --filter arith  # 只跑名字含 "arith" 的用例
 python tests/run_tests.py -v              # 失败时打印完整实际输出
@@ -32,7 +32,7 @@ python tests/run_tests.py --keep-c        # 保留生成的中间产物（默认
    - 条件必须是 bool（`if x` 非法）、没有 `++`、没有 C 风格 for、
      `!` 是按位取反不是逻辑非（逻辑非是 `not`）、没有 `&&`/`||`（用 `and`/`or`）。
 2. 写 `tests/expected/<name>.txt`：真实推导的期望输出（不要占位符）。
-3. 验证：`build\mulanc.exe check tests/cases/<name>.mu`，然后跑运行器。
+3. 验证：`build\muc.exe check tests/cases/<name>.mu`，然后跑运行器。
 
 文件名即用例名；不需要在任何地方注册。仓库根的 `example.mu` 由运行器
 自动作为一个用例（期望输出 `tests/expected/example.txt`）。

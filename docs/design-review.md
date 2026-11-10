@@ -7,7 +7,7 @@
 ## 1. 测试方法
 
 - **成功用例** `tests/cases/*.mu`：编译、运行、逐行比对 `tests/expected/*.txt`。
-- **必须报错用例** `tests/errors/*.mu`：`mulanc check` 必须失败，且 `*.err` 中每行子串都要出现在错误输出里。
+- **必须报错用例** `tests/errors/*.mu`：`muc check` 必须失败，且 `*.err` 中每行子串都要出现在错误输出里。
 - 另有手工压测：跨 unit 结构体、嵌套结构体、结构体含 string/数组字段、指针算术、`as` 截断、字面量溢出、错误路径 10 类。
 
 当前规模：**20 个成功用例 + 37 个必须报错用例**，C++ 版 57/57 全绿。
@@ -113,5 +113,5 @@ sema 递归检查，codegen 递归生成嵌套初始化。`char[N]` 字段可以
 
 ```powershell
 python -m cmake --build build
-$env:MULANC_CMD="build/mulanc.exe"; python tests/run_tests.py    # 58 / 58
+$env:MUC_CMD="build/muc.exe"; python tests/run_tests.py    # 58 / 58
 ```

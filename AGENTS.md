@@ -6,7 +6,7 @@
 
 | 时机 | 范围 | 命令 |
 |---|---|---|
-| 改完一个点（单文件/单函数） | 直接相关用例 | `python tests/run_tests.py --filter <关键字>`；或 `build\mulanc.exe check <file.mu>` |
+| 改完一个点（单文件/单函数） | 直接相关用例 | `python tests/run_tests.py --filter <关键字>`；或 `build\muc.exe check <file.mu>` |
 | 改完一个特性的一组改动 | 该特性相关用例集 | 例如可见性：`python tests/run_tests.py --filter vis` |
 | 阶段收尾 / 版本号变更 / 提交前 | 全量 | `python tests/run_tests.py` |
 | 冷编译零 warning | 仅阶段收尾 | `python -m cmake --build build --clean-first` |
@@ -17,7 +17,7 @@
 python -m cmake --build build
 ```
 
-全量基线（0.0.49）：265/265（65 成功 + 187 报错 + 13 check）。
+全量基线（0.0.50）：265/265（65 成功 + 187 报错 + 13 check）。
 
 ## 报错用例的辅助 unit
 

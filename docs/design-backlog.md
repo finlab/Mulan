@@ -472,7 +472,7 @@
   - std.string 提供：`str_from_cstr`、`str_cstr`、`str_sub`、`str_concat`、`operator+`，
     以及 `string.length()/empty()/at(i)`；
   - **已移除内建 `string` 类型**（lexer/parser/sema 不再有 `string` 关键字；测试/示例使用 `string` 结构体）；
-  - 库搜索路径：入口目录、`-I`、`MULANC_LIBS`、当前目录及祖先的 `libs`、`libs/std`；
+  - 库搜索路径：入口目录、`-I`、`MUC_LIBS`、当前目录及祖先的 `libs`、`libs/std`；
     `unit std.string` 对应 `libs/std/string.mu`；
   - 仍缺：码点/`chars()`、`\u{}`、非 ASCII 字符字面量、StringBuilder/格式化、
     `find/split/trim/replace` 等高层 API、子串 NUL 保证（`str_sub` 不保证）、可变/COW 版本。

@@ -81,8 +81,8 @@ using LType = llvm::Type;
 using LStruct = llvm::StructType;
 using LArray = llvm::ArrayType;
 
-#ifndef MULANC_VERSION
-#define MULANC_VERSION "0.0.0"
+#ifndef MUC_VERSION
+#define MUC_VERSION "0.0.0"
 #endif
 
 namespace {
@@ -2244,7 +2244,7 @@ struct Emitter {
     }
 
     void initInto(Value* addr, const TypePtr& ty, Init* init, bool unaligned = false) {
-        if (std::getenv("MULANC_LLVM_TRACE"))
+        if (std::getenv("MUC_LLVM_TRACE"))
             std::cerr << "[llvm]     init " << (ty ? ty->str() : "?")
                       << (dynamic_cast<InitAggregate*>(init) ? " agg" : " expr") << "\n";
         if (!init) return;
@@ -2280,16 +2280,16 @@ struct Emitter {
             }
             if (ty->kind == TypeKind::Array && sizeOf(ty->elem) == 1 &&
                 dynamic_cast<StringLit*>(e)) {
-                if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       char-array from string\n";
+                if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       char-array from string\n";
                 Value* s = stringConst(static_cast<StringLit*>(e)->value);
-                if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       A\n";
+                if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       A\n";
                 Value* sp = b.CreateExtractValue(s, {0});
                 Value* sl = b.CreateExtractValue(s, {1});
-                if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       B\n";
+                if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       B\n";
                 zeroMem(addr, ty, unaligned);
-                if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       C\n";
+                if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       C\n";
                 b.CreateMemCpy(addr, MaybeAlign(unaligned ? 1 : alignOf(ty)), sp, MaybeAlign(1), sl);
-                if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm]       D\n";
+                if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       D\n";
                 return;
             }
             Value* v = coerce(e, ty);
@@ -2389,7 +2389,7 @@ struct Emitter {
     }
 
     void stmtImpl(Stmt* s) {
-        if (std::getenv("MULANC_LLVM_TRACE")) {
+        if (std::getenv("MUC_LLVM_TRACE")) {
             std::cerr << "[llvm]   stmt " << typeid(*s).name();
             if (auto lv = dynamic_cast<LocalVar*>(s)) std::cerr << " " << lv->name;
             std::cerr << "\n";
@@ -3392,7 +3392,7 @@ struct Emitter {
 
     // ------------------------------------------------------------ 函数
     void emitFunction(FuncDecl* f) {
-        if (std::getenv("MULANC_LLVM_TRACE")) std::cerr << "[llvm] emit " << f->name << "\n";
+        if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm] emit " << f->name << "\n";
         std::vector<LType*> ptys;
         for (auto& t : f->pty) ptys.push_back(lt(t));
         auto* ft = FunctionType::get(lt(f->rty), ptys, false);
@@ -3488,7 +3488,7 @@ struct Emitter {
         mod->setTargetTriple(triple);
         if (tm) mod->setDataLayout(tm->createDataLayout());
         mod->addModuleFlag(Module::Warning, "mulan.version",
-                           llvm::MDString::get(ctx, MULANC_VERSION));
+                           llvm::MDString::get(ctx, MUC_VERSION));
 
         sliceTy = ptrTy();  // 动态数组句柄（头指针）
         descTy = LStruct::create(ctx, "mu_desc");

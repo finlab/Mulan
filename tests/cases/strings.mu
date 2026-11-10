@@ -37,8 +37,8 @@ void show(string s) {
 int main() {
     // ---------- string 是内建 UTF-8 视图，len(s) 是字节数 ----------
     show("hello");                       // hello
-    const string greeting = "mu-lan";    // const 绑定
-    show(greeting);                      // mu-lan
+    const string greeting = "Mulan";    // const 绑定
+    show(greeting);                      // Mulan
 
     // ---------- s[i] 取字节（char，无符号）；可直接下标字符串字面量 ----------
     int sum = 0;
@@ -51,11 +51,11 @@ int main() {
     for ch in greeting {
         putchar(ch);
     }
-    putchar('\n');                       // mu-lan
+    putchar('\n');                       // Mulan
 
     // ---------- char[N] 从 string 初始化：字节拷贝 + NUL ----------
-    char[20] buf = "mu-lan";
-    puts(&buf[0]);                       // mu-lan
+    char[20] buf = "Mulan";
+    puts(&buf[0]);                       // Mulan
 
     // len(buf) 是数组容量 N，不是字符串长度
     auto cap = len(buf);
@@ -68,11 +68,11 @@ int main() {
     while buf[n] != 0 {
         n += 1;
     }
-    print_int(n); putchar('\n');         // 6
+    print_int(n); putchar('\n');         // 5
 
     // ---------- 写入 NUL 截断字符串 ----------
     buf[2] = 0;
-    puts(&buf[0]);                       // mu
+    puts(&buf[0]);                       // Mu
 
     // ---------- 满容量字符串：7 字节 + NUL = 8 ----------
     char[8] c2 = "abcdefg";
