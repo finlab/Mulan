@@ -1,2 +1,1 @@
 type `align_slice_init.Wide` has align(16) greater than 8:
-type `align_slice_init.Wide` has align(16) greater than 8:

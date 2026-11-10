@@ -1,2 +1,1 @@
 align(2) is less than the natural alignment of struct `Bad` (4);
-align(2) is less than the natural alignment of struct `Bad` (4);
