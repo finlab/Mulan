@@ -3072,6 +3072,18 @@ private:
             if (auto m = dynamic_cast<Member*>(e->operand.get()); m && m->kind == "enum_const") {
                 err("枚举成员不是可寻址的对象，不能取地址", e);
             }
+            // U21：RC 生命周期无法用裸指针表达——禁止对 class/interface 句柄、
+            // 以及经引用访问的成员/数组元素取地址（`&c`、`&c.x`、`&h.items[0]`、`&catArray[i]`）。
+            if (is_reference_type(t)) {
+                err("不能对 class/interface 引用取地址（`" + t->str() +
+                        "`）：RC 生命周期无法用裸指针表达",
+                    e);
+            }
+            if (rooted_at_reference(e->operand.get())) {
+                err("不能对经 class/interface 引用访问的成员或元素取地址：先拷到局部变量，"
+                    "用完再赋回（backlog U21）",
+                    e);
+            }
             return Type::make_ptr(t);
         }
 
@@ -4024,9 +4036,40 @@ private:
         if (dynamic_cast<Index*>(e)) return true;
         if (auto m = dynamic_cast<Member*>(e)) {
             auto nm = dynamic_cast<Name*>(m->obj.get());
-            return !(nm && infos_.count(nm->ident));
+            if (!nm) return true;
+            // 局部变量 / 本 unit 全局变量优先于同名 unit（`t.c = x` 中 t 是变量而不是 unit）
+            if (lookup_local(nm->ident)) return true;
+            if (info().globals.count(nm->ident)) return true;
+            return !infos_.count(nm->ident);
         }
         if (auto u = dynamic_cast<Unary*>(e)) return u->op == "*";
+        return false;
+    }
+
+    // 该表达式是否“根”在 class/interface 引用上（含其数组/切片元素）：
+    // `c.x`、`h.items[0]`、`catArray[i]` 都算。U21：这类地址无法表达 RC 生命周期。
+    bool rooted_at_reference(Expr* e) {
+        while (e) {
+            if (auto m = dynamic_cast<Member*>(e)) {
+                e = m->obj.get();
+                continue;
+            }
+            if (auto ix = dynamic_cast<Index*>(e)) {
+                e = ix->base.get();
+                continue;
+            }
+            break;
+        }
+        if (!e || !e->ty) return false;
+        TypePtr t = e->ty;
+        if (is_reference_type(t)) return true;
+        if (t->kind == TypeKind::Array || t->kind == TypeKind::Slice) {
+            TypePtr el = t->elem;
+            while (el && (el->kind == TypeKind::Array || el->kind == TypeKind::Slice)) {
+                el = el->elem;
+            }
+            return is_reference_type(el);
+        }
         return false;
     }
 

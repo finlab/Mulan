@@ -236,6 +236,11 @@
 - 结论：**Java/C# 不付原子 RC 代价，付的是 GC 代价**；受管视图要付原子计数，需要靠 move/借用优化压低。
 
 ### U21. 原生指针保留范围；RC 对象取地址 / 取成员地址
+
+> **实现状态（0.0.48）**：已按下面的策略落地——`&c` / `&iface`（引用本身）、
+> `&c.x` / `&h.items[0]` / `&catArray[i]` / `&h.v[0]`（经引用访问的成员/元素）现在都是编译错误；
+> 纯值 struct、定长数组元素、指针变量取址保持可用。含引用字段的 struct 取址（U24 的
+> 「禁止 `&s`」）仍未收紧。
 - 现状（sema 过宽，已确认）：
   - 声明 `C*` 被拒绝，但**表达式可以绕过**：`&c`、`&c.x`、`&c.d`（d 是 class 字段）、
     `void* v = &c` 都能通过 `check`，产生指向 RC 句柄/对象内部的裸指针。
@@ -327,7 +332,7 @@
 - 现象：`extern` C 函数按值接收 16 字节 struct 时，mulan 侧调用崩溃（访问冲突）。
 - 复现：
   - C：`struct P { long long a,b; }; long long take_p(struct P p);`（gcc 编译）
-  - mu-lan：`struct P { long a,b; } extern long take_p(P p); take_p(p)`
+  - Mulan：`struct P { long a,b; } extern long take_p(P p); take_p(p)`
   - gcc 生成的 `take_p` 期望 **RCX = &p**（MS x64 ABI：非 1/2/4/8 字节的聚合按引用传递）；
   - mulan/LLVM 生成的是 `RCX=a, RDX=b`（两个寄存器），链接运行 → access violation。
 - 原因：codegen 构造 `FunctionType` 时把聚合**按值**作为参数，但**没有加 `byval`/`sret` 属性**；
@@ -405,7 +410,7 @@
     （C 不参与 RC；布局相同也不代表所有权安全）；
   - 数组/容器：`S[N]` 元素逐元素构造/拷贝/析构（需要新的清理路径）。
 - C 互操作：把"可传给 C"定义成**递归 POD 属性**（所有字段都是标量/指针/枚举/POD struct/数组），
-  而不是由 `struct` 关键字保证；非 POD struct 只能用于 mu-lan 内部。
+  而不是由 `struct` 关键字保证；非 POD struct 只能用于 Mulan 内部。
 - 实现影响：
   - sema：放宽 struct 字段的引用检查；新增"是否含引用"的递归查询；extern 签名递归拒绝；
   - codegen：struct 拷贝/赋值/析构/传参/返回的逐字段 RC；数组元素清理；零初始化；

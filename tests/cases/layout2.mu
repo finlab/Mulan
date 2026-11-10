@@ -60,17 +60,31 @@ public byte t;
 public W32 w;
 }
 
+// class 的对象布局是内部实现（不暴露 `&c.field`），这里用同源模型布局的 struct 镜像验证偏移；
+// class 只验证句柄大小与运行时行为。
+struct CShape {
+    byte t;
+    Al a;
+    Pk p;
+}
+
+struct DShape {
+    byte t;
+    W32 w;
+}
+
 int main() {
-    // ---------- class 字段：对象基址 16 对齐，align(16) 字段按模型对齐 ----------
+    // ---------- class 字段：对象基址/偏移是内部布局，用 struct 镜像验证同源模型 ----------
     C c = new C();
     c.a.x = 11;
     c.p.a = 90;
     c.p.b = 123456;
-    print_int((((&c.t) as usize) % 16) as int); putchar(' ');
-    print_int((((&c.a) as usize) % 16) as int); putchar(' ');
-    print_int((((&c.a) as usize) - ((&c.t) as usize)) as int); putchar(' ');
-    print_int((((&c.p) as usize) - ((&c.t) as usize)) as int); putchar(' ');
-    print_int((((&c.p.b) as usize) - ((&c.p) as usize)) as int); nl();  // 0 0 16 32 1
+    CShape cs = {};
+    print_int((((&cs.t) as usize) - ((&cs) as usize)) as int); putchar(' ');
+    print_int((((&cs.a) as usize) % 16) as int); putchar(' ');
+    print_int((((&cs.a) as usize) - ((&cs.t) as usize)) as int); putchar(' ');
+    print_int((((&cs.p) as usize) - ((&cs.t) as usize)) as int); putchar(' ');
+    print_int((((&cs.p.b) as usize) - ((&cs.p) as usize)) as int); nl();  // 0 0 16 32 1
 
     // ---------- 方法内隐式 this 访问 packed 字段 ----------
     c.setb(-7);
@@ -93,19 +107,23 @@ int main() {
     print_int((((&s[1]) as usize) - ((&s[0]) as usize)) as int); putchar(' ');
     print_int(s[0].a + s[1].a); nl();  // 0 8 11
 
-    // ---------- align(32) 字段：对象用对齐分配（_aligned_malloc） ----------
+    // ---------- align(32) 字段：类型级对齐由镜像验证（class 对象用对齐分配是内部实现） ----------
+    // 镜像里 w 的偏移是 32；class 对象带 16 字节对象头，字段偏移是内部实现，不再暴露。
     D d = new D();
     d.t = 1;
     d.w.x = 2;
-    print_int((((&d.w) as usize) % 32) as int); putchar(' ');
-    print_int((((&d.w) as usize) - ((&d.t) as usize)) as int); putchar(' ');
-    print_int(d.t as int + d.w.x); nl();  // 0 16 3
+    DShape ds = {};
+    print_int((((&ds.w) as usize) % 32) as int); putchar(' ');
+    print_int((((&ds.w) as usize) - ((&ds) as usize)) as int); putchar(' ');
+    print_int(d.t as int + d.w.x); nl();  // 0 32 3
     d = null;
 
-    if ((((&c.t) as usize) % 16) == 0 and (((&c.a) as usize) % 16) == 0 and
-        ((((&c.a) as usize) - ((&c.t) as usize)) == 16) and
-        ((((&c.p.b) as usize) - ((&c.p) as usize)) == 1) and
-        ((((&st[0]) as usize) % 16) == 0) and (((&s[0]) as usize) % 8) == 0) {
+    if (sizeof(C) == 8 and sizeof(D) == 8 and sizeof(CShape) == 48 and sizeof(DShape) == 64 and
+        (((&cs.t) as usize) - ((&cs) as usize)) == 0 and
+        (((&cs.a) as usize) % 16) == 0 and
+        (((&cs.a) as usize) - ((&cs.t) as usize)) == 16 and
+        (((&cs.p.b) as usize) - ((&cs.p) as usize)) == 1 and
+        (((&st[0]) as usize) % 16) == 0 and (((&s[0]) as usize) % 8) == 0) {
         puts("layout2 ok");
     }
     return 0;
