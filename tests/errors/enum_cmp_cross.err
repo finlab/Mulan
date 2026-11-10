@@ -1,1 +1,1 @@
-enum `enum_cross.A` can only be compared or combined with values of the same enum type; there is no implicit conversion between enums and integers (write `as`)
+enum `enum_cross.A` can only be compared or combined with values of the same

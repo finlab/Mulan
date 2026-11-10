@@ -1,1 +1,1 @@
-`return` is not allowed in a destructor (fields and the base class are destroyed at the end of the function)
+`return` is not allowed in a destructor

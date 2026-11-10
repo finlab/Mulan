@@ -1,1 +1,1 @@
-`del` has been removed: write `x = null;` to release a reference (same semantics)
+`del` has been removed: write `x = null;` to release a reference

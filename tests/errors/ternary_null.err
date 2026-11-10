@@ -1,1 +1,1 @@
-the branches of `?:` have different types (int* and int); cast one of them explicitly with `as`
+the branches of `?:` have different types (int* and int);

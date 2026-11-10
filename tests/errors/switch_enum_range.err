@@ -1,1 +1,1 @@
-enum switches do not support range cases (enum members have no numeric order); list each member explicitly
+enum switches do not support range cases (enum members have no numeric order);

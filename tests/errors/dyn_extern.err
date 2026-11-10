@@ -1,1 +1,1 @@
-`extern` function `f` cannot use dynamic arrays `T[]` (they carry an RC header and are not C layout)
+`extern` function `f` cannot use dynamic arrays `T[]`

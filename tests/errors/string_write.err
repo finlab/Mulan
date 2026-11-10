@@ -1,1 +1,1 @@
-`string` is immutable; cannot write to elements (use `byte[]` or `str_concat` to build one)
+`string` is immutable; cannot write to elements

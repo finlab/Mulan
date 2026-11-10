@@ -1,1 +1,1 @@
-type `int` cannot be initialized with `{}`; only aggregate types (struct, array, slice, string) can use `{}`use a plain constant for scalars (0, 0.0, false, null)
+type `int` cannot be initialized with `{}`; only aggregate types (struct,

@@ -1,1 +1,1 @@
-switch branch must end with `:` (write `:` after the pattern list, the branch body must be `{ }`)
+switch branch must end with `:` (write `:` after the pattern list,

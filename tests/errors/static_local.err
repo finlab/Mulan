@@ -1,1 +1,1 @@
-`static` has been removed: local variables do not need it; unit-level variables are private by default, use `public` to share across units
+`static` has been removed: local variables do not need it;

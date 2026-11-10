@@ -1,1 +1,1 @@
-cannot take the address of struct `std.string.string` which has reference fields: a raw pointer could bypass RC (backlog U24); pass or return it by value, or use a class (structs with a user-defined destructor are still used through pointers and are not affected)
+cannot take the address of struct `std.string.string` which has reference

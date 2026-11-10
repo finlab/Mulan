@@ -1,1 +1,1 @@
-`for-in` cannot iterate forin_badidx.Vec: the indexed form also requires `operator[](forin_badidx.Vec, usize) -> T`(the `operator[]` found takes index type `int`; `usize` is required)
+`for-in` cannot iterate forin_badidx.Vec:

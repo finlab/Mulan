@@ -1,1 +1,1 @@
-struct `struct_ref_global.H` has reference fields and cannot be a global variable (no exit-time destruction)
+struct `struct_ref_global.H` has reference fields and cannot be a global

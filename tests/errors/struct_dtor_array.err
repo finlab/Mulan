@@ -1,1 +1,1 @@
-struct `struct_dtor_array.S` has a destructor and cannot be an array element (array destruction is not implemented)
+struct `struct_dtor_array.S` has a destructor and cannot be an array element

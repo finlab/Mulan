@@ -1,1 +1,1 @@
-the branches of `?:` have different types (ternary_struct.P and ternary_struct.Q); cast one of them explicitly with `as`
+the branches of `?:` have different types

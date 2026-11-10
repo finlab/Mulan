@@ -1,1 +1,1 @@
-field `xs` of packed struct `Bad` cannot be a dynamic array `int[]` (unaligned pointer access)
+field `xs` of packed struct `Bad` cannot be a dynamic array `int[]`

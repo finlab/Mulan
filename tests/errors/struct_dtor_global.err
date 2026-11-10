@@ -1,1 +1,1 @@
-struct `struct_dtor_global.S` has a destructor and cannot be a global variable (no exit-time destruction)
+struct `struct_dtor_global.S` has a destructor and cannot be a global variable

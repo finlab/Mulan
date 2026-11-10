@@ -1,1 +1,1 @@
-initialization: struct `struct_copy_dtor.S` has a destructor and cannot be copied by value (use a pointer or an explicit clone)
+initialization: struct `struct_copy_dtor.S` has a destructor and cannot be

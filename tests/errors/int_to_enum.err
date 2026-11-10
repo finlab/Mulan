@@ -1,1 +1,1 @@
-initialization: cannot assign int to e14.C (no implicit conversion between enums and integers; write `as`)
+initialization: cannot assign int to e14.C

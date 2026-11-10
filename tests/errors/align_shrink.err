@@ -1,2 +1,2 @@
-align(2) is less than the natural alignment of struct `Bad` (4); use `packed` to lower the alignment
-align(2) is less than the natural alignment of struct `Bad` (4); use `packed` to lower the alignment
+align(2) is less than the natural alignment of struct `Bad` (4);
+align(2) is less than the natural alignment of struct `Bad` (4);

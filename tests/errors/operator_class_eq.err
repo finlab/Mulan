@@ -1,1 +1,1 @@
-`==` on class or interface types is always identity comparison and cannot be overloaded
+`==` on class or interface types is always identity comparison and cannot be

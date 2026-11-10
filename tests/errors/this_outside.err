@@ -1,1 +1,1 @@
-`this` can only appear inside a class or struct method, constructor, or destructor
+`this` can only appear inside a class or struct method, constructor,

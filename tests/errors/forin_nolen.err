@@ -1,1 +1,1 @@
-`for-in` cannot iterate forin_nolen.NoLen: the indexed form requires a method `length() -> usize` (none found)
+`for-in` cannot iterate forin_nolen.NoLen:

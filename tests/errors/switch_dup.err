@@ -1,1 +1,1 @@
-overlapping switch cases: value 1 is already covered by an earlier case (ranges are half-open; `a..b` excludes b)
+overlapping switch cases: value 1 is already covered by an earlier case

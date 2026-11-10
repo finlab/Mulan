@@ -1,1 +1,1 @@
-`public`/`private` cannot be used on interface methods (interface methods are always public)
+`public`/`private` cannot be used on interface methods

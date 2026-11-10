@@ -1,1 +1,1 @@
-switch case pattern must be a compile-time constant: `k` is a variable; use a literal or an enum member
+switch case pattern must be a compile-time constant: `k` is a variable;
