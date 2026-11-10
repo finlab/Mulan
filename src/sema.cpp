@@ -3084,6 +3084,14 @@ private:
                     "用完再赋回（backlog U21）",
                     e);
             }
+            // U24：含引用字段的 struct 由编译器逐字段 RC；裸指针可绕过 retain/release
+            // （也能把弱引用/字段地址带到生命周期之外），第一阶段禁止取址。
+            if (t && t->kind == TypeKind::Struct && has_ref_fields(t) && !t->has_dtor) {
+                err("不能对含引用字段的 struct `" + t->str() +
+                        "` 取地址：裸指针可绕过 RC（backlog U24）；按值传递/返回，或改用 class"
+                        "（含用户析构器的 struct 仍通过指针使用，不受此限）",
+                    e);
+            }
             return Type::make_ptr(t);
         }
 
@@ -3641,6 +3649,25 @@ private:
     static bool is_user_type(const TypePtr& t) {
         return t && (t->kind == TypeKind::Struct || t->kind == TypeKind::Class ||
                      t->kind == TypeKind::Interface);
+    }
+
+    // 是否含 RC 管理的引用字段（class/interface/切片/string/数组递归）；
+    // 只看字段，不看用户析构器（含析构器的 struct 仍允许取址，通过指针使用）。
+    static bool has_ref_fields(const TypePtr& t) {
+        if (!t) return false;
+        switch (t->kind) {
+            case TypeKind::Class:
+            case TypeKind::Interface:
+            case TypeKind::Slice: return true;
+            case TypeKind::Array: return has_ref_fields(t->elem);
+            case TypeKind::Struct:
+                for (const auto& f : t->fields) {
+                    if (f.weak) continue;  // weak 不持有引用
+                    if (has_ref_fields(f.type)) return true;
+                }
+                return false;
+            default: return false;
+        }
     }
 
     // 运算符查找范围：当前 unit + use 引入的 unit + 操作数类型所属 unit（ADL 风格）。

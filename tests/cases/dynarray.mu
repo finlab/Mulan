@@ -17,7 +17,7 @@ S mk(int n) {
     S s = {new byte[n]};
     return s;
 }
-void keep(Box2* out, int[] b) { (*out).b = b; }
+Box2 keep(int[] b) { Box2 r = {}; r.b = b; return r; }
 
 const int[] G = {10, 20, 30};
 
@@ -97,8 +97,7 @@ int main() {
 
     // 借用参数存进字段 -> retain；实参临时数组在调用后释放
     {
-        Box2 box = {};
-        keep(&box, a);
+        Box2 box = keep(a);
         if len(box.b) != 3 or box.b[1] != 2 { puts("borrow store failed"); return 24; }
         box.b[0] = 33;
         if a[0] != 1 { puts("stored copy failed"); return 25; }
