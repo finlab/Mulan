@@ -36,7 +36,7 @@ int main() {
     cur = null;
     while head != null {
         Node nxt = head.next;
-        del head;
+        head = null;
         head = nxt;
     }
     if live != 0 { puts("list cleanup failed"); return 1; }

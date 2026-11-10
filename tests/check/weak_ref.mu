@@ -39,13 +39,13 @@ int main() {
     Node b = new Node(2);
     a.link(b);
     Node c = a.peek();
-    del c;
-    del b;
-    del a;
+    c = null;
+    b = null;
+    a = null;
 
     Circle circ = new Circle(2);
     int x = use_shape(circ);
     bool e = circ.is_empty();
-    del circ;
+    circ = null;
     return x;
 }

@@ -26,7 +26,7 @@ int main() {
     if calls != 5 { puts("index eval wrong"); return 1; }
     if p != 1 { puts("index value wrong"); return 1; }
 
-    del a;
+    a = null;
     if live != 0 { puts("compare cleanup fail"); return 1; }
     puts("compare eval ok");
     return 0;

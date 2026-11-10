@@ -22,32 +22,32 @@ int main() {
     Node b = new Node(2);
     a.link(b);
     if a.peek() != b { puts("weak link fail"); return 1; }
-    del b;
+    b = null;
     if a.next != null { puts("weak not cleared on destroy"); return 1; }
     if a.has_next() { puts("weak has_next fail"); return 1; }
 
     Node c = new Node(3);
     Holder h = new Holder(c);
     if not h.has() { puts("holder weak fail"); return 1; }
-    del c;
+    c = null;
     if h.n != null { puts("holder weak not cleared"); return 1; }
-    del h;
+    h = null;
 
     Node d = new Node(4);
     Node e = new Node(5);
     Node f = new Node(6);
     d.link(e);
     d.link(f);                  // 覆盖 weak 目标
-    del e;
+    e = null;
     if d.next != f { puts("weak overwrite stale null"); return 1; }
-    del f;
+    f = null;
     if d.next != null { puts("weak overwrite clear fail"); return 1; }
 
     Node g = new Node(7);
     g.link(g);                  // 自引用 weak
-    del g;
+    g = null;
 
-    del a; del d;
+    a = null; d = null;
     if live != 0 { puts("weak live fail"); return 1; }
     puts("weak clear ok");
     return 0;

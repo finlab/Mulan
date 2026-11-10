@@ -15,9 +15,9 @@ int main() {
     I j = i.clone();
     if j.f() != 4 { puts("iface ret fail"); return 1; }
     if not i.same(c) { puts("iface this compare fail"); return 1; }
-    del j;
-    del c;
-    del i;
+    j = null;
+    c = null;
+    i = null;
     if live != 0 { puts("iface ret live fail"); return 1; }
     puts("iface ret ok");
     return 0;

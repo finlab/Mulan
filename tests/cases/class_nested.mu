@@ -9,14 +9,14 @@ int main() {
     Holder h = new Holder(new C(4));
     if h.get().get() != 4 { puts("nested new fail"); return 1; }
     if live != 1 { puts("nested new leak"); return 1; }
-    del h;
+    h = null;
     if live != 0 { puts("holder dtor fail"); return 1; }
 
     Animal[2] arr = {};
     Dog d = new Dog();
     arr[0] = d;
     if arr[0].sound() != 7 { puts("base array virtual fail"); return 1; }
-    del d;
+    d = null;
     if arr[0].sound() != 7 { puts("base array rc fail"); return 1; }
     puts("class nested ok");
     return 0;

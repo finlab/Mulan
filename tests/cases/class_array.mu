@@ -30,9 +30,9 @@ int main() {
     if cells[0].get() != 1 { puts("array store failed"); return 1; }
 
     Cell c = cells[0];              // 借用 -> 强引用
-    del a;                          // 数组里仍然持有
+    a = null; // 数组里仍然持有
     if cells[0].get() != 1 { puts("array rc failed"); return 1; }
-    del c;
+    c = null;
 
     Grid g = new Grid();
     Cell e = new Cell(2);
@@ -42,9 +42,9 @@ int main() {
     if g[0] != 5 { puts("operator[] failed"); return 1; }
     if g.cells[1].get() != 2 { puts("operator[]= failed"); return 1; }
 
-    del g;
-    del e;
-    del b;
+    g = null;
+    e = null;
+    b = null;
     puts("class array ok");
     return 0;
 }

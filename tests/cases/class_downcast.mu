@@ -30,7 +30,7 @@ int main() {
     B b4 = i2 as B;   // 动态类型 E，也不是 B
     if b4 != null { puts("iface downcast wrong"); return 1; }
 
-    del ab; del ad; del e; del other;
+    ab = null; ad = null; e = null; other = null;
     puts("downcast ok");
     return 0;
 }

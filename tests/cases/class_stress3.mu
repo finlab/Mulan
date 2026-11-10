@@ -26,10 +26,10 @@ int main() {
     B b2 = new B(1, 2);
     A up = b2;
     if up.f(1) != 2 { puts("virtual base overload fail"); return 1; }
-    del a;
-    del b2;
-    del up;
-    del b;
+    a = null;
+    b2 = null;
+    up = null;
+    b = null;
     puts("stress3 ok");
     return 0;
 }

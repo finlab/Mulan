@@ -9,7 +9,7 @@ int main() {
     I1 a = b;
     if a != b { puts("iface eq fail"); return 1; }
     if a != c { puts("class-iface eq fail"); return 1; }
-    del c; del b; del a;
+    c = null; b = null; a = null;
     puts("eq mix ok");
     return 0;
 }

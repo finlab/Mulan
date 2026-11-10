@@ -14,8 +14,8 @@ int main() {
     B b = new B();
     a.b = b;
     B c = a.b;
-    del c;
-    del b;
-    del a;
+    c = null;
+    b = null;
+    a = null;
     return 0;
 }

@@ -333,10 +333,6 @@ struct ReturnStmt : Stmt {
     ExprPtr value;
 };
 
-struct DelStmt : Stmt {
-    ExprPtr value;
-};
-
 // ---------------------------------------------------------------- 对象模型声明
 
 struct MethodDecl : Node {

@@ -30,7 +30,7 @@ int main() {
     Vec v = new Vec();
     v[0] = 7;
     int x = v[0];
-    del v;
+    v = null;
 
     int n = f(1);
     long big = 1;

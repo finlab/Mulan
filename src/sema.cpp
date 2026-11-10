@@ -108,8 +108,6 @@ private:
     bool in_ctor_ = false;
     bool in_dtor_ = false;
     bool super_ok_ = false;
-    std::unordered_set<const LocalVar*> cur_params_;
-    std::vector<const LocalVar*> forin_vars_;
     std::vector<std::unique_ptr<LocalVar>> this_local_;
     std::vector<Scope> scopes_;
     int loop_depth_ = 0;
@@ -1323,8 +1321,6 @@ private:
         in_dtor_ = false;
         scopes_.clear();
         auto_groups_.clear();
-        cur_params_.clear();
-        forin_vars_.clear();
         scopes_.emplace_back();
         loop_depth_ = 0;
         f->param_locals.clear();
@@ -1338,7 +1334,6 @@ private:
             lv->col = p->col;
             declare_local(lv.get());
             f->param_locals.push_back(std::move(lv));
-            cur_params_.insert(f->param_locals.back().get());
         }
 
         if (f->body) check_block(f->body.get());
@@ -1362,8 +1357,6 @@ private:
                       int col) {
         scopes_.clear();
         auto_groups_.clear();
-        cur_params_.clear();
-        forin_vars_.clear();
         scopes_.emplace_back();
         loop_depth_ = 0;
         cur_class_ = cls;
@@ -1384,8 +1377,6 @@ private:
     void end_member() {
         scopes_.clear();
         auto_groups_.clear();
-        cur_params_.clear();
-        forin_vars_.clear();
         cur_class_ = nullptr;
         cur_ret_ = nullptr;
         cur_name_.clear();
@@ -1405,7 +1396,6 @@ private:
             lv->col = params[i]->col;
             declare_local(lv.get());
             out.push_back(std::move(lv));
-            cur_params_.insert(out.back().get());
         }
     }
 
@@ -1842,38 +1832,6 @@ private:
             if (loop_depth_ == 0) err("`continue` 只能出现在循环中", s);
         } else if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
             check_return(rs);
-        } else if (auto d = dynamic_cast<DelStmt*>(s)) {
-            TypePtr t = check_expr(d->value.get());
-            if (t && t->kind == TypeKind::Null) {
-                // `del null` 是空操作
-            } else if (!is_reference_type(t)) {
-                err("`del` 只能用于 class/interface 引用", d);
-            }
-            if (!is_lvalue(d->value.get()) && !(t && t->kind == TypeKind::Null)) {
-                err("`del` 的目标必须是可写的引用左值", d);
-            }
-            if (auto n = dynamic_cast<Name*>(d->value.get()); n && n->ident == "this") {
-                err("不能 `del this`", d);
-            }
-            if (is_weak_field_access(d->value.get())) {
-                err("不能 `del` weak 字段（weak 不持有引用）", d);
-            }
-            if (auto ix = dynamic_cast<Index*>(d->value.get()); ix && ix->get_func) {
-                err("不能 `del` 运算符下标的结果（`operator[]` 返回的是值）", d);
-            }
-            if (auto n = dynamic_cast<Name*>(d->value.get())) {
-                if (auto lv = std::get_if<LocalVar*>(&n->sym)) {
-                    if (cur_params_.count(*lv)) {
-                        err("不能 `del` 函数参数（参数是借用）；先赋给局部变量", d);
-                    }
-                    for (auto* fv : forin_vars_) {
-                        if (fv == *lv) {
-                            err("不能 `del` for-in 循环变量（借用）；先赋给局部变量", d);
-                        }
-                    }
-                }
-            }
-            if (root_is_const(d->value.get())) err("`del` 不能用于 `const` 绑定", d);
         } else if (auto b = dynamic_cast<Block*>(s)) {
             check_block(b);
         } else {
@@ -2490,9 +2448,7 @@ private:
         s->lvar = std::move(lv);
 
         ++loop_depth_;
-        forin_vars_.push_back(s->lvar.get());
         check_block(s->body.get());
-        forin_vars_.pop_back();
         --loop_depth_;
     }
 

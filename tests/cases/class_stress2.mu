@@ -28,7 +28,7 @@ int main() {
     if m.p.x != 3 or m.p.y != 4 { puts("struct fail"); return 1; }
     if m.nums[2] != 9 { puts("array fail"); return 1; }
     if m.total() != 1234567890123 + 24 { puts("method fail"); return 1; }
-    del m;
+    m = null;
     puts("stress2 ok");
     return 0;
 }

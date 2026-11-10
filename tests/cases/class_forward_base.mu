@@ -15,7 +15,7 @@ class Base {
 int main() {
     Derived x = new Derived();
     if x.total() != 3 { puts("forward base fail"); return 1; }
-    del x;
+    x = null;
     puts("forward base ok");
     return 0;
 }

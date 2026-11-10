@@ -46,15 +46,15 @@ int main() {
     if q.id() != 2 { puts("downcast id fail"); return 1; }
     Rect r = b.get(1) as Rect;
     if r == null or r.area() != 6 { puts("downcast rect fail"); return 1; }
-    del s;
-    del q;
-    del r;
+    s = null;
+    q = null;
+    r = null;
     if live != 2 { puts("downcast rc fail"); return 1; }
 
     b.set(0, null);
     if b.get(0) != null { puts("set null fail"); return 1; }
     if b.get(1).area() != 6 { puts("set null other fail"); return 1; }
-    del b;
+    b = null;
     if live != 0 { puts("box cleanup fail"); return 1; }
     puts("big stress ok");
     return 0;

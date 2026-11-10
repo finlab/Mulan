@@ -21,7 +21,7 @@
 | 作用域 | 声明不写 `T x(...)`；`Point p` 未初始化，`= {}` 零初始化；unit 级变量直接声明，默认 `private` |
 | 对象模型 | 值与引用分离：`struct` 值类型；`class` 引用类型（单继承 + 接口；默认虚方法；原子 RC + weak；无 GC/环收集器） |
 | 字符串 | `string`（std.string struct：`byte* p; usize n; byte[] owner`；UTF-8、NUL 结尾仅保证完整串/字面量） |
-| 内存 | 指针 + `alloc/free/realloc`（裸内存）；`class` 用 `new/del` + 原子引用计数；无 GC、无借用检查 |
+| 内存 | 指针 + `alloc/free/realloc`（裸内存）；`class` 用 `new` + 原子引用计数（提前释放写 `x = null`）；无 GC、无借用检查 |
 | 控制流 | `if/else`、`while`、`for-in`、`break/continue/return`；条件必须是 `bool`；强制花括号 |
 | 条件表达式 | `cond ? a : b`（右结合；条件必须 `bool`；只求值一个分支；两侧取同一类型 / 隐式加宽 / `null` 适配） |
 | 条件括号 | 可选，规范写法省略（`if cond { }`）；C 式 `if (cond)` 仍合法 |
@@ -57,13 +57,15 @@
 ### 2.3 关键字
 
 ```
-unit use public private const auto struct enum extern class interface new del weak packed
+unit use public private const auto struct enum extern class interface new weak packed
 if else while for in switch ref break continue return
 true false null as sizeof alignof len alloc realloc free
 void bool byte char short ushort int uint long ulong
 float double usize isize
 and or not override operator super this
 ```
+
+> `del` 已在 0.0.47 移除（保留为关键字只为给出迁移诊断）：释放引用写 `x = null;`。
 
 > `goto/union/typedef/fn` 暂不纳入。`len/sizeof/alloc/realloc/free/alignof` 等是内建标识符，
 > **禁止被用户声明遮蔽**（已实现：把它们用作变量/参数/字段名会直接报错）。
@@ -150,7 +152,7 @@ move  unsafe  typeof
     `string` 也不能 `for ref`（不可变）。
   - 空值：`T[] s = null;` 与 `T[] s = {};` 等价（都是 null 句柄）；但**切片不能与 `null` 比较**
     （用 `len(s) == 0`）。
-  - `del` 不能用于动态数组（第一阶段报错；`del` 只释放 class/interface 强引用，见 3.8）。
+  - 动态数组的释放：把句柄置空（`s = {}` / `s = null`）即 release 一次；`del` 已移除（0.0.47）。
   - `sizeof(T[])` / `sizeof(T[,])` = 8（句柄大小）；`sizeof(string)` = 24。
   - 聚合初始化 `T[] s = {1, 2, 3};` 分配新数组并初始化元素。
   - `T[N]` → `T[]` 隐式转换：**分配并复制**（动态数组不再提供借用视图）。
@@ -240,8 +242,8 @@ struct Point {
   - 赋值 `b = a;`：先 retain 新值、再 release 旧值（自赋值安全）；
   - 析构（作用域结束、`return`/`break`/`continue`、宿主 class 销毁、数组逐元素）：
     逐字段 release；
-  - 参数按借用传递（callee 不 retain/不释放）；函数返回值是 owned 值（借用返回时先 retain
-    字段）；调用返回的 struct 临时值在语句结束时释放；
+  - 参数是拥有型局部变量（callee 进入时 retain、退出时 release，见 4）；函数返回值是 owned 值
+    （借用返回时先 retain 字段）；调用返回的 struct 临时值在语句结束时释放；
   - 未显式初始化的本地 struct 会先清零，避免析构时释放未初始化指针。
 - **临时限制**：
   - 含引用字段的 struct 暂不能作全局变量（无退出析构）；
@@ -389,12 +391,10 @@ class Cat {
 - 空值：class 引用允许 `null`；`c == null` / `c != null` 合法。
 - 身份比较：`c == d` 比较是否同一对象；不支持 class 的值比较（需要时逐字段比较）。
 - 成员访问自动解引用：`c.name`、`c.parent.name`；写入受 `const` 约束。
-- `del c;`：释放一次强引用并把 `c` 置为 null；`del null` 是空操作。
-  `del` 的目标必须是可写的 class 引用左值：`const` 绑定不可 del，`const` 字段不可 del；
-  局部 `const Cat c` 的绑定本身可重绑定，因此可以 del。对象在强引用计数归零时销毁；
-  对共享对象 `del` 只减少你这一份引用。
-  **不能 del 的对象**（借用，需先赋给局部变量）：函数参数、`for`/`for-in` 循环变量、`this`；
-  下标运算结果同样不可 del。
+- **提前释放**（0.0.47 起 `del` 已移除）：把句柄置空即可，`c = null;` 释放一次强引用并把 `c` 置为 null。
+  对象在强引用计数归零时销毁；对共享对象只减少你这一份引用。目标必须是可写的 class/interface
+  引用左值（`const` 绑定不可赋值）；函数参数、`for`/`for-in` 循环变量同样是拥有型绑定，
+  可以置 null（见 4）；`this` 不可赋值。
 - `weak Cat p;`：
   - 只能作 class 字段（不能作局部变量、参数、返回值）；
   - 不增加目标计数；目标销毁时自动置 null（零化）；
@@ -409,7 +409,10 @@ class Cat {
   `const const Cat c`。目前 `const` 只支持指针/动态数组，const class 视图待语法确定后再实现；编译器会拒绝这种写法。
 - `ref` 参数（仅 struct，**第一阶段不支持**）：`void f(ref Point p)` 借用一个 struct 变量；不可存储、不可返回；
   第一阶段不允许 `ref` 局部变量。当前解析器只在 `for ref` 中接受 `ref`，参数位置会报错。
-- class 参数按借用传递（调用期间不 +1）；被调方要保存时由编译器在存储点 +1。
+- **参数是拥有型局部变量**（0.0.47 起）：进入函数时对参数值 retain 一份，退出（含 `return`/`break`/
+  `continue`）时 release。因此函数体内可以自由重绑定参数（`c = null;`、`c = other;`）而不会影响调用方。
+  调用方仍按值传参并释放自己的临时值，净引用计数不变；后续可在不改语义的前提下用借用/逃逸分析把
+  retain/release 优化掉。
 - `sizeof` / `alignof` 作用于 class/interface 类型（**已实现**）：class 得到**句柄**大小（8）、
   interface 得到接口值大小（16）；对象本身大小不暴露；enum 得到底层 `int`（4）。
 - 禁止（第一阶段）：
@@ -514,7 +517,7 @@ Vec   operator<<(Vec v, int n) { ... }
 | `& \| ^ << >>` | 是 | 位运算 |
 | `[]` / `[]=` | 是 | **显式读写**：`T operator[](C c, I i)` 读取；`void operator[]=(C c, I i, T v)` 写入。`c[i]` 调前者，`c[i] = v` 调后者，`c[i] += v` 先读后写 |
 | `== !=` | 仅 struct | class 的 `==` 固定为身份比较，不可重载；struct 未定义 `==` 时不可比较 |
-| `()` `=` `&& \|\|` `as/new/del` | 否 | 与内建语义冲突 |
+| `()` `=` `&& \|\|` `as/new` | 否 | 与内建语义冲突 |
 
 - 运算符必须至少有一个 struct/class 操作数；不能重定义内置类型。
 - 运算符函数是普通函数，可放在任意 unit；重复定义或解析歧义 → 编译错误。
@@ -564,7 +567,7 @@ class File {
 - 调用时机：强引用计数归零时，**先执行用户析构器**，再按字段逆序释放（派生字段 → 基类字段），最后释放内存。
 - 继承：派生析构器先执行，再执行基类析构器（C++ 顺序）；基类析构器通过 vtable 的 destroy 虚派发。
 - 析构器内虚调用按 C++ 式派发到当前析构层。
-- 不能手动调用；`del` 只减少引用，计数归零才触发。
+- 不能手动调用；把句柄置 null（`c = null;`）只减少引用，计数归零才触发。
 - 环永远不会归零，因此环中的析构器不会执行（weak 断环后才会）。
 - 析构器里不能把 `this` 存到字段/全局（会复活对象）；第一阶段可先靠文档约束。
 - 构造器失败（`abort`）时不执行析构器。
@@ -651,9 +654,11 @@ void g() {
   - 局部 `const` 可以用运行期表达式初始化（`const int x = f();` 合法），只是初始化后不可再赋值。
 - `static` 已移除（0.0.32）：unit 级变量天然具有静态存储期；不支持函数内 `static` 局部变量或 `static` 函数。
 - 参数是可变局部绑定（第一阶段，C 语义）；是否改为默认不可变待定。
+- **参数是拥有型局部变量**（0.0.47 起，与 3.8 一致）：参数值在进入时 retain、退出时 release；
+  class/interface/`string`/切片/含引用字段的 struct 参数都适用。函数体内可自由重绑定参数，
+  不影响调用方；把 owned 值（`new`/调用结果）赋给参数不会泄漏。调用方的实参仍按值传递。
 - `ref T` 参数（仅 struct）：按引用借用调用方变量；callee 可写，但不能存储该引用或返回。
   第一阶段不允许 `ref` 局部变量。
-- class 参数是借用句柄：调用期间不增加引用计数；callee 需要保存时在存储点 +1。
 
 ---
 
@@ -703,7 +708,7 @@ void g() {
 - `len(seq)` 作用于数组/切片。
 - 内建函数：`alloc(bytes: usize) -> void*`、`realloc(p: void*, bytes: usize) -> void*`、`free(p: void*)`。
 - 结构体构造表达式：`Point(1, 2)`、`Point(x = 1, y = 2)`、`Point()`（零值）；花括号初始化不是表达式。
-- `new T(...)` 是表达式（`T` 必须是 class），返回 class 引用；`del` 是语句，不出现在表达式中。
+- `new T(...)` 是表达式（`T` 必须是 class），返回 class 引用；没有对应的释放语句（`del` 已移除，置 null 即可）。
 - 表达式中的 `0` 是 `int`；零值初始化（聚合 `{}` / 标量常量）只用于声明初始化位置。结构体在表达式/赋值里的零值用 `Point()`，不能写 `p = {}`、`p = 0` 或 `f(0)`。
 - 字符串字面量类型 `string`；可隐式转 `const char*`；`"abc"[0]` 合法。
 
@@ -793,7 +798,7 @@ for ref x in seq { ... }   // x 是元素的可变引用
 ### 6.5 其他
 
 - `return expr;` / `return;`（void）。
-- `del c;`：释放一次 class 强引用并把句柄置 null（见 3.8 / 8.3）。
+- 释放引用：`c = null;`（0.0.47 起 `del` 已移除，见 3.8 / 8.3）。
 - 不提供 `do-while`、C 风格 `for`、`goto`。
 - `switch` 见 6.6：无 fallthrough，分支体必须带花括号。
 - 无异常、无 `try/catch`；致命错误用 `abort()`（libc）或返回错误码。
@@ -897,8 +902,8 @@ extern int puts(const char* s);
 - 除数为 0；移位位数 ≥ 位宽（待定：UB 还是定义）。
 - 有符号整数溢出：**已定：定义为二进制补码回绕**（避免 UB，简化优化；后端不发 `nsw`/`nuw`）。
 - 数组/切片越界：待定（建议 debug 检查，release 可关闭；或始终检查）。
-- 访问 `null` 的 class 引用；`del` 后继续使用同一句柄（`del` 已置 null，等同空引用）。
-- 对 class 对象使用 `alloc/free`，或对 `alloc` 内存使用 `del`（两套内存管理不能交叉）。
+- 访问 `null` 的 class 引用；把句柄置 null 后继续使用（等同空引用）。
+- 对 class 对象使用 `alloc/free`，或把 `alloc` 得到的内存当 class 句柄赋值（两套内存管理不能交叉）。
 
 ### 8.3 class 的引用计数、虚表与 weak
 
@@ -918,8 +923,8 @@ interface 值:  { obj*, class_desc* }        // 16 字节；null = {null,null}
 - `itable`：全局接口方法槽表（按全程序接口方法签名去重编号），值为 thunk（类实现或接口默认实现）。
 - 每个 class 对象带**原子**强引用计数（relaxed）；`new` 创建后计数为 1。
 - **+1**：句柄复制（初始化、赋值重绑定、存入字段、返回后由调用方存储、存入接口值）。
-  参数传递按借用处理（不 +1）；被调方需要保存时在存储点 +1。
-- **-1**：句柄被覆盖、离开作用域、字段随对象销毁、接口值被覆盖、`del`。
+  参数传递：callee 在进入时 retain 一份（参数是拥有型局部变量），退出时 release；调用方按值传递。
+- **-1**：句柄被覆盖、离开作用域、字段随对象销毁、接口值被覆盖、句柄被置 null。
 - **归零**：`class_desc->destroy`：执行析构链（用户析构器 → 派生字段逆序释放 → 基类析构器 → …）后 `free` 对象。
 - **虚调用**：类方法走 `desc->vtable[slot]`；接口方法走 `desc->itable[slot]`，接口默认方法同理。
 - **接口值**：强引用；复制 +1、覆盖 -1；`null` 不计数；接口之间的向上转换不改变值。
@@ -927,8 +932,8 @@ interface 值:  { obj*, class_desc* }        // 16 字节；null = {null,null}
   赋值登记 {target, field}，覆盖/持有者析构时注销，目标销毁时把仍指向它的 weak 字段清零。
   环必须用 `weak` 打破。
 - 环：**不收集**；未打破的环 = 泄漏。
-- `del c`：提前 -1 并把 c 置 null；对象仍被其他强引用持有则不销毁；`del null` 空操作。
-- 与裸内存分开：`alloc/free/realloc` 管裸内存，`new/del` 只用于 class，二者不能交叉使用。
+- 提前释放：`c = null;` 立即 -1 并把 c 置 null；对象仍被其他强引用持有则不销毁（`del` 已在 0.0.47 移除）。
+- 与裸内存分开：`alloc/free/realloc` 管裸内存，`new` 只用于 class，二者不能交叉使用。
 - 对象可跨线程共享；析构器在最后释放引用的线程执行，必须线程安全。
 - 构造失败（malloc 返回 null）当前直接 `abort()`。
 - 可选择 `--single-thread` 构建使用非原子快速路径（该构建禁止跨线程，待定）。
@@ -1030,7 +1035,7 @@ unit example;
 | goto | 有 | 不提供 |
 | switch | 有 fallthrough、`case` 标签 | 有；无 fallthrough、无 `case`、`模式列表 : { }`、枚举必须穷尽（6.6） |
 | 结构体构造 | `(struct S){...}` | 声明 `S s = {x=..., y=...}`；表达式 `S(...)` |
-| 堆对象 | `malloc/free` | `new/del` + 引用计数（无 GC） |
+| 堆对象 | `malloc/free` | `new` + 引用计数（无 GC）；提前释放写 `x = null` |
 | 引用 | 指针 + `->` | `class` 句柄，自动解引用；struct 用 `ref` 参数 |
 | 环 | 手动 | `weak` 字段手动断环；无环收集器 |
 | 继承 | 有 | 单继承 + 默认虚方法；无多继承 |
@@ -1112,8 +1117,8 @@ unit example;
 | 66 | `const`/`const`/`string` 可写性检查 | 已定：编译器必须拒绝写入（见 3.7） |
 | 67 | 对象模型 | 已定：struct 值 / class 引用；RC + weak；无环收集器（见 3.8 / 8.3） |
 | 68 | `weak` 的范围 | 仅 class 字段；局部/参数/返回值禁用 |
-| 69 | `del` 的语义 | 强引用 -1 并置 null；`del null` 空操作；共享对象只减少自己那份 |
-| 70 | class 参数的所有权 | 借用（调用期不 +1）；存储时 +1 |
+| 69 | `del` 的语义 | **已移除（0.0.47）**：`del x;` 等价于 `x = null;`，没有独立语义，已从语言中删除（保留关键字只为迁移诊断） |
+| 70 | class 参数的所有权 | 已改（0.0.47）：参数是**拥有型局部变量**（进入 +1、退出 -1）；函数体内可重绑定；后续可用借用/逃逸分析优化 |
 | 71 | class 与 C 互操作 | 禁止传给 `extern`；跨语言用 struct + alloc |
 | 72 | class 数组 | 已定：静态 `Cat[N]` 与动态 `Cat[]` 均支持（逐元素 RC） |
 | 73 | `sizeof`/`alignof` class | 已定（已实现）：class 取句柄大小（8）、interface 取接口值大小（16）；对象大小不暴露 |

@@ -45,11 +45,11 @@ int main() {
     if area_of(s) != 16 { puts("base param failed"); return 1; }
     if area_iface(i) != 16 { puts("iface param failed"); return 1; }
 
-    del q;
+    q = null;
     if i.area() != 16 { puts("rc keepalive failed"); return 1; }
-    del s;
+    s = null;
     if i.area() != 16 { puts("iface keepalive failed"); return 1; }
-    del i;
+    i = null;
 
     puts("class inherit ok");
     return 0;

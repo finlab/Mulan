@@ -11,7 +11,7 @@ class C {
 }
 
 int make_one() {
-    C c = new C();      // 没有 del，返回时由清理逻辑释放
+    C c = new C();      // 没有置 null，返回时由清理逻辑释放
     return 1;
 }
 
@@ -60,7 +60,7 @@ int main() {
     {
         C a = new C();
         C b = a;        // 共享引用
-        del a;
+        a = null;
         if live != 1 { puts("share live failed"); return 1; }
         if b.v != 0 { puts("share value failed"); return 1; }
     }

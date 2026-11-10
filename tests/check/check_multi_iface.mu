@@ -10,8 +10,8 @@ int main() {
     int a = s.area();
     int b = use_shape(s);
     bool e = s.empty();
-    del q;
+    q = null;
     int c = s.area();
-    del s;
+    s = null;
     return a + b + c;
 }

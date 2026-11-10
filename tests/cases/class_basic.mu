@@ -19,7 +19,7 @@ int main() {
 
     Counter b = a;               // 共享强引用
     if live != 1 { puts("share failed"); return 1; }
-    del a;                       // 只减少一份引用
+    a = null; // 只减少一份引用
     if b.get() != 7 { puts("share get failed"); return 1; }
     if live != 1 { puts("premature dtor"); return 1; }
 
@@ -30,11 +30,11 @@ int main() {
     c = b;                       // 重绑定：旧对象析构，新对象 +1
     if live != 1 { puts("rebind failed"); return 1; }
 
-    del b;
+    b = null;
     if c.get() != 9 { puts("rebind get failed"); return 1; }
     if live != 1 { puts("early dtor"); return 1; }
 
-    del c;
+    c = null;
     if live != 0 { puts("dtor failed"); return 1; }
 
     puts("class basic ok");

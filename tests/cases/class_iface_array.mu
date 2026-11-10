@@ -16,7 +16,7 @@ int main() {
     if live != 2 { puts("iface array return rc fail"); return 1; }
     Holder h = new Holder();
     h.items = r;
-    del h;
+    h = null;
     if r[0].f() != 1 { puts("iface array field rc fail"); return 1; }
     if live != 2 { puts("iface array field live fail"); return 1; }
     puts("iface array ok");

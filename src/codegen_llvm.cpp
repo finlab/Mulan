@@ -2543,16 +2543,6 @@ struct Emitter {
             emitSwitch(sw);
             return;
         }
-        if (auto d = dynamic_cast<DelStmt*>(s)) {
-            if (d->value->ty && d->value->ty->kind == TypeKind::Null) return;  // del null
-            Value* addr = addrOf(d->value.get());
-            TypePtr ty = d->value->ty;
-            Value* p = b.CreateLoad(lt(ty), addr);
-            b.CreateStore(Constant::getNullValue(lt(ty)), addr);
-            if (isRefKind(ty)) emitReleaseRef(p, ty);
-            else emitRelease(p);
-            return;
-        }
         if (dynamic_cast<BreakStmt*>(s)) {
             if (loops.empty()) fail("LLVM 后端：break 不在循环中");
             destroyTempsFrom(0);
@@ -2683,11 +2673,24 @@ struct Emitter {
         } else {
             b.CreateStore(loadAt(lt(et), ep, seqUnaligned), varSlot);
         }
+        // 值绑定是拥有型局部变量（SPEC §4）：每轮 retain，离开本轮（正常/break/continue）时 release
+        const bool ownVar = !s->by_ref && needsCleanup(et);
+        if (ownVar) {
+            if (isRefKind(et)) {
+                emitRetainRef(b.CreateLoad(lt(et), varSlot), et);
+            } else {
+                emitRetainValue(varSlot, et);
+            }
+        }
+        const size_t outerDepth = refScopes.size();
         loops.push_back({incBB, endBB});
-        loopScopeDepth.push_back(refScopes.size());
+        pushRefScope();
+        if (ownVar) refScopes.back().push_back(s->lvar.get());
+        loopScopeDepth.push_back(outerDepth);
         block(s->body.get());
         loopScopeDepth.pop_back();
         loops.pop_back();
+        popRefScope();
         if (!hasTerm(b.GetInsertBlock())) b.CreateBr(incBB);
         b.SetInsertPoint(incBB);
         Value* ci3 = b.CreateLoad(i64(), idx);
@@ -3002,6 +3005,24 @@ struct Emitter {
         }
     }
 
+    // 参数是拥有型局部变量（SPEC §4）：进入时 retain 一份，函数退出时随作用域 release。
+    // 调用方仍按值传参并在需要时释放自己的临时值，因此净引用计数不变。
+    // （后续可在不改变语义的前提下做借用/逃逸分析，把 retain/release 优化掉。）
+    void ownParams(const std::vector<std::unique_ptr<LocalVar>>& pls) {
+        pushRefScope();
+        for (auto& pl : pls) {
+            if (!pl || !needsCleanup(pl->rty)) continue;
+            auto it = slots.find(pl.get());
+            if (it == slots.end()) continue;
+            if (isRefKind(pl->rty)) {
+                emitRetainRef(b.CreateLoad(lt(pl->rty), it->second), pl->rty);
+            } else {
+                emitRetainValue(it->second, pl->rty);
+            }
+            refScopes.back().push_back(pl.get());
+        }
+    }
+
     void emitMethod(ClassDecl* c, MethodDecl* m) {
         if (!m->body) return;
         std::vector<LType*> ptys{ptrTy()};
@@ -3017,7 +3038,9 @@ struct Emitter {
         thisSlot = entryAlloca(ptrTy(), "this");
         b.CreateStore(curThis, thisSlot);
         bindParams(fn, 1, m->param_locals);
+        ownParams(m->param_locals);
         block(m->body.get());
+        popRefScope();
         finishBody(fn, c->name + "." + m->name);
     }
 
@@ -3055,7 +3078,9 @@ struct Emitter {
                 b.CreateStore(descOf(c->ty), dp2);
             }
         }
+        ownParams(ctor->param_locals);
         block(ctor->body.get());
+        popRefScope();
         finishBody(fn, c->name + " 构造器");
     }
 
@@ -3227,7 +3252,9 @@ struct Emitter {
         thisSlot = entryAlloca(ptrTy(), "this");
         b.CreateStore(fn->getArg(0), thisSlot);
         bindParams(fn, 1, m->param_locals);
+        ownParams(m->param_locals);
         block(m->body.get());
+        popRefScope();
         finishBody(fn, sd->name + "." + m->name);
     }
 
@@ -3245,7 +3272,9 @@ struct Emitter {
         thisSlot = entryAlloca(ptrTy(), "this");
         b.CreateStore(fn->getArg(0), thisSlot);
         bindParams(fn, 1, ctor->param_locals);
+        ownParams(ctor->param_locals);
         block(ctor->body.get());
+        popRefScope();
         finishBody(fn, sd->name + " 构造器");
     }
 
@@ -3287,7 +3316,9 @@ struct Emitter {
         thisSlot = entryAlloca(ifaceTy, "this");
         b.CreateStore(fn->getArg(0), thisSlot);
         bindParams(fn, 1, m->param_locals);
+        ownParams(m->param_locals);
         block(m->body.get());
+        popRefScope();
         finishBody(fn, itf->name + "." + m->name);
     }
 
@@ -3329,7 +3360,9 @@ struct Emitter {
             ++i;
         }
         b.SetInsertPoint(bodyBB);
+        ownParams(f->param_locals);
         block(f->body.get());
+        popRefScope();
         if (!hasTerm(b.GetInsertBlock())) {
             if (is_void(f->rty)) {
                 b.CreateRetVoid();

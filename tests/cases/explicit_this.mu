@@ -61,7 +61,7 @@ int main() {
     Box b = new Box();
     if b.sum() != 9 { puts("class struct field this failed"); return 1; }
 
-    del a;
+    a = null;
     if live != 0 { puts("this dtor cleanup failed"); return 1; }
     puts("explicit this ok");
     return 0;

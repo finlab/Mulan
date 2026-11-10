@@ -100,7 +100,7 @@ int main() {
     print_int((((&d.w) as usize) % 32) as int); putchar(' ');
     print_int((((&d.w) as usize) - ((&d.t) as usize)) as int); putchar(' ');
     print_int(d.t as int + d.w.x); nl();  // 0 16 3
-    del d;
+    d = null;
 
     if ((((&c.t) as usize) % 16) == 0 and (((&c.a) as usize) % 16) == 0 and
         ((((&c.a) as usize) - ((&c.t) as usize)) == 16) and

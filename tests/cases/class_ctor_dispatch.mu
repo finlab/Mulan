@@ -16,7 +16,7 @@ class B : A {
 int main() {
     B b = new B();
     int s = b.get_seen();
-    del b;
+    b = null;
     if s != 1 { puts("ctor dispatch not C++-like"); return 1; }
     puts("ctor dispatch ok");
     return 0;

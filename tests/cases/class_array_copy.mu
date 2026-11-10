@@ -7,7 +7,7 @@ int main() {
     a[0] = new C(1);
     a[1] = new C(2);
     C[2] b = a;              // 逐元素 retain
-    del a[0];
+    a[0] = null;
     if b[0].get() != 1 { puts("array copy value fail"); return 1; }
     b[0] = null;
     if live != 1 { puts("array rc fail"); return 1; }

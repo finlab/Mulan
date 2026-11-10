@@ -1032,16 +1032,7 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     }
     if (at_kw("del")) {
         const Token dt = advance();
-        auto value = parse_expr();
-        forbid_inc_expr();
-        semicolon();
-        auto d = std::make_unique<DelStmt>();
-        d->value = std::move(value);
-        d->line = dt.line;
-        d->col = dt.col;
-        std::vector<StmtPtr> out;
-        out.push_back(std::move(d));
-        return out;
+        throw err_at("`del` 已移除：释放引用写 `x = null;`（语义相同）", dt);
     }
     if (at_kw("static")) {
         throw err("第一阶段不支持 `static` 局部变量");

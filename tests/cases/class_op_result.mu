@@ -7,7 +7,7 @@ int main() {
     P r = new P(1) + new P(2);
     if r.get() != 3 { puts("op new fail"); return 1; }
     if live != 1 { puts("op new leak"); return 1; }
-    del r;
+    r = null;
     if live != 0 { puts("op new cleanup fail"); return 1; }
     puts("op new ok");
     return 0;

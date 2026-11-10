@@ -14,7 +14,7 @@ class K : I {
 class Holder {
     K k;
     Holder(K x) { k = x; }
-    ~Holder() { del k; }
+    ~Holder() { k = null; }
     int val() { return k.a(); }
 }
 int main() {
@@ -23,9 +23,9 @@ int main() {
     I i = k;
     if i.c() != 12 { puts("iface default chain fail"); return 1; }
     Holder h = new Holder(k);
-    del k;
+    k = null;
     if h.val() != 10 { puts("holder fail"); return 1; }
-    del h;
+    h = null;
 
     K outer = new K(1);
     {
@@ -40,7 +40,7 @@ int main() {
     int sum = 0;
     for it in arr { sum += it.a(); }
     if sum != 11 { puts("for-in class array fail"); return 1; }
-    del outer;
+    outer = null;
     puts("stress1 ok");
     return 0;
 }

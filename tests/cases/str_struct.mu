@@ -62,9 +62,7 @@ int main() {
     Holder h = new Holder();
     h.name = "held";
     if h.name != "held" { return 23; }
-    del h;
-
-    // 全局 string 与 char[N] 字面量初始化
+    h = null; // 全局 string 与 char[N] 字面量初始化
     if G != "global" or len(G) != 6 { return 24; }
     char[8] buf = "abc";
     if buf[2] != 'c' or buf[3] != 0 { return 25; }
