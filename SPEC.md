@@ -967,8 +967,12 @@ extern int puts(const char* s);
 
   使用 C ABI；`const` 不影响 ABI。
 - `main`：
-  - `int main()`；返回值作为进程退出码；执行到末尾等价于 `return 0;`。
-  - 带参数形式 `int main(int argc, char** argv)` 待定。
+  - `int main()` 或 `int main(int argc, char** argv)`（**已实现**）；返回值作为进程退出码；执行到末尾等价于 `return 0;`。
+  - 带参数形式由 C 启动代码传入：`argc` 是参数个数（`argv[0]` 是程序名，所以恒 ≥ 1），`argv` 是 `char**`、
+    **以 null 结尾**（`argv[argc] == null`）。
+  - 参数名任意，但类型必须精确匹配 `(int, char**)`：1 个参数、`char*`、非 `int` 返回都是编译错误。
+  - 用 `char**` 而不是 `string[]`：`argv` 是 C 侧的裸指针数组，不带 RC；需要 `string` 时用
+    `std.string.string(argv[i])` 构造（复制一份）。
 - 函数指针待定；`extern` 的可变参数已支持（见 7.1），语言内**不提供**自定义 varargs。
 
 ### 7.1 可变参数（仅 `extern`，已实现）
@@ -1189,7 +1193,7 @@ unit example;
 | 12 | range 的 `..=` / `step` / 倒序 | 先只支持 `..`（switch 分支区间同此口径） |
 | 13 | 局部类型推断 | 已定：`auto x = expr;`；仅局部、必须有初始化器；多声明符类型一致 |
 | 14 | 参数默认可变性 | 可变（C 语义） |
-| 15 | `main` 带参数 | 第一阶段只 `int main()` |
+| 15 | `main` 带参数 | **已实现**：`int main(int argc, char** argv)`，`argv` 以 null 结尾；其余签名报错 |
 | 16 | 错误处理约定 | 返回码 + `null`；不引入异常 |
 | 17 | 模块可见性/命名修饰 | 已实现（0.0.30）：`private`=unit 内、`public`=跨 unit；struct 成员默认 public、class 成员默认 private；支持 `public:`/`private:` 分段标签；库边界 = unit 名第一段，跨库需 `public unit`；`use` 后 public 符号可直接无前缀使用；非 public 符号用 `internal` linkage（见 `docs/visibility-design.md`） |
 | 18 | 结构体对齐/packed | 已实现（0.0.42）：`packed`（无参数，等价 `pack(1)`）与 `align(N)`（2 的幂常量，覆盖整体对齐、尾部补齐）为**关键字修饰符**，正交可组合；`N` 与自然对齐比较，`N < 自然对齐` 报错。详见 3.4 |

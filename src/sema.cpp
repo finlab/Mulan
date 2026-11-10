@@ -4174,10 +4174,34 @@ private:
                 break;
             }
         }
+        if (!main) {
+            // `int main(int argc, char** argv)`
+            for (auto* cand : f->second) {
+                if (cand->params.size() == 2) {
+                    main = cand;
+                    break;
+                }
+            }
+        }
         if (!main) main = f->second.front();
         if (!main->rty) err("`main` is missing its return type", main);
         if (main->rty->str() != "int") err("`main` must return `int`", main);
-        if (!main->params.empty()) err("`main` cannot take parameters yet", main);
+        if (main->params.empty()) return;
+        if (main->params.size() != 2) {
+            err("`main` must have either no parameters or exactly 2: `(int argc, char** argv)`", main);
+        }
+        // 第二个参数必须是 `char**`（argv 由 CRT 提供，最后一个元素是 null）
+        static auto is_char = [](const TypePtr& t) {
+            return t && t->kind == TypeKind::Prim && t->name == "char";
+        };
+        const TypePtr& p0 = main->pty[0];
+        const TypePtr& p1 = main->pty[1];
+        bool ok0 = p0 && same_type(p0, t_int());
+        bool ok1 = p1 && p1->kind == TypeKind::Ptr && p1->elem &&
+                   p1->elem->kind == TypeKind::Ptr && is_char(p1->elem->elem);
+        if (!ok0 || !ok1) {
+            err("`main` parameters must be `(int argc, char** argv)`", main);
+        }
     }
 };
 

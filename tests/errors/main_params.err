@@ -1,1 +1,1 @@
-`main` cannot take parameters yet
+`main` must have either no parameters or exactly 2

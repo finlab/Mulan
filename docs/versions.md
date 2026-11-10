@@ -74,4 +74,6 @@
 
 | 0.0.55 | 2026-11-11 | **C 可变参数调用（`extern` 的 `...`）+ `std.cstdio`**：`extern` 声明可带 `...`（必须最后、至少一个命名参数），实参按 C 默认提升（`float→double`、小于 `int` 的整型→`int`、枚举→底层整型），`string` 自动传底层 `const char*`；含 RC 的实参编译错误；Mulan 内不支持自定义 varargs。codegen 用 `FunctionType::isVarArg` + `promoteVararg()`，ABI 由 LLVM 处理。另：`extern` 声明现在隐式 `public`（此前跨 unit 调用会被判未公开）；常量初值支持一元 `+`/`-`（`const int EOF = -1;`）；新增 `libs/std/cstdio.mu`（stdio 函数与常量绑定）。新增 varargs / cstdio 成功用例与 5 个报错用例；SPEC 新增 7.1，backlog U31 | 285/285（68 成功 + 204 报错 + 13 check）；冷编译零 warning |
 
+| 0.0.56 | 2026-11-11 | **带参数的 `main`**：支持 `int main(int argc, char** argv)`（C 启动代码传入，`argv` 以 null 结尾、`argv[argc] == null`）；参数类型必须精确为 `(int, char**)`，1 个参数 / `char*` / 非 `int` 返回均编译错误；`char**` 而非 `string[]`（argv 不参与 RC）。新增 main_args 成功用例与 main_bad_argv 报错用例，main_params 期望值更新；SPEC 7、§12 #15 同步 | 287/287（69 成功 + 205 报错 + 13 check）；冷编译零 warning |
+
 > 后续条目只递增 build 号，例如 0.0.2、0.0.3……；主/次版本变更会单独注明。
