@@ -2,6 +2,16 @@
 // Copyright 2026 Zhang Guolong
 
 // muc 命令行入口
+#if defined(_WIN32)
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#endif
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -43,6 +53,30 @@ build 选项:
 环境变量:
   MUC_BACKEND   默认后端（仅 llvm）
 )";
+
+// ---------------------------------------------------------------- 控制台编码
+//
+// Windows 控制台默认使用本地代码页（简体中文是 936/GBK），而源码里的中文
+// 消息以 UTF-8 存放。直接写 stdout 时控制台按 GBK 解释这些字节，中文会变成
+// 乱码。这里在启动时把控制台输出代码页切到 UTF-8，退出时恢复原值，以免影响
+// 同一窗口里的其它命令；输出被重定向到文件时字节不变，仍是 UTF-8。
+#if defined(_WIN32)
+static UINT g_saved_console_cp = 0;
+
+static void restoreConsoleOutputCp() {
+    if (g_saved_console_cp != 0 && g_saved_console_cp != CP_UTF8)
+        SetConsoleOutputCP(g_saved_console_cp);
+}
+
+static void enableUtf8Console() {
+    g_saved_console_cp = GetConsoleOutputCP();
+    if (g_saved_console_cp == 0 || g_saved_console_cp == CP_UTF8) return;
+    SetConsoleOutputCP(CP_UTF8);
+    std::atexit(restoreConsoleOutputCp);
+}
+#else
+static void enableUtf8Console() {}
+#endif
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
 
@@ -323,6 +357,7 @@ static int cmd_build(const std::vector<std::string>& args) {
 }
 
 int main(int argc, char** argv) {
+    enableUtf8Console();
     std::vector<std::string> args(argv + 1, argv + argc);
     if (!args.empty() && (args[0] == "-V" || args[0] == "--version")) {
         std::cout << "muc " MUC_VERSION "\n";

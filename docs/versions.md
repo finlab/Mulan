@@ -64,4 +64,6 @@
 | 0.0.49 | 2026-11-10 | **U24：禁止含引用字段的 struct 取址**：`&s`、`&arr[i]`（元素为含引用 struct）编译报错——裸指针可绕过逐字段 retain/release；标量字段 `&s.x` 仍允许；含用户析构器的 struct 例外（本来就只能通过指针使用）。`dynarray` 用例的 `void keep(S* out, ...)` 改为按值返回；新增 3 个取址报错用例，`addr_rules` 覆盖允许形式（RC struct 的标量字段、析构器 struct 取址） | 265/265（65 成功 + 187 报错 + 13 check） |
 | 0.0.50 | 2026-11-10 | **编译器改名 `mulanc` → `muc`**：可执行目标与 CMake `project()` 名改为 `muc`（产物 `build/muc.exe`），`--version` / `--help` 输出同步；环境变量 `MULANC_CMD`/`MULANC_LIBS`/`MULANC_BACKEND`/`MULANC_LLVM_TRACE` 改为 `MUC_CMD`/`MUC_LIBS`/`MUC_BACKEND`/`MUC_LLVM_TRACE`，编译宏 `MULANC_VERSION` → `MUC_VERSION`；测试运行器默认编译器改为 `muc`；README / SPEC / docs / AGENTS 中的命令示例同步（`versions.md` 历史条目保留旧名）。另：新增 `LICENSE`（Apache-2.0）与 `NOTICE`，语言定名 Mulan（木兰），17 个源文件加 SPDX 头；示例与测试中的 `"mu-lan"` 字面量改为 `"Mulan"`（strings 用例派生的长度 / 截断期望值同步改为 5 / `Mu`） | 265/265（65 成功 + 187 报错 + 13 check） |
 
+| 0.0.51 | 2026-11-10 | **修复 Windows 控制台中文乱码**：`muc` 启动时若控制台输出代码页不是 UTF-8（简体中文系统默认 936/GBK），临时切到 `CP_UTF8` 并用 `atexit` 在退出时恢复原值。源码中的中文消息一直是 UTF-8 字节，此前被 936 控制台按 GBK 解释而显示为乱码；输出重定向到文件或管道时字节不变（仍是 UTF-8） | 265/265（65 成功 + 187 报错 + 13 check）；冷编译零 warning |
+
 > 后续条目只递增 build 号，例如 0.0.2、0.0.3……；主/次版本变更会单独注明。
