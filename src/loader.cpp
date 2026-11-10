@@ -139,7 +139,7 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
             if (!tried.empty()) tried += "\n  ";
             tried += d + "/" + dotted_path(un) + ".mu";
         }
-        throw MuError("找不到 unit `" + un + "`；已尝试：\n  " + tried);
+        throw MuError("cannot find unit `" + un + "`; tried:\n  " + tried);
     };
 
     std::function<Unit*(const std::string&)> visit = [&](const std::string& path) -> Unit* {
@@ -148,7 +148,7 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         auto it = owned.find(name);
         if (it != owned.end()) return it->second.get();
         if (in_progress.count(name)) {
-            throw MuError("unit 循环依赖：" + name);
+            throw MuError("unit circular dependency: " + name);
         }
         in_progress.insert(name);
         Unit* raw = unit.get();
@@ -156,8 +156,8 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         for (auto& use : raw->uses) {
             Unit* dep = visit(find_file(use->unit_name));
             if (dep->name != use->unit_name) {
-                throw MuError(dep->filename + " 声明的 unit 是 `" + dep->name +
-                                  "`，但被 `use " + use->unit_name + ";` 引用",
+                throw MuError(dep->filename + " declares unit `" + dep->name +
+                                  "` but it is referenced by `use " + use->unit_name + ";`",
                               use->line, use->col, raw->filename);
             }
         }

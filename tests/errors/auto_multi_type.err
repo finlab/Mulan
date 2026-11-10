@@ -1,1 +1,1 @@
-推断出不同类型
+`auto` in the same declaration is inferred as different types: int and double

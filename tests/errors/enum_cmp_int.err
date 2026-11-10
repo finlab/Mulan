@@ -1,1 +1,1 @@
-只能与同一枚举类型的值比较/运算
+enum `enum_cmp_int.Color` can only be compared or combined with values of the same enum type; there is no implicit conversion between enums and integers (write `as`)

@@ -1,1 +1,1 @@
-未声明为 pub
+field `hidden` is not declared public (type `lib_vis_cls.C`)

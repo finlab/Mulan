@@ -1,1 +1,1 @@
-必须是整数或枚举
+switch value must be an integer or enum (found double)

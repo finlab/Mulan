@@ -1,1 +1,1 @@
-暂不支持指向 class/interface 的指针
+pointers to class or interface types are not supported (reference types are already handles)

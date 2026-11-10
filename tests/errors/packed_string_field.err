@@ -1,1 +1,1 @@
-字段 `s` 不能是 string
+field `s` of packed struct `Bad` cannot be `string` (unaligned pointer access)

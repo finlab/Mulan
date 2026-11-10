@@ -1,1 +1,1 @@
-区间端点不能是枚举
+range endpoints cannot be enum values (write `x as int`)

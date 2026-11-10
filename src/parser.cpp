@@ -75,11 +75,11 @@ public:
     }
 
     std::string parse_unit_name() {
-        std::string n = expect_ident("unit 名").text;
+        std::string n = expect_ident("unit name").text;
         while (at_op(".")) {
             advance();
             n += ".";
-            n += expect_ident("unit 名").text;
+            n += expect_ident("unit name").text;
         }
         return n;
     }
@@ -123,18 +123,18 @@ private:
     }
 
     Token expect_op(const std::string& op) {
-        if (!at_op(op)) throw err("期望 `" + op + "`，实际是 " + peek().describe());
+        if (!at_op(op)) throw err("expected `" + op + "` but got " + peek().describe());
         return advance();
     }
 
     Token expect_kw(const std::string& kw) {
-        if (!at_kw(kw)) throw err("期望 `" + kw + "`，实际是 " + peek().describe());
+        if (!at_kw(kw)) throw err("expected `" + kw + "` but got " + peek().describe());
         return advance();
     }
 
-    Token expect_ident(const std::string& what = "标识符") {
+    Token expect_ident(const std::string& what = "identifier") {
         if (peek().kind != TokKind::Ident) {
-            throw err("期望" + what + "，实际是 " + peek().describe());
+            throw err("expected " + what + " but got " + peek().describe());
         }
         return advance();
     }
@@ -144,7 +144,7 @@ private:
     // `++`/`--` 没有返回值：出现在任何表达式上下文都是错误
     void forbid_inc_expr() const {
         if (at_op("++", "--")) {
-            throw err("`++`/`--` 没有返回值，不能出现在表达式里；只能作为独立语句");
+            throw err("`++`/`--` has no value and cannot appear in an expression; it must be a standalone statement");
         }
     }
 
@@ -229,7 +229,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         advance();
     }
     if (!at_kw("unit")) {
-        throw err("文件必须以 `unit 名字;`、`public unit 名字;` 或 `private unit 名字;` 开头");
+        throw err("file must start with `unit name;`, `public unit name;` or `private unit name;`");
     }
     advance();
     std::string name = parse_unit_name();
@@ -257,7 +257,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 continue;
             }
             if (at_kw("packed")) {
-                if (packed) throw err_at("重复的布局修饰符 `packed`", peek());
+                if (packed) throw err_at("duplicate layout modifier `packed`", peek());
                 packed = true;
                 has_layout = true;
                 layout_tok = peek();
@@ -266,7 +266,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             // `align` 保持标识符身份，只有 `align(` 形式才是布局修饰符（上下文关键字）
             if (peek().kind == TokKind::Ident && peek().text == "align" && peek(1).is_op("(")) {
-                if (align_expr) throw err_at("重复的布局修饰符 `align(...)`", peek());
+                if (align_expr) throw err_at("duplicate layout modifier `align(...)`", peek());
                 layout_tok = peek();
                 has_layout = true;
                 advance();  // align
@@ -277,12 +277,12 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             break;
         }
-        if (at_eof()) throw err_at("修饰符后缺少声明", tk);
+        if (at_eof()) throw err_at("expected declaration after modifier", tk);
 
         if (at_kw("use")) {
-            if (is_pub) throw err_at("`public` 不能用于 `use`", tk);
+            if (is_pub) throw err_at("`public` cannot be used with `use`", tk);
             if (has_layout) {
-                throw err_at("布局修饰符 `packed` / `align(N)` 只能用于 `struct` 声明", layout_tok);
+                throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` declaration", layout_tok);
             }
             advance();
             std::string uname = parse_unit_name();
@@ -297,9 +297,9 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         }
 
         if (at_kw("extern")) {
-            if (is_pub) throw err_at("`extern` 声明隐式公开，不能使用 `public`", tk);
+            if (is_pub) throw err_at("`extern` declarations are implicitly public; `public` cannot be used", tk);
             if (has_layout) {
-                throw err_at("布局修饰符 `packed` / `align(N)` 只能用于 `struct` 声明", layout_tok);
+                throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` declaration", layout_tok);
             }
             advance();
             unit->decls.push_back(parse_extern(tk));
@@ -319,7 +319,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
 
         if (at_kw("enum")) {
             if (has_layout) {
-                throw err_at("`enum` 不支持布局修饰符（`packed` / `align(N)`）", layout_tok);
+                throw err_at("`enum` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
             }
             auto d = parse_enum();
             d->is_public = is_pub;
@@ -329,7 +329,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
 
         if (at_kw("class")) {
             if (has_layout) {
-                throw err_at("`class` 不支持布局修饰符（`packed` / `align(N)`）", layout_tok);
+                throw err_at("`class` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
             }
             auto d = parse_class();
             d->is_public = is_pub;
@@ -339,7 +339,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
 
         if (at_kw("interface")) {
             if (has_layout) {
-                throw err_at("`interface` 不支持布局修饰符（`packed` / `align(N)`）", layout_tok);
+                throw err_at("`interface` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
             }
             auto d = parse_interface();
             d->is_public = is_pub;
@@ -348,11 +348,11 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         }
 
         if (has_layout) {
-            throw err_at("布局修饰符 `packed` / `align(N)` 只能用于 `struct` 声明", layout_tok);
+            throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` declaration", layout_tok);
         }
 
         if (at_kw("static")) {
-            throw err_at("`static` 已移除：unit 级变量默认 private，跨 unit 使用 `public`", tk);
+            throw err_at("`static` has been removed: unit-level variables are private by default; use `public` to share across units", tk);
         }
 
         if (at_kw("const")) {
@@ -362,7 +362,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             continue;
         }
 
-        if (at_kw("auto")) throw err("unit 级变量不能使用 `auto`，必须显式写类型");
+        if (at_kw("auto")) throw err("`auto` cannot be used for unit-level variables; an explicit type is required");
 
         // 函数定义或 unit 级变量
         TypeSpecPtr spec = parse_type();
@@ -390,7 +390,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
 
 std::unique_ptr<Decl> Parser::parse_extern(const Token& tk) {
     TypeSpecPtr spec = parse_type();
-    const Token name_tok = expect_ident("外部符号名");
+    const Token name_tok = expect_ident("external symbol name");
     if (at_op("(")) {
         auto fn = std::make_unique<FuncDecl>();
         fn->name = name_tok.text;
@@ -415,7 +415,7 @@ std::unique_ptr<Decl> Parser::parse_extern(const Token& tk) {
 
 std::unique_ptr<Decl> Parser::parse_struct() {
     const Token tk = expect_kw("struct");
-    std::string name = expect_ident("结构体名").text;
+    std::string name = expect_ident("struct name").text;
     type_names_.insert(name);
     expect_op("{");
 
@@ -441,8 +441,8 @@ std::unique_ptr<Decl> Parser::parse_struct() {
             explicit_mod = true;
         }
         if (at_op("~")) {
-            if (explicit_mod) throw err("析构器不能使用 `public`/`private`");
-            if (decl->dtor) throw err("struct `" + name + "` 只能有一个析构器");
+            if (explicit_mod) throw err("destructor cannot use `public`/`private`");
+            if (decl->dtor) throw err("struct `" + name + "` can only have one destructor");
             decl->dtor = parse_dtor();
             continue;
         }
@@ -453,10 +453,10 @@ std::unique_ptr<Decl> Parser::parse_struct() {
             continue;
         }
         if (at_kw("weak")) {
-            throw err("`weak` 只能用于 class 字段");
+            throw err("`weak` can only be used on class fields");
         }
         TypeSpecPtr spec = parse_type();
-        const Token name_tok = expect_ident("字段名或方法名");
+        const Token name_tok = expect_ident("field or method name");
         if (at_op("(")) {
             decl->methods.push_back(parse_method(std::move(spec), name_tok));
             decl->methods.back()->is_public = member_pub;
@@ -467,7 +467,7 @@ std::unique_ptr<Decl> Parser::parse_struct() {
         for (;;) {
             if (!at_op(",")) break;
             advance();
-            std::string fname = expect_ident("字段名").text;
+            std::string fname = expect_ident("field name").text;
             decl->field_visibility[fname] = member_pub;
             decl->fields.emplace_back(std::move(fname), clone_spec(*spec));
         }
@@ -480,7 +480,7 @@ std::unique_ptr<Decl> Parser::parse_struct() {
 
 std::unique_ptr<Decl> Parser::parse_enum() {
     const Token tk = expect_kw("enum");
-    std::string name = expect_ident("枚举名").text;
+    std::string name = expect_ident("enum name").text;
     type_names_.insert(name);
     expect_op("{");
 
@@ -490,7 +490,7 @@ std::unique_ptr<Decl> Parser::parse_enum() {
     decl->col = tk.col;
 
     while (!at_op("}")) {
-        std::string member = expect_ident("枚举成员").text;
+        std::string member = expect_ident("enum member name").text;
         std::optional<long long> val;
         if (at_op("=")) {
             advance();
@@ -500,7 +500,7 @@ std::unique_ptr<Decl> Parser::parse_enum() {
                 sign = -1;
             }
             const Token t = peek();
-            if (t.kind != TokKind::Int) throw err("枚举值必须是整数字面量");
+            if (t.kind != TokKind::Int) throw err("enum value must be an integer literal");
             advance();
             val = sign * t.ival;
         }
@@ -517,12 +517,12 @@ std::unique_ptr<Decl> Parser::parse_enum() {
 }
 
 std::string Parser::parse_qualified_name() {
-    Token t = expect_ident("类型名");
+    Token t = expect_ident("type name");
     std::string n = t.text;
     while (at_op(".")) {
         advance();
         n += ".";
-        n += expect_ident("名称").text;
+        n += expect_ident("name").text;
     }
     return n;
 }
@@ -572,7 +572,7 @@ std::unique_ptr<CtorDecl> Parser::parse_ctor(const Token& name_tok) {
 
 std::unique_ptr<DtorDecl> Parser::parse_dtor() {
     const Token tk = expect_op("~");
-    expect_ident("类名");
+    expect_ident("class name");
     expect_op("(");
     expect_op(")");
     auto d = std::make_unique<DtorDecl>();
@@ -584,7 +584,7 @@ std::unique_ptr<DtorDecl> Parser::parse_dtor() {
 
 std::unique_ptr<Decl> Parser::parse_class() {
     const Token tk = expect_kw("class");
-    const Token nm = expect_ident("类名");
+    const Token nm = expect_ident("class name");
     type_names_.insert(nm.text);
 
     auto cd = std::make_unique<ClassDecl>();
@@ -611,8 +611,8 @@ std::unique_ptr<Decl> Parser::parse_class() {
             explicit_mod = true;
         }
         if (at_op("~")) {
-            if (explicit_mod) throw err("析构器不能使用 `public`/`private`");
-            if (cd->dtor) throw err("class `" + cd->name + "` 只能有一个析构器");
+            if (explicit_mod) throw err("destructor cannot use `public`/`private`");
+            if (cd->dtor) throw err("class `" + cd->name + "` can only have one destructor");
             cd->dtor = parse_dtor();
             continue;
         }
@@ -635,21 +635,21 @@ std::unique_ptr<Decl> Parser::parse_class() {
         }
         TypeSpecPtr spec = parse_type();
         if (prefix_weak) spec->weak = true;
-        const Token name_tok = expect_ident("成员名");
+        const Token name_tok = expect_ident("member name");
         if (at_op("(")) {
-            if (prefix_weak) throw err_at("`weak` 只能用于字段，不能用于方法", name_tok);
+            if (prefix_weak) throw err_at("`weak` can only be used on fields, not on methods", name_tok);
             auto m = parse_method(std::move(spec), name_tok);
             if (prefix_override) m->is_override = true;
             m->is_public = member_pub;
             cd->methods.push_back(std::move(m));
             continue;
         }
-        if (prefix_override) throw err_at("`override` 只能用于方法", name_tok);
+        if (prefix_override) throw err_at("`override` can only be used on methods", name_tok);
         cd->fields.emplace_back(name_tok.text, clone_spec(*spec));
         cd->field_visibility[name_tok.text] = member_pub;
         while (at_op(",")) {
             advance();
-            const std::string fname = expect_ident("字段名").text;
+            const std::string fname = expect_ident("field name").text;
             cd->field_visibility[fname] = member_pub;
             cd->fields.emplace_back(fname, clone_spec(*spec));
         }
@@ -662,7 +662,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
 
 std::unique_ptr<Decl> Parser::parse_interface() {
     const Token tk = expect_kw("interface");
-    const Token nm = expect_ident("接口名");
+    const Token nm = expect_ident("interface name");
     type_names_.insert(nm.text);
 
     auto id = std::make_unique<InterfaceDecl>();
@@ -674,10 +674,10 @@ std::unique_ptr<Decl> Parser::parse_interface() {
     expect_op("{");
     while (!at_op("}")) {
         if (at_kw("public", "private")) {
-            throw err("`public`/`private` 不能用于 interface 方法（接口方法恒随 interface 公开）");
+            throw err("`public`/`private` cannot be used on interface methods (interface methods are always public)");
         }
         TypeSpecPtr spec = parse_type();
-        const Token name_tok = expect_ident("方法名");
+        const Token name_tok = expect_ident("method name");
         id->methods.push_back(parse_method(std::move(spec), name_tok));
     }
     expect_op("}");
@@ -699,7 +699,7 @@ std::unique_ptr<FuncDecl> Parser::parse_operator_func(TypeSpecPtr ret, const Tok
     } else if (peek().kind == TokKind::Op) {
         sym = advance().text;
     } else {
-        throw err("`operator` 后缺少运算符");
+        throw err("expected operator after `operator`");
     }
 
     auto f = std::make_unique<FuncDecl>();
@@ -757,11 +757,11 @@ TypeSpecPtr Parser::parse_type() {
         while (at_op(".")) {
             advance();
             name += ".";
-            name += expect_ident("类型名").text;
+            name += expect_ident("type name").text;
         }
         spec = make_named_spec(name, t.line, t.col);
     } else {
-        throw err("期望类型名，实际是 " + t.describe());
+        throw err("expected type name but got " + t.describe());
     }
     if (base_const) spec->is_const = true;
     return type_suffixes(std::move(spec), t);
@@ -784,11 +784,11 @@ TypeSpecPtr Parser::parse_type_base() {
         while (at_op(".")) {
             advance();
             name += ".";
-            name += expect_ident("类型名").text;
+            name += expect_ident("type name").text;
         }
         spec = make_named_spec(name, t.line, t.col);
     } else {
-        throw err("期望类型名，实际是 " + t.describe());
+        throw err("expected type name but got " + t.describe());
     }
     if (base_const) spec->is_const = true;
     while (at_op("*")) {
@@ -847,9 +847,9 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
             std::vector<size_t> dims;
             for (;;) {
                 const Token n = peek();
-                if (n.kind != TokKind::Int) throw err("数组长度暂只支持整数字面量");
+                if (n.kind != TokKind::Int) throw err("array length only supports integer literals for now");
                 advance();
-                if (n.ival <= 0) throw err_at("数组长度必须大于 0", n);
+                if (n.ival <= 0) throw err_at("array length must be greater than 0", n);
                 dims.push_back(static_cast<size_t>(n.ival));
                 if (at_op(",")) {
                     advance();
@@ -888,11 +888,11 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params() {
             // `b` 会被 parse_type 当成类型名、再在 `)` 处报「期望参数名」，因此提前给出明确诊断。
             if (ptok.kind == TokKind::Ident && (peek(1).is_op(",") || peek(1).is_op(")"))) {
                 throw err_at(
-                    "参数必须写成 `类型 名称`；每个参数单独声明类型，不支持 `int a, b` 共享类型",
+                    "parameter must be written as `type name`; each parameter declares its own type, shared types like `int a, b` are not supported",
                     ptok);
             }
             TypeSpecPtr spec = parse_type();
-            std::string pname = expect_ident("参数名").text;
+            std::string pname = expect_ident("parameter name").text;
             auto p = std::make_unique<Param>();
             p->name = std::move(pname);
             p->spec = std::move(spec);
@@ -922,7 +922,7 @@ std::unique_ptr<FuncDecl> Parser::parse_func(std::string name, TypeSpecPtr ret, 
 std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global_list(TypeSpecPtr spec, bool is_const) {
     std::vector<std::unique_ptr<GlobalVar>> out;
     for (;;) {
-        const Token name_tok = expect_ident("变量名");
+        const Token name_tok = expect_ident("variable name");
         InitPtr init;
         if (at_op("=")) {
             advance();
@@ -946,7 +946,7 @@ std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global_list(TypeSpecPtr sp
 
 std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global() {
     if (at_kw("static")) {
-        throw err("`static` 已移除：unit 级变量默认 private，跨 unit 使用 `public`");
+        throw err("`static` has been removed: unit-level variables are private by default; use `public` to share across units");
     }
     TypeSpecPtr spec = parse_type();
     // C 模型：无后缀的 `const T` 是变量绑定 const；`const T*` 的 const 属于 pointee
@@ -962,7 +962,7 @@ std::unique_ptr<Block> Parser::parse_block() {
     block->line = tk.line;
     block->col = tk.col;
     while (!at_op("}")) {
-        if (at_eof()) throw err_at("代码块没有闭合", tk);
+        if (at_eof()) throw err_at("unterminated block", tk);
         for (auto& s : parse_stmt()) block->stmts.push_back(std::move(s));
     }
     expect_op("}");
@@ -976,7 +976,7 @@ std::vector<StmtPtr> Parser::parse_stmt() {
         out.push_back(parse_block());
         return out;
     }
-    if (t.kind == TokKind::Op && t.text == ";") throw err("不支持空语句 `;`");
+    if (t.kind == TokKind::Op && t.text == ";") throw err("empty statement `;` is not supported");
     if (at_kw("if")) {
         std::vector<StmtPtr> out;
         out.push_back(parse_if());
@@ -1035,10 +1035,10 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     }
     if (at_kw("del")) {
         const Token dt = advance();
-        throw err_at("`del` 已移除：释放引用写 `x = null;`（语义相同）", dt);
+        throw err_at("`del` has been removed: write `x = null;` to release a reference (same semantics)", dt);
     }
     if (at_kw("static")) {
-        throw err("第一阶段不支持 `static` 局部变量");
+        throw err("`static` local variables are not supported in phase 1");
     }
     // 前缀 ++/--：只能作为独立语句（不产生值）
     if (at_op("++", "--")) {
@@ -1068,7 +1068,7 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     // `static` 已从语言移除，但保留明确提示（尤其是函数内旧写法）
     if (t.kind == TokKind::Ident && t.text == "static" &&
         (peek(1).kind == TokKind::Ident || peek(1).kind == TokKind::Kw)) {
-        throw err_at("`static` 已移除：局部变量不需要它；unit 级变量默认 private，跨 unit 用 `public`", t);
+        throw err_at("`static` has been removed: local variables do not need it; unit-level variables are private by default, use `public` to share across units", t);
     }
     // 以类型关键字开头的语句一定是声明：直接按声明解析，让类型错误原样暴露
     if (t.kind == TokKind::Kw && is_type_start(t)) {
@@ -1080,7 +1080,7 @@ std::vector<StmtPtr> Parser::parse_stmt() {
 
     // `Foo bar;` 但 Foo 不是已知类型：给出更明确的诊断（表达式语句不可能以两个标识符开头）
     if (t.kind == TokKind::Ident && peek(1).kind == TokKind::Ident) {
-        throw err_at("`" + t.text + "` 不是已知类型（类型必须先声明后使用）", t);
+        throw err_at("`" + t.text + "` is not a known type (types must be declared before use)", t);
     }
 
     ExprPtr expr = parse_expr();
@@ -1165,13 +1165,13 @@ std::vector<StmtPtr> Parser::parse_local(bool is_const, bool is_auto) {
 
     std::vector<StmtPtr> out;
     for (;;) {
-        const Token name_tok = expect_ident("变量名");
+        const Token name_tok = expect_ident("variable name");
         InitPtr init;
         if (at_op("=")) {
             advance();
             init = parse_init();
         }
-        if (is_auto && !init) throw err_at("`auto` 声明必须有初始化器", name_tok);
+        if (is_auto && !init) throw err_at("`auto` declaration requires an initializer", name_tok);
         auto lv = std::make_unique<LocalVar>();
         lv->name = name_tok.text;
         lv->spec = spec ? clone_spec(*spec) : nullptr;
@@ -1280,18 +1280,18 @@ std::unique_ptr<Stmt> Parser::parse_for() {
         advance();
         by_ref = true;
     }
-    if (peek().kind != TokKind::Ident) throw err("for-in 需要一个循环变量名");
+    if (peek().kind != TokKind::Ident) throw err("for-in requires a loop variable name");
     std::string first = advance().text;
     bool has_idx = false;
     std::string idx_name;
     if (at_op(",")) {
-        if (by_ref) throw err("`for ref i, x` 不合法：索引形态写成 `for i, ref x in seq`（`ref` 紧贴元素变量）");
+        if (by_ref) throw err("`for ref i, x` is invalid: write the index form as `for i, ref x in seq` (`ref` must directly precede the element variable)");
         advance();  // ,
         if (at_kw("ref")) {
             advance();
             by_ref = true;
         }
-        if (peek().kind != TokKind::Ident) throw err("for-in 需要一个循环变量名");
+        if (peek().kind != TokKind::Ident) throw err("for-in requires a loop variable name");
         idx_name = std::move(first);
         first = advance().text;
         has_idx = true;
@@ -1334,18 +1334,18 @@ std::unique_ptr<Stmt> Parser::parse_switch() {
     node->col = tk.col;
     bool saw_else = false;
     while (!at_op("}")) {
-        if (at_eof()) throw err_at("switch 没有闭合", tk);
+        if (at_eof()) throw err_at("unterminated switch", tk);
         const Token at = peek();
         auto arm = std::make_unique<SwitchArm>();
         arm->line = at.line;
         arm->col = at.col;
         if (at_kw("else")) {
             advance();
-            if (saw_else) throw err_at("switch 只能有一个 `else` 分支", at);
+            if (saw_else) throw err_at("switch can only have one `else` branch", at);
             arm->is_else = true;
             saw_else = true;
         } else {
-            if (saw_else) throw err_at("`else:` 必须是 switch 的最后一个分支", at);
+            if (saw_else) throw err_at("`else:` must be the last branch of the switch", at);
             for (;;) {
                 SwitchPat pat;
                 pat.lo = parse_expr();
@@ -1360,7 +1360,7 @@ std::unique_ptr<Stmt> Parser::parse_switch() {
             }
         }
         if (!at_op(":")) {
-            throw err_at("switch 分支需要以 `:` 结尾（模式列表后写 `:`，分支体必须是 `{ }`）",
+            throw err_at("switch branch must end with `:` (write `:` after the pattern list, the branch body must be `{ }`)",
                          peek());
         }
         advance();  // :
@@ -1391,7 +1391,7 @@ ExprPtr Parser::parse_ternary() {
     auto node = std::make_unique<Ternary>();
     node->cond = std::move(cond);
     node->then_e = parse_ternary();  // 中间分支允许嵌套 `?:`
-    if (!at_op(":")) throw err_at("`?:` 缺少 `:`", peek());
+    if (!at_op(":")) throw err_at("expected `:` after `?`", peek());
     advance();
     node->else_e = parse_ternary();  // 右结合：`a ? b : c ? d : e` = `a ? b : (c ? d : e)`
     node->line = tok.line;
@@ -1522,7 +1522,7 @@ ExprPtr Parser::parse_unary() {
         ne->col = t.col;
         if (at_op("[")) {
             const Token lb = advance();
-            if (at_op("]")) throw err_at("`new` 的动态数组需要长度", lb);
+            if (at_op("]")) throw err_at("`new` dynamic array requires a length", lb);
             for (;;) {
                 ne->dims.push_back(parse_expr());
                 if (at_op(",")) {
@@ -1535,14 +1535,14 @@ ExprPtr Parser::parse_unary() {
             // new T[m][]：外层数组的元素是 T[]（空槽，稍后逐行 new）
             while (at_op("[")) {
                 if (!peek(1).is_op("]")) {
-                    throw err_at("`new T[m][n]` 不是锯齿数组语法：矩形数组用 `new T[m,n]`，锯齿数组请先 new 外层再循环填行", peek());
+                    throw err_at("`new T[m][n]` is not jagged array syntax: use `new T[m,n]` for rectangular arrays; for jagged arrays, allocate the outer array first and fill the rows in a loop", peek());
                 }
                 advance();
                 advance();
                 ne->jagged_rank++;
             }
             ne->is_array = true;
-            if (at_op("(")) throw err_at("动态数组构造不支持构造器参数", lb);
+            if (at_op("(")) throw err_at("dynamic array construction does not support constructor arguments", lb);
             return parse_postfix_tail(std::move(ne));
         }
         if (at_op("(")) {
@@ -1564,12 +1564,12 @@ ExprPtr Parser::parse_unary() {
             }
             expect_op(")");
             if (!ne->args.empty() && !ne->named.empty())
-                throw err_at("位置参数与命名参数不能混用", t);
+                throw err_at("positional and named arguments cannot be mixed", t);
         }
         return parse_postfix_tail(std::move(ne));
     }
     if (at_op("!")) {
-        throw err("`!` 已不再使用：逻辑非用 `not`，位取反用 `~`");
+        throw err("`!` is no longer used: use `not` for logical negation and `~` for bitwise negation");
     }
     if (t.kind == TokKind::Op && at_op("-", "+", "&", "*", "~")) {
         advance();
@@ -1657,7 +1657,7 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
                 }
             }
             advance();
-            std::string nm = expect_ident("成员名").text;
+            std::string nm = expect_ident("member name").text;
             auto node = std::make_unique<Member>();
             node->obj = std::move(e);
             node->name = std::move(nm);
@@ -1702,7 +1702,7 @@ ExprPtr Parser::parse_call(ExprPtr callee) {
         }
     }
     expect_op(")");
-    if (!args.empty() && !named.empty()) throw err_at("位置参数与命名参数不能混用", t);
+    if (!args.empty() && !named.empty()) throw err_at("positional and named arguments cannot be mixed", t);
     auto node = std::make_unique<Call>();
     node->callee = std::move(callee);
     node->args = std::move(args);
@@ -1790,12 +1790,12 @@ ExprPtr Parser::parse_primary() {
         advance();
         ExprPtr e = parse_expr();
         if (at_op("++", "--")) {
-            throw err("`++`/`--` 没有返回值，不能出现在表达式里（只能作为独立语句）");
+            throw err("`++`/`--` has no value and cannot appear in an expression (only as a standalone statement)");
         }
         expect_op(")");
         return e;
     }
-    throw err("意外的 " + t.describe());
+    throw err("unexpected " + t.describe());
 }
 
 }  // namespace
@@ -1809,7 +1809,7 @@ std::unique_ptr<Unit> parse_source(const std::string& src, const std::string& fi
 
 std::unique_ptr<Unit> parse_file(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
-    if (!f) throw MuError("无法读写文件 " + path);
+    if (!f) throw MuError("cannot read or write file " + path);
     std::ostringstream ss;
     ss << f.rdbuf();
     return parse_source(ss.str(), path);

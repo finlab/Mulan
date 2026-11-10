@@ -1,1 +1,1 @@
-`?:` 两侧类型不一致（ternary_struct.P 与 ternary_struct.Q）
+the branches of `?:` have different types (ternary_struct.P and ternary_struct.Q); cast one of them explicitly with `as`

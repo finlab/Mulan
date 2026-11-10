@@ -1,1 +1,1 @@
-不支持布局修饰符
+`enum` does not support layout modifiers (`packed` / `align(N)`)

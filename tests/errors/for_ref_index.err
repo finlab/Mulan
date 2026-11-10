@@ -1,1 +1,1 @@
-必须是变量或成员访问
+the sequence of `for ref` must be a variable or member access (an lvalue)

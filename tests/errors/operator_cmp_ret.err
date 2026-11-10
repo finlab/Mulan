@@ -1,1 +1,1 @@
-比较运算符必须返回 bool
+comparison operators must return `bool`

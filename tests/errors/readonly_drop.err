@@ -1,1 +1,1 @@
-不能把 const int* 赋给 int*
+argument of call to `f`: cannot assign const int* to int*

@@ -1,1 +1,1 @@
-返回类型不一致
+override return type does not match the declaration in `iface_ret_conflict.I2`

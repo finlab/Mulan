@@ -1,1 +1,1 @@
-`?:` 两侧类型不一致（int 与 double）
+the branches of `?:` have different types (int and double); cast one of them explicitly with `as`

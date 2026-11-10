@@ -1,1 +1,1 @@
-必须在第一条语句调用
+constructor must call `super(...)` as its first statement

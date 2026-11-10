@@ -1,1 +1,1 @@
-字段 `xs` 不能是动态数组
+field `xs` of packed struct `Bad` cannot be a dynamic array `int[]` (unaligned pointer access)

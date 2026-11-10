@@ -1,1 +1,1 @@
-枚举与整数之间没有隐式转换
+initialization: cannot assign enum_implicit.Color to int (no implicit conversion between enums and integers; write `as`)

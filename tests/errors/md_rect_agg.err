@@ -1,1 +1,1 @@
-请用 `new T[m,n]` 初始化
+dynamic rectangular array `int[,]` must be created with `new T[m,n]`

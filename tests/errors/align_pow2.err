@@ -1,1 +1,1 @@
-align(N) 的 N 必须是 2 的幂
+N in `align(N)` must be a power of two (got 3)

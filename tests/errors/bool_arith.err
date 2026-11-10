@@ -1,1 +1,1 @@
-`+` 不支持 bool 与 int
+`+` is not supported for bool and int

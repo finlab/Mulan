@@ -1,1 +1,1 @@
-必须返回 `usize`
+`forin_badlen.Vec::length()` must return `usize` (found `int`）

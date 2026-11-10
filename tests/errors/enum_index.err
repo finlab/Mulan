@@ -1,1 +1,1 @@
-下标不能是枚举
+subscript cannot be an enum `enum_index.Color` (write `x as int`)

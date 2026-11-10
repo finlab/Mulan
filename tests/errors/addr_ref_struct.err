@@ -1,1 +1,1 @@
-不能对含引用字段的 struct
+cannot take the address of struct `addr_ref_struct.S` which has reference fields: a raw pointer could bypass RC (backlog U24); pass or return it by value, or use a class (structs with a user-defined destructor are still used through pointers and are not affected)

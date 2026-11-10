@@ -1,1 +1,1 @@
-冲突，必须在类中覆盖
+default interface method `f` is conflicting and must be overridden in the class

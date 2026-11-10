@@ -1,1 +1,1 @@
-`!` 已不再使用
+`!` is no longer used: use `not` for logical negation and `~` for bitwise negation

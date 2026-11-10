@@ -1,1 +1,1 @@
-不能对 `this` 取地址
+cannot take the address of `this`: it is a reference to the current object

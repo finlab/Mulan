@@ -1,1 +1,1 @@
-不能使用非 public 类型
+public function `leak` cannot use non-public type `lib_vis_leak.Secret`

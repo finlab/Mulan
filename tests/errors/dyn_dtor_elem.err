@@ -1,1 +1,1 @@
-暂不能作动态数组元素
+struct `dyn_dtor_elem.S` has a destructor and cannot be a dynamic array element

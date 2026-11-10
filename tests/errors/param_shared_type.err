@@ -1,1 +1,1 @@
-每个参数单独声明类型
+parameter must be written as `type name`; each parameter declares its own type, shared types like `int a, b` are not supported

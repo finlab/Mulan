@@ -1,1 +1,1 @@
-枚举成员是常量，不能赋值
+enum members are constants and cannot be assigned

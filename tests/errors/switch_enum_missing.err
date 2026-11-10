@@ -1,1 +1,1 @@
-没有覆盖枚举
+switch does not cover all members of enum switch_enum_missing.C (missing Cc); add the missing cases or write `else:`

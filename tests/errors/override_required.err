@@ -1,1 +1,1 @@
-必须写 `override`
+overriding or implementing a base class method requires `override`

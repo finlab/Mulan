@@ -1,1 +1,1 @@
-有歧义
+type `Dup` is ambiguous: `lib_imp_a.Dup` and `lib_imp_b.Dup`; use a qualified name

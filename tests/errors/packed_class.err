@@ -1,1 +1,1 @@
-不支持布局修饰符
+`class` does not support layout modifiers (`packed` / `align(N)`)

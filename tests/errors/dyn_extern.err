@@ -1,1 +1,1 @@
-不能使用动态数组
+`extern` function `f` cannot use dynamic arrays `T[]` (they carry an RC header and are not C layout)

@@ -1,1 +1,1 @@
-初始化：不能把 int 赋给 byte
+initialization: cannot assign int to byte

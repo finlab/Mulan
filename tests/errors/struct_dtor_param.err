@@ -1,1 +1,1 @@
-只能通过指针传递
+struct `struct_dtor_param.S` has a destructor and can only be passed by pointer (passing by value would copy)

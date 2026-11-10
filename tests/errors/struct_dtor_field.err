@@ -1,1 +1,1 @@
-暂不能作为字段
+struct `struct_dtor_field.S` has a destructor and cannot be used as a field (field destruction is not implemented)

@@ -1,3 +1,3 @@
-动态数组数据区在 24 字节头部之后
-最多 8 字节对齐
-align(16)
+type `align_heap.Wide` has align(16) greater than 8: the data area of a dynamic array follows a 24-byte header, so elements can be aligned to at most 8 bytes; use a fixed-size array or a pointer instead, or lower `align(N)`
+type `align_heap.Wide` has align(16) greater than 8: the data area of a dynamic array follows a 24-byte header, so elements can be aligned to at most 8 bytes; use a fixed-size array or a pointer instead, or lower `align(N)`
+type `align_heap.Wide` has align(16) greater than 8: the data area of a dynamic array follows a 24-byte header, so elements can be aligned to at most 8 bytes; use a fixed-size array or a pointer instead, or lower `align(N)`

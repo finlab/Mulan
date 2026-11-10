@@ -1,1 +1,1 @@
-不能按值包含自身
+struct `S` cannot contain itself by value

@@ -1,1 +1,1 @@
-声明隐式公开
+`extern` declarations are implicitly public; `public` cannot be used

@@ -1,1 +1,1 @@
-重复实现接口
+class `C` implements interface `iface_dup.I` more than once

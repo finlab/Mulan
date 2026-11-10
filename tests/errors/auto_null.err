@@ -1,1 +1,1 @@
-不能从 `null` 推断类型
+cannot infer a type from `null`

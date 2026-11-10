@@ -1,1 +1,1 @@
-不支持多维数组
+`for-in` does not support multidimensional arrays `int[,]`: use an index loop (get each dimension's length with `len(a, k)`)

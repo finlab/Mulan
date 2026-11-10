@@ -1,1 +1,1 @@
-不能把 int 赋给 std.string.string
+operator+ argument: cannot assign int to std.string.string

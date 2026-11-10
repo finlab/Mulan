@@ -1,1 +1,1 @@
-不支持 `+=`
+enum `enum_compound.Color` does not support `+=` (write `x = (x as int + y) as Color`）

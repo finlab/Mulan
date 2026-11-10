@@ -1,2 +1,2 @@
-align(2) 小于结构体 `Bad` 的自然对齐 4
-降对齐请用 `packed`
+align(2) is less than the natural alignment of struct `Bad` (4); use `packed` to lower the alignment
+align(2) is less than the natural alignment of struct `Bad` (4); use `packed` to lower the alignment

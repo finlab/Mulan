@@ -1,1 +1,1 @@
-不支持多维数组
+`for-in` does not support multidimensional arrays `int[3,2]`: use an index loop, or take one row first and iterate over it

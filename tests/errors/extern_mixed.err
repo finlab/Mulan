@@ -1,1 +1,1 @@
-不能同时声明为 extern
+function `getv` cannot be declared both `extern` and normal

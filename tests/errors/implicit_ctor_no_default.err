@@ -1,1 +1,1 @@
-基类没有无参构造器
+base class of class `B` has no parameterless constructor; declare a constructor explicitly

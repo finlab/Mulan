@@ -1,1 +1,1 @@
-未声明为 public
+method `hidden` is not declared public and cannot be called from another unit

@@ -174,7 +174,7 @@ private:
                         adv();
                     }
                 }
-                if (depth != 0) throw err("块注释没有闭合", line, col);
+                if (depth != 0) throw err("unterminated block comment", line, col);
                 continue;
             }
             break;
@@ -208,8 +208,8 @@ private:
 
         // 不支持的运算符：给出友好提示（Python 版里这两条判断位于运算符匹配之后，
         // 实际不可达；这里按规范意图提前判断，使提示真正生效）。
-        if (ch == '&' && peek(1) == '&') throw err("不支持 `&&`：逻辑与请写 `and`");
-        if (ch == '|' && peek(1) == '|') throw err("不支持 `||`：逻辑或请写 `or`");
+        if (ch == '&' && peek(1) == '&') throw err("`&&` is not supported: use `and` for logical and");
+        if (ch == '|' && peek(1) == '|') throw err("`||` is not supported: use `or` for logical or");
 
         // 运算符（最长匹配）
         for (const char* op : OPS3) {
@@ -235,8 +235,8 @@ private:
             return tok;
         }
 
-        if (ch == '\\') throw err("非法字符 `\\`");
-        throw err("非法字符 " + quote_char(ch));
+        if (ch == '\\') throw err("invalid character `\\`");
+        throw err("invalid character " + quote_char(ch));
     }
 
     // ------------------------------------------------------ 数字
@@ -245,7 +245,7 @@ private:
         try {
             return parse_digits(raw, base);
         } catch (const std::overflow_error&) {
-            throw err("整数字面量超出 64 位范围（最大 2^63-1）", line, col);
+            throw err("integer literal is too large (maximum 2^63-1)", line, col);
         }
     }
 
@@ -259,7 +259,7 @@ private:
             std::size_t ds = i_;
             while (i_ < n_ && in_set(peek(), "0123456789abcdefABCDEF_")) adv();
             std::string raw = src_.substr(ds, i_ - ds);
-            if (raw.empty()) throw err("十六进制字面量缺少数字", line, col);
+            if (raw.empty()) throw err("hexadecimal literal has no digits", line, col);
             tok.kind = TokKind::Int;
             tok.ival = int_digits(raw, 16, line, col);
             return tok;
@@ -270,7 +270,7 @@ private:
             std::size_t ds = i_;
             while (i_ < n_ && in_set(peek(), "01_")) adv();
             std::string raw = src_.substr(ds, i_ - ds);
-            if (raw.empty()) throw err("二进制字面量缺少数字", line, col);
+            if (raw.empty()) throw err("binary literal has no digits", line, col);
             tok.kind = TokKind::Int;
             tok.ival = int_digits(raw, 2, line, col);
             return tok;
@@ -350,13 +350,13 @@ private:
         if (ch == 'x') {
             std::string h = adv(2);
             if (h.size() != 2 || h.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
-                throw err("`\\x` 后必须跟两位十六进制数字", line, col);
+                throw err("`\\x` must be followed by two hexadecimal digits", line, col);
             }
             return static_cast<int>(std::strtol(h.c_str(), nullptr, 16));
         }
-        if (ch == 'u') throw err("暂不支持 `\\u{...}` 转义");
-        if (ch < 0) throw err("未知转义 `\\`", line, col);
-        throw err("未知转义 `\\" + std::string(1, static_cast<char>(ch)) + "`", line, col);
+        if (ch == 'u') throw err("`\\u{...}` escape is not supported yet");
+        if (ch < 0) throw err("invalid escape sequence `\\`", line, col);
+        throw err("invalid escape sequence `\\" + std::string(1, static_cast<char>(ch)) + "`", line, col);
     }
 
     Token char_lit(int line, int col) {
@@ -364,7 +364,7 @@ private:
         tok.line = line;
         tok.col = col;
         adv();  // 开头的 '
-        if (peek() < 0) throw err("字符字面量没有闭合", line, col);
+        if (peek() < 0) throw err("unterminated character literal", line, col);
         long long v = 0;
         if (peek() == '\\') {
             adv();
@@ -372,10 +372,10 @@ private:
         } else {
             int ch = peek();
             adv();
-            if (ch > 0x7F) throw err("字符字面量暂只支持 ASCII", line, col);
+            if (ch > 0x7F) throw err("character literal only supports ASCII for now", line, col);
             v = ch;
         }
-        if (peek() != '\'') throw err("字符字面量只能包含一个字符", line, col);
+        if (peek() != '\'') throw err("character literal can only contain one character", line, col);
         adv();
         tok.kind = TokKind::Char;
         tok.ival = v;
@@ -389,13 +389,13 @@ private:
         adv();  // 开头的 "
         std::string buf;
         for (;;) {
-            if (i_ >= n_) throw err("字符串没有闭合", line, col);
+            if (i_ >= n_) throw err("unterminated string literal", line, col);
             int ch = peek();
             if (ch == '"') {
                 adv();
                 break;
             }
-            if (ch == '\n') throw err("字符串不能跨行", line, col);
+            if (ch == '\n') throw err("string literal cannot span multiple lines", line, col);
             if (ch == '\\') {
                 adv();
                 buf.push_back(static_cast<char>(escape() & 0xFF));
@@ -405,7 +405,7 @@ private:
             buf.push_back(static_cast<char>(ch));  // UTF-8 字节原样保留
         }
         if (buf.find('\0') != std::string::npos) {
-            throw err("字符串字面量不能包含 NUL 字节", line, col);
+            throw err("string literal cannot contain NUL bytes", line, col);
         }
         tok.kind = TokKind::Str;
         tok.bytes = std::move(buf);
@@ -427,9 +427,9 @@ private:
 std::string Token::describe() const {
     switch (kind) {
         case TokKind::Eof:
-            return "文件结尾";
+            return "end of file";
         case TokKind::Str:
-            return "字符串字面量";
+            return "string literal";
         case TokKind::Float: {
             char buf[32];
             std::snprintf(buf, sizeof(buf), "%g", fval);

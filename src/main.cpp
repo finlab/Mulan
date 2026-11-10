@@ -34,24 +34,24 @@ namespace fs = std::filesystem;
 #define MUC_VERSION "0.0.0"
 #endif
 
-static const char* USAGE = R"(muc - Mulan 语言编译器（LLVM 后端）
+static const char* USAGE = R"(muc - Mulan language compiler (LLVM backend)
 
-用法:
-  muc check <entry.mu>            只做语义检查
-  muc dump  <entry.mu>            打印 AST（调试）
-  muc build <entry.mu> [选项]     编译并链接
-  muc -V | --version              输出版本号
+Usage:
+  muc check <entry.mu>            run semantic checks only
+  muc dump  <entry.mu>            dump the AST (debug)
+  muc build <entry.mu> [options]  compile and link
+  muc -V | --version              print version
 
-build 选项:
-  -o <path>        输出可执行文件（默认 build/<entry>.exe）
-  --backend <b>    后端（本版本只有 llvm，保留参数兼容）
-  --emit-ir <path> 另存生成的 LLVM IR
-  --cc <name>      链接器（默认环境变量 CC，否则 gcc）
-  -I <dir>         额外的 unit 搜索目录（可重复）
-  --run            编译成功后立即运行
+build options:
+  -o <path>        output executable (default: build/<entry>.exe)
+  --backend <b>    backend to use (only llvm in this version; kept for compatibility)
+  --emit-ir <path> also write the generated LLVM IR to <path>
+  --cc <name>      linker driver (default: $CC, else gcc)
+  -I <dir>         extra unit search directory (repeatable)
+  --run            run the executable after a successful build
 
-环境变量:
-  MUC_BACKEND   默认后端（仅 llvm）
+Environment:
+  MUC_BACKEND      default backend (llvm only)
 )";
 
 // ---------------------------------------------------------------- 控制台编码
@@ -277,13 +277,13 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
     if (const char* cc = std::getenv("CC")) b.cc = cc;
     if (const char* bk = std::getenv("MUC_BACKEND")) b.backend = bk;
     size_t i = 0;
-    if (args.empty()) throw MuError("缺少入口文件");
+    if (args.empty()) throw MuError("missing entry file");
     b.entry = args[0];
     i = 1;
     while (i < args.size()) {
         const std::string& a = args[i];
         auto need = [&](const char* what) {
-            if (i + 1 >= args.size()) throw MuError(std::string("选项 ") + what + " 缺少参数");
+            if (i + 1 >= args.size()) throw MuError(std::string("missing argument for ") + what);
             return args[++i];
         };
         if (a == "-o") b.out = need("-o");
@@ -292,7 +292,7 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "--cc") b.cc = need("--cc");
         else if (a == "-I") b.dirs.push_back(need("-I"));
         else if (a == "--run") b.run = true;
-        else throw MuError("未知选项 `" + a + "`");
+        else throw MuError("unknown option `" + a + "`");
         ++i;
     }
     return b;
@@ -304,7 +304,7 @@ static int cmd_check(const std::vector<std::string>& args) {
     auto units = load_units(args[0], {}, entry_name);
     size_t n = units.size();
     auto prog = analyze(std::move(units), entry_name);
-    std::cout << "ok: " << n << " 个 unit，语义检查通过\n";
+    std::cout << "ok: " << n << " units, semantic checks passed\n";
     return 0;
 }
 
@@ -329,14 +329,14 @@ static int cmd_build(const std::vector<std::string>& args) {
     fs::path out = ba.out.empty() ? build_dir / (base + ".exe") : fs::path(ba.out);
 
     if (ba.backend != "llvm") {
-        throw MuError("未知 backend `" + ba.backend + "`（本版本只有 llvm）");
+        throw MuError("unknown backend `" + ba.backend + "` (only llvm in this version)");
     }
 
     fs::path ir_path = ba.emit_ir.empty() ? build_dir / (base + ".ll") : fs::path(ba.emit_ir);
     if (ir_path.has_parent_path()) fs::create_directories(ir_path.parent_path());
     {
         std::ofstream f(ir_path, std::ios::binary);
-        if (!f) throw MuError("无法写入 " + ir_path.string());
+        if (!f) throw MuError("cannot write " + ir_path.string());
         f << llvm_emit_text(prog);
     }
     fs::path obj = build_dir / (base + ".o");
@@ -345,8 +345,8 @@ static int cmd_build(const std::vector<std::string>& args) {
     std::cout << "+ " << cmd << "\n";
     int rc = std::system(cmd.c_str());
     if (rc != 0) {
-        std::cerr << "error: 链接失败（目标文件：" << obj.string()
-                  << "，IR：" << ir_path.string() << "）\n";
+        std::cerr << "error: link failed (object file: " << obj.string()
+                  << ", IR: " << ir_path.string() << ")\n";
         return rc;
     }
     std::cout << "ok: " << out.string() << "\n";
@@ -373,7 +373,7 @@ int main(int argc, char** argv) {
         if (cmd == "check") return cmd_check(rest);
         if (cmd == "dump") return cmd_dump(rest);
         if (cmd == "build") return cmd_build(rest);
-        std::cerr << "未知命令 `" << cmd << "`\n\n" << USAGE;
+        std::cerr << "unknown command `" << cmd << "`\n\n" << USAGE;
         return 2;
     } catch (const MuError& e) {
         std::cerr << e.what() << "\n";

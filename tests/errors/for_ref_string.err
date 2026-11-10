@@ -1,1 +1,1 @@
-string 不可变
+`string` is immutable and cannot be iterated with `for ref`

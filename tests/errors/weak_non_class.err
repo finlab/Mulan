@@ -1,1 +1,1 @@
-必须是 class 引用
+`weak` field must be a class reference (interfaces do not support `weak` yet)

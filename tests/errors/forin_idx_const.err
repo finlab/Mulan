@@ -1,1 +1,1 @@
-const 绑定，不能赋值
+`i` is a `const` binding and cannot be assigned

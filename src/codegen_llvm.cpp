@@ -173,7 +173,7 @@ struct Emitter {
         if (n == "long" || n == "ulong" || n == "usize" || n == "isize") return i64();
         if (n == "float") return LType::getFloatTy(ctx);
         if (n == "double") return LType::getDoubleTy(ctx);
-        fail("LLVM 后端：未知基本类型 " + n);
+        fail("LLVM backend: unknown primitive type " + n);
     }
 
     LStruct* structOf(const TypePtr& t) {
@@ -190,7 +190,7 @@ struct Emitter {
         for (auto& f : t->fields) {
             LType* ft = lt(f.type);
             if (!ft->isSized()) {
-                fail("LLVM 后端：结构体 `" + t->str() + "` 的字段 `" + f.name + "` 不是定长类型");
+                fail("LLVM backend: struct `" + t->str() + "` field `" + f.name + "` is not a fixed-size type");
             }
             uint64_t fsz = dl.getTypeAllocSize(ft);
             uint64_t fa = alignOf(f.type);
@@ -203,8 +203,8 @@ struct Emitter {
                 llvmCur = modelOff;
                 llvmOff = modelOff;
             } else if (llvmOff > modelOff) {
-                fail("LLVM 后端：结构体 `" + t->str() + "` 的字段 `" + f.name +
-                     "` 布局与语义层不一致");
+                fail("LLVM backend: struct `" + t->str() + "` field `" + f.name +
+                     "` has a layout mismatch with sema");
             }
             map.push_back(static_cast<unsigned>(fs.size()));
             fs.push_back(ft);
@@ -223,8 +223,8 @@ struct Emitter {
         if (llvmEnd < modelSize) {
             fs.push_back(LArray::get(i8(), modelSize - llvmEnd));
         } else if (llvmEnd > modelSize) {
-            fail("LLVM 后端：结构体 `" + t->str() + "` 的大小与语义层不一致（" +
-                 std::to_string(llvmEnd) + " / " + std::to_string(modelSize) + "）");
+            fail("LLVM backend: size of struct `" + t->str() + "` does not match sema (" +
+                 std::to_string(llvmEnd) + " / " + std::to_string(modelSize) + ")");
         }
         st->setBody(fs, t->is_packed);
         fieldMap[key] = std::move(map);
@@ -299,7 +299,7 @@ struct Emitter {
         for (auto& f : cls->fields) {
             LType* ft = lt(f.type);
             if (!ft->isSized()) {
-                fail("LLVM 后端：class `" + cls->str() + "` 的字段 `" + f.name + "` 不是定长类型");
+                fail("LLVM backend: class `" + cls->str() + "` field `" + f.name + "` is not a fixed-size type");
             }
             uint64_t fsz = dl.getTypeAllocSize(ft);
             uint64_t fa = alignOf(f.type);
@@ -312,8 +312,8 @@ struct Emitter {
                 llvmCur = modelOff;
                 llvmOff = modelOff;
             } else if (llvmOff > modelOff) {
-                fail("LLVM 后端：class `" + cls->str() + "` 的字段 `" + f.name +
-                     "` 布局与语义层不一致");
+                fail("LLVM backend: class `" + cls->str() + "` field `" + f.name +
+                     "` has a layout mismatch with sema");
             }
             map.push_back(static_cast<unsigned>(fs.size()));
             fs.push_back(ft);
@@ -325,12 +325,12 @@ struct Emitter {
         if (llvmCur < modelSize) {
             fs.push_back(LArray::get(i8(), modelSize - llvmCur));
         } else if (llvmCur > modelSize) {
-            fail("LLVM 后端：class `" + cls->str() + "` 的大小与语义层不一致（" +
-                 std::to_string(llvmCur) + " / " + std::to_string(modelSize) + "）");
+            fail("LLVM backend: size of class `" + cls->str() + "` does not match sema (" +
+                 std::to_string(llvmCur) + " / " + std::to_string(modelSize) + ")");
         }
         st->setBody(fs, false);
         if (dl.getTypeAllocSize(st) != modelSize) {
-            fail("LLVM 后端：class `" + cls->str() + "` 的 LLVM 大小与语义层不一致（" +
+            fail("LLVM backend: LLVM size of class `" + cls->str() + "` does not match sema (" +
                  std::to_string(dl.getTypeAllocSize(st)) + " / " + std::to_string(modelSize) +
                  "）");
         }
@@ -378,7 +378,7 @@ struct Emitter {
                 }
             }
         }
-        fail("std.string.string 未定义");
+        fail("std.string.string is not defined");
     }
 
     bool isStrType(const TypePtr& t) {
@@ -1163,14 +1163,14 @@ struct Emitter {
                                               GlobalValue::PrivateLinkage, hdr, ".arr");
                 return gv;
             }
-            fail("LLVM 后端：不支持的全局聚合初始化", ia->line, ia->col);
+            fail("LLVM backend: unsupported global aggregate initializer", ia->line, ia->col);
         }
         auto ie = dynamic_cast<InitExpr*>(init);
-        if (!ie) fail("LLVM 后端：未知初始化器");
+        if (!ie) fail("LLVM backend: unknown initializer");
         Expr* e = ie->expr.get();
         if (auto il = dynamic_cast<IntLit*>(e)) {
             if (isStrType(ty)) {
-                fail("LLVM 后端：string 不能用整数初始化");
+                fail("LLVM backend: cannot initialize `string` from an integer");
             }
             if (ty->kind == TypeKind::Slice && il->value == 0) {
                 return Constant::getNullValue(ct);
@@ -1199,7 +1199,7 @@ struct Emitter {
                 return ConstantStruct::get(cast<LStruct>(ct), {inner});
             }
         }
-        fail("LLVM 后端：全局初始化器必须是常量", e->line, e->col);
+        fail("LLVM backend: global initializer must be a constant", e->line, e->col);
     }
 
     // ------------------------------------------------------------ 表达式
@@ -1245,7 +1245,7 @@ struct Emitter {
         if (from->kind == TypeKind::Ptr && is_integer(to)) return b.CreatePtrToInt(v, tt);
         if (is_integer(from) && to->kind == TypeKind::Ptr) return b.CreateIntToPtr(v, tt);
         if (from->kind == TypeKind::Ptr && to->kind == TypeKind::Ptr) return v;
-        fail("LLVM 后端：无法转换 " + from->str() + " → " + to->str(), line, col);
+        fail("LLVM backend: cannot convert " + from->str() + " -> " + to->str(), line, col);
     }
 
     bool isLvalue(Expr* e) {
@@ -1317,17 +1317,17 @@ struct Emitter {
             if (i == 0) continue;
             if (auto* st = dyn_cast<LStruct>(cur)) {
                 auto* ci = dyn_cast<ConstantInt>(*it);
-                if (!ci) fail("LLVM 后端：结构体下标必须是常量", line, col);
+                if (!ci) fail("LLVM backend: struct index must be a constant", line, col);
                 unsigned f = static_cast<unsigned>(ci->getZExtValue());
                 if (f >= st->getNumElements())
-                    fail("LLVM 后端：结构体字段下标越界（" + std::to_string(f) + "/" +
+                    fail("LLVM backend: struct field index out of bounds (" + std::to_string(f) + "/" +
                              std::to_string(st->getNumElements()) + "）",
                          line, col);
                 cur = st->getElementType(f);
             } else if (auto* at = dyn_cast<LArray>(cur)) {
                 cur = at->getElementType();
             } else {
-                fail("LLVM 后端：GEP 下标过多（基类型不是聚合）", line, col);
+                fail("LLVM backend: too many GEP indices (base type is not an aggregate)", line, col);
             }
         }
         return b.CreateGEP(ty, ptr, idxs);
@@ -1347,7 +1347,7 @@ struct Emitter {
                 return thisSlot;
             }
             if (n->kind == "field" && n->implicit_this) {
-                if (!curClassTy || !thisSlot) fail("LLVM 后端：隐式字段访问缺少 this", n->line, n->col);
+                if (!curClassTy || !thisSlot) fail("LLVM backend: implicit field access is missing `this`", n->line, n->col);
                 return fieldAddr(b.CreateLoad(ptrTy(), thisSlot), curClassTy, n->field_index);
             }
             if (auto lv = std::get_if<LocalVar*>(&n->sym)) {
@@ -1358,7 +1358,7 @@ struct Emitter {
             if (auto gv = std::get_if<GlobalVar*>(&n->sym)) {
                 return mod->getOrInsertGlobal((*gv)->cname, lt((*gv)->rty));
             }
-            fail("LLVM 后端：名字 `" + n->ident + "` 不可寻址", n->line, n->col);
+            fail("LLVM backend: name `" + n->ident + "` is not addressable", n->line, n->col);
         }
         if (auto m = dynamic_cast<Member*>(e)) {
             if (m->kind == "global") {
@@ -1372,7 +1372,7 @@ struct Emitter {
             }
             Value* base = addrOf(m->obj.get());
             if (ot->kind != TypeKind::Struct)
-                fail("LLVM 后端：成员访问的基类型不是结构体", m->line, m->col);
+                fail("LLVM backend: base type of member access is not a struct", m->line, m->col);
             auto* st = cast<LStruct>(lt(ot));
             return b.CreateStructGEP(st, base, llvmFieldIndex(ot, m->field_index));
         }
@@ -1384,7 +1384,7 @@ struct Emitter {
                                          Type::make_prim("usize"), ix->line, ix->col));
             }
             if (isStrType(bt)) {
-                if (idxs.size() != 1) fail("LLVM 后端：string 只接受一个下标", ix->line, ix->col);
+                if (idxs.size() != 1) fail("LLVM backend: `string` accepts exactly one index", ix->line, ix->col);
                 Value* sv = evalStrValue(ix->base.get());
                 Value* p = b.CreateExtractValue(sv, {0});
                 return b.CreateGEP(i8(), p, idxs[0]);
@@ -1412,14 +1412,14 @@ struct Emitter {
                 return b.CreateGEP(lt(bt->elem), data, lin);
             }
             if (bt->kind == TypeKind::Ptr) {
-                if (idxs.size() != 1) fail("LLVM 后端：指针下标数量错误", ix->line, ix->col);
+                if (idxs.size() != 1) fail("LLVM backend: wrong number of pointer indices", ix->line, ix->col);
                 return gep(lt(bt->elem), eval(ix->base.get()), idxs[0]);
             }
             if (bt->kind == TypeKind::String) {
                 Value* sv = eval(ix->base.get());
                 return gep(i8(), b.CreateExtractValue(sv, {0}), idxs[0]);
             }
-            fail("LLVM 后端：不可下标访问", ix->line, ix->col);
+            fail("LLVM backend: type is not indexable", ix->line, ix->col);
         }
         if (auto u = dynamic_cast<Unary*>(e)) {
             if (u->op == "*") return eval(u->operand.get());
@@ -1564,7 +1564,7 @@ struct Emitter {
                 return compareOp(op, l, r, true, false);
             }
             TypePtr common = usual_arith(lt_, rt_);
-            if (!common) fail("LLVM 后端：比较操作数类型不一致", e->line, e->col);
+            if (!common) fail("LLVM backend: comparison operands have different types", e->line, e->col);
             l = convertTo(l, lt_, common);
             r = convertTo(r, rt_, common);
             bool fl = common->kind == TypeKind::Prim && common->is_float();
@@ -1591,7 +1591,7 @@ struct Emitter {
         if (op == "&") return b.CreateAnd(l, r);
         if (op == "|") return b.CreateOr(l, r);
         if (op == "^") return b.CreateXor(l, r);
-        fail("LLVM 后端：未知二元运算 " + op, e->line, e->col);
+        fail("LLVM backend: unknown binary operator " + op, e->line, e->col);
     }
 
     // 条件表达式：只求值被选中的分支，结果物化到 entry 块的结果槽后按 owned 值返回。
@@ -1688,7 +1688,7 @@ struct Emitter {
         if (ifaceCall) {
             auto it = islotIndex.find(sigKey(*sig));
             if (it == islotIndex.end()) {
-                fail("LLVM 后端：接口方法未进入 itable", at->line, at->col);
+                fail("LLVM backend: interface method is missing from the itable", at->line, at->col);
             }
             int slot = it->second;
             Value* obj = nullptr;
@@ -1891,7 +1891,7 @@ struct Emitter {
         }
         if (c->callee_kind == "struct_method") {
             const MethodSig* sig = c->method;
-            if (!sig || !sig->owner) fail("LLVM 后端：struct 方法缺少签名", c->line, c->col);
+            if (!sig || !sig->owner) fail("LLVM backend: struct method is missing its signature", c->line, c->col);
             Value* recv = nullptr;
             if (auto m = dynamic_cast<Member*>(c->callee.get())) {
                 recv = addrOf(m->obj.get());
@@ -1910,7 +1910,7 @@ struct Emitter {
         }
         if (c->callee_kind == "method") {
             const MethodSig* sig = c->method;
-            if (!sig || !sig->owner) fail("LLVM 后端：方法调用缺少签名", c->line, c->col);
+            if (!sig || !sig->owner) fail("LLVM backend: method call is missing its signature", c->line, c->col);
             Value* recv = nullptr;
             TypePtr recvTy = nullptr;
             bool recvOwned = false;
@@ -1950,7 +1950,7 @@ struct Emitter {
             // super(...)：调用基类构造器，然后恢复派生类的 desc
             TypePtr base = curClassTy ? curClassTy->base : nullptr;
             if (!base || base->kind != TypeKind::Class)
-                fail("LLVM 后端：super(...) 缺少基类", c->line, c->col);
+                fail("LLVM backend: super(...) has no base class", c->line, c->col);
             if (!base->ctors.empty()) {
                 const std::vector<TypePtr>* pty =
                     c->ctor_pty ? c->ctor_pty : nullptr;
@@ -1977,7 +1977,7 @@ struct Emitter {
         }
         // 普通函数调用
         FuncDecl* f = c->func;
-        if (!f) fail("LLVM 后端：调用缺少目标函数", c->line, c->col);
+        if (!f) fail("LLVM backend: call is missing its target function", c->line, c->col);
         std::vector<LType*> ptys;
         for (auto& t : f->pty) ptys.push_back(lt(t));
         FunctionCallee callee = mod->getOrInsertFunction(
@@ -2063,13 +2063,13 @@ struct Emitter {
                 return ConstantInt::get(i32(), static_cast<uint64_t>((*ec)->value),
                                         true);
             }
-            if (n->kind == "func") fail("LLVM 后端：函数不能作为值", e->line, e->col);
+            if (n->kind == "func") fail("LLVM backend: functions cannot be used as values", e->line, e->col);
             return loadAt(lt(e->ty), addrOf(e), unalignedExpr(e));
         }
         if (auto m = dynamic_cast<Member*>(e)) {
             if (m->kind == "enum_const") {
                 auto* ec = std::get_if<EnumConst*>(&m->sym);
-                if (!ec) fail("LLVM 后端：缺少枚举常量", e->line, e->col);
+                if (!ec) fail("LLVM backend: missing enum constant", e->line, e->col);
                 return ConstantInt::get(i32(), static_cast<uint64_t>((*ec)->value), true);
             }
             if (m->kind == "field" && m->obj->ty && m->obj->ty->kind == TypeKind::Class) {
@@ -2138,7 +2138,7 @@ struct Emitter {
                     axisV = convertTo(eval(v->dim.get()), v->dim->ty,
                                       Type::make_prim("usize"));
                 } else {
-                    fail("静态数组/一维数组的 `len(seq, k)` 维度必须是整数字面量",
+                    fail("the `len(seq, k)` axis of a static or one-dimensional array must be an integer literal",
                          v->dim->line, v->dim->col);
                 }
             }
@@ -2146,11 +2146,11 @@ struct Emitter {
                 TypePtr cur = st;
                 for (int i = 0; i < axis; ++i) {
                     if (!cur || cur->kind != TypeKind::Array)
-                        fail("`len` 维度越界", v->line, v->col);
+                        fail("`len` axis is out of bounds", v->line, v->col);
                     cur = cur->elem;
                 }
                 if (!cur || cur->kind != TypeKind::Array)
-                    fail("`len` 维度越界", v->line, v->col);
+                    fail("`len` axis is out of bounds", v->line, v->col);
                 return ConstantInt::get(i64(), cur->array_size);
             }
             Value* s = eval(v->seq.get());
@@ -2161,7 +2161,7 @@ struct Emitter {
             }
             return b.CreateExtractValue(s, {1});
         }
-        fail("LLVM 后端：未知表达式", e->line, e->col);
+        fail("LLVM backend: unknown expression", e->line, e->col);
     }
 
     // sizeof/alignof 的 TypeSpec 解析（只依赖已解析的类型模型）
@@ -2196,7 +2196,7 @@ struct Emitter {
                 if (i2 != prog.infos[curUnit].interfaces.end()) return i2->second->ty;
                 auto e = prog.infos[curUnit].enums.find(spec->name);
                 if (e != prog.infos[curUnit].enums.end()) return e->second->ty;
-                fail("LLVM 后端：sizeof/alignof 未知类型 " + spec->name);
+                fail("LLVM backend: sizeof/alignof on unknown type " + spec->name);
             }
             case TypeSpec::K::Ptr:
                 return Type::make_ptr(specType(spec->elem.get()), spec->is_const);
@@ -2205,7 +2205,7 @@ struct Emitter {
             case TypeSpec::K::Array:
                 return Type::make_array(specType(spec->elem.get()), spec->size);
         }
-        fail("LLVM 后端：未知类型 spec");
+        fail("LLVM backend: unknown type spec");
     }
     void curSpecUnitFix() {}
 
@@ -2372,7 +2372,7 @@ struct Emitter {
                 return;
             }
         }
-        fail("LLVM 后端：不支持的初始化", init->line, init->col);
+        fail("LLVM backend: unsupported initializer", init->line, init->col);
     }
 
     void block(Block* blk) {
@@ -2565,7 +2565,7 @@ struct Emitter {
             return;
         }
         if (dynamic_cast<BreakStmt*>(s)) {
-            if (loops.empty()) fail("LLVM 后端：break 不在循环中");
+            if (loops.empty()) fail("LLVM backend: `break` outside of a loop");
             destroyTempsFrom(0);
             if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().second);
@@ -2574,7 +2574,7 @@ struct Emitter {
             return;
         }
         if (dynamic_cast<ContinueStmt*>(s)) {
-            if (loops.empty()) fail("LLVM 后端：continue 不在循环中");
+            if (loops.empty()) fail("LLVM backend: `continue` outside of a loop");
             destroyTempsFrom(0);
             if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().first);
@@ -2597,7 +2597,7 @@ struct Emitter {
             b.SetInsertPoint(dead);
             return;
         }
-        fail("LLVM 后端：未知语句");
+        fail("LLVM backend: unknown statement");
     }
 
     TypePtr curRetTy;
@@ -3045,7 +3045,7 @@ struct Emitter {
         std::string errs;
         raw_string_ostream os(errs);
         if (verifyFunction(*fn, &os)) {
-            throw MuError("LLVM 后端：`" + what + "` 生成的 IR 无效：" + os.str());
+            throw MuError("LLVM backend: `" + what + "` produced invalid IR: " + os.str());
         }
         curFn = nullptr;
         allocaBB = nullptr;
@@ -3149,7 +3149,7 @@ struct Emitter {
         ownParams(ctor->param_locals);
         block(ctor->body.get());
         popRefScope();
-        finishBody(fn, c->name + " 构造器");
+        finishBody(fn, c->name + " constructor");
     }
 
     void emitReleaseValue(Value* addr, const TypePtr& ty, bool unaligned = false) {
@@ -3253,7 +3253,7 @@ struct Emitter {
                 FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
             b.CreateCall(baseDtor, {curThis});
         }
-        finishBody(fn, c->name + " 析构器");
+        finishBody(fn, c->name + " destructor");
     }
 
     void emitDestroy(ClassDecl* c) {
@@ -3275,7 +3275,7 @@ struct Emitter {
         } else {
             b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {p});
         }
-        finishBody(fn, c->name + " 销毁函数");
+        finishBody(fn, c->name + " destroy function");
     }
 
     void emitClassDesc(ClassDecl* c) {
@@ -3343,7 +3343,7 @@ struct Emitter {
         ownParams(ctor->param_locals);
         block(ctor->body.get());
         popRefScope();
-        finishBody(fn, sd->name + " 构造器");
+        finishBody(fn, sd->name + " constructor");
     }
 
     void emitStructDtor(StructDecl* sd) {
@@ -3367,7 +3367,7 @@ struct Emitter {
                                        static_cast<int>(idx)),
                              sd->ty->fields[idx].type, sd->ty->is_packed);
         }
-        finishBody(fn, sd->name + " 析构器");
+        finishBody(fn, sd->name + " destructor");
     }
 
     void emitInterfaceMethod(InterfaceDecl* itf, MethodDecl* m) {
@@ -3446,7 +3446,7 @@ struct Emitter {
         std::string err;
         raw_string_ostream os(err);
         if (verifyFunction(*fn, &os)) {
-            throw MuError("LLVM 后端：函数 `" + f->name + "` 生成的 IR 无效：" + os.str());
+            throw MuError("LLVM backend: function `" + f->name + "` produced invalid IR: " + os.str());
         }
         curFn = nullptr;
         allocaBB = nullptr;
@@ -3479,7 +3479,7 @@ struct Emitter {
         std::string err;
         llvm::Triple triple(tripleStr);
         const Target* target = TargetRegistry::lookupTarget(triple, err);
-        if (!target) throw MuError("LLVM 后端：找不到目标 " + tripleStr + "：" + err);
+        if (!target) throw MuError("LLVM backend: cannot find target " + tripleStr + ": " + err);
         TargetOptions opt;
         tm.reset(target->createTargetMachine(triple, "generic", "", opt,
                                              std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_),
@@ -3581,7 +3581,7 @@ struct Emitter {
         std::string errs;
         raw_string_ostream os(errs);
         if (verifyModule(*mod, &os)) {
-            throw MuError("LLVM 后端：生成的模块无效：" + os.str());
+            throw MuError("LLVM backend: generated module is invalid: " + os.str());
         }
 
         // 标准 -O2 流水线：让 Str 的短方法/运算符与 RC 辅助函数内联。
@@ -3624,10 +3624,10 @@ void llvm_emit_object(Program& prog, const std::string& obj_path) {
     em.run();
     std::error_code ec;
     raw_fd_ostream dest(obj_path, ec, llvm::sys::fs::OF_None);
-    if (ec) throw MuError("无法写入目标文件 " + obj_path + "：" + ec.message());
+    if (ec) throw MuError("cannot write object file " + obj_path + ": " + ec.message());
     llvm::legacy::PassManager pm;
     if (em.tm->addPassesToEmitFile(pm, dest, nullptr, llvm::CodeGenFileType::ObjectFile)) {
-        throw MuError("LLVM 后端：目标不支持生成目标文件");
+        throw MuError("LLVM backend: target does not support object file emission");
     }
     pm.run(*em.mod);
     dest.flush();

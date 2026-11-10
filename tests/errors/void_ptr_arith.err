@@ -1,1 +1,1 @@
-void* 不能做指针算术
+pointer arithmetic is not allowed on `void*`

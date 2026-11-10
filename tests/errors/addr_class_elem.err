@@ -1,1 +1,1 @@
-不能对 class/interface 引用取地址
+cannot take the address of a class or interface reference (`addr_class_elem.C`): its RC lifetime cannot be expressed with a raw pointer

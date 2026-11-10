@@ -1,1 +1,1 @@
-不是锯齿数组语法
+`new T[m][n]` is not jagged array syntax: use `new T[m,n]` for rectangular arrays; for jagged arrays, allocate the outer array first and fill the rows in a loop

@@ -1,1 +1,1 @@
-参数不能是 class/interface
+parameter of `extern` function `f` cannot be a class or interface

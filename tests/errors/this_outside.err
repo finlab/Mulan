@@ -1,1 +1,1 @@
-`this` 只能出现在 class/struct 方法/构造器/析构器中
+`this` can only appear inside a class or struct method, constructor, or destructor

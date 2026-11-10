@@ -1,1 +1,1 @@
-未声明为 pub
+method `hidden_m` is not declared public and cannot be called from another unit

@@ -1,1 +1,1 @@
-固定为身份比较
+`==` on class or interface types is always identity comparison and cannot be overloaded

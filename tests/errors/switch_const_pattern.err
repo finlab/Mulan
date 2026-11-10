@@ -1,1 +1,1 @@
-必须是编译期常量
+switch case pattern must be a compile-time constant: `K` is a variable; use a literal or an enum member

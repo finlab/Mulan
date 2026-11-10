@@ -1,1 +1,1 @@
-不能使用聚合初始化
+struct `struct_ctor_aggregate.S` has a constructor and cannot use aggregate initialization

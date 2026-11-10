@@ -1,1 +1,1 @@
-用户类型不支持 `for ref`
+user types do not support `for ref` (`operator[]` returns a value); use `for i, x` with `c[i] = ...` instead

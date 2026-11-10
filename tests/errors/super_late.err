@@ -1,1 +1,1 @@
-必须是构造器的第一条语句
+`super(...)` must be the first statement of a constructor

@@ -1,1 +1,1 @@
-没有 `operator[]=`
+type `index_assign_no_op.V` does not support subscript assignment (no `operator[]=`)

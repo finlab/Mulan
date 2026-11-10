@@ -1,1 +1,1 @@
-用户下标暂只支持 `=` 赋值
+user-defined subscript assignment only supports `=`

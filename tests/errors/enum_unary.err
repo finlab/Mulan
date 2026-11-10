@@ -1,1 +1,1 @@
-不支持一元 `~`
+enum `enum_unary.Color` does not support unary `~` (write `x as int`)

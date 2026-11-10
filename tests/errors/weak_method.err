@@ -1,1 +1,1 @@
-`weak` 只能用于字段
+`weak` can only be used on fields, not on methods

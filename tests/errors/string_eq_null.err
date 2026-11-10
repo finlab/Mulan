@@ -1,1 +1,1 @@
-不能与 null 比较
+`string` cannot be compared with `null` (use `len(s) == 0` or `s == ""`)

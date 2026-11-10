@@ -239,10 +239,10 @@ private:
         if (!t) return;
         if (cur_ && t->unit == cur_->name) return;
         if (!unit_visible(t->unit)) {
-            err_ts("unit `" + t->unit + "` 仅在库内可见，跨库使用需要 `public unit`", spec);
+            err_ts("unit `" + t->unit + "` is only visible within its library; cross-library use requires `public unit`", spec);
         }
         if (!type_is_public(t)) {
-            err_ts("类型 `" + t->unit + "." + t->name + "` 未声明为 public", spec);
+            err_ts("type `" + t->unit + "." + t->name + "` is not declared public", spec);
         }
     }
 
@@ -254,7 +254,7 @@ private:
         for (auto& u : units_) {
             if (!seen_units.insert(u->name).second) {
                 cur_ = u.get();
-                err("重复的 unit `" + u->name + "`");
+                err("duplicate unit `" + u->name + "`");
             }
             UnitInfo ui;
             ui.unit = u.get();
@@ -273,13 +273,13 @@ private:
                 } else if (auto e = dynamic_cast<EnumDecl*>(d.get())) {
                     ui.enums[e->name] = e;
                 } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
-                    if (ui.classes.count(c->name)) err("重复定义 class `" + c->name + "`", c);
+                    if (ui.classes.count(c->name)) err("duplicate definition of class `" + c->name + "`", c);
                     ui.classes[c->name] = c;
                 } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
-                    if (ui.interfaces.count(i->name)) err("重复定义 interface `" + i->name + "`", i);
+                    if (ui.interfaces.count(i->name)) err("duplicate definition of interface `" + i->name + "`", i);
                     ui.interfaces[i->name] = i;
                 } else if (auto g = dynamic_cast<GlobalVar*>(d.get())) {
-                    if (ui.globals.count(g->name)) err("重复定义变量 `" + g->name + "`", g);
+                    if (ui.globals.count(g->name)) err("duplicate definition of variable `" + g->name + "`", g);
                     ui.globals[g->name] = g;
                     g->cname = g->is_extern ? g->name : mangle(u->name, g->name);
                 }
@@ -308,12 +308,12 @@ private:
                 if (dynamic_cast<FuncDecl*>(node)) {
                     auto it = names.find(nm);
                     if (it != names.end() && !dynamic_cast<FuncDecl*>(it->second)) {
-                        err("`" + nm + "` 与其它声明重名", node);
+                        err("`" + nm + "` conflicts with another declaration", node);
                     }
                     if (it == names.end()) names.emplace(nm, node);
                     continue;
                 }
-                if (names.count(nm)) err("`" + nm + "` 在同一 unit 中重复声明", node);
+                if (names.count(nm)) err("`" + nm + "` is declared more than once in the same unit", node);
                 names.emplace(nm, node);
             }
         }
@@ -322,11 +322,11 @@ private:
             cur_ = u.get();
             for (auto& use : u->uses) {
                 if (!infos_.count(use->unit_name)) {
-                    err("找不到 unit `" + use->unit_name + "`", use.get());
+                    err("cannot find unit `" + use->unit_name + "`", use.get());
                 }
                 if (!unit_visible(use->unit_name)) {
                     err("unit `" + use->unit_name +
-                            "` 仅在库内可见，跨库使用需要 `public unit`",
+                            "` is only visible within its library; cross-library use requires `public unit`",
                         use.get());
                 }
             }
@@ -351,15 +351,15 @@ private:
         }
         if (cur_ && b->unit == cur_->name) {
             if (!type_is_public(b)) {
-                err(what + " 不能使用非 public 类型 `" + b->str() + "`", at);
+                err(what + " cannot use non-public type `" + b->str() + "`", at);
             }
             return;
         }
         if (!unit_visible(b->unit)) {
-            err(what + " 不能使用不可见 unit `" + b->unit + "` 的类型 `" + b->str() + "`", at);
+            err(what + " cannot use type `" + b->str() + "` from non-visible unit `" + b->unit + "`", at);
         }
         if (!type_is_public(b)) {
-            err(what + " 不能使用非 public 类型 `" + b->str() + "`", at);
+            err(what + " cannot use non-public type `" + b->str() + "`", at);
         }
     }
 
@@ -370,41 +370,41 @@ private:
                 if (!d->is_public) continue;
                 if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
                     if (f->is_extern) continue;
-                    const std::string what = "public 函数 `" + f->name + "`";
+                    const std::string what = "public function `" + f->name + "`";
                     check_exposed_type(f->rty, what, f);
                     for (auto& p : f->pty) check_exposed_type(p, what, f);
                 } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
                     const std::string what = "public class `" + c->name + "`";
-                    if (c->ty->base) check_exposed_type(c->ty->base, what + " 的基类", c);
+                    if (c->ty->base) check_exposed_type(c->ty->base, "base class of " + what, c);
                     for (auto& i : c->ty->interfaces) {
-                        check_exposed_type(i, what + " 的接口", c);
+                        check_exposed_type(i, "interface of " + what, c);
                     }
                     for (auto& fd : c->ty->fields) {
                         if (fd.is_public) {
-                            check_exposed_type(fd.type, what + " 的 public 字段 `" + fd.name + "`", c);
+                            check_exposed_type(fd.type, "public field `" + fd.name + "` of " + what, c);
                         }
                     }
                     for (auto& m : c->ty->methods) {
                         if (!m.is_public) continue;
-                        const std::string mw = what + " 的 public 方法 `" + m.name + "`";
+                        const std::string mw = "public method `" + m.name + "` of " + what;
                         check_exposed_type(m.ret, mw, c);
                         for (auto& p : m.params) check_exposed_type(p, mw, c);
                     }
                 } else if (auto sd = dynamic_cast<StructDecl*>(d.get())) {
                     const std::string what = "public struct `" + sd->name + "`";
                     for (auto& fd : sd->ty->fields) {
-                        check_exposed_type(fd.type, what + " 的字段 `" + fd.name + "`", sd);
+                        check_exposed_type(fd.type, "field `" + fd.name + "` of " + what, sd);
                     }
                     for (auto& m : sd->ty->methods) {
                         if (!m.is_public) continue;
-                        const std::string mw = what + " 的 public 方法 `" + m.name + "`";
+                        const std::string mw = "public method `" + m.name + "` of " + what;
                         check_exposed_type(m.ret, mw, sd);
                         for (auto& p : m.params) check_exposed_type(p, mw, sd);
                     }
                 } else if (auto itf = dynamic_cast<InterfaceDecl*>(d.get())) {
                     const std::string what = "public interface `" + itf->name + "`";
                     for (auto& m : itf->ty->methods) {
-                        const std::string mw = what + " 的方法 `" + m.name + "`";
+                        const std::string mw = "method `" + m.name + "` of " + what;
                         check_exposed_type(m.ret, mw, itf);
                         for (auto& p : m.params) check_exposed_type(p, mw, itf);
                     }
@@ -438,16 +438,16 @@ private:
         for (auto& f : fields) fnames.insert(f.name);
         for (auto& [fname, spec] : c->fields) {
             if (!fnames.insert(fname).second) {
-                err("class `" + c->name + "` 字段 `" + fname + "` 重复", c);
+                err("duplicate field `" + fname + "` in class `" + c->name + "`", c);
             }
             TypePtr ft = resolve_type(spec.get(), u);
-            if (is_void(ft)) err("class 字段不能是 void", c);
+            if (is_void(ft)) err("class field cannot be void", c);
             if (spec->weak && !is_class_type(ft)) {
-                err("`weak` 字段必须是 class 引用（接口暂不支持 weak）", c);
+                err("`weak` field must be a class reference (interfaces do not support `weak` yet)", c);
             }
             if (noncopyable_struct(ft)) {
-                err("含析构器的 struct `" + ft->str() +
-                        "` 暂不能作为字段（字段析构未实现）",
+                err("struct `" + ft->str() +
+                        "` has a destructor and cannot be used as a field (field destruction is not implemented)",
                     c);
             }
             bool field_pub = false;  // class 默认 private
@@ -531,10 +531,10 @@ private:
                 if (!sd->align_expr) continue;
                 long long n = 0;
                 if (!eval_const_int(sd->align_expr.get(), n)) {
-                    err("align(N) 的 N 必须是编译期整型常量", sd);
+                    err("N in `align(N)` must be a compile-time integer constant", sd);
                 }
                 if (!is_pow2(n) || n > 65536) {
-                    err("align(N) 的 N 必须是 2 的幂（当前为 " + std::to_string(n) + "）", sd);
+                    err("N in `align(N)` must be a power of two (got " + std::to_string(n) + ")", sd);
                 }
                 sd->ty->align_req = static_cast<int>(n);
             }
@@ -550,9 +550,9 @@ private:
                     size_t natural = 1;
                     for (auto& f : ty->fields) natural = std::max(natural, type_align(f.type));
                     if (static_cast<size_t>(ty->align_req) < natural) {
-                        err("align(" + std::to_string(ty->align_req) + ") 小于结构体 `" +
-                                sd->name + "` 的自然对齐 " + std::to_string(natural) +
-                                "；降对齐请用 `packed`",
+                        err("align(" + std::to_string(ty->align_req) + ") is less than the natural alignment of struct `" +
+                                sd->name + "` (" + std::to_string(natural) + ")" +
+                                "; use `packed` to lower the alignment",
                             sd);
                     }
                 }
@@ -563,18 +563,18 @@ private:
                     while (base && base->kind == TypeKind::Array) base = base->elem;
                     if (!base) continue;
                     if (is_str(base)) {
-                        err("packed 结构 `" + sd->name + "` 的字段 `" + f.name +
-                                "` 不能是 string（未对齐指针访问）",
+                        err("field `" + f.name + "` of packed struct `" + sd->name +
+                                "` cannot be `string` (unaligned pointer access)",
                             sd);
                     }
                     if (base->kind == TypeKind::Slice) {
-                        err("packed 结构 `" + sd->name + "` 的字段 `" + f.name +
-                                "` 不能是动态数组 `" + base->str() + "`（未对齐指针访问）",
+                        err("field `" + f.name + "` of packed struct `" + sd->name +
+                                "` cannot be a dynamic array `" + base->str() + "` (unaligned pointer access)",
                             sd);
                     }
                     if (is_reference_type(base)) {
-                        err("packed 结构 `" + sd->name + "` 的字段 `" + f.name +
-                                "` 不能是 class/interface 引用（未对齐指针访问）",
+                        err("field `" + f.name + "` of packed struct `" + sd->name +
+                                "` cannot be a `class` or `interface` reference (unaligned pointer access)",
                             sd);
                     }
                 }
@@ -595,17 +595,17 @@ private:
             std::unordered_set<std::string> fnames;
             for (auto& [fname, spec] : sd->fields) {
                 if (!fnames.insert(fname).second) {
-                    err("结构体 `" + sd->name + "` 字段 `" + fname + "` 重复", sd);
+                    err("duplicate field `" + fname + "` in struct `" + sd->name + "`", sd);
                 }
                 TypePtr ft = resolve_type(spec.get(), u);
-                if (is_void(ft)) err("结构体 `" + sd->name + "` 的字段不能是 void", sd);
+                if (is_void(ft)) err("field of struct `" + sd->name + "` cannot be void", sd);
                 if (same_type(ft, sd->ty)) {
-                    err("结构体 `" + sd->name + "` 不能按值包含自身", sd);
+                    err("struct `" + sd->name + "` cannot contain itself by value", sd);
                 }
-                if (spec->weak) err("`weak` 只能用于 class 字段", sd);
+                if (spec->weak) err("`weak` can only be used on class fields", sd);
                 if (noncopyable_struct(ft)) {
-                    err("含析构器的 struct `" + ft->str() +
-                            "` 暂不能作为字段（字段析构未实现）",
+                    err("struct `" + ft->str() +
+                            "` has a destructor and cannot be used as a field (field destruction is not implemented)",
                         sd);
                 }
                 bool field_pub = true;  // struct 默认 public
@@ -621,17 +621,17 @@ private:
             for (auto& m : sd->methods) {
                 m->rty = resolve_type(m->ret.get(), u);
                 if (noncopyable_struct(m->rty)) {
-                    err("含析构器的 struct `" + m->rty->str() +
-                            "` 不能按值返回（用指针）",
+                    err("struct `" + m->rty->str() +
+                            "` has a destructor and cannot be returned by value (use a pointer)",
                         m.get());
                 }
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
-                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
-                        err("含析构器的 struct `" + pt->str() +
-                                "` 只能通过指针传递（按值会拷贝）",
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
                             p.get());
                     }
                     m->pty.push_back(pt);
@@ -652,10 +652,10 @@ private:
                 ctor->pty.clear();
                 for (auto& p : ctor->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
-                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
-                        err("含析构器的 struct `" + pt->str() +
-                                "` 只能通过指针传递（按值会拷贝）",
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
                             p.get());
                     }
                     ctor->pty.push_back(pt);
@@ -681,18 +681,18 @@ private:
             for (size_t i = 0; i < c->bases.size(); ++i) {
                 TypePtr bt = resolve_named_type(c->bases[i], u, &where);
                 if (bt->kind == TypeKind::Class) {
-                    if (i != 0 || has_base) err("class 只允许一个基类，且必须写在最前", c);
+                    if (i != 0 || has_base) err("a class may have at most one base class, and it must come first", c);
                     has_base = true;
                     c->ty->base = bt;
                 } else if (bt->kind == TypeKind::Interface) {
                     for (auto& prev : c->ty->interfaces) {
                         if (same_type(prev, bt)) {
-                            err("class `" + c->name + "` 重复实现接口 `" + bt->str() + "`", c);
+                            err("class `" + c->name + "` implements interface `" + bt->str() + "` more than once", c);
                         }
                     }
                     c->ty->interfaces.push_back(bt);
                 } else {
-                    err("`" + c->bases[i] + "` 不是 class 或 interface", c);
+                    err("`" + c->bases[i] + "` is not a class or interface", c);
                 }
             }
 
@@ -703,17 +703,17 @@ private:
             for (auto& m : c->methods) {
                 m->rty = resolve_type(m->ret.get(), u);
                 if (noncopyable_struct(m->rty)) {
-                    err("含析构器的 struct `" + m->rty->str() +
-                            "` 不能按值返回（用指针）",
+                    err("struct `" + m->rty->str() +
+                            "` has a destructor and cannot be returned by value (use a pointer)",
                         m.get());
                 }
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
-                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
-                        err("含析构器的 struct `" + pt->str() +
-                                "` 只能通过指针传递（按值会拷贝）",
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
                             p.get());
                     }
                     m->pty.push_back(pt);
@@ -734,10 +734,10 @@ private:
                 ctor->pty.clear();
                 for (auto& p : ctor->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
-                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
-                        err("含析构器的 struct `" + pt->str() +
-                                "` 只能通过指针传递（按值会拷贝）",
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
                             p.get());
                     }
                     ctor->pty.push_back(pt);
@@ -783,11 +783,11 @@ private:
             for (auto& b : itf->bases) {
                 TypePtr bt = resolve_named_type(b, u, &where);
                 if (bt->kind != TypeKind::Interface) {
-                    err("interface 只能继承 interface", itf);
+                    err("an interface can only inherit from an interface", itf);
                 }
                 for (auto& prev : itf->ty->interfaces) {
                     if (same_type(prev, bt)) {
-                        err("interface `" + itf->name + "` 重复继承 `" + bt->str() + "`", itf);
+                        err("interface `" + itf->name + "` inherits `" + bt->str() + "` more than once", itf);
                     }
                 }
                 itf->ty->interfaces.push_back(bt);
@@ -796,17 +796,17 @@ private:
             for (auto& m : itf->methods) {
                 m->rty = resolve_type(m->ret.get(), u);
                 if (noncopyable_struct(m->rty)) {
-                    err("含析构器的 struct `" + m->rty->str() +
-                            "` 不能按值返回（用指针）",
+                    err("struct `" + m->rty->str() +
+                            "` has a destructor and cannot be returned by value (use a pointer)",
                         m.get());
                 }
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
-                    if (is_void(pt)) err("参数不能是 void", p.get());
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
-                        err("含析构器的 struct `" + pt->str() +
-                                "` 只能通过指针传递（按值会拷贝）",
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
                             p.get());
                     }
                     m->pty.push_back(pt);
@@ -830,7 +830,7 @@ private:
             std::unordered_set<std::string> names;
             for (auto& [m, v] : ed->members) {
                 if (!names.insert(m).second) {
-                    err("枚举 `" + ed->name + "` 的成员 `" + m + "` 重复", ed);
+                    err("duplicate member `" + m + "` in enum `" + ed->name + "`", ed);
                 }
             }
         }
@@ -839,7 +839,7 @@ private:
             auto g = dynamic_cast<GlobalVar*>(d.get());
             if (!g) continue;
             g->rty = resolve_type(g->spec.get(), u);
-            if (is_void(g->rty)) err("变量 `" + g->name + "` 不能是 void", g);
+            if (is_void(g->rty)) err("variable `" + g->name + "` cannot be void", g);
         }
 
         for (auto& d : u->decls) {
@@ -847,27 +847,27 @@ private:
             if (!f) continue;
             f->rty = resolve_type(f->ret.get(), u);
             if (noncopyable_struct(f->rty)) {
-                err("含析构器的 struct `" + f->rty->str() + "` 不能按值返回（用指针）", f);
+                err("struct `" + f->rty->str() + "` has a destructor and cannot be returned by value (use a pointer)", f);
             }
             f->pty.clear();
             for (auto& p : f->params) {
                 TypePtr pt = resolve_type(p->spec.get(), u);
-                if (is_void(pt)) err("参数 `" + p->name + "` 不能是 void", p.get());
+                if (is_void(pt)) err("parameter `" + p->name + "` cannot be void", p.get());
                 if (noncopyable_struct(pt)) {
-                    err("含析构器的 struct `" + pt->str() +
-                            "` 只能通过指针传递（按值会拷贝）",
+                    err("struct `" + pt->str() +
+                            "` has a destructor and can only be passed by pointer (passing by value would copy)",
                         p.get());
                 }
                 f->pty.push_back(pt);
             }
             if (f->is_extern) {
                 if (contains_reference_type(f->rty)) {
-                    err("`extern` 函数 `" + f->name + "` 不能返回 class/interface（C 侧不参与引用计数）",
+                    err("`extern` function `" + f->name + "` cannot return a class or interface (C code does not participate in reference counting)",
                         f);
                 }
                 for (auto& pt : f->pty) {
                     if (contains_reference_type(pt)) {
-                        err("`extern` 函数 `" + f->name + "` 的参数不能是 class/interface", f);
+                        err("parameter of `extern` function `" + f->name + "` cannot be a class or interface", f);
                     }
                 }
                 if (contains_slice_type(f->rty) || [&] {
@@ -875,8 +875,8 @@ private:
                             if (contains_slice_type(pt)) return true;
                         return false;
                     }()) {
-                    err("`extern` 函数 `" + f->name +
-                            "` 不能使用动态数组 `T[]`（内部带有 RC 头，不是 C 布局）",
+                    err("`extern` function `" + f->name +
+                            "` cannot use dynamic arrays `T[]` (they carry an RC header and are not C layout)",
                         f);
                 }
                 f->cname = f->name;
@@ -890,7 +890,7 @@ private:
 
     // ------------------------------------------------------------ 类型解析
     TypePtr resolve_type(const TypeSpec* spec, Unit* u) {
-        if (!spec) err("缺少类型");
+        if (!spec) err("missing type");
         switch (spec->kind) {
             case TypeSpec::K::Named: {
                 TypePtr t = resolve_named_type(spec->name, u, spec);
@@ -905,34 +905,34 @@ private:
             case TypeSpec::K::Ptr: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
                 if (is_reference_type(elem)) {
-                    err_ts("暂不支持指向 class/interface 的指针（引用类型本身已是句柄）", spec);
+                    err_ts("pointers to class or interface types are not supported (reference types are already handles)", spec);
                 }
                 return Type::make_ptr(elem, spec->is_const);
             }
             case TypeSpec::K::Slice: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
-                if (is_void(elem)) err_ts("动态数组元素不能是 void", spec);
+                if (is_void(elem)) err_ts("dynamic array element cannot be void", spec);
                 if (noncopyable_struct(elem)) {
-                    err_ts("含析构器的 struct `" + elem->str() +
-                               "` 暂不能作动态数组元素",
+                    err_ts("struct `" + elem->str() +
+                               "` has a destructor and cannot be a dynamic array element",
                            spec);
                 }
                 return Type::make_slice(elem, spec->is_const, spec->rank);
             }
             case TypeSpec::K::Array: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
-                if (is_void(elem)) err_ts("数组元素不能是 void", spec);
+                if (is_void(elem)) err_ts("array element cannot be void", spec);
                 TypePtr base = elem;
                 while (base && base->kind == TypeKind::Array) base = base->elem;
                 if (noncopyable_struct(base)) {
-                    err_ts("含析构器的 struct `" + base->str() +
-                               "` 暂不能作为数组元素（数组析构未实现）",
+                    err_ts("struct `" + base->str() +
+                               "` has a destructor and cannot be an array element (array destruction is not implemented)",
                            spec);
                 }
                 return Type::make_array(elem, spec->size);
             }
         }
-        err_ts("未知类型 " + spec_text(spec), spec);
+        err_ts("unknown type " + spec_text(spec), spec);
     }
 
     // 在指定 unit 中按名字找类型；require_pub 时只返回 public 声明。
@@ -968,15 +968,15 @@ private:
             auto it = infos_.find(un);
             if (it != infos_.end()) {
                 if (un != u->name && !unit_imported(un)) {
-                    err_ts("未通过 `use` 导入 unit `" + un + "`", spec);
+                    err_ts("unit `" + un + "` is not imported with `use`", spec);
                 }
                 if (!unit_visible(un)) {
-                    err_ts("unit `" + un + "` 仅在库内可见，跨库使用需要 `public unit`", spec);
+                    err_ts("unit `" + un + "` is only visible within its library; cross-library use requires `public unit`", spec);
                 }
                 UnitInfo& ui = it->second;
                 auto need_pub = [&](bool is_pub) {
                     if (un != u->name && !is_pub) {
-                        err_ts("类型 `" + un + "." + tn + "` 未声明为 public", spec);
+                        err_ts("type `" + un + "." + tn + "` is not declared public", spec);
                     }
                 };
                 if (auto s = ui.structs.find(tn); s != ui.structs.end()) {
@@ -995,7 +995,7 @@ private:
                     need_pub(i->second->is_public);
                     return i->second->ty;
                 }
-                err_ts("unit `" + un + "` 中没有类型 `" + tn + "`", spec);
+                err_ts("unit `" + un + "` has no type `" + tn + "`", spec);
             }
             if (pos == 0) break;
             pos = name.rfind('.', pos - 1);
@@ -1012,8 +1012,8 @@ private:
             TypePtr t = find_type_named(use->unit_name, name, true);
             if (!t) continue;
             if (found) {
-                err_ts("类型 `" + name + "` 有歧义：`" + found_unit + "." + name + "` 与 `" +
-                           use->unit_name + "." + name + "`；请写限定名",
+                err_ts("type `" + name + "` is ambiguous: `" + found_unit + "." + name + "` and `" +
+                           use->unit_name + "." + name + "`; use a qualified name",
                        spec);
             }
             found = t;
@@ -1023,26 +1023,26 @@ private:
         if (UnitInfo* stdn = std_info()) {
             if (auto s = stdn->structs.find(name); s != stdn->structs.end()) {
                 if (!s->second->is_public)
-                    err_ts("类型 `std.string." + name + "` 未声明为 public", spec);
+                    err_ts("type `std.string." + name + "` is not declared public", spec);
                 return s->second->ty;
             }
             if (auto e = stdn->enums.find(name); e != stdn->enums.end()) {
                 if (!e->second->is_public)
-                    err_ts("类型 `std.string." + name + "` 未声明为 public", spec);
+                    err_ts("type `std.string." + name + "` is not declared public", spec);
                 return e->second->ty;
             }
             if (auto c = stdn->classes.find(name); c != stdn->classes.end()) {
                 if (!c->second->is_public)
-                    err_ts("类型 `std.string." + name + "` 未声明为 public", spec);
+                    err_ts("type `std.string." + name + "` is not declared public", spec);
                 return c->second->ty;
             }
             if (auto i = stdn->interfaces.find(name); i != stdn->interfaces.end()) {
                 if (!i->second->is_public)
-                    err_ts("类型 `std.string." + name + "` 未声明为 public", spec);
+                    err_ts("type `std.string." + name + "` is not declared public", spec);
                 return i->second->ty;
             }
         }
-        err_ts("未知类型 `" + name + "`", spec);
+        err_ts("unknown type `" + name + "`", spec);
     }
 
     // 表达式里的类型名解析（当前 unit → use 的 public 类型 → std.string），
@@ -1056,8 +1056,8 @@ private:
             TypePtr t = find_type_named(use->unit_name, name, true);
             if (!t) continue;
             if (found && !same_type(found, t)) {
-                err("类型 `" + name + "` 有歧义：`" + found_unit + "." + name + "` 与 `" +
-                        use->unit_name + "." + name + "`；请写限定名",
+                err("type `" + name + "` is ambiguous: `" + found_unit + "." + name + "` and `" +
+                        use->unit_name + "." + name + "`; use a qualified name",
                     at);
             }
             if (!found) {
@@ -1120,7 +1120,7 @@ private:
     void declare_local(LocalVar* lv) {
         if (scopes_.empty()) scopes_.emplace_back();
         Scope& sc = scopes_.back();
-        if (sc.count(lv->name)) err("重复声明 `" + lv->name + "`", lv);
+        if (sc.count(lv->name)) err("duplicate declaration of `" + lv->name + "`", lv);
         sc[lv->name] = lv;
     }
 
@@ -1165,7 +1165,7 @@ private:
         for (auto& entry : infos_.at(u->name).funcs) {
             auto& vec = entry.second;
             if (entry.first == "main" && vec.size() > 1) {
-                err("`main` 不参与重载（每个 unit 最多一个 `main`）", vec[1]);
+                err("`main` cannot be overloaded (at most one `main` per unit)", vec[1]);
             }
             if (vec.size() > 1) {
                 bool hasExtern = false, hasBody = false;
@@ -1174,9 +1174,9 @@ private:
                     else hasBody = true;
                 }
                 if (hasExtern && hasBody) {
-                    err("函数 `" + entry.first + "` 不能同时声明为 extern 与普通函数", vec[1]);
+                    err("function `" + entry.first + "` cannot be declared both `extern` and normal", vec[1]);
                 }
-                if (hasExtern) err("extern 函数 `" + entry.first + "` 不能重载", vec[1]);
+                if (hasExtern) err("`extern` function `" + entry.first + "` cannot be overloaded", vec[1]);
             }
             for (size_t i = 0; i < vec.size(); ++i) {
                 for (size_t j = i + 1; j < vec.size(); ++j) {
@@ -1189,7 +1189,7 @@ private:
                             }
                         }
                     }
-                    if (same) err("函数 `" + entry.first + "` 的签名重复", vec[j]);
+                    if (same) err("duplicate signature of function `" + entry.first + "`", vec[j]);
                 }
             }
         }
@@ -1210,31 +1210,31 @@ private:
     }
 
     void check_global(GlobalVar* g) {
-        if (!g->rty) err("全局变量 `" + g->name + "` 缺少类型", g);
+        if (!g->rty) err("global variable `" + g->name + "` is missing its type", g);
         if (noncopyable_struct(g->rty)) {
-            err("含析构器的 struct `" + g->rty->str() +
-                    "` 暂不能作为全局变量（无退出析构）",
+            err("struct `" + g->rty->str() +
+                    "` has a destructor and cannot be a global variable (no exit-time destruction)",
                 g);
         }
         if (g->rty->kind == TypeKind::Struct && g->rty->needs_cleanup() &&
             !is_str(g->rty)) {
-            err("含引用字段的 struct `" + g->rty->str() +
-                    "` 暂不能作为全局变量（无退出析构）",
+            err("struct `" + g->rty->str() +
+                    "` has reference fields and cannot be a global variable (no exit-time destruction)",
                 g);
         }
         if (g->is_extern) {
-            if (g->init) err("`extern` 变量 `" + g->name + "` 不能有初始化器", g);
+            if (g->init) err("`extern` variable `" + g->name + "` cannot have an initializer", g);
             return;
         }
         if (!g->init) {
-            if (g->is_const) err("`const` 变量 `" + g->name + "` 必须初始化", g);
+            if (g->is_const) err("`const` variable `" + g->name + "` must be initialized", g);
             g->zero = true;
             return;
         }
         if (!is_const_expr(g->init.get())) {
-            err("unit 级变量 `" + g->name + "` 的初始化器必须是编译期常量", g);
+            err("initializer of unit-level variable `" + g->name + "` must be a compile-time constant", g);
         }
-        check_decl_init(g->zero, g->rty, g->init.get(), "全局初始化", g);
+        check_decl_init(g->zero, g->rty, g->init.get(), "global initialization", g);
     }
 
     static bool guarantees_return(Stmt* s) {
@@ -1265,14 +1265,14 @@ private:
         const size_t n = f->pty.size();
         const bool unary_or_binary = (sym == "-" || sym == "+");
         if (sym == "~") {
-            if (n != 1) err("`operator~` 需要 1 个参数", f);
+            if (n != 1) err("`operator~` takes 1 parameter", f);
         } else if (sym == "[]") {
-            if (n != 2) err("`operator[]` 需要 2 个参数（容器, 索引）", f);
+            if (n != 2) err("`operator[]` takes 2 parameters (container, index)", f);
         } else if (sym == "[]=") {
-            if (n != 3) err("`operator[]=` 需要 3 个参数（容器, 索引, 值）", f);
-            if (!is_void(f->rty)) err("`operator[]=` 必须返回 void", f);
+            if (n != 3) err("`operator[]=` takes 3 parameters (container, index, value)", f);
+            if (!is_void(f->rty)) err("`operator[]=` must return void", f);
         } else if (unary_or_binary) {
-            if (n != 1 && n != 2) err("`operator" + sym + "` 需要 1 或 2 个参数", f);
+            if (n != 1 && n != 2) err("`operator" + sym + "` takes 1 or 2 parameters", f);
         } else {
             static const char* allowed[] = {"*", "/", "%", "<", "<=", ">", ">=", "==",
                                             "!=", "&", "|", "^", "<<", ">>"};
@@ -1280,41 +1280,41 @@ private:
             for (auto* a : allowed) {
                 if (sym == a) { ok = true; break; }
             }
-            if (!ok) err("不允许重载运算符 `" + sym + "`", f);
-            if (n != 2) err("二元运算符需要 2 个参数", f);
+            if (!ok) err("operator `" + sym + "` cannot be overloaded", f);
+            if (n != 2) err("binary operators take 2 parameters", f);
         }
 
         bool has_user = false;
         for (auto& p : f->pty) {
             if (p->kind == TypeKind::Struct || p->kind == TypeKind::Class) has_user = true;
-            if (p->kind == TypeKind::Void) err("运算符参数不能是 void", f);
+            if (p->kind == TypeKind::Void) err("operator parameter cannot be void", f);
         }
-        if (!has_user) err("运算符至少需要一个 struct/class 操作数", f);
+        if (!has_user) err("operators require at least one struct or class operand", f);
 
         if (sym == "==" || sym == "!=") {
             for (auto& p : f->pty) {
                 if (p->kind == TypeKind::Class || p->kind == TypeKind::Interface) {
-                    err("class/interface 的 `" + sym + "` 固定为身份比较，不能重载", f);
+                    err("`" + sym + "` on class or interface types is always identity comparison and cannot be overloaded", f);
                 }
             }
         }
 
         if (sym == "<" || sym == "<=" || sym == ">" || sym == ">=" || sym == "==" || sym == "!=") {
             if (!(f->rty && f->rty->kind == TypeKind::Prim && f->rty->name == "bool")) {
-                err("比较运算符必须返回 bool", f);
+                err("comparison operators must return `bool`", f);
             }
         }
 
         if (sym == "[]" || sym == "[]=") {
             if (!(f->pty[0]->kind == TypeKind::Struct || f->pty[0]->kind == TypeKind::Class)) {
-                err("`operator" + sym + "` 的第一个参数必须是 struct/class", f);
+                err("first parameter of `operator" + sym + "` must be a struct or class", f);
             }
-            if (!is_integer(f->pty[1])) err("`operator[]` 的索引必须是整数", f);
+            if (!is_integer(f->pty[1])) err("index of `operator[]` must be an integer", f);
         }
     }
 
     void check_func(FuncDecl* f) {
-        if (!f->rty) err("函数 `" + f->name + "` 缺少返回类型", f);
+        if (!f->rty) err("function `" + f->name + "` is missing its return type", f);
         if (f->is_operator) check_operator_decl(f);
         cur_func_ = f;
         cur_ret_ = f->rty;
@@ -1343,7 +1343,7 @@ private:
 
         // 非 void 函数必须保证有返回值；main 例外（掉出等价 return 0）
         if (!is_void(f->rty) && f->cname != "main" && !guarantees_return(f->body.get())) {
-            err("函数 `" + f->name + "` 可能执行到末尾而没有返回值", f);
+            err("function `" + f->name + "` may reach the end of its body without returning a value", f);
         }
 
         scopes_.clear();
@@ -1469,13 +1469,13 @@ private:
         declare_params(m->param_locals, m->params, m->pty);
         check_block(m->body.get());
         if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
-            err("方法 `" + m->name + "` 可能执行到末尾而没有返回值", m);
+            err("method `" + m->name + "` may reach the end of its body without returning a value", m);
         }
         end_member();
     }
 
     void check_ctor(ClassDecl* c, CtorDecl* ctor) {
-        begin_member(c->ty, t_void(), c->name + " 构造器", ctor->line, ctor->col);
+        begin_member(c->ty, t_void(), c->name + " constructor", ctor->line, ctor->col);
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
 
@@ -1500,7 +1500,7 @@ private:
             first_super = nm && nm->ident == "super";
         }
         if (needs_super && !first_super) {
-            err("构造器必须在第一条语句调用 `super(...)`", ctor);
+            err("constructor must call `super(...)` as its first statement", ctor);
         }
         ctor->has_explicit_super = first_super;
 
@@ -1525,7 +1525,7 @@ private:
     void check_dtor(ClassDecl* c) {
         DtorDecl* d = c->dtor.get();
         if (!d) return;
-        begin_member(c->ty, t_void(), c->name + " 析构器", d->line, d->col);
+        begin_member(c->ty, t_void(), c->name + " destructor", d->line, d->col);
         in_dtor_ = true;
         check_block(d->body.get());
         in_dtor_ = false;
@@ -1534,19 +1534,19 @@ private:
 
     void check_struct_method(StructDecl* sd, MethodDecl* m) {
         if (!m->body) {
-            err("struct 方法 `" + m->name + "` 必须有函数体", m);
+            err("struct method `" + m->name + "` must have a body", m);
         }
         begin_member(sd->ty, m->rty, sd->name + "." + m->name, m->line, m->col);
         declare_params(m->param_locals, m->params, m->pty);
         check_block(m->body.get());
         if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
-            err("方法 `" + m->name + "` 可能执行到末尾而没有返回值", m);
+            err("method `" + m->name + "` may reach the end of its body without returning a value", m);
         }
         end_member();
     }
 
     void check_struct_ctor(StructDecl* sd, CtorDecl* ctor) {
-        begin_member(sd->ty, t_void(), sd->name + " 构造器", ctor->line, ctor->col);
+        begin_member(sd->ty, t_void(), sd->name + " constructor", ctor->line, ctor->col);
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
         check_block(ctor->body.get());
@@ -1556,7 +1556,7 @@ private:
     void check_struct_dtor(StructDecl* sd) {
         DtorDecl* d = sd->dtor.get();
         if (!d) return;
-        begin_member(sd->ty, t_void(), sd->name + " 析构器", d->line, d->col);
+        begin_member(sd->ty, t_void(), sd->name + " destructor", d->line, d->col);
         in_dtor_ = true;
         check_block(d->body.get());
         in_dtor_ = false;
@@ -1570,10 +1570,10 @@ private:
             for (auto& p : m->pty) key += p->str() + ",";
             key += ")";
             if (!seen.insert(key).second) {
-                err("struct `" + sd->name + "` 方法 `" + key + "` 重复", m.get());
+                err("duplicate method `" + key + "` in struct `" + sd->name + "`", m.get());
             }
             if (sd->ty->field_type(m->name)) {
-                err("struct `" + sd->name + "` 的方法 `" + m->name + "` 与字段同名", m.get());
+                err("method `" + m->name + "` in struct `" + sd->name + "` has the same name as a field", m.get());
             }
             check_struct_method(sd, m.get());
         }
@@ -1582,7 +1582,7 @@ private:
             std::string key;
             for (auto& p : ctor->pty) key += p->str() + ",";
             if (!ctor_keys.insert(key).second) {
-                err("struct `" + sd->name + "` 的构造器签名重复", ctor.get());
+                err("duplicate constructor signature in struct `" + sd->name + "`", ctor.get());
             }
             check_struct_ctor(sd, ctor.get());
         }
@@ -1599,10 +1599,10 @@ private:
             for (auto& p : m->pty) key += p->str() + ",";
             key += ")";
             if (!seen.insert(key).second) {
-                err("class `" + c->name + "` 方法 `" + key + "` 重复", m.get());
+                err("duplicate method `" + key + "` in class `" + c->name + "`", m.get());
             }
             if (c->ty->field_type(m->name)) {
-                err("class `" + c->name + "` 的方法 `" + m->name + "` 与字段同名", m.get());
+                err("method `" + m->name + "` in class `" + c->name + "` has the same name as a field", m.get());
             }
 
             const MethodSig* base_sig = nullptr;
@@ -1617,22 +1617,22 @@ private:
             }
             if (base_sig) {
                 if (!m->is_override) {
-                    err("覆盖/实现基类方法必须写 `override`", m.get());
+                    err("overriding or implementing a base class method requires `override`", m.get());
                 }
                 std::vector<const MethodSig*> matches;
                 collect_sigs(c->ty->base ? c->ty->base : c->ty, sig, matches);
                 for (auto& i : c->ty->interfaces) collect_sigs(i, sig, matches);
                 for (auto* ms : matches) {
                     if (!same_type(ms->ret, m->rty)) {
-                        err("override 的返回类型不一致：与 `" + ms->owner->str() + "` 的声明不符",
+                        err("override return type does not match the declaration in `" + ms->owner->str() + "`",
                             m.get());
                     }
                 }
                 if (!same_type(base_sig->ret, m->rty)) {
-                    err("override 的返回类型不一致", m.get());
+                    err("override has a mismatched return type", m.get());
                 }
             } else if (m->is_override) {
-                err("`override` 没有匹配的基类/接口方法", m.get());
+                err("`override` does not match any base class or interface method", m.get());
             }
             check_method(c, m.get());
         }
@@ -1641,7 +1641,7 @@ private:
             std::string key;
             for (auto& p : ctor->pty) key += p->str() + ",";
             if (!ctor_keys.insert(key).second) {
-                err("class `" + c->name + "` 的构造器签名重复", ctor.get());
+                err("duplicate constructor signature in class `" + c->name + "`", ctor.get());
             }
             check_ctor(c, ctor.get());
         }
@@ -1652,14 +1652,14 @@ private:
                 if (cs.empty()) { base_default = true; break; }
             }
             if (!base_default) {
-                err("class `" + c->name + "` 的基类没有无参构造器，必须显式声明构造器", c);
+                err("base class of class `" + c->name + "` has no parameterless constructor; declare a constructor explicitly", c);
             }
         }
         // 派生类字段不能遮蔽基类方法名（用字段名访问会与方法调用混淆）
         if (c->ty->base) {
             for (auto& [fname, spec] : c->fields) {
                 if (has_method_named(c->ty->base, fname)) {
-                    err("class `" + c->name + "` 的字段 `" + fname + "` 与基类方法同名", c);
+                    err("field `" + fname + "` in class `" + c->name + "` has the same name as a base class method", c);
                 }
             }
         }
@@ -1673,7 +1673,7 @@ private:
             declare_params(m->param_locals, m->params, m->pty);
             check_block(m->body.get());
             if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
-                err("接口方法 `" + m->name + "` 可能执行到末尾而没有返回值", m.get());
+                err("interface method `" + m->name + "` may reach the end of its body without returning a value", m.get());
             }
             end_member();
         }
@@ -1735,7 +1735,7 @@ private:
                 std::unordered_set<Type*> seen;
                 TypePtr cur = c->ty;
                 while (cur && cur->kind == TypeKind::Class) {
-                    if (!seen.insert(cur.get()).second) err("class `" + c->name + "` 存在继承环", c);
+                    if (!seen.insert(cur.get()).second) err("class `" + c->name + "` has a circular inheritance chain", c);
                     cur = cur->base;
                 }
             }
@@ -1745,7 +1745,7 @@ private:
         std::function<void(TypePtr)> visit = [&](TypePtr t) {
             if (!t || t->kind != TypeKind::Interface) return;
             int& col = color[t.get()];
-            if (col == 1) err("interface 继承环：" + t->str());
+            if (col == 1) err("circular interface inheritance: " + t->str());
             if (col == 2) return;
             col = 1;
             for (auto& b : t->interfaces) visit(b);
@@ -1785,8 +1785,8 @@ private:
                     for (size_t j = i + 1; j < defaults.size(); ++j) {
                         if (same_sig(defaults[i], defaults[j]) &&
                             !class_has_concrete(c->ty, defaults[i])) {
-                            err("接口默认方法 `" + defaults[i].name +
-                                    "` 冲突，必须在类中覆盖",
+                            err("default interface method `" + defaults[i].name +
+                                    "` is conflicting and must be overridden in the class",
                                 c);
                         }
                     }
@@ -1811,7 +1811,7 @@ private:
         } else if (auto as = dynamic_cast<AssignStmt*>(s)) {
             check_assign_stmt(as);
         } else if (auto is = dynamic_cast<IfStmt*>(s)) {
-            check_cond(is->cond.get(), "if 条件");
+            check_cond(is->cond.get(), "if condition");
             check_block(is->then.get());
             if (is->els) {
                 if (auto b = dynamic_cast<Block*>(is->els.get())) {
@@ -1821,7 +1821,7 @@ private:
                 }
             }
         } else if (auto ws = dynamic_cast<WhileStmt*>(s)) {
-            check_cond(ws->cond.get(), "while 条件");
+            check_cond(ws->cond.get(), "while condition");
             ++loop_depth_;
             check_block(ws->body.get());
             --loop_depth_;
@@ -1830,44 +1830,44 @@ private:
         } else if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
             check_switch(sw);
         } else if (dynamic_cast<BreakStmt*>(s)) {
-            if (loop_depth_ == 0) err("`break` 只能出现在循环中", s);
+            if (loop_depth_ == 0) err("`break` can only appear in a loop", s);
         } else if (dynamic_cast<ContinueStmt*>(s)) {
-            if (loop_depth_ == 0) err("`continue` 只能出现在循环中", s);
+            if (loop_depth_ == 0) err("`continue` can only appear in a loop", s);
         } else if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
             check_return(rs);
         } else if (auto b = dynamic_cast<Block*>(s)) {
             check_block(b);
         } else {
-            err("未知语句", s);
+            err("unknown statement", s);
         }
     }
 
     void check_local(LocalVar* lv) {
         if (lv->is_auto) {
             auto ie = dynamic_cast<InitExpr*>(lv->init.get());
-            if (!ie || !ie->expr) err("`auto` 必须用表达式初始化", lv);
+            if (!ie || !ie->expr) err("`auto` must be initialized with an expression", lv);
             Expr* e = ie->expr.get();
-            if (dynamic_cast<NullLit*>(e)) err("不能从 `null` 推断类型", lv);
+            if (dynamic_cast<NullLit*>(e)) err("cannot infer a type from `null`", lv);
             TypePtr t = check_expr(e);
-            if (is_void(t)) err("不能从 void 表达式推断类型", lv);
-            if (t->kind == TypeKind::Range) err("不能从区间推断类型", lv);
+            if (is_void(t)) err("cannot infer a type from a `void` expression", lv);
+            if (t->kind == TypeKind::Range) err("cannot infer a type from a range", lv);
             lv->rty = t;
             // 同一声明语句的多个 auto 声明符必须推断出同一类型
             auto it = auto_groups_.find(lv->group);
             if (it == auto_groups_.end()) {
                 auto_groups_[lv->group] = t;
             } else if (!same_type(it->second, t)) {
-                err("同一声明中的 `auto` 推断出不同类型：" + it->second->str() + " 与 " +
+                err("`auto` in the same declaration is inferred as different types: " + it->second->str() + " and " +
                         t->str(),
                     lv);
             }
         } else {
             lv->rty = resolve_type(lv->spec.get(), cur_);
-            if (is_void(lv->rty)) err("变量不能是 void 类型", lv);
+            if (is_void(lv->rty)) err("variable cannot have type `void`", lv);
         }
 
         if (lv->is_const && !lv->init) {
-            err("`const` 变量 `" + lv->name + "` 必须初始化", lv);
+            err("`const` variable `" + lv->name + "` must be initialized", lv);
         }
 
         if (!lv->init && lv->rty && lv->rty->kind == TypeKind::Struct &&
@@ -1881,24 +1881,24 @@ private:
             }
             if (!has_default) {
                 err("struct `" + lv->rty->str() +
-                        "` 没有无参构造器，声明时必须用构造器初始化",
+                        "` has no parameterless constructor and must be initialized with a constructor",
                     lv);
             }
         }
 
         declare_local(lv);
-        if (lv->init) check_decl_init(lv->zero, lv->rty, lv->init.get(), "初始化", lv);
+        if (lv->init) check_decl_init(lv->zero, lv->rty, lv->init.get(), "initialization", lv);
     }
 
     void check_decl_init(bool& zero_flag, const TypePtr& ty, Init* init, const std::string& what,
                          const Node* node) {
-        if (!init) err("缺少初始化器", node);
+        if (!init) err("missing initializer", node);
         if (auto ia = dynamic_cast<InitAggregate*>(init)) {
             if (ia->items.empty()) {
                 if (!is_zeroable(ty)) {
-                    err("类型 `" + ty->str() +
-                            "` 不能用 `{}` 初始化；只有聚合类型（struct/数组/切片/string）可用 `{}`，"
-                            "标量请用各自的常量值（0、0.0、false、null）",
+                    err("type `" + ty->str() +
+                            "` cannot be initialized with `{}`; only aggregate types (struct, array, slice, string) can use `{}`"
+                            "use a plain constant for scalars (0, 0.0, false, null)",
                         node);
                 }
                 zero_flag = true;
@@ -1908,7 +1908,7 @@ private:
         if (auto ie = dynamic_cast<InitExpr*>(init)) {
             if (auto il = dynamic_cast<IntLit*>(ie->expr.get())) {
                 if (il->value == 0 && is_zeroable(ty)) {
-                    err("聚合类型 `" + ty->str() + "` 的零初始化请用 `{}`，不再支持 `= 0`", node);
+                    err("zero-initialize aggregate type `" + ty->str() + "` with `{}`; `= 0` is no longer supported", node);
                 }
             }
         }
@@ -1918,13 +1918,13 @@ private:
     // 单个初始化位置：声明初始化、聚合成员、嵌套花括号都走这里
     void check_init_into(const TypePtr& ty, Init* init, const std::string& what,
                          const Node* node) {
-        if (!init) err("缺少初始化器", node);
+        if (!init) err("missing initializer", node);
         if (auto ia0 = dynamic_cast<InitAggregate*>(init)) {
             if (ia0->items.empty()) {
                 if (!is_zeroable(ty)) {
-                    err("类型 `" + ty->str() +
-                            "` 不能用 `{}` 初始化；只有聚合类型（struct/数组/切片/string）可用 `{}`，"
-                            "标量请用各自的常量值（0、0.0、false、null）",
+                    err("type `" + ty->str() +
+                            "` cannot be initialized with `{}`; only aggregate types (struct, array, slice, string) can use `{}`"
+                            "use a plain constant for scalars (0, 0.0, false, null)",
                         node);
                 }
                 return;
@@ -1932,10 +1932,10 @@ private:
         }
         if (auto ie = dynamic_cast<InitExpr*>(init)) {
             Expr* e = ie->expr.get();
-            if (!e) err("缺少初始化表达式", node);
+            if (!e) err("missing initializer expression", node);
             if (auto il = dynamic_cast<IntLit*>(e)) {
                 if (il->value == 0 && is_zeroable(ty)) {
-                    err("聚合类型 `" + ty->str() + "` 的零初始化请用 `{}`，不再支持 `= 0`", node);
+                    err("zero-initialize aggregate type `" + ty->str() + "` with `{}`; `= 0` is no longer supported", node);
                 }
             }
             if (auto call = dynamic_cast<Call*>(e);
@@ -1945,8 +1945,8 @@ private:
                 direct_init_expr_ = nullptr;
                 if (call->callee_kind == "struct_ctor") return;  // 就地构造
                 if (!same_type(call->ty, ty)) {
-                    err("有构造器的 struct `" + ty->str() +
-                            "` 必须用 `T(...)` 构造，或由同类型表达式拷贝初始化",
+                    err("struct `" + ty->str() +
+                            "` has a constructor and must be built with `T(...)` or copy-initialized from an expression of the same type",
                         node);
                 }
                 return;  // 同类型返回值：拷贝初始化
@@ -1963,14 +1963,14 @@ private:
             check_aggregate(ia, ty, what);
             return;
         }
-        err("未知的初始化器", node);
+        err("unknown initializer", node);
     }
 
     void check_aggregate(InitAggregate* init, const TypePtr& ty, const std::string& what) {
         auto& items = init->items;
 
         if (ty->kind == TypeKind::Struct && !ty->ctors.empty()) {
-            err("有构造器的 struct `" + ty->str() + "` 不能使用聚合初始化", init);
+            err("struct `" + ty->str() + "` has a constructor and cannot use aggregate initialization", init);
         }
 
         if (ty->kind == TypeKind::Struct) {
@@ -1979,8 +1979,8 @@ private:
             if (cur_ && cur_->name != ty->unit) {
                 for (auto& f : fields) {
                     if (!f.is_public) {
-                        err("struct `" + ty->str() + "` 的字段 `" + f.name +
-                                "` 未声明为 public，不能从其他 unit 聚合初始化",
+                        err("field `" + f.name + "` of struct `" + ty->str() +
+                                "` is not declared public and cannot be aggregate-initialized from another unit",
                             init);
                     }
                 }
@@ -1994,11 +1994,11 @@ private:
                     any_named = true;
                 }
             }
-            if (any_positional && any_named) err("命名字段与位置初始化不能混用", init);
+            if (any_positional && any_named) err("cannot mix named and positional initializers", init);
             if (!any_named) {
                 if (items.size() != fields.size()) {
-                    err("结构体 `" + ty->str() + "` 需要 " + std::to_string(fields.size()) +
-                            " 个初始值，实际 " + std::to_string(items.size()) + " 个",
+                    err("struct `" + ty->str() + "` expects " + std::to_string(fields.size()) +
+                            " initializers, but " + std::to_string(items.size()) + " were given",
                         init);
                 }
                 for (size_t i = 0; i < items.size(); ++i) {
@@ -2014,9 +2014,9 @@ private:
             for (auto& [n, sub] : items) {
                 auto it = fmap.find(n);
                 if (it == fmap.end()) {
-                    err("结构体 `" + ty->str() + "` 没有字段 `" + n + "`", init);
+                    err("struct `" + ty->str() + "` has no field `" + n + "`", init);
                 }
-                if (!seen.insert(n).second) err("字段 `" + n + "` 重复初始化", init);
+                if (!seen.insert(n).second) err("field `" + n + "` is initialized more than once", init);
                 check_init_into(fields[it->second].type, sub.get(), what, init);
             }
 
@@ -2027,18 +2027,18 @@ private:
                 missing += f.name;
             }
             if (!missing.empty()) {
-                err("结构体 `" + ty->str() + "` 缺少字段初始化：" + missing, init);
+                err("struct `" + ty->str() + "` is missing initializers for: " + missing, init);
             }
             return;
         }
 
         if (ty->kind == TypeKind::Array) {
             for (auto& item : items) {
-                if (!item.first.empty()) err("数组初始化不能用命名字段", init);
+                if (!item.first.empty()) err("array initializers cannot use named fields", init);
             }
             if (items.size() > ty->array_size) {
-                err("数组长度 " + std::to_string(ty->array_size) + "，却给了 " +
-                        std::to_string(items.size()) + " 个初始值",
+                err("array of length " + std::to_string(ty->array_size) + " was given " +
+                        std::to_string(items.size()) + " initializers",
                     init);
             }
             for (auto& item : items) check_init_into(ty->elem, item.second.get(), what, init);
@@ -2048,16 +2048,16 @@ private:
         if (ty->kind == TypeKind::Slice) {
             if (type_align(ty->elem) > 8) err_slice_elem_align(ty->elem, init);
             if (ty->rank != 1) {
-                err("动态矩形数组 `" + ty->str() + "` 请用 `new T[m,n]` 初始化", init);
+                err("dynamic rectangular array `" + ty->str() + "` must be created with `new T[m,n]`", init);
             }
             for (auto& item : items) {
-                if (!item.first.empty()) err("切片初始化不能用命名字段", init);
+                if (!item.first.empty()) err("slice initializers cannot use named fields", init);
             }
             for (auto& item : items) check_init_into(ty->elem, item.second.get(), what, init);
             return;
         }
 
-        err("类型 " + ty->str() + " 不能用花括号初始化", init);
+        err("type " + ty->str() + " cannot be brace-initialized", init);
     }
 
     static bool simple_seq(Expr* e) {
@@ -2081,29 +2081,29 @@ private:
 
     void check_writable(Expr* t) {
         if (auto n = dynamic_cast<Name*>(t)) {
-            if (n->ident == "this") err("不能给 `this` 赋值", t);
-            if (root_is_const(t)) err("`" + n->ident + "` 是 const 绑定，不能赋值", t);
+            if (n->ident == "this") err("cannot assign to `this`", t);
+            if (root_is_const(t)) err("`" + n->ident + "` is a `const` binding and cannot be assigned", t);
             return;
         }
         if (dynamic_cast<Member*>(t)) {
-            if (root_is_const(t)) err("不能修改 const 绑定的成员", t);
+            if (root_is_const(t)) err("cannot modify a member of a `const` binding", t);
             return;
         }
         if (auto ix = dynamic_cast<Index*>(t)) {
             TypePtr bt = ix->base->ty;
-            if (is_str(bt)) err("string 不可变，不能写元素（如需构造请用 byte[]/str_concat）", t);
+            if (is_str(bt)) err("`string` is immutable; cannot write to elements (use `byte[]` or `str_concat` to build one)", t);
             if (bt && bt->kind == TypeKind::Slice && bt->elem && bt->elem->is_const)
-                err("不能通过 const 切片写入", t);
+                err("cannot write through a `const` slice", t);
             if (bt && bt->kind == TypeKind::Ptr && bt->elem && bt->elem->is_const)
-                err("不能通过 const 指针写入", t);
-            if (root_is_const(ix->base.get())) err("不能修改 const 绑定的元素", t);
+                err("cannot write through a `const` pointer", t);
+            if (root_is_const(ix->base.get())) err("cannot modify an element of a `const` binding", t);
             return;
         }
         if (auto u = dynamic_cast<Unary*>(t)) {
             if (u->op == "*") {
                 TypePtr ot = u->operand->ty;
                 if (ot && ot->kind == TypeKind::Ptr && ot->elem && ot->elem->is_const)
-                    err("不能通过 const 指针写入", t);
+                    err("cannot write through a `const` pointer", t);
             }
         }
     }
@@ -2127,22 +2127,22 @@ private:
     }
 
     void check_assign_stmt(AssignStmt* s) {
-        if (!is_lvalue(s->target.get())) err("赋值左侧必须是可赋值的对象", s);
+        if (!is_lvalue(s->target.get())) err("left side of an assignment must be assignable", s);
 
         if (auto ix = dynamic_cast<Index*>(s->target.get())) {
             TypePtr bt = check_expr(ix->base.get());
             if (is_user_type(bt)) {
                 if (is_str(bt))
-                    err("string 不可变，不能写元素（如需构造请用 byte[]/str_concat）",
+                    err("`string` is immutable; cannot write to elements (use `byte[]` or `str_concat` to build one)",
                         s->target.get());
                 if (ix->indices.size() != 1)
-                    err("用户 `operator[]=` 只接受一个下标", s->target.get());
+                    err("user-defined `operator[]=` takes exactly one index", s->target.get());
                 TypePtr it = check_expr(ix->indices[0].get());
-                if (!is_integer(it)) err("下标必须是整数", s->target.get());
-                if (s->op != "=") err("用户下标暂只支持 `=` 赋值", s);
+                if (!is_integer(it)) err("index must be an integer", s->target.get());
+                if (s->op != "=") err("user-defined subscript assignment only supports `=`", s);
                 auto cands = collect_operators("[]=", {bt, it});
                 if (cands.empty()) {
-                    err("类型 `" + bt->str() + "` 不支持下标赋值（没有 `operator[]=`）", s);
+                    err("type `" + bt->str() + "` does not support subscript assignment (no `operator[]=`)", s);
                 }
                 check_writable(s->target.get());
                 s->set_func = choose_overload(cands,
@@ -2155,62 +2155,62 @@ private:
 
         TypePtr tt = check_expr(s->target.get());
         if (auto m = dynamic_cast<Member*>(s->target.get()); m && m->kind == "enum_const") {
-            err("枚举成员是常量，不能赋值", s);
+            err("enum members are constants and cannot be assigned", s);
         }
         check_writable(s->target.get());
         if (s->op == "=") {
-            check_assign(s->value.get(), tt, "赋值");
+            check_assign(s->value.get(), tt, "assignment");
             return;
         }
         if (is_enum_t(tt)) {
-            err("枚举 `" + tt->str() + "` 不支持 `" + s->op +
-                    "`（请写 `x = (x as int " + s->op.substr(0, s->op.size() - 1) +
+            err("enum `" + tt->str() + "` does not support `" + s->op +
+                    "` (write `x = (x as int " + s->op.substr(0, s->op.size() - 1) +
                     " y) as " + tt->name + "`）",
                 s);
         }
         const std::string op = s->op.empty() ? std::string() : s->op.substr(0, s->op.size() - 1);
         TypePtr vt = check_expr(s->value.get(), tt);
         if (op == "<<" || op == ">>") {
-            if (!is_integer(tt) || !is_integer(vt)) err("`" + s->op + "` 两侧必须是整数", s);
+            if (!is_integer(tt) || !is_integer(vt)) err("`both sides of `" + s->op + "` must be integers", s);
             return;
         }
         if (op == "&" || op == "|" || op == "^") {
-            if (!is_integer(tt) || !is_integer(vt)) err("`" + s->op + "` 两侧必须是整数", s);
+            if (!is_integer(tt) || !is_integer(vt)) err("`both sides of `" + s->op + "` must be integers", s);
             return;
         }
         if ((op == "+" || op == "-") && tt->kind == TypeKind::Ptr) {
-            if (tt->elem && tt->elem->kind == TypeKind::Void) err("void* 不能做指针算术", s);
-            if (!is_integer(vt)) err("指针加减只能配合整数", s);
+            if (tt->elem && tt->elem->kind == TypeKind::Void) err("pointer arithmetic is not allowed on `void*`", s);
+            if (!is_integer(vt)) err("pointer arithmetic requires an integer operand", s);
             return;
         }
-        if (!(is_numeric(tt) && is_numeric(vt))) err("`" + s->op + "` 需要数值操作数", s);
+        if (!(is_numeric(tt) && is_numeric(vt))) err("`" + s->op + "` requires numeric operands", s);
     }
 
     void check_return(ReturnStmt* s) {
-        if (in_dtor_) err("析构器中不允许 `return`（字段释放与基类析构在函数末尾执行）", s);
-        if (!cur_ret_) err("`return` 只能出现在函数/方法中", s);
+        if (in_dtor_) err("`return` is not allowed in a destructor (fields and the base class are destroyed at the end of the function)", s);
+        if (!cur_ret_) err("`return` can only appear in a function or method", s);
         TypePtr rt = cur_ret_;
         if (!s->value) {
             if (!is_void(rt)) {
-                err("`" + cur_name_ + "` 必须返回 " + (rt ? rt->str() : "void") + " 类型的值", s);
+                err("`" + cur_name_ + "` must return a value of type " + (rt ? rt->str() : "void"), s);
             }
             return;
         }
-        if (is_void(rt)) err("void 函数/方法 `" + cur_name_ + "` 不能返回值", s);
-        check_assign(s->value.get(), rt, "返回值");
+        if (is_void(rt)) err("`void` function or method `" + cur_name_ + "` cannot return a value", s);
+        check_assign(s->value.get(), rt, "return value");
     }
 
     void check_cond(Expr* e, const std::string& what) {
         TypePtr t = check_expr(e);
         if (!(is_prim(t) && t->name == "bool")) {
-            err(what + "必须是 bool，实际是 " + (t ? t->str() : "void"), e);
+            err(what + " must be `bool`, found " + (t ? t->str() : "void"), e);
         }
     }
 
     // switch 分支模式求值：只接受编译期常量（字面量 / 枚举成员）
     long long checked_int_pattern(long long v, const TypePtr& st, Expr* e) {
         if (!promote_int_literal(v, st)) {
-            err("switch 模式值 " + std::to_string(v) + " 超出 " + st->str() + " 的取值范围", e);
+            err("switch case value " + std::to_string(v) + " is out of range for " + st->str(), e);
         }
         return v;
     }
@@ -2225,17 +2225,17 @@ private:
                     n->ty = st;
                     return ec->value;
                 }
-                err("枚举 `" + st->str() + "` 没有成员 `" + n->ident + "`", e);
+                err("enum `" + st->str() + "` has no member `" + n->ident + "`", e);
             }
             if (auto* m = dynamic_cast<Member*>(e)) {
                 TypePtr pt = check_expr(e);
                 auto* ec = std::get_if<EnumConst*>(&m->sym);
                 if (!ec || !*ec || !pt || !same_type(pt, st)) {
-                    err("switch 模式类型与被匹配值不一致：期望 " + st->str(), e);
+                    err("switch case type does not match the value being switched on: expected " + st->str(), e);
                 }
                 return (*ec)->value;
             }
-            err("枚举 switch 的模式必须是 " + st->str() + " 的成员", e);
+            err("cases of an enum switch must be members of " + st->str(), e);
         }
 
         if (auto* il = dynamic_cast<IntLit*>(e)) return checked_int_pattern(il->value, st, e);
@@ -2249,13 +2249,13 @@ private:
         if (auto* n = dynamic_cast<Name*>(e)) {
             check_expr(e);  // 解析成变量 / 枚举成员，好给出更准的错误
             if (std::get_if<EnumConst*>(&n->sym)) {
-                err("模式 `" + n->ident + "` 是枚举成员，不能匹配 " + st->str(), e);
+                err("pattern `" + n->ident + "` is an enum member and cannot match " + st->str(), e);
             }
-            err("switch 分支的模式必须是编译期常量：`" + n->ident +
-                    "` 是变量；请用字面量或枚举成员",
+            err("switch case pattern must be a compile-time constant: `" + n->ident +
+                    "` is a variable; use a literal or an enum member",
                 e);
         }
-        err("switch 分支的模式必须是编译期常量（整数字面量、字符字面量或枚举成员）", e);
+        err("switch case pattern must be a compile-time constant (integer literal, character literal, or enum member)", e);
     }
 
     std::vector<std::pair<std::string, long long>> enum_members_of(const TypePtr& et) {
@@ -2286,10 +2286,10 @@ private:
     void check_switch(SwitchStmt* s) {
         ScopeGuard guard(*this);
         TypePtr st = check_expr(s->scrut.get());
-        if (!st) err("switch 缺少被匹配的表达式", s);
+        if (!st) err("switch is missing the value to match", s);
         const bool enum_sw = st->kind == TypeKind::Enum;
         if (!enum_sw && !(is_prim(st) && is_integer(st))) {
-            err("switch 的被匹配值必须是整数或枚举（实际是 " + st->str() + "）", s->scrut.get());
+            err("switch value must be an integer or enum (found " + st->str() + ")", s->scrut.get());
         }
         s->sty = st;
 
@@ -2305,11 +2305,11 @@ private:
         for (auto& up : s->arms) {
             SwitchArm* arm = up.get();
             if (arm->is_else) {
-                if (s->has_else) err("switch 只能有一个 `else` 分支", s);
+                if (s->has_else) err("switch can have at most one `else` branch", s);
                 s->has_else = true;
             }
             if (arm->pats.empty() && !arm->is_else) {
-                err("switch 分支缺少模式", s);
+                err("switch case is missing a pattern", s);
             }
             for (auto& p : arm->pats) {
                 p.vlo = pattern_value(p.lo.get(), st);
@@ -2318,14 +2318,14 @@ private:
                 iv.node = p.lo.get();
                 if (p.is_range) {
                     if (enum_sw) {
-                        err("枚举 switch 不支持区间分支（枚举成员没有数值序）；请逐个列出成员",
+                        err("enum switches do not support range cases (enum members have no numeric order); list each member explicitly",
                             p.lo.get());
                     }
                     p.vhi = pattern_value(p.hi.get(), st);
                     if (p.vlo >= p.vhi) {
-                        err("switch 区间 `" + std::to_string(p.vlo) + ".." +
+                        err("switch range `" + std::to_string(p.vlo) + ".." +
                                 std::to_string(p.vhi) +
-                                "` 为空：半开区间的上界必须大于下界",
+                                "` is empty: the upper bound of a half-open range must be greater than the lower bound",
                             p.lo.get());
                     }
                     iv.hi = p.vhi;
@@ -2350,8 +2350,8 @@ private:
             const Iv& prev = ivs[i - 1];
             const Iv& cur = ivs[i];
             if (prev.top || cur.lo < prev.hi) {
-                err("switch 分支重叠：值 " + std::to_string(cur.lo) +
-                        " 已被前面的分支覆盖（区间半开，`a..b` 不含 b）",
+                err("overlapping switch cases: value " + std::to_string(cur.lo) +
+                        " is already covered by an earlier case (ranges are half-open; `a..b` excludes b)",
                     cur.node);
             }
         }
@@ -2373,13 +2373,13 @@ private:
             }
             if (!s->has_else) {
                 if (!missing.empty()) {
-                    err("switch 没有覆盖枚举 " + st->str() + " 的全部成员（缺少 " + missing +
-                            "）；补分支或写 `else:`",
+                    err("switch does not cover all members of enum " + st->str() + " (missing " + missing +
+                            "); add the missing cases or write `else:`",
                         s);
                 }
                 s->enum_exhaustive = true;
             } else if (missing.empty()) {
-                warn("`else` 分支不可达：已覆盖枚举 `" + st->str() + "` 的全部成员", s);
+                warn("`else` branch is unreachable: all members of enum `" + st->str() + "` are already covered", s);
             }
         }
     }
@@ -2389,12 +2389,12 @@ private:
         TypePtr us = Type::make_prim("usize");
         const MethodSig* len = find_method(st, "length", 0);
         if (!len) {
-            err("`for-in` 不能遍历 " + st->str() +
-                    "：索引形态需要方法 `length() -> usize`（没有找到 `length()`）",
+            err("`for-in` cannot iterate " + st->str() +
+                    ": the indexed form requires a method `length() -> usize` (none found)",
                 s->seq.get());
         }
         if (!same_type(len->ret, us)) {
-            err("`" + st->str() + "::length()` 必须返回 `usize`（实际是 `" +
+            err("`" + st->str() + "::length()` must return `usize` (found `" +
                     (len->ret ? len->ret->str() : "void") + "`）",
                 s->seq.get());
         }
@@ -2412,17 +2412,17 @@ private:
                 continue;
             }
             if (picked) {
-                err("`" + st->str() + "` 有多个 `operator[](" + st->str() +
-                        ", usize)` 重载，`for-in` 无法选择",
+                err("`" + st->str() + "` has more than one `operator[](`" + st->str() +
+                        ", usize)` overload; `for-in` cannot choose one",
                     s->seq.get());
             }
             picked = c;
         }
         if (!picked) {
-            std::string msg = "`for-in` 不能遍历 " + st->str() + "：索引形态还需要 `operator[](" +
+            std::string msg = "`for-in` cannot iterate " + st->str() + ": the indexed form also requires `operator[](" +
                               st->str() + ", usize) -> T`";
             if (!saw_index.empty()) {
-                msg += "（找到的 `operator[]` 索引类型是 `" + saw_index + "`，需要 `usize`）";
+                msg += "(the `operator[]` found takes index type `" + saw_index + "`; `usize` is required)";
             }
             err(msg, s->seq.get());
         }
@@ -2441,30 +2441,30 @@ private:
             TypePtr lt = check_expr(r->lo.get());
             TypePtr ht = check_expr(r->hi.get());
             if (is_enum_t(lt) || is_enum_t(ht)) {
-                err("区间端点不能是枚举（请写 `x as int`）", r);
+                err("range endpoints cannot be enum values (write `x as int`)", r);
             }
-            if (!is_integer(lt) || !is_integer(ht)) err("区间两端必须是整数", r);
+            if (!is_integer(lt) || !is_integer(ht)) err("range bounds must be integers", r);
             TypePtr vt = usual_arith(lt, ht);
             if (!vt) vt = t_int();
-            if (!is_integer(vt)) err("区间的循环变量必须是整数", r);
+            if (!is_integer(vt)) err("the loop variable of a range must be an integer", r);
             s->loop_kind = "range";
             s->seq_ty = t_range();
             s->elem_ty = vt;
         } else {
             TypePtr st = check_expr(s->seq.get());
-            if (!st) err("for-in 缺少序列", s);
+            if (!st) err("`for-in` is missing a sequence", s);
             if (st->kind == TypeKind::Array) {
                 if (st->elem && st->elem->kind == TypeKind::Array) {
-                    err("`for-in` 不支持多维数组 `" + st->str() +
-                            "`：用下标循环，或先取一行再遍历",
+                    err("`for-in` does not support multidimensional arrays `" + st->str() +
+                            "`: use an index loop, or take one row first and iterate over it",
                         s->seq.get());
                 }
                 s->loop_kind = "array";
                 s->elem_ty = st->elem;
             } else if (st->kind == TypeKind::Slice) {
                 if (st->rank > 1) {
-                    err("`for-in` 不支持多维数组 `" + st->str() +
-                            "`：用下标循环（各维长度用 `len(a, k)`）",
+                    err("`for-in` does not support multidimensional arrays `" + st->str() +
+                            "`: use an index loop (get each dimension's length with `len(a, k)`)",
                         s->seq.get());
                 }
                 s->loop_kind = "slice";
@@ -2475,8 +2475,8 @@ private:
             } else if (st->kind == TypeKind::Struct || st->kind == TypeKind::Class) {
                 resolve_index_shape(s, st);
             } else {
-                err("for-in 不能遍历 " + st->str() +
-                        "（支持区间、数组、切片、string；用户类型需提供 `length() -> usize` 与 "
+                err("`for-in` cannot iterate " + st->str() +
+                        " (supported: range, array, slice, string; user types must provide `length() -> usize` and "
                         "`operator[](C, usize)`）",
                     s->seq.get());
             }
@@ -2484,27 +2484,27 @@ private:
         }
 
         if (s->by_ref && s->loop_kind == "string") {
-            err("string 不可变，不能用 `for ref` 遍历", s);
+            err("`string` is immutable and cannot be iterated with `for ref`", s);
         }
         if (s->by_ref && s->loop_kind == "index") {
-            err("用户类型不支持 `for ref`（`operator[]` 返回的是值）；改用 `for i, x` + `c[i] = ...`",
+            err("user types do not support `for ref` (`operator[]` returns a value); use `for i, x` with `c[i] = ...` instead",
                 s->seq.get());
         }
         if (s->by_ref && s->loop_kind == "range") {
-            err("区间循环不能用 `for ref`", s);
+            err("`for ref` cannot be used on a range loop", s);
         }
         if (s->by_ref && s->elem_ty && is_reference_type(s->elem_ty)) {
-            err("暂不支持对 class/interface 元素使用 `for ref`（用值绑定句柄）", s);
+            err("`for ref` is not supported for class or interface elements (bind the handle by value)", s);
         }
         if (s->by_ref && s->seq_ty && s->seq_ty->kind == TypeKind::Slice && s->seq_ty->elem &&
             s->seq_ty->elem->is_const) {
-            err("不能对 const 切片使用 `for ref`", s->seq.get());
+            err("`for ref` cannot be used on a `const` slice", s->seq.get());
         }
         if (s->by_ref && root_is_const(s->seq.get())) {
-            err("不能对 const 绑定使用 `for ref`", s->seq.get());
+            err("`for ref` cannot be used on a `const` binding", s->seq.get());
         }
         if (s->by_ref && !simple_seq(s->seq.get())) {
-            err("`for ref` 的序列必须是变量或成员访问（可寻址）", s->seq.get());
+            err("the sequence of `for ref` must be a variable or member access (an lvalue)", s->seq.get());
         }
 
         TypePtr vt = s->elem_ty;
@@ -2582,18 +2582,18 @@ private:
 
     TypePtr check_assign(Expr* e, const TypePtr& dst, const std::string& what) {
         if (noncopyable_struct(dst)) {
-            err(what + "：含析构器的 struct `" + dst->str() +
-                    "` 不能按值拷贝（用指针/显式 clone）",
+            err(what + ": struct `" + dst->str() +
+                    "` has a destructor and cannot be copied by value (use a pointer or an explicit clone)",
                 e);
         }
         TypePtr src = check_expr(e, dst);
         if (assignable(e, src, dst)) return src;
         if (is_enum_t(src) || is_enum_t(dst)) {
-            err(what + "：不能把 " + (src ? src->str() : "void") + " 赋给 " +
-                    (dst ? dst->str() : "void") + "（枚举与整数之间没有隐式转换，请写 `as`）",
+            err(what + ": cannot assign " + (src ? src->str() : "void") + " to " +
+                    (dst ? dst->str() : "void") + " (no implicit conversion between enums and integers; write `as`)",
                 e);
         }
-        err(what + "：不能把 " + (src ? src->str() : "void") + " 赋给 " +
+        err(what + ": cannot assign " + (src ? src->str() : "void") + " to " +
                 (dst ? dst->str() : "void"),
             e);
     }
@@ -2683,7 +2683,7 @@ private:
 
     // ------------------------------------------------------------ 表达式
     TypePtr check_expr(Expr* e, const TypePtr& expected = nullptr) {
-        if (!e) err("缺少表达式");
+        if (!e) err("missing expression");
         TypePtr t = check_expr_impl(e, expected);
         e->ty = t;
         return t;
@@ -2734,20 +2734,20 @@ private:
 
         if (auto ix = dynamic_cast<Index*>(e)) {
             TypePtr bt = check_expr(ix->base.get());
-            if (ix->indices.empty()) err("下标不能为空", e);
+            if (ix->indices.empty()) err("subscript list cannot be empty", e);
             std::vector<TypePtr> its;
             for (auto& idxExpr : ix->indices) {
                 TypePtr it = check_expr(idxExpr.get());
                 if (is_enum_t(it)) {
-                    err("下标不能是枚举 `" + it->str() + "`（请写 `x as int`）", idxExpr.get());
+                    err("subscript cannot be an enum `" + it->str() + "` (write `x as int`)", idxExpr.get());
                 }
                 if (!is_integer(it)) {
-                    err("下标必须是整数，实际是 " + (it ? it->str() : "void"),
+                    err("subscript must be an integer, found " + (it ? it->str() : "void"),
                         idxExpr.get());
                 }
                 its.push_back(it);
             }
-            if (!bt) err("类型不能下标访问", e);
+            if (!bt) err("type cannot be subscripted", e);
             const size_t n = ix->indices.size();
             if (bt->kind == TypeKind::Array) {
                 TypePtr cur = bt;
@@ -2757,8 +2757,8 @@ private:
                     depth++;
                 }
                 if (n > depth) {
-                    err("下标过多：`" + bt->str() + "` 只有 " + std::to_string(depth) +
-                            " 维",
+                    err("too many subscripts: `" + bt->str() + "` has only " + std::to_string(depth) +
+                            " dimensions",
                         e);
                 }
                 TypePtr r = bt;
@@ -2767,32 +2767,32 @@ private:
             }
             if (bt->kind == TypeKind::Slice) {
                 if (static_cast<int>(n) != bt->rank) {
-                    err("`" + bt->str() + "` 需要 " + std::to_string(bt->rank) +
-                            " 个下标（实际 " + std::to_string(n) + " 个）",
+                    err("`" + bt->str() + "` requires " + std::to_string(bt->rank) +
+                            " subscripts (got " + std::to_string(n) + ")",
                         e);
                 }
                 return bt->elem;
             }
             if (bt->kind == TypeKind::Ptr) {
-                if (n != 1) err("指针只接受一个下标", e);
+                if (n != 1) err("pointer accepts exactly one subscript", e);
                 return bt->elem;
             }
             if (is_str(bt)) {
-                if (n != 1) err("string 只接受一个下标", e);
+                if (n != 1) err("`string` accepts exactly one subscript", e);
                 return Type::make_prim("byte");
             }
             if (is_user_type(bt)) {
-                if (n != 1) err("用户 `operator[]` 只接受一个下标", e);
+                if (n != 1) err("user-defined `operator[]` takes exactly one subscript", e);
                 auto cands = collect_operators("[]", {bt, its[0]});
                 if (cands.empty()) {
-                    err("类型 `" + bt->str() + "` 不支持下标（没有 `operator[]`）", e);
+                    err("type `" + bt->str() + "` does not support subscripting (no `operator[]`)", e);
                 }
                 auto f = choose_overload(cands, {ix->base.get(), ix->indices[0].get()},
                                          "operator[]", e);
                 ix->get_func = f;
                 return f->rty;
             }
-            err("类型 " + bt->str() + " 不能下标访问", e);
+            err("type " + bt->str() + " cannot be subscripted", e);
         }
 
         if (auto u = dynamic_cast<Unary*>(e)) return check_unary(u);
@@ -2800,7 +2800,7 @@ private:
         if (auto nt = dynamic_cast<NotExpr*>(e)) {
             TypePtr t = check_expr(nt->operand.get());
             if (!(is_prim(t) && t->name == "bool")) {
-                err("`not` 需要 bool 操作数，实际是 " + (t ? t->str() : "void"), e);
+                err("`not` requires a `bool` operand, found " + (t ? t->str() : "void"), e);
             }
             return t_bool();
         }
@@ -2813,7 +2813,7 @@ private:
             TypePtr st = check_expr(c->expr.get());
             TypePtr dt = resolve_type(c->spec.get(), cur_);
             if (!can_cast(st, dt)) {
-                err("不能用 `as` 把 " + (st ? st->str() : "void") + " 转成 " + dt->str(), e);
+                err("cannot use `as` to convert " + (st ? st->str() : "void") + " to " + dt->str(), e);
             }
             e->ty = dt;
             return dt;
@@ -2825,7 +2825,7 @@ private:
 
         if (auto sz = dynamic_cast<SizeofExpr*>(e)) {
             TypePtr t = resolve_type(sz->spec.get(), cur_);
-            if (is_void(t)) err("`" + sz->which + "(void)` 非法", e);
+            if (is_void(t)) err("`" + sz->which + "(void)` is invalid", e);
             e->ty = Type::make_prim("usize");
             return e->ty;
         }
@@ -2833,50 +2833,50 @@ private:
         if (auto ln = dynamic_cast<Len*>(e)) {
             TypePtr t = check_expr(ln->seq.get());
             if (is_str(t)) {
-                if (ln->dim) err("string 的长度没有维度参数", ln->dim.get());
+                if (ln->dim) err("`string` length has no dimension argument", ln->dim.get());
                 return Type::make_prim("usize");
             }
             if (ln->dim) {
                 TypePtr dt = check_expr(ln->dim.get());
-                if (!is_integer(dt)) err("`len(seq, k)` 的维度必须是整数", ln->dim.get());
+                if (!is_integer(dt)) err("dimension of `len(seq, k)` must be an integer", ln->dim.get());
                 auto il = dynamic_cast<IntLit*>(ln->dim.get());
                 if (t && t->kind == TypeKind::Array) {
-                    if (!il) err("静态数组的维度参数必须是整数字面量", ln->dim.get());
+                    if (!il) err("dimension argument of a static array must be an integer literal", ln->dim.get());
                     size_t depth = 0;
                     for (TypePtr c = t; c && c->kind == TypeKind::Array; c = c->elem) depth++;
                     if (il && (il->value < 0 ||
                                static_cast<size_t>(il->value) >= depth)) {
-                        err("维度越界：`" + t->str() + "` 只有 " + std::to_string(depth) +
-                                " 维",
+                        err("dimension out of bounds: `" + t->str() + "` has only " + std::to_string(depth) +
+                                " dimensions",
                             ln->dim.get());
                     }
                 } else if (t && t->kind == TypeKind::Slice) {
                     if (il && (il->value < 0 || il->value >= t->rank)) {
-                        err("维度越界：`" + t->str() + "` 只有 " + std::to_string(t->rank) +
-                                " 维",
+                        err("dimension out of bounds: `" + t->str() + "` has only " + std::to_string(t->rank) +
+                                " dimensions",
                             ln->dim.get());
                     }
                 } else if (t && t->kind != TypeKind::Array) {
-                    err("`len(seq, k)` 只能用于多维数组", ln->dim.get());
+                    err("`len(seq, k)` can only be used on a multidimensional array", ln->dim.get());
                 }
             }
             if (t && (t->kind == TypeKind::Array || t->kind == TypeKind::Slice)) {
                 return Type::make_prim("usize");
             }
-            err("`len` 不支持 " + (t ? t->str() : "void"), e);
+            err("`len` does not support " + (t ? t->str() : "void"), e);
         }
 
-        if (dynamic_cast<RangeExpr*>(e)) err("区间 `a..b` 只能用于 for-in", e);
+        if (dynamic_cast<RangeExpr*>(e)) err("range `a..b` can only be used in `for-in`", e);
 
-        err("未知表达式", e);
+        err("unknown expression", e);
     }
 
     TypePtr check_name(Name* e) {
         if (e->ident == "super") {
-            err("`super` 只能用于 `super(...)` 或 `super.method(...)`", e);
+            err("`super` can only be used as `super(...)` or `super.method(...)`", e);
         }
         if (e->ident == "this" && lookup_local("this") == nullptr) {
-            err("`this` 只能出现在 class/struct 方法/构造器/析构器中", e);
+            err("`this` can only appear inside a class or struct method, constructor, or destructor", e);
         }
         if (LocalVar* lv = lookup_local(e->ident)) {
             e->kind = "local";
@@ -2900,7 +2900,7 @@ private:
         if (auto f = ui.funcs.find(e->ident); f != ui.funcs.end() && !f->second.empty()) {
             e->kind = "func";
             e->sym = f->second.front();
-            err("函数 `" + e->ident + "` 不能作为值使用", e);
+            err("function `" + e->ident + "` cannot be used as a value", e);
         }
         if (EnumConst* ec = lookup_enum_const(e->ident)) {
             e->kind = "enum_const";
@@ -2921,8 +2921,8 @@ private:
             UnitInfo& o = it->second;
             if (auto g = o.globals.find(e->ident); g != o.globals.end() && g->second->is_public) {
                 if (imp_g) {
-                    err("`" + e->ident + "` 有歧义：`" + imp_g_unit + "." + e->ident + "` 与 `" +
-                            use->unit_name + "." + e->ident + "`；请写限定名",
+                    err("`" + e->ident + "` is ambiguous: `" + imp_g_unit + "." + e->ident + "` and `" +
+                            use->unit_name + "." + e->ident + "`; use a qualified name",
                         e);
                 }
                 imp_g = g->second;
@@ -2934,8 +2934,8 @@ private:
             }
             if (EnumConst* ec = lookup_enum_const_in(use->unit_name, e->ident, true)) {
                 if (imp_ec) {
-                    err("`" + e->ident + "` 有歧义：`" + imp_ec_unit + "." + e->ident + "` 与 `" +
-                            use->unit_name + "." + e->ident + "`；请写限定名",
+                    err("`" + e->ident + "` is ambiguous: `" + imp_ec_unit + "." + e->ident + "` and `" +
+                            use->unit_name + "." + e->ident + "`; use a qualified name",
                         e);
                 }
                 imp_ec = ec;
@@ -2950,27 +2950,27 @@ private:
         if (imp_f) {
             e->kind = "func";
             e->sym = imp_f;
-            err("函数 `" + e->ident + "` 不能作为值使用", e);
+            err("function `" + e->ident + "` cannot be used as a value", e);
         }
         if (imp_ec) {
             e->kind = "enum_const";
             e->sym = imp_ec;
             return imp_ec->ty;
         }
-        err("未定义的标识符 `" + e->ident + "`", e);
+        err("undefined identifier `" + e->ident + "`", e);
     }
 
     TypePtr check_member(Member* e) {
         Expr* obj = e->obj.get();
-        if (!obj) err("缺少成员访问的对象", e);
+        if (!obj) err("missing object for member access", e);
 
         if (auto nm = dynamic_cast<Name*>(obj); nm && lookup_local(nm->ident) == nullptr) {
             const std::string uname = nm->ident;
             auto it = infos_.find(uname);
             if (it != infos_.end() && uname != cur_->name) {
-                if (!unit_imported(uname)) err("未通过 `use` 导入 unit `" + uname + "`", e);
+                if (!unit_imported(uname)) err("unit `" + uname + "` is not imported with `use`", e);
                 if (!unit_visible(uname)) {
-                    err("unit `" + uname + "` 仅在库内可见，跨库使用需要 `public unit`", e);
+                    err("unit `" + uname + "` is only visible within its library; cross-library use requires `public unit`", e);
                 }
                 UnitInfo& ui = it->second;
                 nm->kind = "unit";
@@ -2978,17 +2978,17 @@ private:
                 if (auto f = ui.funcs.find(e->name); f != ui.funcs.end() && !f->second.empty()) {
                     e->kind = "func";
                     e->sym = f->second.front();
-                    err("函数 `" + uname + "." + e->name + "` 不能作为值使用", e);
+                    err("function `" + uname + "." + e->name + "` cannot be used as a value", e);
                 }
                 if (auto g = ui.globals.find(e->name); g != ui.globals.end()) {
                     if (!g->second->is_public) {
-                        err("`" + uname + "." + e->name + "` 未声明为 public", e);
+                        err("`" + uname + "." + e->name + "` is not declared public", e);
                     }
                     e->kind = "global";
                     e->sym = g->second;
                     return g->second->rty;
                 }
-                err("unit `" + uname + "` 中没有 `" + e->name + "`", e);
+                err("unit `" + uname + "` has no member `" + e->name + "`", e);
             }
         }
 
@@ -3008,20 +3008,20 @@ private:
                     auto it = infos_.find(un->ident);
                     if (it != infos_.end() && un->ident != cur_->name) {
                         if (!unit_imported(un->ident)) {
-                            err("未通过 `use` 导入 unit `" + un->ident + "`", e);
+                            err("unit `" + un->ident + "` is not imported with `use`", e);
                         }
                         if (!unit_visible(un->ident)) {
                             err("unit `" + un->ident +
-                                    "` 仅在库内可见，跨库使用需要 `public unit`",
+                                    "` is only visible within its library; cross-library use requires `public unit`",
                                 e);
                         }
                         TypePtr t = find_type_named(un->ident, inner->name, false);
                         if (!t) {
-                            err("unit `" + un->ident + "` 中没有类型 `" + inner->name + "`", e);
+                            err("unit `" + un->ident + "` has no type `" + inner->name + "`", e);
                         }
                         if (!type_is_public(t)) {
-                            err("类型 `" + un->ident + "." + inner->name +
-                                    "` 未声明为 public",
+                            err("type `" + un->ident + "." + inner->name +
+                                    "` is not declared public",
                                 e);
                         }
                         et = t;
@@ -3031,10 +3031,10 @@ private:
             }
             if (et) {
                 if (et->kind != TypeKind::Enum) {
-                    err("`" + et->str() + "` 不是枚举，不能用 `类型.成员` 引用", e);
+                    err("`" + et->str() + "` is not an enum and cannot be referenced as `Type.Member`", e);
                 }
                 EnumConst* ec = find_enum_member(et, e->name);
-                if (!ec) err("枚举 `" + et->str() + "` 没有成员 `" + e->name + "`", e);
+                if (!ec) err("enum `" + et->str() + "` has no member `" + e->name + "`", e);
                 e->kind = "enum_const";
                 e->sym = ec;
                 return et;
@@ -3046,14 +3046,14 @@ private:
             TypePtr ft = ot->field_type(e->name);
             if (!ft) {
                 if (ot->kind == TypeKind::Class && has_method_named(ot, e->name)) {
-                    err("方法 `" + e->name + "` 必须被调用（`x." + e->name + "(...)`）", e);
+                    err("method `" + e->name + "` must be called (`x." + e->name + "(...)`)", e);
                 }
-                err("类型 `" + ot->str() + "` 没有字段 `" + e->name + "`", e);
+                err("type `" + ot->str() + "` has no field `" + e->name + "`", e);
             }
             for (auto& f : ot->fields) {
                 if (f.name != e->name) continue;
                 if (!f.is_public && (!cur_ || cur_->name != ot->unit)) {
-                    err("字段 `" + e->name + "` 未声明为 public（类型 `" + ot->str() + "`）", e);
+                    err("field `" + e->name + "` is not declared public (type `" + ot->str() + "`)", e);
                 }
                 break;
             }
@@ -3061,38 +3061,38 @@ private:
             e->field_index = ot->field_index(e->name);
             return ft;
         }
-        err("类型 " + (ot ? ot->str() : "void") + " 没有成员 `" + e->name + "`", e);
+        err("type " + (ot ? ot->str() : "void") + " has no member `" + e->name + "`", e);
     }
 
     TypePtr check_unary(Unary* e) {
         if (e->op == "&") {
             if (auto nm = dynamic_cast<Name*>(e->operand.get());
                 nm && nm->ident == "this" && lookup_local("this") != nullptr) {
-                err("不能对 `this` 取地址：`this` 是当前对象的引用", e);
+                err("cannot take the address of `this`: it is a reference to the current object", e);
             }
-            if (!is_lvalue(e->operand.get())) err("`&` 需要一个可寻址的对象", e);
+            if (!is_lvalue(e->operand.get())) err("`&` requires an addressable object", e);
             TypePtr t = check_expr(e->operand.get());
             if (auto m = dynamic_cast<Member*>(e->operand.get()); m && m->kind == "enum_const") {
-                err("枚举成员不是可寻址的对象，不能取地址", e);
+                err("enum members are not addressable", e);
             }
             // U21：RC 生命周期无法用裸指针表达——禁止对 class/interface 句柄、
             // 以及经引用访问的成员/数组元素取地址（`&c`、`&c.x`、`&h.items[0]`、`&catArray[i]`）。
             if (is_reference_type(t)) {
-                err("不能对 class/interface 引用取地址（`" + t->str() +
-                        "`）：RC 生命周期无法用裸指针表达",
+                err("cannot take the address of a class or interface reference (`" + t->str() +
+                        "`): its RC lifetime cannot be expressed with a raw pointer",
                     e);
             }
             if (rooted_at_reference(e->operand.get())) {
-                err("不能对经 class/interface 引用访问的成员或元素取地址：先拷到局部变量，"
-                    "用完再赋回（backlog U21）",
+                err("cannot take the address of a member or element reached through a class or interface reference: copy it to a local, "
+                    "use it, then assign it back (backlog U21)",
                     e);
             }
             // U24：含引用字段的 struct 由编译器逐字段 RC；裸指针可绕过 retain/release
             // （也能把弱引用/字段地址带到生命周期之外），第一阶段禁止取址。
             if (t && t->kind == TypeKind::Struct && has_ref_fields(t) && !t->has_dtor) {
-                err("不能对含引用字段的 struct `" + t->str() +
-                        "` 取地址：裸指针可绕过 RC（backlog U24）；按值传递/返回，或改用 class"
-                        "（含用户析构器的 struct 仍通过指针使用，不受此限）",
+                err("cannot take the address of struct `" + t->str() +
+                        "` which has reference fields: a raw pointer could bypass RC (backlog U24); pass or return it by value, or use a class"
+                        " (structs with a user-defined destructor are still used through pointers and are not affected)",
                     e);
             }
             return Type::make_ptr(t);
@@ -3102,12 +3102,12 @@ private:
 
         // 枚举不是算术类型：一元运算（`~`/`-`/`+`）需要显式 `as int`
         if (is_enum_t(t) && (e->op == "~" || e->op == "-" || e->op == "+")) {
-            err("枚举 `" + t->str() + "` 不支持一元 `" + e->op + "`（请写 `x as int`）", e);
+            err("enum `" + t->str() + "` does not support unary `" + e->op + "` (write `x as int`)", e);
         }
 
         if (e->op == "*") {
             if (t && t->kind == TypeKind::Ptr) return t->elem;
-            err("`*` 需要指针，实际是 " + (t ? t->str() : "void"), e);
+            err("`*` requires a pointer, found " + (t ? t->str() : "void"), e);
         }
         if (e->op == "~") {
             if (is_integer(t)) return t;
@@ -3118,16 +3118,16 @@ private:
                     if (f->pty.size() == 1) unary.push_back(f);
                 }
                 if (unary.empty()) {
-                    err("类型 `" + t->str() + "` 没有一元 `~` 运算符重载", e);
+                    err("type `" + t->str() + "` has no unary `~` operator overload", e);
                 }
                 auto f = choose_overload(unary, {e->operand.get()}, "operator~", e);
                 e->op_func = f;
                 return f->rty;
             }
             const std::string hint = (is_prim(t) && t->name == "bool")
-                                         ? "（对 bool 取逻辑非请用 `not`）"
+                                         ? " (use `not` for logical negation of `bool`)"
                                          : "";
-            err("`~` 是按位取反，需要整数" + hint, e);
+            err("`~` is bitwise NOT and requires an integer" + hint, e);
         }
         if (e->op == "-" || e->op == "+") {
             if (is_numeric(t)) return t;
@@ -3138,15 +3138,15 @@ private:
                     if (f->pty.size() == 1) unary.push_back(f);
                 }
                 if (unary.empty()) {
-                    err("类型 `" + t->str() + "` 没有一元 `" + e->op + "` 运算符重载", e);
+                    err("type `" + t->str() + "` has no unary `" + e->op + "` operator overload", e);
                 }
                 auto f = choose_overload(unary, {e->operand.get()}, "operator" + e->op, e);
                 e->op_func = f;
                 return f->rty;
             }
-            err("`" + e->op + "` 需要数值操作数，实际是 " + (t ? t->str() : "void"), e);
+            err("`" + e->op + "` requires a numeric operand, found " + (t ? t->str() : "void"), e);
         }
-        err("未知一元运算符 `" + e->op + "`", e);
+        err("unknown unary operator `" + e->op + "`", e);
     }
 
     // 条件表达式 `cond ? a : b`（SPEC §5.2）：
@@ -3154,13 +3154,13 @@ private:
     TypePtr check_ternary(Ternary* e, const TypePtr& expected = nullptr) {
         TypePtr ct = check_expr(e->cond.get());
         if (!(is_prim(ct) && ct->name == "bool")) {
-            err("`?:` 的条件必须是 bool，实际是 " + (ct ? ct->str() : "void"),
+            err("the condition of `?:` must be `bool`, found " + (ct ? ct->str() : "void"),
                 e->cond.get());
         }
         // 期望类型透传给两个分支：字面量按上下文适配（`char c = pick ? 'a' : 'b';`）
         TypePtr a = check_expr(e->then_e.get(), expected);
         TypePtr b = check_expr(e->else_e.get(), expected);
-        if (!a || !b) err("`?:` 缺少分支表达式", e);
+        if (!a || !b) err("`?:` is missing a branch expression", e);
         adapt_lit(e->then_e.get(), a, b);
         adapt_lit(e->else_e.get(), b, a);
         a = e->then_e->ty;
@@ -3182,8 +3182,8 @@ private:
         if (same_type(a, b)) return a;
         if (implicit_ok(a, b)) return b;
         if (implicit_ok(b, a)) return a;
-        err("`?:` 两侧类型不一致（" + a->str() + " 与 " + b->str() +
-                "）；请用 `as` 显式转换其中一侧",
+        err("the branches of `?:` have different types (" + a->str() + " and " + b->str() +
+                "); cast one of them explicitly with `as`",
             e);
     }
 
@@ -3202,14 +3202,14 @@ private:
         adapt_lit(e->right.get(), rt, lt);
         lt = e->left->ty;
         rt = e->right->ty;
-        if (!lt || !rt) err("二元运算缺少操作数", e);
+        if (!lt || !rt) err("binary operator is missing an operand", e);
 
         if (is_user_type(lt) || is_user_type(rt)) {
             if (op != "==" && op != "!=") {
                 auto cands = collect_operators(op, {lt, rt});
                 if (cands.empty()) {
-                    err("类型 `" + lt->str() + "` 与 `" + rt->str() + "` 没有运算符 `" + op +
-                            "` 重载",
+                    err("type `" + lt->str() + "` and `" + rt->str() + "` has no `" + op +
+                            "` operator overload",
                         e);
                 }
                 auto f = choose_overload(cands, {e->left.get(), e->right.get()},
@@ -3223,13 +3223,13 @@ private:
         if (is_enum_t(lt) || is_enum_t(rt)) {
             if (!(is_enum_t(lt) && is_enum_t(rt)) || !same_type(lt, rt)) {
                 const TypePtr& en = is_enum_t(lt) ? lt : rt;
-                err("枚举 `" + en->str() + "` 只能与同一枚举类型的值比较/运算；枚举与整数" +
-                        "之间没有隐式转换（请写 `as`）",
+                err("enum `" + en->str() + "` can only be compared or combined with values of the same enum type; there is no implicit" +
+                        " conversion between enums and integers (write `as`)",
                     e);
             }
             if (op != "==" && op != "!=" && op != "<" && op != "<=" && op != ">" &&
                 op != ">=") {
-                err("枚举 `" + lt->str() + "` 只支持 == != < <= > >=（算术/位运算请先 `as int`）", e);
+                err("enum `" + lt->str() + "` only supports == != < <= > >= (cast to `int` first for arithmetic or bitwise operations)", e);
             }
             return t_bool();
         }
@@ -3237,56 +3237,56 @@ private:
         if (op == "+" || op == "-") {
             if (lt->kind == TypeKind::Ptr && is_integer(rt)) {
                 if (lt->elem && lt->elem->kind == TypeKind::Void)
-                    err("void* 不能做指针算术", e);
+                    err("pointer arithmetic is not allowed on `void*`", e);
                 return lt;
             }
             if (op == "+" && is_integer(lt) && rt->kind == TypeKind::Ptr) {
                 if (rt->elem && rt->elem->kind == TypeKind::Void)
-                    err("void* 不能做指针算术", e);
+                    err("pointer arithmetic is not allowed on `void*`", e);
                 return rt;
             }
             if (op == "-" && lt->kind == TypeKind::Ptr && rt->kind == TypeKind::Ptr) {
-                if (!same_type(lt->elem, rt->elem)) err("指针相减要求元素类型相同", e);
+                if (!same_type(lt->elem, rt->elem)) err("pointer subtraction requires the same element type", e);
                 if (lt->elem && lt->elem->kind == TypeKind::Void)
-                    err("void* 不能做指针算术", e);
+                    err("pointer arithmetic is not allowed on `void*`", e);
                 return Type::make_prim("isize");
             }
             TypePtr res = usual_arith(lt, rt);
-            if (!res) err("`" + op + "` 不支持 " + lt->str() + " 与 " + rt->str(), e);
+            if (!res) err("`" + op + "` is not supported for " + lt->str() + " and " + rt->str(), e);
             return res;
         }
 
         if (op == "*" || op == "/" || op == "%") {
             TypePtr res = usual_arith(lt, rt);
-            if (!res) err("`" + op + "` 不支持 " + lt->str() + " 与 " + rt->str(), e);
+            if (!res) err("`" + op + "` is not supported for " + lt->str() + " and " + rt->str(), e);
             return res;
         }
 
         if (op == "<<" || op == ">>") {
-            if (!is_integer(lt) || !is_integer(rt)) err("`" + op + "` 两侧必须是整数", e);
+            if (!is_integer(lt) || !is_integer(rt)) err("`both sides of `" + op + "` must be integers", e);
             return lt;
         }
 
         if (op == "&" || op == "|" || op == "^") {
             TypePtr res = usual_arith(lt, rt);
-            if (!res || !is_integer(res)) err("`" + op + "` 两侧必须是整数", e);
+            if (!res || !is_integer(res)) err("`both sides of `" + op + "` must be integers", e);
             return res;
         }
 
         if (op == "<" || op == "<=" || op == ">" || op == ">=") {
             if (lt->kind == TypeKind::Ptr && rt->kind == TypeKind::Ptr) return t_bool();
             if (is_numeric(lt) && is_numeric(rt)) return t_bool();
-            err("`" + op + "` 不支持 " + lt->str() + " 与 " + rt->str(), e);
+            err("`" + op + "` is not supported for " + lt->str() + " and " + rt->str(), e);
         }
 
         if (op == "==" || op == "!=") {
             if (lt->kind == TypeKind::Null || rt->kind == TypeKind::Null) {
                 const TypePtr& other = (lt->kind == TypeKind::Null) ? rt : lt;
                 if (is_str(other)) {
-                    err("string 不能与 null 比较（用 len(s) == 0 或 s == \"\"）", e);
+                    err("`string` cannot be compared with `null` (use `len(s) == 0` or `s == \"\"`)", e);
                 }
                 if (other->kind == TypeKind::Slice) {
-                    err("切片不能与 null 比较（用 len(s) == 0）", e);
+                    err("slice cannot be compared with `null` (use `len(s) == 0`)", e);
                 }
                 if (other->kind == TypeKind::Ptr || other->kind == TypeKind::Slice ||
                     other->kind == TypeKind::Null || other->kind == TypeKind::Class ||
@@ -3317,8 +3317,8 @@ private:
                     }
                 }
                 if (cands.empty()) {
-                    err("类型 `" + lt->str() + "` 与 `" + rt->str() + "` 没有运算符 `" + op +
-                            "` 重载",
+                    err("type `" + lt->str() + "` and `" + rt->str() + "` has no `" + op +
+                            "` operator overload",
                         e);
                 }
                 auto f = choose_overload(cands, {e->left.get(), e->right.get()},
@@ -3326,16 +3326,16 @@ private:
                 e->op_func = f;
                 return f->rty;
             }
-            err("`" + op + "` 不支持 " + lt->str() + " 与 " + rt->str(), e);
+            err("`" + op + "` is not supported for " + lt->str() + " and " + rt->str(), e);
         }
 
-        err("未知二元运算符 `" + op + "`", e);
+        err("unknown binary operator `" + op + "`", e);
     }
 
     TypePtr check_cond_type(Expr* e, const std::string& what) {
         TypePtr t = check_expr(e);
         if (!(is_prim(t) && t->name == "bool")) {
-            err(what + " 需要 bool，实际是 " + (t ? t->str() : "void"), e);
+            err(what + " must be `bool`, found " + (t ? t->str() : "void"), e);
         }
         return t;
     }
@@ -3390,7 +3390,7 @@ private:
     // ------------------------------------------------------------ 调用
     TypePtr check_call(Call* c) {
         Expr* callee = c->callee.get();
-        if (!callee) err("调用缺少被调用者", c);
+        if (!callee) err("call is missing a callee", c);
 
         if (auto nm = dynamic_cast<Name*>(callee)) {
             if (nm->ident == "alloc" || nm->ident == "realloc" || nm->ident == "free") {
@@ -3402,8 +3402,8 @@ private:
                 std::vector<const MethodSig*> ms;
                 collect_methods(cur_class_, nm->ident, ms);
                 if (!ms.empty()) {
-                    auto sig = choose_method(ms, raw_args(c->args), "方法 `" + nm->ident + "`", c);
-                    check_method_args(c, sig, "方法 `" + nm->ident + "`");
+                    auto sig = choose_method(ms, raw_args(c->args), "method `" + nm->ident + "`", c);
+                    check_method_args(c, sig, "method `" + nm->ident + "`");
                     c->callee_kind =
                         cur_class_->kind == TypeKind::Struct ? "struct_method" : "method";
                     c->method = sig;
@@ -3417,7 +3417,7 @@ private:
 
         if (auto nm = dynamic_cast<Name*>(callee)) {
             if (lookup_local(nm->ident) != nullptr) {
-                err("`" + nm->ident + "` 是变量，不是函数", c);
+                err("`" + nm->ident + "` is a variable, not a function", c);
             }
             // 候选：当前 unit + 直接 use 的 unit（只收 public）+ std.string（隐式）
             std::vector<FuncDecl*> cands;
@@ -3445,7 +3445,7 @@ private:
 
             if (!cands.empty()) {
                 FuncDecl* chosen = choose_overload(cands, raw_args(c->args),
-                                                   "函数 `" + nm->ident + "`", c);
+                                                   "function `" + nm->ident + "`", c);
                 nm->kind = "func";
                 nm->sym = chosen;
                 target = chosen;
@@ -3459,8 +3459,8 @@ private:
                         TypePtr t = find_type_named(use->unit_name, nm->ident, true);
                         if (!t) continue;
                         if (st) {
-                            err("类型 `" + nm->ident + "` 有歧义：`" + src + "` 与 `" +
-                                    use->unit_name + "`；请写限定名",
+                            err("type `" + nm->ident + "` is ambiguous: `" + src + "` and `" +
+                                    use->unit_name + "`; use a qualified name",
                                 c);
                         }
                         st = t;
@@ -3470,13 +3470,13 @@ private:
                 if (!st && std_info()) st = find_type_named("std.string", nm->ident, true);
                 if (st) {
                     if (st->kind != TypeKind::Struct) {
-                        err("`" + nm->ident + "` 不是 struct，不能按值构造", c);
+                        err("`" + nm->ident + "` is not a struct and cannot be constructed by value", c);
                     }
                     struct_ty = st;
                 } else if (lookup_enum_const(nm->ident) != nullptr) {
-                    err("`" + nm->ident + "` 是枚举成员，不能调用", c);
+                    err("`" + nm->ident + "` is an enum member and cannot be called", c);
                 } else {
-                    err("未定义的函数 `" + nm->ident + "`", c);
+                    err("undefined function `" + nm->ident + "`", c);
                 }
             }
         } else if (auto m = dynamic_cast<Member*>(callee)) {
@@ -3484,18 +3484,18 @@ private:
             // super.method(...)
             if (auto on = dynamic_cast<Name*>(obj);
                 on && on->ident == "super" && lookup_local("super") == nullptr) {
-                if (!cur_class_ || !cur_class_->base) err("当前类没有基类", c);
+                if (!cur_class_ || !cur_class_->base) err("the current class has no base class", c);
                 std::vector<const MethodSig*> ms;
                 collect_class_methods(cur_class_->base, m->name, ms);
-                if (ms.empty()) err("基类没有方法 `" + m->name + "`", c);
-                auto sig = choose_method(ms, raw_args(c->args), "方法 `" + m->name + "`", c);
+                if (ms.empty()) err("base class has no method `" + m->name + "`", c);
+                auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
                 if (sig->is_abstract) {
-                    err("不能通过 `super` 调用抽象方法 `" + m->name + "`", c);
+                    err("abstract method `" + m->name + "` cannot be called via `super`", c);
                 }
                 if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
-                    err("方法 `" + m->name + "` 未声明为 public，不能从其他 unit 调用", c);
+                    err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
                 }
-                check_method_args(c, sig, "方法 `" + m->name + "`");
+                check_method_args(c, sig, "method `" + m->name + "`");
                 m->kind = "method";
                 c->callee_kind = "super";
                 c->method = sig;
@@ -3514,13 +3514,13 @@ private:
                     std::vector<const MethodSig*> ms;
                     collect_methods(ot, m->name, ms);
                     if (ms.empty()) {
-                        err("类型 `" + ot->str() + "` 没有方法 `" + m->name + "`", c);
+                        err("type `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
-                    auto sig = choose_method(ms, raw_args(c->args), "方法 `" + m->name + "`", c);
+                    auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
                     if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
-                        err("方法 `" + m->name + "` 未声明为 public，不能从其他 unit 调用", c);
+                        err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
                     }
-                    check_method_args(c, sig, "方法 `" + m->name + "`");
+                    check_method_args(c, sig, "method `" + m->name + "`");
                     m->kind = "method";
                     c->callee_kind = "method";
                     c->method = sig;
@@ -3530,34 +3530,34 @@ private:
                     std::vector<const MethodSig*> ms;
                     collect_methods(ot, m->name, ms);
                     if (ms.empty()) {
-                        err("struct `" + ot->str() + "` 没有方法 `" + m->name + "`", c);
+                        err("struct `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
-                    auto sig = choose_method(ms, raw_args(c->args), "方法 `" + m->name + "`", c);
+                    auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
                     if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
-                        err("方法 `" + m->name + "` 未声明为 public，不能从其他 unit 调用", c);
+                        err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
                     }
-                    check_method_args(c, sig, "方法 `" + m->name + "`");
+                    check_method_args(c, sig, "method `" + m->name + "`");
                     m->kind = "method";
                     c->callee_kind = "struct_method";
                     c->method = sig;
                     return sig->ret;
                 }
-                err("`" + m->name + "` 不是函数", c);
+                err("`" + m->name + "` is not a function", c);
             }
-            if (!unit_imported(uname)) err("未通过 `use` 导入 unit `" + uname + "`", c);
+            if (!unit_imported(uname)) err("unit `" + uname + "` is not imported with `use`", c);
             if (!unit_visible(uname)) {
-                err("unit `" + uname + "` 仅在库内可见，跨库使用需要 `public unit`", c);
+                err("unit `" + uname + "` is only visible within its library; cross-library use requires `public unit`", c);
             }
 
             UnitInfo& ui = infos_.at(uname);
             auto f = ui.funcs.find(m->name);
             if (f == ui.funcs.end() || f->second.empty()) {
-                err("unit `" + uname + "` 中没有函数 `" + m->name + "`", c);
+                err("unit `" + uname + "` has no function `" + m->name + "`", c);
             }
             FuncDecl* chosen = choose_overload(f->second, raw_args(c->args),
-                                               "函数 `" + uname + "." + m->name + "`", c);
+                                               "function `" + uname + "." + m->name + "`", c);
             if (!chosen->is_public) {
-                err("函数 `" + uname + "." + m->name + "` 未声明为 public", c);
+                err("function `" + uname + "." + m->name + "` is not declared public", c);
             }
             auto nm = dynamic_cast<Name*>(obj);
             nm->kind = "unit";
@@ -3566,24 +3566,24 @@ private:
             m->sym = chosen;
             target = chosen;
         } else {
-            err("只能调用函数或结构体构造", c);
+            err("only functions and struct constructors can be called", c);
         }
 
         if (struct_ty) {
             if (!struct_ty->ctors.empty()) {
-                if (!c->named.empty()) err("struct 构造器不支持命名参数", c);
+                if (!c->named.empty()) err("struct constructors do not support named arguments", c);
                 if (struct_ty->has_dtor && c != direct_init_expr_) {
-                    err("含析构器的 struct 构造只能用于声明初始化", c);
+                    err("a struct with a destructor can only be constructed in a declaration initializer", c);
                 }
                 const auto* chosen = choose_ctor(struct_ty->ctors, raw_args(c->args),
                                                  "struct `" + struct_ty->str() + "`", c);
                 const size_t ci = static_cast<size_t>(chosen - struct_ty->ctors.data());
                 if (ci < struct_ty->ctor_is_public.size() && !struct_ty->ctor_is_public[ci] &&
                     (!cur_ || cur_->name != struct_ty->unit)) {
-                    err("构造器未声明为 public，不能从其他 unit 调用", c);
+                    err("constructor is not declared public and cannot be called from another unit", c);
                 }
                 for (size_t i = 0; i < c->args.size(); ++i) {
-                    check_assign(c->args[i].get(), (*chosen)[i], "构造参数");
+                    check_assign(c->args[i].get(), (*chosen)[i], "constructor argument");
                 }
                 c->callee_kind = "struct_ctor";
                 c->ctor = struct_ty;
@@ -3596,21 +3596,21 @@ private:
             return struct_ty;
         }
 
-        if (!target) err("只能调用函数或结构体构造", c);
+        if (!target) err("only functions and struct constructors can be called", c);
         c->callee_kind = "func";
         c->func = target;
         const auto& params = target->pty;
 
         if (!c->named.empty()) {
-            err("函数调用不支持命名参数（只有结构体构造支持）", c);
+            err("function calls do not support named arguments (only struct construction does)", c);
         }
         if (c->args.size() != params.size()) {
-            err("函数 `" + target->name + "` 需要 " + std::to_string(params.size()) +
-                    " 个参数，实际 " + std::to_string(c->args.size()) + " 个",
+            err("function `" + target->name + "` expects " + std::to_string(params.size()) +
+                    " arguments, but " + std::to_string(c->args.size()) + " were given",
                 c);
         }
         for (size_t i = 0; i < c->args.size(); ++i) {
-            check_assign(c->args[i].get(), params[i], "调用 `" + target->name + "` 的参数");
+            check_assign(c->args[i].get(), params[i], "argument of call to `" + target->name + "`");
         }
         return target->rty;
     }
@@ -3730,10 +3730,10 @@ private:
         if (ok.empty()) {
             if (cands.size() == 1 && cands[0]->pty.size() == args.size()) {
                 for (size_t i = 0; i < args.size(); ++i) {
-                    check_assign(args[i], cands[0]->pty[i], what + " 的参数");
+                    check_assign(args[i], cands[0]->pty[i], what + " argument");
                 }
             }
-            err("没有匹配的 " + what + " 重载", at);
+            err("no matching overload of " + what, at);
         }
 
         int best = -1;
@@ -3751,7 +3751,7 @@ private:
                 best = static_cast<int>(i);
             }
         }
-        if (best < 0) err("`" + what + "` 的重载调用有歧义", at);
+        if (best < 0) err("ambiguous overload call of `" + what + "`", at);
         return ok[static_cast<size_t>(best)];
     }
 
@@ -3810,7 +3810,7 @@ private:
             }
             if (good) { ok.push_back(sig); ranks.push_back(std::move(r)); }
         }
-        if (ok.empty()) err("没有匹配的 " + what + " 重载", at);
+        if (ok.empty()) err("no matching overload of " + what, at);
 
         int best = -1;
         for (size_t i = 0; i < ok.size(); ++i) {
@@ -3827,7 +3827,7 @@ private:
                 best = static_cast<int>(i);
             }
         }
-        if (best < 0) err("`" + what + "` 的重载调用有歧义", at);
+        if (best < 0) err("ambiguous overload call of `" + what + "`", at);
         return ok[static_cast<size_t>(best)];
     }
 
@@ -3850,7 +3850,7 @@ private:
             }
             if (good) { ok.push_back(&cs); ranks.push_back(std::move(r)); }
         }
-        if (ok.empty()) err(what + " 没有匹配的构造器", at);
+        if (ok.empty()) err("no matching constructor for " + what, at);
 
         int best = -1;
         for (size_t i = 0; i < ok.size(); ++i) {
@@ -3867,35 +3867,35 @@ private:
                 best = static_cast<int>(i);
             }
         }
-        if (best < 0) err("`" + what + "` 的构造器调用有歧义", at);
+        if (best < 0) err("ambiguous constructor call of `" + what + "`", at);
         return ok[static_cast<size_t>(best)];
     }
 
     void check_method_args(Call* c, const MethodSig* sig, const std::string& what) {
-        if (!c->named.empty()) err("方法调用不支持命名参数", c);
+        if (!c->named.empty()) err("method calls do not support named arguments", c);
         if (c->args.size() != sig->params.size()) {
-            err(what + " 需要 " + std::to_string(sig->params.size()) + " 个参数，实际 " +
-                    std::to_string(c->args.size()) + " 个",
+            err(what + " expects " + std::to_string(sig->params.size()) + " arguments, but " +
+                    std::to_string(c->args.size()) + " were given",
                 c);
         }
         for (size_t i = 0; i < c->args.size(); ++i) {
-            check_assign(c->args[i].get(), sig->params[i], what + " 的参数");
+            check_assign(c->args[i].get(), sig->params[i], what + " argument");
         }
     }
 
     TypePtr check_super_call(Call* c) {
         if (!in_ctor_ || !super_ok_) {
-            err("`super(...)` 必须是构造器的第一条语句", c);
+            err("`super(...)` must be the first statement of a constructor", c);
         }
-        if (!cur_class_ || !cur_class_->base) err("当前类没有基类", c);
-        if (!c->named.empty()) err("构造器调用不支持命名参数", c);
+        if (!cur_class_ || !cur_class_->base) err("the current class has no base class", c);
+        if (!c->named.empty()) err("constructor calls do not support named arguments", c);
         const auto& ctors = cur_class_->base->ctors;
         if (ctors.empty()) {
-            if (!c->args.empty()) err("基类没有匹配的构造器", c);
+            if (!c->args.empty()) err("base class has no matching constructor", c);
         } else {
-            const auto* chosen = choose_ctor(ctors, raw_args(c->args), "基类", c);
+            const auto* chosen = choose_ctor(ctors, raw_args(c->args), "base class", c);
             for (size_t i = 0; i < c->args.size(); ++i) {
-                check_assign(c->args[i].get(), (*chosen)[i], "super 参数");
+                check_assign(c->args[i].get(), (*chosen)[i], "super argument");
             }
             c->ctor_pty = chosen;
         }
@@ -3904,36 +3904,36 @@ private:
     }
 
     [[noreturn]] void err_slice_elem_align(const TypePtr& elem, const Node* node) const {
-        err("类型 `" + elem->str() + "` 的 align(" + std::to_string(type_align(elem)) +
-                ") 超过 8：动态数组数据区在 24 字节头部之后，元素最多 8 字节对齐；"
-                "请改用定长数组/指针，或降低 align(N)",
+        err("type `" + elem->str() + "` has align(" + std::to_string(type_align(elem)) +
+                ") greater than 8: the data area of a dynamic array follows a 24-byte header, so elements can be aligned to at most 8 bytes; "
+                "use a fixed-size array or a pointer instead, or lower `align(N)`",
             node);
     }
 
     TypePtr check_new(NewExpr* ne) {
         TypePtr t = resolve_type(ne->type.get(), cur_);
         if (ne->is_array) {
-            if (is_void(t)) err("动态数组元素不能是 void", ne);
-            if (ne->dims.empty()) err("动态数组缺少长度", ne);
+            if (is_void(t)) err("dynamic array element cannot be void", ne);
+            if (ne->dims.empty()) err("dynamic array is missing its length", ne);
             for (auto& d : ne->dims) {
                 TypePtr ct = check_expr(d.get());
                 if (!(ct && ct->is_integer())) {
-                    err("动态数组长度必须是整数", d.get());
+                    err("dynamic array length must be an integer", d.get());
                 }
             }
             if (t->kind == TypeKind::Struct && t->has_dtor) {
-                err("含析构器的 struct `" + t->str() +
-                        "` 暂不能作动态数组元素（元素构造/析构未实现）",
+                err("struct `" + t->str() +
+                        "` has a destructor and cannot be a dynamic array element (element construction and destruction are not implemented)",
                     ne);
             }
             if (!ne->args.empty() || !ne->named.empty()) {
-                err("动态数组不能带构造器参数", ne);
+                err("dynamic arrays cannot take constructor arguments", ne);
             }
             ne->class_ty = t;
             if (ne->jagged_rank > 0) {
                 if (ne->dims.size() != 1) {
-                    err("锯齿数组 `new T[m][]` 一次只能创建一维；"
-                        "二维请循环填行，矩形数组用 `new T[m,n]`",
+                    err("a jagged array `new T[m][]` creates one dimension at a time; "
+                        "fill rows in a loop for two dimensions, or use `new T[m,n]` for a rectangular array",
                         ne);
                 }
                 TypePtr row = t;
@@ -3945,23 +3945,23 @@ private:
             ne->elem_ty = t;
             return Type::make_slice(t, false, static_cast<int>(ne->dims.size()));
         }
-        if (t->kind != TypeKind::Class) err("`new` 只能用于 class 或动态数组", ne);
-        if (t->is_abstract) err("抽象类 `" + t->str() + "` 不能 `new`", ne);
-        if (!ne->named.empty()) err("构造器暂不支持命名参数", ne);
+        if (t->kind != TypeKind::Class) err("`new` can only be used with a class or a dynamic array", ne);
+        if (t->is_abstract) err("abstract class `" + t->str() + "` cannot be instantiated with `new`", ne);
+        if (!ne->named.empty()) err("constructors do not support named arguments yet", ne);
 
         const auto& ctors = t->ctors;
         ne->has_ctor = !ctors.empty();
         if (ctors.empty()) {
-            if (!ne->args.empty()) err("class `" + t->str() + "` 没有匹配的构造器", ne);
+            if (!ne->args.empty()) err("class `" + t->str() + "` has no matching constructor", ne);
         } else {
             const auto* chosen = choose_ctor(ctors, raw_args(ne->args), "class `" + t->str() + "`", ne);
             const size_t idx = static_cast<size_t>(chosen - ctors.data());
             if (idx < t->ctor_is_public.size() && !t->ctor_is_public[idx] &&
                 (!cur_ || cur_->name != t->unit)) {
-                err("构造器未声明为 public，不能从其他 unit `new`", ne);
+                err("constructor is not declared public and cannot be invoked with `new` from another unit", ne);
             }
             for (size_t i = 0; i < ne->args.size(); ++i) {
-                check_assign(ne->args[i].get(), (*chosen)[i], "构造参数");
+                check_assign(ne->args[i].get(), (*chosen)[i], "constructor argument");
             }
             ne->ctor_pty = *chosen;
         }
@@ -3976,8 +3976,8 @@ private:
         if (cur_ && cur_->name != ty->unit) {
             for (auto& f : fields) {
                 if (!f.is_public) {
-                    err("struct `" + ty->str() + "` 的字段 `" + f.name +
-                            "` 未声明为 public，不能从其他 unit 构造",
+                    err("field `" + f.name + "` of struct `" + ty->str() +
+                            "` is not declared public and cannot be constructed from another unit",
                         c);
                 }
             }
@@ -3997,28 +3997,28 @@ private:
             for (auto& [n, e] : c->named) {
                 auto it = fmap.find(n);
                 if (it == fmap.end()) {
-                    err("结构体 `" + ty->str() + "` 没有字段 `" + n + "`", c);
+                    err("struct `" + ty->str() + "` has no field `" + n + "`", c);
                 }
-                if (!seen.insert(n).second) err("字段 `" + n + "` 重复初始化", c);
+                if (!seen.insert(n).second) err("field `" + n + "` is initialized more than once", c);
                 const size_t idx = it->second;
                 order.push_back(static_cast<int>(idx));
-                check_assign(e.get(), fields[idx].type, "构造 `" + ty->str() + "`");
+                check_assign(e.get(), fields[idx].type, "construction of `" + ty->str() + "`");
             }
             if (order.size() != fields.size()) {
-                err("构造 `" + ty->str() + "` 必须给全部字段", c);
+                err("construction of `" + ty->str() + "` must initialize every field", c);
             }
             c->field_order = std::move(order);
             return;
         }
 
         if (c->args.size() != fields.size()) {
-            err("构造 `" + ty->str() + "` 需要 " + std::to_string(fields.size()) +
-                    " 个参数，实际 " + std::to_string(c->args.size()) + " 个",
+            err("construction of `" + ty->str() + "` expects " + std::to_string(fields.size()) +
+                    " arguments, but " + std::to_string(c->args.size()) + " were given",
                 c);
         }
         c->field_order.clear();
         for (size_t i = 0; i < fields.size(); ++i) {
-            check_assign(c->args[i].get(), fields[i].type, "构造 `" + ty->str() + "`");
+            check_assign(c->args[i].get(), fields[i].type, "construction of `" + ty->str() + "`");
             c->field_order.push_back(static_cast<int>(i));
         }
     }
@@ -4026,35 +4026,35 @@ private:
     TypePtr check_builtin(Call* c, const std::string& name) {
         c->callee_kind = "builtin";
         c->builtin = name;
-        if (!c->named.empty()) err("内建函数 `" + name + "` 不支持命名参数", c);
+        if (!c->named.empty()) err("builtin function `" + name + "` does not support named arguments", c);
 
         if (name == "alloc") {
-            if (c->args.size() != 1) err("`alloc(bytes)` 需要 1 个参数", c);
+            if (c->args.size() != 1) err("`alloc(bytes)` takes 1 argument", c);
             if (!is_integer(check_expr(c->args[0].get()))) {
-                err("`alloc` 的字节数必须是整数", c);
+                err("size passed to `alloc` must be an integer", c);
             }
             return Type::make_ptr(t_void());
         }
         if (name == "realloc") {
-            if (c->args.size() != 2) err("`realloc(p, bytes)` 需要 2 个参数", c);
+            if (c->args.size() != 2) err("`realloc(p, bytes)` takes 2 arguments", c);
             TypePtr p0 = check_expr(c->args[0].get());
             if (!p0 || p0->kind != TypeKind::Ptr) {
-                err("`realloc` 的第一个参数必须是指针", c);
+                err("first argument of `realloc` must be a pointer", c);
             }
             if (!is_integer(check_expr(c->args[1].get()))) {
-                err("`realloc` 的字节数必须是整数", c);
+                err("size passed to `realloc` must be an integer", c);
             }
             return Type::make_ptr(t_void());
         }
         if (name == "free") {
-            if (c->args.size() != 1) err("`free(p)` 需要 1 个参数", c);
+            if (c->args.size() != 1) err("`free(p)` takes 1 argument", c);
             TypePtr p0 = check_expr(c->args[0].get());
             if (!p0 || (p0->kind != TypeKind::Ptr && p0->kind != TypeKind::Null)) {
-                err("`free` 的参数必须是指针", c);
+                err("argument of `free` must be a pointer", c);
             }
             return t_void();
         }
-        err("未知内建函数 `" + name + "`", c);
+        err("unknown builtin function `" + name + "`", c);
     }
 
     // ------------------------------------------------------------ 杂项
@@ -4105,7 +4105,7 @@ private:
 
     void check_entry() {
         auto it = infos_.find(entry_);
-        if (it == infos_.end()) throw SemaError("找不到入口 unit `" + entry_ + "`");
+        if (it == infos_.end()) throw SemaError("cannot find entry unit `" + entry_ + "`");
         UnitInfo& ui = it->second;
         // Python 版这里用 self.cur（此时是最后一个被检查的 unit）取 filename，
         // 可能指错文件；这里显式指向入口 unit。
@@ -4113,7 +4113,7 @@ private:
 
         auto f = ui.funcs.find("main");
         if (f == ui.funcs.end() || f->second.empty()) {
-            throw SemaError("unit `" + entry_ + "` 中没有 `main` 函数");
+            throw SemaError("unit `" + entry_ + "` has no `main` function");
         }
         FuncDecl* main = nullptr;
         for (auto* cand : f->second) {
@@ -4123,9 +4123,9 @@ private:
             }
         }
         if (!main) main = f->second.front();
-        if (!main->rty) err("`main` 缺少返回类型", main);
-        if (main->rty->str() != "int") err("`main` 必须返回 int", main);
-        if (!main->params.empty()) err("第一阶段 `main` 不能带参数", main);
+        if (!main->rty) err("`main` is missing its return type", main);
+        if (main->rty->str() != "int") err("`main` must return `int`", main);
+        if (!main->params.empty()) err("`main` cannot take parameters yet", main);
     }
 };
 

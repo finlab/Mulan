@@ -1,1 +1,1 @@
-仅在库内可见
+unit `vislib.secret` is only visible within its library; cross-library use requires `public unit`
