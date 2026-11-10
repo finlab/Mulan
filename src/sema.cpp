@@ -2767,6 +2767,8 @@ private:
 
         if (auto b = dynamic_cast<Binary*>(e)) return check_binary(b);
 
+        if (auto te = dynamic_cast<Ternary*>(e)) return check_ternary(te, expected);
+
         if (auto c = dynamic_cast<Cast*>(e)) {
             TypePtr st = check_expr(c->expr.get());
             TypePtr dt = resolve_type(c->spec.get(), cur_);
@@ -3085,6 +3087,44 @@ private:
             err("`" + e->op + "` 需要数值操作数，实际是 " + (t ? t->str() : "void"), e);
         }
         err("未知一元运算符 `" + e->op + "`", e);
+    }
+
+    // 条件表达式 `cond ? a : b`（SPEC §5.2）：
+    // 条件必须是 bool；两侧类型取「同一类型 → 隐式加宽 → null 适配」，都不成立则要求显式 `as`。
+    TypePtr check_ternary(Ternary* e, const TypePtr& expected = nullptr) {
+        TypePtr ct = check_expr(e->cond.get());
+        if (!(is_prim(ct) && ct->name == "bool")) {
+            err("`?:` 的条件必须是 bool，实际是 " + (ct ? ct->str() : "void"),
+                e->cond.get());
+        }
+        // 期望类型透传给两个分支：字面量按上下文适配（`char c = pick ? 'a' : 'b';`）
+        TypePtr a = check_expr(e->then_e.get(), expected);
+        TypePtr b = check_expr(e->else_e.get(), expected);
+        if (!a || !b) err("`?:` 缺少分支表达式", e);
+        adapt_lit(e->then_e.get(), a, b);
+        adapt_lit(e->else_e.get(), b, a);
+        a = e->then_e->ty;
+        b = e->else_e->ty;
+
+        // null 字面量适配到另一侧（指针 / class / interface / 动态数组）
+        auto null_target = [](const TypePtr& t) {
+            return t && (t->kind == TypeKind::Ptr || t->kind == TypeKind::Class ||
+                         t->kind == TypeKind::Interface || t->kind == TypeKind::Slice);
+        };
+        if (a->kind == TypeKind::Null && b->kind != TypeKind::Null && null_target(b)) {
+            e->then_e->ty = b;
+            a = b;
+        } else if (b->kind == TypeKind::Null && a->kind != TypeKind::Null && null_target(a)) {
+            e->else_e->ty = a;
+            b = a;
+        }
+
+        if (same_type(a, b)) return a;
+        if (implicit_ok(a, b)) return b;
+        if (implicit_ok(b, a)) return a;
+        err("`?:` 两侧类型不一致（" + a->str() + " 与 " + b->str() +
+                "）；请用 `as` 显式转换其中一侧",
+            e);
     }
 
     TypePtr check_binary(Binary* e) {

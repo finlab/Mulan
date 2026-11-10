@@ -120,6 +120,13 @@ struct Cast : Expr {
     TypeSpecPtr spec;
 };
 
+// 条件表达式：cond ? then_e : else_e（右结合，只求值被选中的分支）
+struct Ternary : Expr {
+    ExprPtr cond;
+    ExprPtr then_e;
+    ExprPtr else_e;
+};
+
 struct Call : Expr {
     ExprPtr callee;
     std::vector<ExprPtr> args;

@@ -1029,6 +1029,7 @@ struct Emitter {
         if (dynamic_cast<NewExpr*>(e)) return true;
         if (dynamic_cast<Call*>(e)) return true;
         if (auto b = dynamic_cast<Binary*>(e); b && b->op_func) return true;
+        if (dynamic_cast<Ternary*>(e)) return true;  // 结果槽已按 owned 语义物化
         if (auto u = dynamic_cast<Unary*>(e); u && u->op_func) return true;
         if (auto ix = dynamic_cast<Index*>(e); ix && ix->get_func) return true;
         if (auto c = dynamic_cast<Cast*>(e)) return valueOwned(c->expr.get());
@@ -1171,6 +1172,9 @@ struct Emitter {
             if (ty->kind == TypeKind::Slice && il->value == 0) {
                 return Constant::getNullValue(ct);
             }
+            // 整数字面量按上下文适配到浮点类型（SPEC §3.6）
+            if (ty->kind == TypeKind::Prim && ty->is_float())
+                return ConstantFP::get(ct, static_cast<double>(il->value));
             auto* it = IntegerType::get(ctx, static_cast<unsigned>(sizeOf(ty) * 8));
             return ConstantInt::get(it, static_cast<uint64_t>(il->value), /*isSigned=*/true);
         }
@@ -1587,6 +1591,56 @@ struct Emitter {
         fail("LLVM 后端：未知二元运算 " + op, e->line, e->col);
     }
 
+    // 条件表达式：只求值被选中的分支，结果物化到 entry 块的结果槽后按 owned 值返回。
+    Value* evalTernary(Ternary* e) {
+        Value* cond = eval(e->cond.get());
+        BasicBlock* thenBB = BasicBlock::Create(ctx, "tern.then", curFn);
+        BasicBlock* elseBB = BasicBlock::Create(ctx, "tern.else", curFn);
+        BasicBlock* endBB = BasicBlock::Create(ctx, "tern.end", curFn);
+        b.CreateCondBr(cond, thenBB, elseBB);
+
+        const TypePtr& ty = e->ty;
+        AllocaInst* res = is_void(ty) ? nullptr : entryAlloca(lt(ty), "tern.res", alignOf(ty));
+
+        b.SetInsertPoint(thenBB);
+        emitTernaryArm(res, e->then_e.get(), ty);
+        if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
+
+        b.SetInsertPoint(elseBB);
+        emitTernaryArm(res, e->else_e.get(), ty);
+        if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
+
+        b.SetInsertPoint(endBB);
+        if (!res) return nullptr;
+        return loadAt(lt(ty), res);
+    }
+
+    // 把分支值写入结果槽：借用源逐字段 retain，owned 源直接转移所有权（与 initInto 一致）
+    void emitTernaryArm(Value* addr, Expr* src, const TypePtr& ty) {
+        if (!addr) {  // void 分支：只求值
+            eval(src);
+            return;
+        }
+        Value* v = coerce(src, ty);
+        if (isRefKind(ty)) {
+            if (!ownsReference(src)) emitRetainRef(v, ty);
+            storeValue(v, addr, ty);
+            return;
+        }
+        if ((ty->kind == TypeKind::Array || ty->kind == TypeKind::Struct) &&
+            needsCleanup(ty)) {
+            storeValue(v, addr, ty);
+            if (!valueOwned(src)) emitRetainValue(addr, ty);
+            return;
+        }
+        if (ty->kind == TypeKind::Slice) {
+            storeValue(v, addr, ty);
+            if (!convOwns(src, ty)) emitRetainValue(addr, ty);
+            return;
+        }
+        storeValue(v, addr, ty);
+    }
+
     // 调用参数：求值 + 记录需要释放的临时强引用（new / 返回引用的调用）
     struct ArgPack {
         std::vector<Value*> vals;
@@ -1966,6 +2020,9 @@ struct Emitter {
             if (isRefKind(e->ty)) return Constant::getNullValue(lt(e->ty));
             if (e->ty && e->ty->kind == TypeKind::Null) return Constant::getNullValue(ptrTy());
             LType* ty = lt(e->ty);
+            // 整数字面量按上下文适配到浮点类型（SPEC §3.6）
+            if (e->ty && e->ty->kind == TypeKind::Prim && e->ty->is_float())
+                return ConstantFP::get(ty, static_cast<double>(v->value));
             return ConstantInt::get(cast<IntegerType>(ty), static_cast<uint64_t>(v->value),
                                     /*isSigned=*/true);
         }
@@ -2028,6 +2085,7 @@ struct Emitter {
             return b.CreateXor(x, ConstantInt::get(i1(), 1));
         }
         if (auto v = dynamic_cast<Binary*>(e)) return evalBinary(v);
+        if (auto v = dynamic_cast<Ternary*>(e)) return evalTernary(v);
         if (auto v = dynamic_cast<Cast*>(e)) {
             TypePtr from = v->expr->ty;
             if (from && e->ty && isRefKind(from) && e->ty->kind == TypeKind::Class &&

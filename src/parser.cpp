@@ -185,7 +185,8 @@ private:
 
     // ------------------------------------------------------ 表达式
 
-    ExprPtr parse_expr() { return parse_or(); }
+    ExprPtr parse_expr() { return parse_ternary(); }
+    ExprPtr parse_ternary();
     ExprPtr parse_or();
     ExprPtr parse_and();
     ExprPtr parse_not();
@@ -1367,6 +1368,21 @@ ExprPtr Parser::make_binary(const std::string& op, ExprPtr left, ExprPtr right,
     node->op = op;
     node->left = std::move(left);
     node->right = std::move(right);
+    node->line = tok.line;
+    node->col = tok.col;
+    return node;
+}
+
+ExprPtr Parser::parse_ternary() {
+    ExprPtr cond = parse_or();
+    if (!at_op("?")) return cond;
+    const Token tok = advance();
+    auto node = std::make_unique<Ternary>();
+    node->cond = std::move(cond);
+    node->then_e = parse_ternary();  // 中间分支允许嵌套 `?:`
+    if (!at_op(":")) throw err_at("`?:` 缺少 `:`", peek());
+    advance();
+    node->else_e = parse_ternary();  // 右结合：`a ? b : c ? d : e` = `a ? b : (c ? d : e)`
     node->line = tok.line;
     node->col = tok.col;
     return node;

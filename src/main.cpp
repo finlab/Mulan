@@ -88,6 +88,7 @@ static void dump_expr(const Expr* e, int ind) {
     if (auto v = dynamic_cast<const Member*>(e)) std::cout << " ." << v->name;
     if (auto v = dynamic_cast<const Unary*>(e)) std::cout << " " << v->op;
     if (auto v = dynamic_cast<const Binary*>(e)) std::cout << " " << v->op;
+    if (dynamic_cast<const Ternary*>(e)) std::cout << " ?:";
     std::cout << "\n";
 
     if (dynamic_cast<const Name*>(e)) return;
@@ -112,6 +113,12 @@ static void dump_expr(const Expr* e, int ind) {
         return;
     }
     if (auto v = dynamic_cast<const Cast*>(e)) { dump_expr(v->expr.get(), ind + 1); return; }
+    if (auto v = dynamic_cast<const Ternary*>(e)) {
+        dump_expr(v->cond.get(), ind + 1);
+        dump_expr(v->then_e.get(), ind + 1);
+        dump_expr(v->else_e.get(), ind + 1);
+        return;
+    }
     if (auto v = dynamic_cast<const Call*>(e)) {
         dump_expr(v->callee.get(), ind + 1);
         for (auto& a : v->args) dump_expr(a.get(), ind + 1);
