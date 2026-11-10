@@ -65,9 +65,27 @@ build\muc.exe build example.mu --run
 # 保留生成的 IR
 build\muc.exe build example.mu --emit-ir build/example.ll
 
+# 带调试信息（DWARF）：gdb 可断点 / 单步 / info locals
+build\muc.exe build example.mu -g
+
 # 回归测试
 $env:MUC_CMD = "build/muc.exe"
 python tests/run_tests.py
+```
+
+## 诊断
+
+编译错误带源码片段与插入符，同一 unit 的多个错误会一次报出：
+
+```
+multi_errors.mu:4:19: error: undefined identifier `undefined_one`
+  |
+4 | int f1() { return undefined_one; }
+  |                   ^
+multi_errors.mu:5:19: error: undefined identifier `undefined_two`
+  |
+5 | int f2() { return undefined_two; }
+  |                   ^
 ```
 
 ## 目录结构

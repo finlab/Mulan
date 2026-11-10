@@ -76,4 +76,6 @@
 
 | 0.0.56 | 2026-11-11 | **带参数的 `main`**：支持 `int main(int argc, char** argv)`（C 启动代码传入，`argv` 以 null 结尾、`argv[argc] == null`）；参数类型必须精确为 `(int, char**)`，1 个参数 / `char*` / 非 `int` 返回均编译错误；`char**` 而非 `string[]`（argv 不参与 RC）。新增 main_args 成功用例与 main_bad_argv 报错用例，main_params 期望值更新；SPEC 7、§12 #15 同步 | 287/287（69 成功 + 205 报错 + 13 check）；冷编译零 warning |
 
+| 0.0.57 | 2026-11-11 | **诊断与调试体验**：①诊断附带源码片段与插入符（`  |` + 行号 + `^`；tab 展开 4 列、CJK 按 2 列计算显示宽度）；②**多错误报告**——同一 unit 的全局/函数/class/struct/interface 检查逐项收集错误后统一输出（出错后重置作用域、循环深度与 auto 推断状态），单次上限 20 条；③`-g` / `--debug` 生成 **DWARF**（编译单元、函数 DISubprogram、语句级行号、局部变量与结构体成员），gdb 可断点、单步、`info locals`。新增 multi_errors（3 条错误一次报出）与 dbgvars 用例 | 289/289（70 成功 + 206 报错 + 13 check）；冷编译零 warning |
+
 > 后续条目只递增 build 号，例如 0.0.2、0.0.3……；主/次版本变更会单独注明。

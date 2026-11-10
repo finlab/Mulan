@@ -46,6 +46,7 @@ build options:
   -o <path>        output executable (default: build/<entry>.exe)
   --backend <b>    backend to use (only llvm in this version; kept for compatibility)
   --emit-ir <path> also write the generated LLVM IR to <path>
+  -g, --debug      emit DWARF debug info (line tables / function scopes)
   --cc <name>      linker driver (default: $CC, else gcc)
   -I <dir>         extra unit search directory (repeatable)
   --run            run the executable after a successful build
@@ -270,6 +271,7 @@ struct BuildArgs {
     std::string cc = "gcc";
     std::vector<std::string> dirs;
     bool run = false;
+    bool debug = false;
 };
 
 static BuildArgs parse_build_args(const std::vector<std::string>& args) {
@@ -292,6 +294,7 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "--cc") b.cc = need("--cc");
         else if (a == "-I") b.dirs.push_back(need("-I"));
         else if (a == "--run") b.run = true;
+        else if (a == "-g" || a == "--debug") b.debug = true;
         else throw MuError("unknown option `" + a + "`");
         ++i;
     }
@@ -340,7 +343,7 @@ static int cmd_build(const std::vector<std::string>& args) {
         f << llvm_emit_text(prog);
     }
     fs::path obj = build_dir / (base + ".o");
-    llvm_emit_object(prog, obj.string());
+    llvm_emit_object(prog, obj.string(), ba.debug);
     std::string cmd = ba.cc + " -o " + quote(out.string()) + " " + quote(obj.string());
     std::cout << "+ " << cmd << "\n";
     int rc = std::system(cmd.c_str());
@@ -375,6 +378,9 @@ int main(int argc, char** argv) {
         if (cmd == "build") return cmd_build(rest);
         std::cerr << "unknown command `" << cmd << "`\n\n" << USAGE;
         return 2;
+    } catch (const MuErrorList& e) {
+        for (const auto& m : e.messages) std::cerr << m << "\n";
+        return 1;
     } catch (const MuError& e) {
         std::cerr << e.what() << "\n";
         return 1;

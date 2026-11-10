@@ -11,5 +11,5 @@
 // 生成文本 IR（调试 / --emit-ir）
 std::string llvm_emit_text(Program& prog);
 
-// 生成 COFF 目标文件；失败抛 MuError
-void llvm_emit_object(Program& prog, const std::string& obj_path);
+// 生成 COFF 目标文件；debug_info 为 true 时附带 DWARF（-g）
+void llvm_emit_object(Program& prog, const std::string& obj_path, bool debug_info = false);

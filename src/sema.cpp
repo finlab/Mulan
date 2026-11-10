@@ -79,6 +79,7 @@ public:
         compute_abstract_all();
         check_public_signatures();
         for (auto& u : units_) check_unit(u.get());
+        if (!errors_.empty()) throw MuErrorList(std::move(errors_));
         check_entry();
 
         Program prog;
@@ -113,6 +114,8 @@ private:
     bool super_ok_ = false;
     std::vector<std::unique_ptr<LocalVar>> this_local_;
     std::vector<Scope> scopes_;
+    std::vector<std::string> errors_;  // 收集到的错误（多错误报告）
+    static constexpr size_t kMaxErrors = 20;
     int loop_depth_ = 0;
     std::unordered_map<int, TypePtr> auto_groups_;  // auto 同一声明的推断结果
     Expr* direct_init_expr_ = nullptr;  // 当前正在检查的直接初始化表达式（构造器就地构造）
@@ -1115,8 +1118,23 @@ private:
     }
 
     // ------------------------------------------------------------ 作用域
-    void push() { scopes_.emplace_back(); }
-    void pop() {
+    // 收集错误并继续：单个声明/函数出错不应该阻止报告同一 unit 里其它的错误。
+    // 出错后重置作用域等临时状态，避免下一条声明受污染。
+    template <class F>
+    void recover(F&& fn) {
+        try {
+            fn();
+        } catch (const MuError& e) {
+            errors_.push_back(e.what());
+            scopes_.clear();
+            loop_depth_ = 0;
+            auto_groups_.clear();
+            direct_init_expr_ = nullptr;
+            if (errors_.size() >= kMaxErrors) throw MuErrorList(errors_);
+        }
+    }
+
+    void push() { scopes_.emplace_back(); }    void pop() {
         if (!scopes_.empty()) scopes_.pop_back();
     }
 
@@ -1170,7 +1188,7 @@ private:
     void check_unit(Unit* u) {
         cur_ = u;
         for (auto& d : u->decls) {
-            if (auto g = dynamic_cast<GlobalVar*>(d.get())) check_global(g);
+            if (auto g = dynamic_cast<GlobalVar*>(d.get())) recover([&] { check_global(g); });
         }
         // 同名函数的签名不能完全重复（重载必须参数不同）
         for (auto& entry : infos_.at(u->name).funcs) {
@@ -1207,16 +1225,16 @@ private:
         for (auto& d : u->decls) {
             auto f = dynamic_cast<FuncDecl*>(d.get());
             if (!f || f->is_extern) continue;
-            check_func(f);
+            recover([&] { check_func(f); });
         }
         for (auto& d : u->decls) {
-            if (auto c = dynamic_cast<ClassDecl*>(d.get())) check_class(c);
+            if (auto c = dynamic_cast<ClassDecl*>(d.get())) recover([&] { check_class(c); });
         }
         for (auto& d : u->decls) {
-            if (auto sd = dynamic_cast<StructDecl*>(d.get())) check_struct(sd);
+            if (auto sd = dynamic_cast<StructDecl*>(d.get())) recover([&] { check_struct(sd); });
         }
         for (auto& d : u->decls) {
-            if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) check_interface(i);
+            if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) recover([&] { check_interface(i); });
         }
     }
 

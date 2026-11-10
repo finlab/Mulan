@@ -31,6 +31,8 @@
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/BinaryFormat/Dwarf.h>
+#include <llvm/IR/DIBuilder.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Passes/OptimizationLevel.h>
 #include <llvm/Passes/PassBuilder.h>
@@ -44,6 +46,16 @@
 using llvm::AllocaInst;
 using llvm::BasicBlock;
 using llvm::CodeGenOptLevel;
+using llvm::DICompileUnit;
+using llvm::DIBuilder;
+using llvm::DebugLoc;
+using llvm::DIFile;
+using llvm::DIType;
+using llvm::ConstantAsMetadata;
+using llvm::DILocation;
+using llvm::DINode;
+using llvm::DISourceLanguageName;
+using llvm::DISubprogram;
 using llvm::Constant;
 using llvm::ConstantAggregateZero;
 using llvm::ConstantArray;
@@ -116,9 +128,10 @@ bool is_numeric(const TypePtr& t) {
 bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
 
 struct Emitter {
-    explicit Emitter(Program& p) : prog(p) {}
+    explicit Emitter(Program& p, bool dbg = false) : prog(p), wantDebug(dbg) {}
 
     Program& prog;
+    bool wantDebug = false;
     LLVMContext ctx;
     std::unique_ptr<Module> mod;
     std::unique_ptr<TargetMachine> tm;
@@ -126,7 +139,12 @@ struct Emitter {
     IRBuilder<> ab{ctx};
 
     TypePtr strMeta;  // std.string.string 的语义类型（惰性查找）
-    LType* sliceTy = nullptr;  // 动态数组句柄
+
+    // 调试信息（DWARF）：编译单元 / 文件 / 当前函数的 subprogram
+    std::unique_ptr<DIBuilder> dib;
+    DICompileUnit* diCu = nullptr;
+    DIFile* diFile = nullptr;
+    DISubprogram* diSub = nullptr;    LType* sliceTy = nullptr;  // 动态数组句柄
     std::map<std::string, Function*> sliceFreeCache;  // 元素类型 -> 释放函数
     LStruct* descTy = nullptr;
     LStruct* ifaceTy = nullptr;  // {ptr obj, ptr desc}
@@ -1131,6 +1149,75 @@ struct Emitter {
         return a;
     }
 
+    // 结构体成员的字节偏移（与 types.cpp 的布局规则一致；union 全部 0）
+    uint64_t memberOffset(const TypePtr& t, size_t idx) {
+        if (t->is_union) return 0;
+        uint64_t off = 0;
+        for (size_t i = 0; i <= idx && i < t->fields.size(); ++i) {
+            const TypePtr& ft = t->fields[i].type;
+            const uint64_t fa = alignOf(ft);
+            if (!t->is_packed) off = (off + fa - 1) / fa * fa;
+            if (i == idx) return off;
+            off += sizeOf(ft);
+        }
+        return 0;
+    }
+
+    // Mulan 类型 -> DWARF 类型。结构体展开成员（一层层往下，深度上限 2）；
+    // 指针只对「标量 / 枚举」递归元素类型，其余显示为 void*（避免自引用无界递归）。
+    DIType* diType(const TypePtr& t, int depth = 0) {
+        if (!dib || !t) return nullptr;
+        const uint64_t bits = static_cast<uint64_t>(sizeOf(t) * 8);
+        if (depth > 2) return dib->createBasicType(t->str(), bits, llvm::dwarf::DW_ATE_unsigned);
+
+        if (t->kind == TypeKind::Prim) {
+            unsigned enc = llvm::dwarf::DW_ATE_signed;
+            if (t->name == "bool") {
+                enc = llvm::dwarf::DW_ATE_boolean;
+            } else if (t->name == "float" || t->name == "double") {
+                enc = llvm::dwarf::DW_ATE_float;
+            } else if (t->name == "byte" || t->name == "char" || t->name == "ushort" ||
+                       t->name == "uint" || t->name == "ulong" || t->name == "usize") {
+                enc = llvm::dwarf::DW_ATE_unsigned;
+            }
+            return dib->createBasicType(t->str(), bits, enc);
+        }
+        if (t->kind == TypeKind::Enum) {
+            return dib->createBasicType(t->str(), bits ? bits : 32, llvm::dwarf::DW_ATE_signed);
+        }
+        if (t->kind == TypeKind::Ptr) {
+            DIType* pointee = nullptr;
+            if (t->elem && (t->elem->kind == TypeKind::Prim || t->elem->kind == TypeKind::Enum)) {
+                pointee = diType(t->elem, depth + 1);
+            } else {
+                pointee = dib->createBasicType("void", 0, llvm::dwarf::DW_ATE_unsigned);
+            }
+            return dib->createPointerType(pointee, bits);
+        }
+        if (t->kind == TypeKind::Struct) {
+            std::vector<llvm::Metadata*> members;
+            members.reserve(t->fields.size());
+            for (size_t i = 0; i < t->fields.size(); ++i) {
+                const auto& f = t->fields[i];
+                members.push_back(dib->createMemberType(
+                    diCu, f.name, diFile, 0,
+                    ConstantAsMetadata::get(ConstantInt::get(
+                        i64(), static_cast<uint64_t>(sizeOf(f.type) * 8))),
+                    static_cast<uint32_t>(alignOf(f.type) * 8),
+                    ConstantAsMetadata::get(ConstantInt::get(
+                        i64(), static_cast<uint64_t>(memberOffset(t, i) * 8))),
+                    DINode::FlagZero, diType(f.type, depth + 1)));
+            }
+            auto* sizeMeta =
+                ConstantAsMetadata::get(ConstantInt::get(i64(), bits));
+            return dib->createStructType(diCu, t->str(), diFile, 0, sizeMeta,
+                                         static_cast<uint32_t>(alignOf(t) * 8),
+                                         DINode::FlagZero, nullptr,
+                                         dib->getOrCreateArray(members));
+        }
+        return dib->createBasicType(t->str(), bits, llvm::dwarf::DW_ATE_unsigned);
+    }
+
     AllocaInst* slotFor(const LocalVar* lv) {
         auto it = slots.find(lv);
         if (it != slots.end()) return it->second;
@@ -1138,6 +1225,13 @@ struct Emitter {
         if (lv->by_ref) ty = ptrTy();
         auto* a = entryAlloca(ty, sane(lv->name), alignOf(lv->rty));
         slots[lv] = a;
+        if (dib && diSub) {
+            const unsigned line = lv->line > 0 ? static_cast<unsigned>(lv->line) : 1u;
+            const unsigned col = lv->col > 0 ? static_cast<unsigned>(lv->col) : 1u;
+            auto* dv = dib->createAutoVariable(diSub, lv->name, diFile, line, diType(lv->rty));
+            dib->insertDeclare(a, dv, dib->createExpression(),
+                               DILocation::get(ctx, line, col, diSub), allocaBB);
+        }
         return a;
     }
 
@@ -2475,6 +2569,10 @@ struct Emitter {
     }
 
     void stmtImpl(Stmt* s) {
+        if (diSub && s->line > 0) {
+            b.SetCurrentDebugLocation(DILocation::get(ctx, static_cast<unsigned>(s->line),
+                                                      static_cast<unsigned>(s->col), diSub));
+        }
         if (std::getenv("MUC_LLVM_TRACE")) {
             std::cerr << "[llvm]   stmt " << typeid(*s).name();
             if (auto lv = dynamic_cast<LocalVar*>(s)) std::cerr << " " << lv->name;
@@ -3178,6 +3276,7 @@ struct Emitter {
     }
 
     void emitMethod(ClassDecl* c, MethodDecl* m) {
+        resetDebugScope();
         if (!m->body) return;
         std::vector<LType*> ptys{ptrTy()};
         for (auto& t : m->pty) ptys.push_back(lt(t));
@@ -3199,6 +3298,7 @@ struct Emitter {
     }
 
     void emitCtor(ClassDecl* c, CtorDecl* ctor) {
+        resetDebugScope();
         std::vector<LType*> ptys{ptrTy()};
         for (auto& t : ctor->pty) ptys.push_back(lt(t));
         Function* fn = cast<Function>(
@@ -3307,6 +3407,7 @@ struct Emitter {
     }
 
     void emitDtor(ClassDecl* c) {
+        resetDebugScope();
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(dtor_cname(c->ty->unit, c->name),
                                      FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
@@ -3343,6 +3444,7 @@ struct Emitter {
     }
 
     void emitDestroy(ClassDecl* c) {
+        resetDebugScope();
         std::string nm = "mu_" + c->ty->unit + "_destroy_" + c->name;
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(nm, FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
@@ -3393,6 +3495,7 @@ struct Emitter {
     }
 
     void emitStructMethod(StructDecl* sd, MethodDecl* m) {
+        resetDebugScope();
         if (!m->body) return;
         std::vector<LType*> ptys{ptrTy()};
         for (auto& t : m->pty) ptys.push_back(lt(t));
@@ -3413,6 +3516,7 @@ struct Emitter {
     }
 
     void emitStructCtor(StructDecl* sd, CtorDecl* ctor) {
+        resetDebugScope();
         std::vector<LType*> ptys{ptrTy()};
         for (auto& t : ctor->pty) ptys.push_back(lt(t));
         Function* fn = cast<Function>(
@@ -3433,6 +3537,7 @@ struct Emitter {
     }
 
     void emitStructDtor(StructDecl* sd) {
+        resetDebugScope();
         if (!sd->dtor) return;
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(sd->dtor->cname,
@@ -3457,6 +3562,7 @@ struct Emitter {
     }
 
     void emitInterfaceMethod(InterfaceDecl* itf, MethodDecl* m) {
+        resetDebugScope();
         if (!m->body) return;
         std::vector<LType*> ptys{ifaceTy};
         for (auto& t : m->pty) ptys.push_back(lt(t));
@@ -3477,6 +3583,14 @@ struct Emitter {
     }
 
     // ------------------------------------------------------------ 函数
+    // IRBuilder 跨函数复用：每次进入新函数前清掉上一个函数残留的 !dbg 位置，
+    // 否则新函数的指令会指向旧函数的 DISubprogram（LLVM verifier 会拒绝）。
+    void resetDebugScope() {
+        diSub = nullptr;
+        b.SetCurrentDebugLocation(DebugLoc());
+        ab.SetCurrentDebugLocation(DebugLoc());
+    }
+
     void emitFunction(FuncDecl* f) {
         if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm] emit " << f->name << "\n";
         std::vector<LType*> ptys;
@@ -3487,6 +3601,18 @@ struct Emitter {
                            ? GlobalValue::ExternalLinkage
                            : GlobalValue::InternalLinkage);
         if (f->is_extern) return;
+
+        resetDebugScope();
+        if (dib) {
+            const unsigned line = f->line > 0 ? static_cast<unsigned>(f->line) : 1u;
+            auto* spTy = dib->createSubroutineType(dib->getOrCreateTypeArray({}));
+            diSub = dib->createFunction(diCu, f->name, f->cname, diFile, line, spTy, line,
+                                        DINode::FlagPrototyped, DISubprogram::SPFlagDefinition);
+            fn->setSubprogram(diSub);
+            const auto fnLoc = DILocation::get(ctx, line, 1, diSub);
+            b.SetCurrentDebugLocation(fnLoc);
+            ab.SetCurrentDebugLocation(fnLoc);
+        }
 
         curClassTy = nullptr;
         curThis = nullptr;
@@ -3559,6 +3685,31 @@ struct Emitter {
         }
     }
 
+    void initDebug() {
+        if (!wantDebug) return;
+        // 用入口 unit 的源文件作为编译单元（units 里第一个通常是隐式导入的 std.string）
+        std::string file;
+        for (auto& u : prog.units) {
+            if (u->name == prog.entry) {
+                file = u->filename;
+                break;
+            }
+        }
+        if (file.empty() && !prog.units.empty()) file = prog.units.front()->filename;
+        std::string dir = ".";
+        std::string base = file;
+        const auto slash = file.find_last_of("/\\");
+        if (slash != std::string::npos) {
+            dir = file.substr(0, slash);
+            base = file.substr(slash + 1);
+        }
+        dib = std::make_unique<DIBuilder>(*mod);
+        diFile = dib->createFile(base, dir);
+        diCu = dib->createCompileUnit(
+            DISourceLanguageName(llvm::dwarf::DW_LANG_C99), diFile, "muc " MUC_VERSION,
+            /*isOptimized=*/false, "", 0);
+    }
+
     void run() {
         // 目标
         std::string tripleStr = "x86_64-w64-windows-gnu";
@@ -3575,6 +3726,7 @@ struct Emitter {
         if (tm) mod->setDataLayout(tm->createDataLayout());
         mod->addModuleFlag(Module::Warning, "mulan.version",
                            llvm::MDString::get(ctx, MUC_VERSION));
+        initDebug();
 
         sliceTy = ptrTy();  // 动态数组句柄（头指针）
         descTy = LStruct::create(ctx, "mu_desc");
@@ -3664,6 +3816,8 @@ struct Emitter {
             }
         }
 
+        if (dib) dib->finalize();
+
         std::string errs;
         raw_string_ostream os(errs);
         if (verifyModule(*mod, &os)) {
@@ -3703,10 +3857,10 @@ std::string llvm_emit_text(Program& prog) {
     return out;
 }
 
-void llvm_emit_object(Program& prog, const std::string& obj_path) {
+void llvm_emit_object(Program& prog, const std::string& obj_path, bool debug_info) {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
-    Emitter em{prog};
+    Emitter em{prog, debug_info};
     em.run();
     std::error_code ec;
     raw_fd_ostream dest(obj_path, ec, llvm::sys::fs::OF_None);
