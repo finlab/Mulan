@@ -1,0 +1,9 @@
+const member basics ok
+const member expressions ok
+const member wide types ok
+const member shr ok
+const member methods ok
+const member shadow ok
+const member inheritance ok
+const member layout ok
+const member unit-level ok

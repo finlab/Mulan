@@ -1,0 +1,809 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
+// 本文件包含 字段/工具/可见性/收集/签名检查/布局修饰符（Sema 成员函数定义）。
+#include "sema_impl.hpp"
+
+namespace muc_detail {
+
+    [[noreturn]] void Sema::err(const std::string& msg, const Node* node) const {
+        const int line = node ? node->line : 0;
+        const int col = node ? node->col : 0;
+        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string());
+    }
+
+    void Sema::warn(const std::string& msg, const Node* node) const {
+        const int line = node ? node->line : 0;
+        const int col = node ? node->col : 0;
+        std::cerr << (cur_ ? cur_->filename : std::string()) << ":" << line << ":" << col
+                  << ": warning: " << msg << "\n";
+    }
+
+    [[noreturn]] void Sema::err_ts(const std::string& msg, const TypeSpec* spec) const {
+        const int line = spec ? spec->line : 0;
+        const int col = spec ? spec->col : 0;
+        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string());
+    }
+
+    UnitInfo& Sema::info() { return infos_.at(cur_->name); }
+
+    UnitInfo* Sema::std_info() {
+        auto it = infos_.find("std.string");
+        return it == infos_.end() ? nullptr : &it->second;
+    }
+
+    TypePtr Sema::str_type() {
+        if (UnitInfo* std = std_info()) {
+            auto it = std->structs.find("string");
+            if (it != std->structs.end()) return it->second->ty;
+        }
+        return nullptr;
+    }
+
+    bool Sema::is_str(const TypePtr& t) {
+        TypePtr s = str_type();
+        return t && s && same_type(t, s);
+    }
+
+    bool Sema::implicit_ok(const TypePtr& src, const TypePtr& dst) {
+        if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->elem &&
+            dst->elem->is_const &&
+            dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
+            return true;  // Str -> readonly char*/byte*（NUL 结尾）
+        }
+        return implicitly_convertible(src, dst);
+    }
+
+    bool Sema::uses_unit(const std::string& uname) const {
+        if (!cur_) return false;
+        for (const auto& use : cur_->uses) {
+            if (use->unit_name == uname) return true;
+        }
+        return false;
+    }
+
+    bool Sema::unit_imported(const std::string& uname) const {
+        return uname == "std.string" || uses_unit(uname);
+    }
+
+    std::string Sema::lib_of(const std::string& unit_name) {
+        const auto dot = unit_name.find('.');
+        return dot == std::string::npos ? std::string() : unit_name.substr(0, dot);
+    }
+
+    bool Sema::unit_visible(const std::string& target) const {
+        auto it = infos_.find(target);
+        if (it == infos_.end()) return false;
+        if (cur_ && lib_of(target) == lib_of(cur_->name)) return true;
+        return it->second.unit && it->second.unit->is_public;
+    }
+
+    bool Sema::decl_visible(const std::string& owner_unit, bool is_public) const {
+        if (!cur_ || owner_unit == cur_->name) return true;
+        if (!unit_visible(owner_unit)) return false;
+        return is_public;
+    }
+
+    bool Sema::type_is_public(const TypePtr& t) const {
+        if (!t) return true;
+        auto it = infos_.find(t->unit);
+        if (it == infos_.end()) return true;  // 内建类型
+        const UnitInfo& ui = it->second;
+        switch (t->kind) {
+            case TypeKind::Struct: {
+                auto p = ui.structs.find(t->name);
+                return p != ui.structs.end() && p->second->is_public;
+            }
+            case TypeKind::Enum: {
+                auto p = ui.enums.find(t->name);
+                return p != ui.enums.end() && p->second->is_public;
+            }
+            case TypeKind::Class: {
+                auto p = ui.classes.find(t->name);
+                return p != ui.classes.end() && p->second->is_public;
+            }
+            case TypeKind::Interface: {
+                auto p = ui.interfaces.find(t->name);
+                return p != ui.interfaces.end() && p->second->is_public;
+            }
+            default: return true;
+        }
+    }
+
+    void Sema::require_type_visible(const TypePtr& t, const TypeSpec* spec) const {
+        if (!t) return;
+        if (cur_ && t->unit == cur_->name) return;
+        if (!unit_visible(t->unit)) {
+            err_ts("unit `" + t->unit + "` is only visible within its library; cross-library use requires `public unit`", spec);
+        }
+        if (!type_is_public(t)) {
+            err_ts("type `" + t->unit + "." + t->name + "` is not declared public", spec);
+        }
+    }
+
+    void Sema::collect() {
+        std::unordered_set<std::string> seen_units;
+        for (auto& u : units_) {
+            if (!seen_units.insert(u->name).second) {
+                cur_ = u.get();
+                err("duplicate unit `" + u->name + "`");
+            }
+            UnitInfo ui;
+            ui.unit = u.get();
+            infos_.emplace(u->name, std::move(ui));
+        }
+
+        for (auto& u : units_) {
+            cur_ = u.get();
+            UnitInfo& ui = infos_.at(u->name);
+            for (auto& d : u->decls) {
+                if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
+                    ui.funcs[f->name].push_back(f);
+                    f->sym = f;
+                } else if (auto s = dynamic_cast<StructDecl*>(d.get())) {
+                    ui.structs[s->name] = s;
+                } else if (auto e = dynamic_cast<EnumDecl*>(d.get())) {
+                    ui.enums[e->name] = e;
+                } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
+                    if (ui.classes.count(c->name)) err("duplicate definition of class `" + c->name + "`", c);
+                    ui.classes[c->name] = c;
+                } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
+                    if (ui.interfaces.count(i->name)) err("duplicate definition of interface `" + i->name + "`", i);
+                    ui.interfaces[i->name] = i;
+                } else if (auto g = dynamic_cast<GlobalVar*>(d.get())) {
+                    if (ui.globals.count(g->name)) err("duplicate definition of variable `" + g->name + "`", g);
+                    ui.globals[g->name] = g;
+                    g->cname = g->is_extern ? g->name : mangle(u->name, g->name);
+                }
+            }
+
+            // 同域名字不能跨类别冲突
+            std::unordered_map<std::string, Node*> names;
+            for (auto& d : u->decls) {
+                Node* node = d.get();
+                std::string nm;
+                if (auto f = dynamic_cast<FuncDecl*>(node)) {
+                    nm = f->name;
+                } else if (auto s = dynamic_cast<StructDecl*>(node)) {
+                    nm = s->name;
+                } else if (auto e = dynamic_cast<EnumDecl*>(node)) {
+                    nm = e->name;
+                } else if (auto c = dynamic_cast<ClassDecl*>(node)) {
+                    nm = c->name;
+                } else if (auto i = dynamic_cast<InterfaceDecl*>(node)) {
+                    nm = i->name;
+                } else if (auto g = dynamic_cast<GlobalVar*>(node)) {
+                    nm = g->name;
+                } else {
+                    continue;
+                }
+                if (dynamic_cast<FuncDecl*>(node)) {
+                    auto it = names.find(nm);
+                    if (it != names.end() && !dynamic_cast<FuncDecl*>(it->second)) {
+                        err("`" + nm + "` conflicts with another declaration", node);
+                    }
+                    if (it == names.end()) names.emplace(nm, node);
+                    continue;
+                }
+                if (names.count(nm)) err("`" + nm + "` is declared more than once in the same unit", node);
+                names.emplace(nm, node);
+            }
+        }
+
+        for (auto& u : units_) {
+            cur_ = u.get();
+            for (auto& use : u->uses) {
+                if (!infos_.count(use->unit_name)) {
+                    err("cannot find unit `" + use->unit_name + "`", use.get());
+                }
+                if (!unit_visible(use->unit_name)) {
+                    err("unit `" + use->unit_name +
+                            "` is only visible within its library; cross-library use requires `public unit`",
+                        use.get());
+                }
+            }
+        }
+    }
+
+    void Sema::check_exposed_type(const TypePtr& t, const std::string& what, const Node* at) {
+        if (!t) return;
+        TypePtr b = t;
+        while (b && (b->kind == TypeKind::Ptr || b->kind == TypeKind::Array ||
+                     b->kind == TypeKind::Slice)) {
+            b = b->elem;
+        }
+        if (!b) return;
+        if (b->kind != TypeKind::Struct && b->kind != TypeKind::Class &&
+            b->kind != TypeKind::Interface && b->kind != TypeKind::Enum) {
+            return;
+        }
+        if (cur_ && b->unit == cur_->name) {
+            if (!type_is_public(b)) {
+                err(what + " cannot use non-public type `" + b->str() + "`", at);
+            }
+            return;
+        }
+        if (!unit_visible(b->unit)) {
+            err(what + " cannot use type `" + b->str() + "` from non-visible unit `" + b->unit + "`", at);
+        }
+        if (!type_is_public(b)) {
+            err(what + " cannot use non-public type `" + b->str() + "`", at);
+        }
+    }
+
+    void Sema::check_public_signatures() {
+        for (auto& u : units_) {
+            cur_ = u.get();
+            for (auto& d : u->decls) {
+                if (!d->is_public) continue;
+                if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
+                    if (f->is_extern) continue;
+                    const std::string what = "public function `" + f->name + "`";
+                    check_exposed_type(f->rty, what, f);
+                    for (auto& p : f->pty) check_exposed_type(p, what, f);
+                } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
+                    const std::string what = "public class `" + c->name + "`";
+                    if (c->ty->base) check_exposed_type(c->ty->base, "base class of " + what, c);
+                    for (auto& i : c->ty->interfaces) {
+                        check_exposed_type(i, "interface of " + what, c);
+                    }
+                    for (auto& fd : c->ty->fields) {
+                        if (fd.is_public) {
+                            check_exposed_type(fd.type, "public field `" + fd.name + "` of " + what, c);
+                        }
+                    }
+                    for (auto& m : c->ty->methods) {
+                        if (!m.is_public) continue;
+                        const std::string mw = "public method `" + m.name + "` of " + what;
+                        check_exposed_type(m.ret, mw, c);
+                        for (auto& p : m.params) check_exposed_type(p, mw, c);
+                    }
+                } else if (auto sd = dynamic_cast<StructDecl*>(d.get())) {
+                    const std::string what = "public struct `" + sd->name + "`";
+                    for (auto& fd : sd->ty->fields) {
+                        check_exposed_type(fd.type, "field `" + fd.name + "` of " + what, sd);
+                    }
+                    for (auto& m : sd->ty->methods) {
+                        if (!m.is_public) continue;
+                        const std::string mw = "public method `" + m.name + "` of " + what;
+                        check_exposed_type(m.ret, mw, sd);
+                        for (auto& p : m.params) check_exposed_type(p, mw, sd);
+                    }
+                } else if (auto itf = dynamic_cast<InterfaceDecl*>(d.get())) {
+                    const std::string what = "public interface `" + itf->name + "`";
+                    for (auto& m : itf->ty->methods) {
+                        const std::string mw = "method `" + m.name + "` of " + what;
+                        check_exposed_type(m.ret, mw, itf);
+                        for (auto& p : m.params) check_exposed_type(p, mw, itf);
+                    }
+                }
+            }
+        }
+    }
+
+    void Sema::place_structs() {
+        for (auto& u : units_) {
+            for (auto& d : u->decls) {
+                if (auto s = dynamic_cast<StructDecl*>(d.get())) {
+                    s->ty = Type::make_struct(u->name, s->name);
+                } else if (auto e = dynamic_cast<EnumDecl*>(d.get())) {
+                    // 与 Python 版不同（见回报）：枚举类型在这里就建好，保证跨 unit
+                    // 引用到“尚未 resolve 的 unit 的枚举”时不会拿到空类型。
+                    e->ty = Type::make_enum(u->name, e->name);
+                } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
+                    c->ty = Type::make_class(u->name, c->name);
+                } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
+                    i->ty = Type::make_interface(u->name, i->name);
+                }
+            }
+        }
+    }
+
+    void Sema::resolve_class_fields(ClassDecl* c, Unit* u) {
+        std::vector<Field> fields;
+        if (c->ty->base) fields = c->ty->base->fields;
+        std::unordered_set<std::string> fnames;
+        for (auto& f : fields) fnames.insert(f.name);
+        for (auto& [fname, spec] : c->fields) {
+            if (!fnames.insert(fname).second) {
+                err("duplicate field `" + fname + "` in class `" + c->name + "`", c);
+            }
+            TypePtr ft = resolve_type(spec.get(), u);
+            if (is_void(ft)) err("class field cannot be void", c);
+            if (spec->weak && !is_class_type(ft)) {
+                err("`weak` field must be a class reference (interfaces do not support `weak` yet)", c);
+            }
+            if (noncopyable_struct(ft)) {
+                err("struct `" + ft->str() +
+                        "` has a destructor and cannot be used as a field (field destruction is not implemented)",
+                    c);
+            }
+            bool field_pub = false;  // class 默认 private
+            if (auto vit = c->field_visibility.find(fname); vit != c->field_visibility.end()) {
+                field_pub = vit->second;
+            }
+            fields.push_back(Field{fname, ft, spec->weak, field_pub});
+        }
+        c->ty->fields = std::move(fields);
+    }
+
+    bool Sema::eval_const_int(Expr* e, long long& out) {
+        if (!e) return false;
+        if (auto il = dynamic_cast<IntLit*>(e)) {
+            out = il->value;
+            return true;
+        }
+        if (auto cl = dynamic_cast<CharLit*>(e)) {
+            out = cl->value;
+            return true;
+        }
+        if (auto u = dynamic_cast<Unary*>(e)) {
+            long long v = 0;
+            if (!eval_const_int(u->operand.get(), v)) return false;
+            if (u->op == "-") {
+                out = -v;
+                return true;
+            }
+            if (u->op == "+") {
+                out = v;
+                return true;
+            }
+            return false;
+        }
+        if (auto c = dynamic_cast<Cast*>(e)) return eval_const_int(c->expr.get(), out);
+        if (auto b = dynamic_cast<Binary*>(e)) {
+            long long l = 0, r = 0;
+            if (!eval_const_int(b->left.get(), l) || !eval_const_int(b->right.get(), r)) {
+                return false;
+            }
+            const std::string& op = b->op;
+            if (op == "+") out = l + r;
+            else if (op == "-") out = l - r;
+            else if (op == "*") out = l * r;
+            else if (op == "/") {
+                if (r == 0) return false;
+                out = l / r;
+            } else if (op == "%") {
+                if (r == 0) return false;
+                out = l % r;
+            } else if (op == "<<") {
+                if (r < 0 || r > 62) return false;
+                out = l << r;
+            } else if (op == ">>") {
+                if (r < 0 || r > 63) return false;
+                out = l >> r;
+            } else if (op == "&") out = l & r;
+            else if (op == "|") out = l | r;
+            else if (op == "^") out = l ^ r;
+            else return false;
+            return true;
+        }
+        return false;
+    }
+
+    bool Sema::is_pow2(long long n) { return n > 0 && (n & (n - 1)) == 0; }
+
+    void Sema::check_layouts() {
+        // 第一遍：求值 align(N)，校验正整数 + 2 的幂
+        for (auto& u : units_) {
+            cur_ = u.get();
+            for (auto& d : u->decls) {
+                auto sd = dynamic_cast<StructDecl*>(d.get());
+                if (!sd || !sd->ty) continue;
+                sd->ty->is_packed = sd->is_packed;
+                if (!sd->align_expr) continue;
+                long long n = 0;
+                if (!eval_const_int(sd->align_expr.get(), n)) {
+                    err("N in `align(N)` must be a compile-time integer constant", sd);
+                }
+                if (!is_pow2(n) || n > 65536) {
+                    err("N in `align(N)` must be a power of two (got " + std::to_string(n) + ")", sd);
+                }
+                sd->ty->align_req = static_cast<int>(n);
+            }
+        }
+        // 第二遍：N 与自然对齐比较 + packed 字段类型限制（此时所有 unit 的字段都已解析）
+        for (auto& u : units_) {
+            cur_ = u.get();
+            for (auto& d : u->decls) {
+                auto sd = dynamic_cast<StructDecl*>(d.get());
+                if (!sd || !sd->ty) continue;
+                const TypePtr& ty = sd->ty;
+                const std::string kw = sd->is_union ? "union" : "struct";
+                if (ty->align_req > 0 && !ty->is_packed) {
+                    size_t natural = 1;
+                    for (auto& f : ty->fields) natural = std::max(natural, type_align(f.type));
+                    if (static_cast<size_t>(ty->align_req) < natural) {
+                        err("align(" + std::to_string(ty->align_req) + ") is less than the natural alignment of " + kw + " `" +
+                                sd->name + "` (" + std::to_string(natural) + ")" +
+                                "; use `packed` to lower the alignment",
+                            sd);
+                    }
+                }
+                if (!ty->is_packed) continue;
+                for (auto& f : ty->fields) {
+                    // 数组按元素类型检查
+                    TypePtr base = f.type;
+                    while (base && base->kind == TypeKind::Array) base = base->elem;
+                    if (!base) continue;
+                    if (is_str(base)) {
+                        err("field `" + f.name + "` of packed " + kw + " `" + sd->name +
+                                "` cannot be `string` (unaligned pointer access)",
+                            sd);
+                    }
+                    if (base->kind == TypeKind::Slice) {
+                        err("field `" + f.name + "` of packed " + kw + " `" + sd->name +
+                                "` cannot be a dynamic array `" + base->str() + "` (unaligned pointer access)",
+                            sd);
+                    }
+                    if (is_reference_type(base)) {
+                        err("field `" + f.name + "` of packed " + kw + " `" + sd->name +
+                                "` cannot be a `class` or `interface` reference (unaligned pointer access)",
+                            sd);
+                    }
+                }
+            }
+        }
+    }
+
+    void Sema::resolve_const_members(std::vector<std::unique_ptr<ConstMember>>& list,
+                               const TypePtr& owner, Unit* u, const std::string& kw,
+                               const std::string& type_name) {
+        for (auto& cm : list) {
+            cm->owner = owner;
+            cm->rty = resolve_type(cm->spec.get(), u);
+            if (is_void(cm->rty)) {
+                err("const member `" + cm->name + "` in " + kw + " `" + type_name +
+                        "` cannot be void",
+                    cm.get());
+            }
+            if (!(is_prim(cm->rty) || is_enum_t(cm->rty))) {
+                err("const member `" + cm->name +
+                        "` must have a scalar type (bool, integer, float, double, or enum), found `" +
+                        cm->rty->str() + "`",
+                    cm.get());
+            }
+        }
+    }
+
+    void Sema::resolve_unit_types(Unit* u) {
+        cur_ = u;
+
+        // 结构体：占位类型已就绪，这里填字段（字段可引用别的结构体/枚举）
+        for (auto& d : u->decls) {
+            auto sd = dynamic_cast<StructDecl*>(d.get());
+            if (!sd) continue;
+            if (!sd->ty) sd->ty = Type::make_struct(u->name, sd->name);
+            sd->ty->is_packed = sd->is_packed;  // align_req 在 check_layouts 里求值
+            sd->ty->is_union = sd->is_union;
+            const std::string kw = sd->is_union ? "union" : "struct";
+            std::vector<Field> fields;
+            std::unordered_set<std::string> fnames;
+            for (auto& [fname, spec] : sd->fields) {
+                if (!fnames.insert(fname).second) {
+                    err("duplicate field `" + fname + "` in " + kw + " `" + sd->name + "`", sd);
+                }
+                TypePtr ft = resolve_type(spec.get(), u);
+                if (is_void(ft)) err("field of " + kw + " `" + sd->name + "` cannot be void", sd);
+                if (same_type(ft, sd->ty)) {
+                    err(kw + " `" + sd->name + "` cannot contain itself by value", sd);
+                }
+                if (spec->weak) err("`weak` can only be used on class fields", sd);
+                if (sd->is_union && (is_str(ft) || ft->needs_cleanup())) {
+                    err("field `" + fname + "` of union `" + sd->name + "` cannot be `" + ft->str() +
+                            "`: union members cannot hold values that need reference counting",
+                        sd);
+                }
+                if (noncopyable_struct(ft)) {
+                    err("struct `" + ft->str() +
+                            "` has a destructor and cannot be used as a field (field destruction is not implemented)",
+                        sd);
+                }
+                bool field_pub = true;  // struct 默认 public
+                if (auto vit = sd->field_visibility.find(fname);
+                    vit != sd->field_visibility.end()) {
+                    field_pub = vit->second;
+                }
+                fields.push_back(Field{fname, ft, false, field_pub});
+            }
+            sd->ty->fields = std::move(fields);
+            if (sd->is_union && sd->ty->fields.empty()) {
+                err("union `" + sd->name + "` must have at least one member", sd);
+            }
+            resolve_const_members(sd->const_members, sd->ty, u, kw, sd->name);
+
+            sd->ty->methods.clear();
+            for (auto& m : sd->methods) {
+                m->rty = resolve_type(m->ret.get(), u);
+                if (noncopyable_struct(m->rty)) {
+                    err("struct `" + m->rty->str() +
+                            "` has a destructor and cannot be returned by value (use a pointer)",
+                        m.get());
+                }
+                m->pty.clear();
+                for (auto& p : m->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                            p.get());
+                    }
+                    m->pty.push_back(pt);
+                }
+                MethodSig sig;
+                sig.name = m->name;
+                sig.ret = m->rty;
+                sig.params = m->pty;
+                sig.is_abstract = false;
+                sig.is_override = false;
+                sig.is_public = m->is_public;
+                sig.owner = sd->ty;
+                sd->ty->methods.push_back(std::move(sig));
+                m->cname = method_cname(u->name, sd->name, m->name, m->pty);
+            }
+            sd->ty->ctors.clear();
+            for (auto& ctor : sd->ctors) {
+                ctor->pty.clear();
+                for (auto& p : ctor->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                            p.get());
+                    }
+                    ctor->pty.push_back(pt);
+                }
+                ctor->cname = ctor_cname(u->name, sd->name, ctor->pty);
+                sd->ty->ctors.push_back(ctor->pty);
+                sd->ty->ctor_is_public.push_back(ctor->is_public);
+            }
+            sd->ty->has_dtor = sd->dtor != nullptr;
+            if (sd->dtor) sd->dtor->cname = dtor_cname(u->name, sd->name);
+        }
+
+        // class：基类、接口、扁平字段、方法/构造器签名
+        for (auto& d : u->decls) {
+            auto c = dynamic_cast<ClassDecl*>(d.get());
+            if (!c) continue;
+            if (!c->ty) c->ty = Type::make_class(u->name, c->name);
+
+            bool has_base = false;
+            TypeSpec where;
+            where.line = c->line;
+            where.col = c->col;
+            for (size_t i = 0; i < c->bases.size(); ++i) {
+                TypePtr bt = resolve_named_type(c->bases[i], u, &where);
+                if (bt->kind == TypeKind::Class) {
+                    if (i != 0 || has_base) err("a class may have at most one base class, and it must come first", c);
+                    has_base = true;
+                    c->ty->base = bt;
+                } else if (bt->kind == TypeKind::Interface) {
+                    for (auto& prev : c->ty->interfaces) {
+                        if (same_type(prev, bt)) {
+                            err("class `" + c->name + "` implements interface `" + bt->str() + "` more than once", c);
+                        }
+                    }
+                    c->ty->interfaces.push_back(bt);
+                } else {
+                    err("`" + c->bases[i] + "` is not a class or interface", c);
+                }
+            }
+
+            // 字段在后面的拓扑 pass 处理（基类字段需先就绪）
+
+            resolve_const_members(c->const_members, c->ty, u, "class", c->name);
+
+            c->ty->methods.clear();
+            c->ty->is_abstract = false;
+            for (auto& m : c->methods) {
+                m->rty = resolve_type(m->ret.get(), u);
+                if (noncopyable_struct(m->rty)) {
+                    err("struct `" + m->rty->str() +
+                            "` has a destructor and cannot be returned by value (use a pointer)",
+                        m.get());
+                }
+                m->pty.clear();
+                for (auto& p : m->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                            p.get());
+                    }
+                    m->pty.push_back(pt);
+                }
+                MethodSig sig;
+                sig.name = m->name;
+                sig.ret = m->rty;
+                sig.params = m->pty;
+                sig.is_abstract = !m->body;
+                sig.is_override = m->is_override;
+                sig.is_public = m->is_public;
+                sig.owner = c->ty;
+                c->ty->methods.push_back(std::move(sig));
+                m->cname = method_cname(u->name, c->name, m->name, m->pty);
+                if (!m->body) c->ty->is_abstract = true;
+            }
+            for (auto& ctor : c->ctors) {
+                ctor->pty.clear();
+                for (auto& p : ctor->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                            p.get());
+                    }
+                    ctor->pty.push_back(pt);
+                }
+                ctor->cname = ctor_cname(u->name, c->name, ctor->pty);
+                c->ty->ctors.push_back(ctor->pty);
+                c->ty->ctor_is_public.push_back(ctor->is_public);
+            }
+            if (c->dtor) c->dtor->cname = dtor_cname(u->name, c->name);
+        }
+
+        // class 字段：按基类依赖顺序解析（同一 unit 内基类可能后声明）
+        {
+            std::unordered_map<std::string, ClassDecl*> by_name;
+            for (auto& d : u->decls) {
+                if (auto c = dynamic_cast<ClassDecl*>(d.get())) by_name[c->name] = c;
+            }
+            std::unordered_map<ClassDecl*, int> state;
+            std::function<void(ClassDecl*)> resolve_fields = [&](ClassDecl* c) {
+                if (!c || state[c] != 0) return;
+                state[c] = 1;
+                for (auto& bn : c->bases) {
+                    if (bn.find('.') != std::string::npos) continue;
+                    auto it = by_name.find(bn);
+                    if (it != by_name.end() && it->second != c) resolve_fields(it->second);
+                }
+                resolve_class_fields(c, u);
+                state[c] = 2;
+            };
+            for (auto& d : u->decls) {
+                if (auto c = dynamic_cast<ClassDecl*>(d.get())) resolve_fields(c);
+            }
+        }
+
+        // interface：基接口与方法签名
+        for (auto& d : u->decls) {
+            auto itf = dynamic_cast<InterfaceDecl*>(d.get());
+            if (!itf) continue;
+            if (!itf->ty) itf->ty = Type::make_interface(u->name, itf->name);
+            TypeSpec where;
+            where.line = itf->line;
+            where.col = itf->col;
+            for (auto& b : itf->bases) {
+                TypePtr bt = resolve_named_type(b, u, &where);
+                if (bt->kind != TypeKind::Interface) {
+                    err("an interface can only inherit from an interface", itf);
+                }
+                for (auto& prev : itf->ty->interfaces) {
+                    if (same_type(prev, bt)) {
+                        err("interface `" + itf->name + "` inherits `" + bt->str() + "` more than once", itf);
+                    }
+                }
+                itf->ty->interfaces.push_back(bt);
+            }
+            itf->ty->methods.clear();
+            for (auto& m : itf->methods) {
+                m->rty = resolve_type(m->ret.get(), u);
+                if (noncopyable_struct(m->rty)) {
+                    err("struct `" + m->rty->str() +
+                            "` has a destructor and cannot be returned by value (use a pointer)",
+                        m.get());
+                }
+                m->pty.clear();
+                for (auto& p : m->params) {
+                    TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (is_void(pt)) err("parameter cannot be void", p.get());
+                    if (noncopyable_struct(pt)) {
+                        err("struct `" + pt->str() +
+                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                            p.get());
+                    }
+                    m->pty.push_back(pt);
+                }
+                MethodSig sig;
+                sig.name = m->name;
+                sig.ret = m->rty;
+                sig.params = m->pty;
+                sig.is_abstract = !m->body;
+                sig.is_override = false;
+                sig.owner = itf->ty;
+                itf->ty->methods.push_back(std::move(sig));
+                m->cname = method_cname(u->name, itf->name, m->name, m->pty);
+            }
+        }
+
+        // 枚举：检查成员重复（类型已在 place_structs 建好）
+        for (auto& d : u->decls) {
+            auto ed = dynamic_cast<EnumDecl*>(d.get());
+            if (!ed) continue;
+            std::unordered_set<std::string> names;
+            for (auto& [m, v] : ed->members) {
+                if (!names.insert(m).second) {
+                    err("duplicate member `" + m + "` in enum `" + ed->name + "`", ed);
+                }
+            }
+        }
+
+        for (auto& d : u->decls) {
+            auto g = dynamic_cast<GlobalVar*>(d.get());
+            if (!g) continue;
+            g->rty = resolve_type(g->spec.get(), u);
+            if (is_void(g->rty)) err("variable `" + g->name + "` cannot be void", g);
+        }
+
+        for (auto& d : u->decls) {
+            auto f = dynamic_cast<FuncDecl*>(d.get());
+            if (!f) continue;
+            f->rty = resolve_type(f->ret.get(), u);
+            if (noncopyable_struct(f->rty)) {
+                err("struct `" + f->rty->str() + "` has a destructor and cannot be returned by value (use a pointer)", f);
+            }
+            f->pty.clear();
+            for (auto& p : f->params) {
+                TypePtr pt = resolve_type(p->spec.get(), u);
+                if (is_void(pt)) err("parameter `" + p->name + "` cannot be void", p.get());
+                if (noncopyable_struct(pt)) {
+                    err("struct `" + pt->str() +
+                            "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                        p.get());
+                }
+                f->pty.push_back(pt);
+            }
+            if (f->is_extern) {
+                if (contains_reference_type(f->rty)) {
+                    err("`extern` function `" + f->name + "` cannot return a class or interface (C code does not participate in reference counting)",
+                        f);
+                }
+                for (auto& pt : f->pty) {
+                    if (contains_reference_type(pt)) {
+                        err("parameter of `extern` function `" + f->name + "` cannot be a class or interface", f);
+                    }
+                }
+                if (contains_slice_type(f->rty) || [&] {
+                        for (auto& pt : f->pty)
+                            if (contains_slice_type(pt)) return true;
+                        return false;
+                    }()) {
+                    err("`extern` function `" + f->name +
+                            "` cannot use dynamic arrays `T[]` (they carry an RC header and are not C layout)",
+                        f);
+                }
+                f->cname = f->name;
+            } else if (f->name == "main" && u->name == entry_) {
+                f->cname = "main";
+            } else {
+                f->cname = func_cname(u->name, f);
+            }
+        }
+    }
+Sema::Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry)
+    : units_(std::move(units)), entry_(std::move(entry)) {}
+
+Program Sema::run() {
+    collect();
+    place_structs();
+    for (auto& u : units_) resolve_unit_types(u.get());
+    check_layouts();
+    check_hierarchy_cycles();
+    compute_abstract_all();
+    check_public_signatures();
+    for (auto& u : units_) check_unit(u.get());
+    if (!errors_.empty()) throw MuErrorList(std::move(errors_));
+    check_entry();
+
+    Program prog;
+    prog.units = std::move(units_);
+    prog.infos = std::move(infos_);
+    prog.entry = entry_;
+    return prog;
+}
+
+}  // namespace muc_detail

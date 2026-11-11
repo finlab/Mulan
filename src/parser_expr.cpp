@@ -1,0 +1,639 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
+// 语法分析 —— 类型与表达式
+#include "parser_impl.hpp"
+
+#include <memory>
+#include <string>
+#include <unordered_set>
+#include <utility>
+
+using namespace muc_detail;
+
+namespace muc_detail {
+
+// 与 mtypes.PRIM_NAMES 一致（parser.py 的 PRIMS）；`string` 已改为 core.Str 结构体
+static const std::unordered_set<std::string>& prims() {
+    static const std::unordered_set<std::string> s = {
+        "byte",  "char",   "short", "ushort", "int",   "uint",  "long",
+        "ulong", "usize", "isize", "float",  "double", "bool",  "void",
+    };
+    return s;
+}
+
+// 一条声明中的多个声明符共享同一个类型语法；深度复制以各持一份所有权的 TypeSpec。
+TypeSpecPtr clone_spec(const TypeSpec& s) {
+    auto out = std::make_unique<TypeSpec>();
+    out->kind = s.kind;
+    out->name = s.name;
+    out->elem = s.elem ? clone_spec(*s.elem) : nullptr;
+    out->size = s.size;
+    out->rank = s.rank;
+    out->is_const = s.is_const;
+    out->weak = s.weak;
+    out->line = s.line;
+    out->col = s.col;
+    return out;
+}
+
+static TypeSpecPtr make_named_spec(const std::string& name, int line, int col) {
+    auto spec = std::make_unique<TypeSpec>();
+    spec->kind = TypeSpec::K::Named;
+    spec->name = name;
+    spec->line = line;
+    spec->col = col;
+    return spec;
+}
+
+}  // namespace muc_detail
+
+// ---------------------------------------------------------------- 类型
+
+bool Parser::is_type_start(const Token& t) const {
+    if (t.kind == TokKind::Kw) {
+        if (prims().count(t.text) != 0) return true;
+        if (t.text == "const") return true;
+        return false;
+    }
+    if (t.kind == TokKind::Ident) {
+        if (type_names_.count(t.text) != 0) return true;
+        // 限定类型 `math.Point` / `std.string.string` / `lib.a.b.T`
+        if (peek(1).is_op(".") && is_module_prefix(t.text)) return true;
+    }
+    return false;
+}
+
+// 是否是某个已导入 unit 名（或 std.string）的点号前缀。
+bool Parser::is_module_prefix(const std::string& s) const {
+    for (const auto& m : module_names_) {
+        if (m == s) return true;
+        if (m.size() > s.size() && m.compare(0, s.size(), s) == 0 && m[s.size()] == '.') {
+            return true;
+        }
+    }
+    return false;
+}
+
+TypeSpecPtr Parser::parse_type() {
+    bool base_const = false;
+    if (at_kw("const")) {
+        advance();
+        base_const = true;
+    }
+    const Token t = peek();
+    TypeSpecPtr spec;
+    if (t.kind == TokKind::Kw && prims().count(t.text) != 0) {
+        advance();
+        spec = make_named_spec(t.text, t.line, t.col);
+    } else if (t.kind == TokKind::Ident) {
+        advance();
+        std::string name = t.text;
+        while (at_op(".")) {
+            advance();
+            name += ".";
+            name += expect_ident("type name").text;
+        }
+        spec = make_named_spec(name, t.line, t.col);
+    } else {
+        throw err("expected type name but got " + t.describe());
+    }
+    if (base_const) spec->is_const = true;
+    return type_suffixes(std::move(spec), t);
+}
+
+TypeSpecPtr Parser::parse_type_base() {
+    bool base_const = false;
+    if (at_kw("const")) {
+        advance();
+        base_const = true;
+    }
+    const Token t = peek();
+    TypeSpecPtr spec;
+    if (t.kind == TokKind::Kw && prims().count(t.text) != 0) {
+        advance();
+        spec = make_named_spec(t.text, t.line, t.col);
+    } else if (t.kind == TokKind::Ident) {
+        advance();
+        std::string name = t.text;
+        while (at_op(".")) {
+            advance();
+            name += ".";
+            name += expect_ident("type name").text;
+        }
+        spec = make_named_spec(name, t.line, t.col);
+    } else {
+        throw err("expected type name but got " + t.describe());
+    }
+    if (base_const) spec->is_const = true;
+    while (at_op("*")) {
+        const Token tok = advance();
+        auto ptr = std::make_unique<TypeSpec>();
+        ptr->kind = TypeSpec::K::Ptr;
+        ptr->elem = std::move(spec);
+        ptr->line = tok.line;
+        ptr->col = tok.col;
+        spec = std::move(ptr);
+    }
+    return spec;
+}
+
+TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
+    for (;;) {
+        if (at_op("*")) {
+            const Token tok = advance();
+            auto ptr = std::make_unique<TypeSpec>();
+            ptr->kind = TypeSpec::K::Ptr;
+            ptr->elem = std::move(spec);
+            ptr->line = tok.line;
+            ptr->col = tok.col;
+            spec = std::move(ptr);
+            continue;
+        }
+        if (at_op("[")) {
+            const Token tok = advance();
+            if (at_op("]")) {
+                advance();
+                auto slice = std::make_unique<TypeSpec>();
+                slice->kind = TypeSpec::K::Slice;
+                slice->elem = std::move(spec);
+                slice->rank = 1;
+                slice->line = tok.line;
+                slice->col = tok.col;
+                spec = std::move(slice);
+                continue;
+            }
+            if (at_op(",")) {
+                int rank = 1;
+                while (at_op(",")) {
+                    advance();
+                    rank++;
+                }
+                expect_op("]");
+                auto slice = std::make_unique<TypeSpec>();
+                slice->kind = TypeSpec::K::Slice;
+                slice->elem = std::move(spec);
+                slice->rank = rank;
+                slice->line = tok.line;
+                slice->col = tok.col;
+                spec = std::move(slice);
+                continue;
+            }
+            std::vector<size_t> dims;
+            for (;;) {
+                const Token n = peek();
+                if (n.kind != TokKind::Int) throw err("array length only supports integer literals for now");
+                advance();
+                if (n.ival <= 0) throw err_at("array length must be greater than 0", n);
+                dims.push_back(static_cast<size_t>(n.ival));
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+            expect_op("]");
+            // 反向包装：int[2,3] -> Array(Array(int,3),2)
+            for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
+                auto arr = std::make_unique<TypeSpec>();
+                arr->kind = TypeSpec::K::Array;
+                arr->elem = std::move(spec);
+                arr->size = *it;
+                arr->line = tok.line;
+                arr->col = tok.col;
+                spec = std::move(arr);
+            }
+            continue;
+        }
+        break;
+    }
+
+    return spec;
+}
+
+// ---------------------------------------------------------------- 表达式
+
+ExprPtr Parser::make_binary(const std::string& op, ExprPtr left, ExprPtr right,
+                            const Token& tok) {
+    auto node = std::make_unique<Binary>();
+    node->op = op;
+    node->left = std::move(left);
+    node->right = std::move(right);
+    node->line = tok.line;
+    node->col = tok.col;
+    return node;
+}
+
+ExprPtr Parser::parse_ternary() {
+    ExprPtr cond = parse_or();
+    if (!at_op("?")) return cond;
+    const Token tok = advance();
+    auto node = std::make_unique<Ternary>();
+    node->cond = std::move(cond);
+    node->then_e = parse_ternary();  // 中间分支允许嵌套 `?:`
+    if (!at_op(":")) throw err_at("expected `:` after `?`", peek());
+    advance();
+    node->else_e = parse_ternary();  // 右结合：`a ? b : c ? d : e` = `a ? b : (c ? d : e)`
+    node->line = tok.line;
+    node->col = tok.col;
+    return node;
+}
+
+ExprPtr Parser::parse_or() {
+    ExprPtr left = parse_and();
+    while (at_kw("or")) {
+        const Token tok = advance();
+        ExprPtr right = parse_and();
+        left = make_binary("or", std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_and() {
+    ExprPtr left = parse_not();
+    while (at_kw("and")) {
+        const Token tok = advance();
+        ExprPtr right = parse_not();
+        left = make_binary("and", std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_not() {
+    if (at_kw("not")) {
+        const Token tok = advance();
+        ExprPtr operand = parse_not();
+        auto node = std::make_unique<NotExpr>();
+        node->operand = std::move(operand);
+        node->line = tok.line;
+        node->col = tok.col;
+        return node;
+    }
+    return parse_eq();
+}
+
+ExprPtr Parser::parse_eq() {
+    ExprPtr left = parse_rel();
+    while (at_op("==", "!=")) {
+        const Token tok = advance();
+        ExprPtr right = parse_rel();
+        left = make_binary(tok.text, std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_rel() {
+    ExprPtr left = parse_bitor();
+    while (at_op("<", "<=", ">", ">=")) {
+        const Token tok = advance();
+        ExprPtr right = parse_bitor();
+        left = make_binary(tok.text, std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_bitor() {
+    ExprPtr left = parse_bitxor();
+    while (at_op("|")) {
+        const Token tok = advance();
+        ExprPtr right = parse_bitxor();
+        left = make_binary("|", std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_bitxor() {
+    ExprPtr left = parse_bitand();
+    while (at_op("^")) {
+        const Token tok = advance();
+        ExprPtr right = parse_bitand();
+        left = make_binary("^", std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_bitand() {
+    ExprPtr left = parse_shift();
+    while (at_op("&")) {
+        const Token tok = advance();
+        ExprPtr right = parse_shift();
+        left = make_binary("&", std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_shift() {
+    ExprPtr left = parse_add();
+    while (at_op("<<", ">>")) {
+        const Token tok = advance();
+        ExprPtr right = parse_add();
+        left = make_binary(tok.text, std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_add() {
+    ExprPtr left = parse_mul();
+    while (at_op("+", "-")) {
+        const Token tok = advance();
+        ExprPtr right = parse_mul();
+        left = make_binary(tok.text, std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_mul() {
+    ExprPtr left = parse_unary();
+    while (at_op("*", "/", "%")) {
+        const Token tok = advance();
+        ExprPtr right = parse_unary();
+        left = make_binary(tok.text, std::move(left), std::move(right), tok);
+    }
+    return left;
+}
+
+ExprPtr Parser::parse_unary() {
+    const Token t = peek();
+    if (at_kw("new")) {
+        advance();
+        auto ne = std::make_unique<NewExpr>();
+        ne->type = parse_type_base();
+        ne->line = t.line;
+        ne->col = t.col;
+        if (at_op("[")) {
+            const Token lb = advance();
+            if (at_op("]")) throw err_at("`new` dynamic array requires a length", lb);
+            for (;;) {
+                ne->dims.push_back(parse_expr());
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+            expect_op("]");
+            // new T[m][]：外层数组的元素是 T[]（空槽，稍后逐行 new）
+            while (at_op("[")) {
+                if (!peek(1).is_op("]")) {
+                    throw err_at("`new T[m][n]` is not jagged array syntax: use `new T[m,n]` for rectangular arrays; for jagged arrays, allocate the outer array first and fill the rows in a loop", peek());
+                }
+                advance();
+                advance();
+                ne->jagged_rank++;
+            }
+            ne->is_array = true;
+            if (at_op("(")) throw err_at("dynamic array construction does not support constructor arguments", lb);
+            return parse_postfix_tail(std::move(ne));
+        }
+        if (at_op("(")) {
+            advance();
+            while (!at_op(")")) {
+                if (peek().kind == TokKind::Ident && peek(1).is_op("=")) {
+                    std::string nm = advance().text;
+                    advance();
+                    ne->named.emplace_back(std::move(nm), parse_expr());
+                } else {
+                    ne->args.push_back(parse_expr());
+                    forbid_inc_expr();
+                }
+                if (at_op(",")) {
+                    advance();
+                } else {
+                    break;
+                }
+            }
+            expect_op(")");
+            if (!ne->args.empty() && !ne->named.empty())
+                throw err_at("positional and named arguments cannot be mixed", t);
+        }
+        return parse_postfix_tail(std::move(ne));
+    }
+    if (at_op("!")) {
+        throw err("`!` is no longer used: use `not` for logical negation and `~` for bitwise negation");
+    }
+    if (t.kind == TokKind::Op && at_op("-", "+", "&", "*", "~")) {
+        advance();
+        ExprPtr operand = parse_unary();
+        auto node = std::make_unique<Unary>();
+        node->op = t.text;
+        node->operand = std::move(operand);
+        node->line = t.line;
+        node->col = t.col;
+        return parse_postfix_tail(std::move(node));
+    }
+    if (at_kw("sizeof", "alignof")) {
+        std::string which = advance().text;
+        expect_op("(");
+        TypeSpecPtr spec = parse_type();
+        expect_op(")");
+        auto node = std::make_unique<SizeofExpr>();
+        node->spec = std::move(spec);
+        node->which = std::move(which);
+        node->line = t.line;
+        node->col = t.col;
+        return parse_postfix_tail(std::move(node));
+    }
+    if (at_kw("len")) {
+        advance();
+        expect_op("(");
+        ExprPtr seq = parse_expr();
+        ExprPtr dim;
+        if (at_op(",")) {
+            advance();
+            dim = parse_expr();
+        }
+        expect_op(")");
+        auto node = std::make_unique<Len>();
+        node->seq = std::move(seq);
+        node->dim = std::move(dim);
+        node->line = t.line;
+        node->col = t.col;
+        return parse_postfix_tail(std::move(node));
+    }
+    return parse_postfix();
+}
+
+ExprPtr Parser::parse_postfix() {
+    return parse_postfix_tail(parse_primary());
+}
+
+ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
+    for (;;) {
+        const Token t = peek();
+        if (t.is_op("(")) {
+            e = parse_call(std::move(e));
+            continue;
+        }
+        if (t.is_op("[")) {
+            advance();
+            auto node = std::make_unique<Index>();
+            for (;;) {
+                node->indices.push_back(parse_expr());
+                forbid_inc_expr();
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+            expect_op("]");
+            node->base = std::move(e);
+            node->line = t.line;
+            node->col = t.col;
+            e = std::move(node);
+            continue;
+        }
+        if (t.is_op(".")) {
+            // 多段 unit 名：`lib.a.b.f` 中 `lib.a.b` 是 unit，合并成单个 Name，
+            // 避免被拆成三层成员访问。按最长已导入前缀匹配。
+            if (auto* n = dynamic_cast<Name*>(e.get());
+                n && peek(1).kind == TokKind::Ident) {
+                const std::string cand = n->ident + "." + peek(1).text;
+                if (module_names_.count(cand)) {
+                    advance();  // '.'
+                    advance();  // 成员名
+                    n->ident = cand;
+                    continue;
+                }
+            }
+            advance();
+            std::string nm = expect_ident("member name").text;
+            auto node = std::make_unique<Member>();
+            node->obj = std::move(e);
+            node->name = std::move(nm);
+            node->line = t.line;
+            node->col = t.col;
+            e = std::move(node);
+            continue;
+        }
+        if (t.is_kw("as")) {
+            advance();
+            TypeSpecPtr spec = parse_type();
+            auto node = std::make_unique<Cast>();
+            node->expr = std::move(e);
+            node->spec = std::move(spec);
+            node->line = t.line;
+            node->col = t.col;
+            e = std::move(node);
+            continue;
+        }
+        break;
+    }
+    return e;
+}
+
+ExprPtr Parser::parse_call(ExprPtr callee) {
+    const Token t = expect_op("(");
+    std::vector<ExprPtr> args;
+    std::vector<std::pair<std::string, ExprPtr>> named;
+    while (!at_op(")")) {
+        if (peek().kind == TokKind::Ident && peek(1).is_op("=")) {
+            std::string nm = advance().text;
+            advance();
+            named.emplace_back(std::move(nm), parse_expr());
+        } else {
+            args.push_back(parse_expr());
+            forbid_inc_expr();
+        }
+        if (at_op(",")) {
+            advance();
+        } else {
+            break;
+        }
+    }
+    expect_op(")");
+    if (!args.empty() && !named.empty()) throw err_at("positional and named arguments cannot be mixed", t);
+    auto node = std::make_unique<Call>();
+    node->callee = std::move(callee);
+    node->args = std::move(args);
+    node->named = std::move(named);
+    node->line = t.line;
+    node->col = t.col;
+    return node;
+}
+
+ExprPtr Parser::parse_primary() {
+    const Token t = peek();
+    if (t.kind == TokKind::Kw && (t.text == "this" || t.text == "super")) {
+        advance();
+        auto node = std::make_unique<Name>();
+        node->ident = t.text;
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
+    if (t.kind == TokKind::Int) {
+        advance();
+        auto node = std::make_unique<IntLit>();
+        node->value = t.ival;
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
+    if (t.kind == TokKind::Float) {
+        advance();
+        auto node = std::make_unique<FloatLit>();
+        node->value = t.fval;
+        node->is_float32 = t.f32;
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
+    if (t.kind == TokKind::Char) {
+        advance();
+        auto node = std::make_unique<CharLit>();
+        node->value = static_cast<int>(t.ival);
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
+    if (t.kind == TokKind::Str) {
+        advance();
+        auto node = std::make_unique<StringLit>();
+        node->value = t.bytes;
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
+    if (t.kind == TokKind::Kw && (t.text == "true" || t.text == "false")) {
+        advance();
+        auto node = std::make_unique<BoolLit>();
+        node->value = t.text == "true";
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
+    if (t.kind == TokKind::Kw && t.text == "null") {
+        advance();
+        auto node = std::make_unique<NullLit>();
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
+    if (t.kind == TokKind::Kw && (t.text == "alloc" || t.text == "realloc" || t.text == "free")) {
+        advance();
+        auto node = std::make_unique<Name>();
+        node->ident = t.text;
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
+    if (t.kind == TokKind::Ident) {
+        advance();
+        auto node = std::make_unique<Name>();
+        node->ident = t.text;
+        node->line = t.line;
+        node->col = t.col;
+        return node;
+    }
+    if (t.kind == TokKind::Op && t.text == "(") {
+        advance();
+        ExprPtr e = parse_expr();
+        if (at_op("++", "--")) {
+            throw err("`++`/`--` has no value and cannot appear in an expression (only as a standalone statement)");
+        }
+        expect_op(")");
+        return e;
+    }
+    throw err("unexpected " + t.describe());
+}

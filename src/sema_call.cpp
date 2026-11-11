@@ -1,0 +1,787 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
+// 本文件包含 调用检查与杂项（Sema 成员函数定义）。
+#include "sema_impl.hpp"
+
+namespace muc_detail {
+
+    TypePtr Sema::check_call(Call* c) {
+        Expr* callee = c->callee.get();
+        if (!callee) err("call is missing a callee", c);
+
+        if (auto nm = dynamic_cast<Name*>(callee)) {
+            if (nm->ident == "alloc" || nm->ident == "realloc" || nm->ident == "free") {
+                return check_builtin(c, nm->ident);
+            }
+            if (nm->ident == "super") return check_super_call(c);
+            // 类内部对自身方法的非限定调用
+            if (lookup_local(nm->ident) == nullptr && cur_class_) {
+                std::vector<const MethodSig*> ms;
+                collect_methods(cur_class_, nm->ident, ms);
+                if (!ms.empty()) {
+                    auto sig = choose_method(ms, raw_args(c->args), "method `" + nm->ident + "`", c);
+                    check_method_args(c, sig, "method `" + nm->ident + "`");
+                    c->callee_kind =
+                        cur_class_->kind == TypeKind::Struct ? "struct_method" : "method";
+                    c->method = sig;
+                    return sig->ret;
+                }
+            }
+        }
+
+        FuncDecl* target = nullptr;
+        TypePtr struct_ty = nullptr;
+
+        if (auto nm = dynamic_cast<Name*>(callee)) {
+            if (lookup_local(nm->ident) != nullptr) {
+                err("`" + nm->ident + "` is a variable, not a function", c);
+            }
+            // 候选：当前 unit + 直接 use 的 unit（只收 public）+ std.string（隐式）
+            std::vector<FuncDecl*> cands;
+            auto add_funcs = [&](UnitInfo& o, bool require_pub) {
+                auto f = o.funcs.find(nm->ident);
+                if (f == o.funcs.end()) return;
+                for (auto* fd : f->second) {
+                    if (!require_pub || fd->is_public) cands.push_back(fd);
+                }
+            };
+            UnitInfo& ui = info();
+            add_funcs(ui, false);
+            // 本地有同名函数时完全遮蔽导入（与本地类型/变量一致）
+            if (cands.empty()) {
+                for (auto& use : cur_->uses) {
+                    if (use->unit_name == "std.string") continue;  // 下面统一按隐式导入加入
+                    if (!unit_visible(use->unit_name)) continue;
+                    auto it = infos_.find(use->unit_name);
+                    if (it != infos_.end()) add_funcs(it->second, true);
+                }
+                if (UnitInfo* stdn = std_info(); stdn && cur_->name != "std.string") {
+                    add_funcs(*stdn, true);
+                }
+            }
+
+            if (!cands.empty()) {
+                FuncDecl* chosen = choose_overload(cands, raw_args(c->args),
+                                                   "function `" + nm->ident + "`", c);
+                nm->kind = "func";
+                nm->sym = chosen;
+                target = chosen;
+            } else {
+                // struct 构造：当前 unit 优先，再找 use 的 unit 的 public 类型
+                TypePtr st = find_type_named(cur_->name, nm->ident, false);
+                if (!st) {
+                    std::string src;
+                    for (auto& use : cur_->uses) {
+                        if (!unit_visible(use->unit_name)) continue;
+                        TypePtr t = find_type_named(use->unit_name, nm->ident, true);
+                        if (!t) continue;
+                        if (st) {
+                            err("type `" + nm->ident + "` is ambiguous: `" + src + "` and `" +
+                                    use->unit_name + "`; use a qualified name",
+                                c);
+                        }
+                        st = t;
+                        src = use->unit_name;
+                    }
+                }
+                if (!st && std_info()) st = find_type_named("std.string", nm->ident, true);
+                if (st) {
+                    if (st->kind != TypeKind::Struct) {
+                        err("`" + nm->ident + "` is not a struct and cannot be constructed by value", c);
+                    }
+                    struct_ty = st;
+                } else if (lookup_enum_const(nm->ident) != nullptr) {
+                    err("`" + nm->ident + "` is an enum member and cannot be called", c);
+                } else {
+                    err("undefined function `" + nm->ident + "`", c);
+                }
+            }
+        } else if (auto m = dynamic_cast<Member*>(callee)) {
+            Expr* obj = m->obj.get();
+            // super.method(...)
+            if (auto on = dynamic_cast<Name*>(obj);
+                on && on->ident == "super" && lookup_local("super") == nullptr) {
+                if (!cur_class_ || !cur_class_->base) err("the current class has no base class", c);
+                std::vector<const MethodSig*> ms;
+                collect_class_methods(cur_class_->base, m->name, ms);
+                if (ms.empty()) err("base class has no method `" + m->name + "`", c);
+                auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
+                if (sig->is_abstract) {
+                    err("abstract method `" + m->name + "` cannot be called via `super`", c);
+                }
+                if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
+                    err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
+                }
+                check_method_args(c, sig, "method `" + m->name + "`");
+                m->kind = "method";
+                c->callee_kind = "super";
+                c->method = sig;
+                return sig->ret;
+            }
+
+            std::string uname;
+            if (auto nm = dynamic_cast<Name*>(obj)) {
+                if (lookup_local(nm->ident) == nullptr && infos_.count(nm->ident)) {
+                    uname = nm->ident;
+                }
+            }
+            if (uname.empty()) {
+                TypePtr ot = check_expr(obj);
+                if (is_reference_type(ot)) {
+                    std::vector<const MethodSig*> ms;
+                    collect_methods(ot, m->name, ms);
+                    if (ms.empty()) {
+                        err("type `" + ot->str() + "` has no method `" + m->name + "`", c);
+                    }
+                    auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
+                    if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
+                        err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
+                    }
+                    check_method_args(c, sig, "method `" + m->name + "`");
+                    m->kind = "method";
+                    c->callee_kind = "method";
+                    c->method = sig;
+                    return sig->ret;
+                }
+                if (ot && ot->kind == TypeKind::Struct) {
+                    std::vector<const MethodSig*> ms;
+                    collect_methods(ot, m->name, ms);
+                    if (ms.empty()) {
+                        err("struct `" + ot->str() + "` has no method `" + m->name + "`", c);
+                    }
+                    auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
+                    if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
+                        err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
+                    }
+                    check_method_args(c, sig, "method `" + m->name + "`");
+                    m->kind = "method";
+                    c->callee_kind = "struct_method";
+                    c->method = sig;
+                    return sig->ret;
+                }
+                err("`" + m->name + "` is not a function", c);
+            }
+            if (!unit_imported(uname)) err("unit `" + uname + "` is not imported with `use`", c);
+            if (!unit_visible(uname)) {
+                err("unit `" + uname + "` is only visible within its library; cross-library use requires `public unit`", c);
+            }
+
+            UnitInfo& ui = infos_.at(uname);
+            auto f = ui.funcs.find(m->name);
+            if (f == ui.funcs.end() || f->second.empty()) {
+                err("unit `" + uname + "` has no function `" + m->name + "`", c);
+            }
+            FuncDecl* chosen = choose_overload(f->second, raw_args(c->args),
+                                               "function `" + uname + "." + m->name + "`", c);
+            if (!chosen->is_public) {
+                err("function `" + uname + "." + m->name + "` is not declared public", c);
+            }
+            auto nm = dynamic_cast<Name*>(obj);
+            nm->kind = "unit";
+            nm->ty = Type::make_module(uname);
+            m->kind = "func";
+            m->sym = chosen;
+            target = chosen;
+        } else {
+            err("only functions and struct constructors can be called", c);
+        }
+
+        if (struct_ty) {
+            if (struct_ty->is_union) {
+                err("union `" + struct_ty->str() + "` cannot be constructed with `T(...)`; use `{ member = value }`", c);
+            }
+            if (!struct_ty->ctors.empty()) {
+                if (!c->named.empty()) err("struct constructors do not support named arguments", c);
+                if (struct_ty->has_dtor && c != direct_init_expr_) {
+                    err("a struct with a destructor can only be constructed in a declaration initializer", c);
+                }
+                const auto* chosen = choose_ctor(struct_ty->ctors, raw_args(c->args),
+                                                 "struct `" + struct_ty->str() + "`", c);
+                const size_t ci = static_cast<size_t>(chosen - struct_ty->ctors.data());
+                if (ci < struct_ty->ctor_is_public.size() && !struct_ty->ctor_is_public[ci] &&
+                    (!cur_ || cur_->name != struct_ty->unit)) {
+                    err("constructor is not declared public and cannot be called from another unit", c);
+                }
+                for (size_t i = 0; i < c->args.size(); ++i) {
+                    check_assign(c->args[i].get(), (*chosen)[i], "constructor argument");
+                }
+                c->callee_kind = "struct_ctor";
+                c->ctor = struct_ty;
+                c->ctor_pty = chosen;
+                return struct_ty;
+            }
+            c->callee_kind = "ctor";
+            c->ctor = struct_ty;
+            check_ctor_args(c, struct_ty);
+            return struct_ty;
+        }
+
+        if (!target) err("only functions and struct constructors can be called", c);
+        c->callee_kind = "func";
+        c->func = target;
+        const auto& params = target->pty;
+
+        if (!c->named.empty()) {
+            err("function calls do not support named arguments (only struct construction does)", c);
+        }
+        if (c->args.size() != params.size() && !target->is_varargs) {
+            err("function `" + target->name + "` expects " + std::to_string(params.size()) +
+                    " arguments, but " + std::to_string(c->args.size()) + " were given",
+                c);
+        }
+        if (target->is_varargs && c->args.size() < params.size()) {
+            err("variadic function `" + target->name + "` expects at least " +
+                    std::to_string(params.size()) + " arguments, but " +
+                    std::to_string(c->args.size()) + " were given",
+                c);
+        }
+        for (size_t i = 0; i < params.size() && i < c->args.size(); ++i) {
+            check_assign(c->args[i].get(), params[i], "argument of call to `" + target->name + "`");
+        }
+        if (target->is_varargs) {
+            // `...` 的实参没有静态类型：只要求 ABI 可传递（标量 / 指针 / POD）。
+            // `string` 按 C 语义传底层 `const char*`（对应 printf 的 %s）。
+            for (size_t i = params.size(); i < c->args.size(); ++i) {
+                TypePtr at = c->args[i]->ty;
+                if (!at) continue;
+                if (is_str(at)) continue;
+                if (at->needs_cleanup() || is_reference_type(at)) {
+                    err("variadic argument " + std::to_string(i + 1) + " cannot be `" + at->str() +
+                            "`: `...` cannot carry values that need reference counting",
+                        c->args[i].get());
+                }
+            }
+        }
+        return target->rty;
+    }
+
+    int Sema::rank_arg(Expr* e, const TypePtr& aty, const TypePtr& p) {
+        if (!p || !aty) return -1;
+        if (auto il = dynamic_cast<IntLit*>(e)) {
+            if (same_type(aty, p)) return 0;
+            if (is_numeric(p) && promote_int_literal(il->value, p)) return 1;
+            return -1;
+        }
+        if (auto fl = dynamic_cast<FloatLit*>(e)) {
+            (void)fl;
+            if (same_type(aty, p)) return 0;
+            if (p->kind == TypeKind::Prim && (p->name == "float" || p->name == "double")) return 1;
+            return -1;
+        }
+        if (dynamic_cast<NullLit*>(e)) {
+            if (p->kind == TypeKind::Ptr || p->kind == TypeKind::Slice ||
+                p->kind == TypeKind::Class || p->kind == TypeKind::Interface) {
+                return 0;
+            }
+            return -1;
+        }
+        if (same_type(aty, p)) return 0;
+        if (implicit_ok(aty, p)) return 1;
+        return -1;
+    }
+
+    bool Sema::dominates(const std::vector<int>& a, const std::vector<int>& b) {
+        bool strict = false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            if (a[i] > b[i]) return false;
+            if (a[i] < b[i]) strict = true;
+        }
+        return strict;
+    }
+
+    bool Sema::is_user_type(const TypePtr& t) {
+        return t && (t->kind == TypeKind::Struct || t->kind == TypeKind::Class ||
+                     t->kind == TypeKind::Interface);
+    }
+
+    bool Sema::has_ref_fields(const TypePtr& t) {
+        if (!t) return false;
+        switch (t->kind) {
+            case TypeKind::Class:
+            case TypeKind::Interface:
+            case TypeKind::Slice: return true;
+            case TypeKind::Array: return has_ref_fields(t->elem);
+            case TypeKind::Struct:
+                for (const auto& f : t->fields) {
+                    if (f.weak) continue;  // weak 不持有引用
+                    if (has_ref_fields(f.type)) return true;
+                }
+                return false;
+            default: return false;
+        }
+    }
+
+    std::vector<FuncDecl*> Sema::collect_operators(const std::string& sym,
+                                             const std::vector<TypePtr>& operands) {
+        std::unordered_set<std::string> scope;
+        if (cur_) {
+            scope.insert(cur_->name);
+            for (auto& u : cur_->uses) scope.insert(u->unit_name);
+        }
+        for (auto& t : operands) {
+            if (t && (t->kind == TypeKind::Struct || t->kind == TypeKind::Class ||
+                      t->kind == TypeKind::Enum || t->kind == TypeKind::Interface)) {
+                if (!t->unit.empty()) scope.insert(t->unit);
+            }
+        }
+
+        std::vector<FuncDecl*> out;
+        const std::string name = "operator" + sym;
+        for (auto& entry : infos_) {
+            if (!scope.empty() && !scope.count(entry.first)) continue;
+            auto it = entry.second.funcs.find(name);
+            if (it != entry.second.funcs.end()) {
+                out.insert(out.end(), it->second.begin(), it->second.end());
+            }
+        }
+        return out;
+    }
+
+    std::vector<Expr*> Sema::raw_args(const std::vector<ExprPtr>& v) {
+        std::vector<Expr*> out;
+        out.reserve(v.size());
+        for (auto& e : v) out.push_back(e.get());
+        return out;
+    }
+
+    FuncDecl* Sema::choose_overload(const std::vector<FuncDecl*>& cands,
+                              const std::vector<Expr*>& args, const std::string& what,
+                              Node* at) {
+        std::vector<TypePtr> atys;
+        for (auto* a : args) atys.push_back(check_expr(a));
+
+        std::vector<FuncDecl*> ok;
+        std::vector<std::vector<int>> ranks;
+        for (auto* f : cands) {
+            if (f->is_varargs ? f->pty.size() > args.size() : f->pty.size() != args.size()) continue;
+            std::vector<int> r;
+            bool good = true;
+            for (size_t i = 0; i < f->pty.size(); ++i) {
+                int k = rank_arg(args[i], atys[i], f->pty[i]);
+                if (k < 0) { good = false; break; }
+                r.push_back(k);
+            }
+            if (good) { ok.push_back(f); ranks.push_back(std::move(r)); }
+        }
+        if (ok.empty()) {
+            if (cands.size() == 1 && cands[0]->pty.size() == args.size()) {
+                for (size_t i = 0; i < args.size(); ++i) {
+                    check_assign(args[i], cands[0]->pty[i], what + " argument");
+                }
+            }
+            err("no matching overload of " + what, at);
+        }
+
+        int best = -1;
+        for (size_t i = 0; i < ok.size(); ++i) {
+            bool unique = true;
+            for (size_t j = 0; j < ok.size(); ++j) {
+                if (i == j) continue;
+                if (dominates(ranks[j], ranks[i]) || ranks[j] == ranks[i]) {
+                    unique = false;
+                    break;
+                }
+            }
+            if (unique) {
+                if (best >= 0) { best = -1; break; }
+                best = static_cast<int>(i);
+            }
+        }
+        if (best < 0) err("ambiguous overload call of `" + what + "`", at);
+        return ok[static_cast<size_t>(best)];
+    }
+
+    void Sema::collect_class_methods(const TypePtr& t, const std::string& name,
+                               std::vector<const MethodSig*>& out, int depth) {
+        if (!t || depth > 256) return;
+        for (auto& m : t->methods) {
+            if (m.name != name) continue;
+            bool dup = false;
+            for (auto* e : out) {
+                if (same_sig(*e, m)) { dup = true; break; }
+            }
+            if (!dup) out.push_back(&m);
+        }
+        if (t->kind == TypeKind::Class && t->base) {
+            collect_class_methods(t->base, name, out, depth + 1);
+        }
+    }
+
+    void Sema::collect_methods(const TypePtr& t, const std::string& name,
+                         std::vector<const MethodSig*>& out, int depth) {
+        if (!t || depth > 256) return;
+        for (auto& m : t->methods) {
+            if (m.name != name) continue;
+            bool dup = false;
+            for (auto* e : out) {
+                if (same_sig(*e, m)) { dup = true; break; }
+            }
+            if (!dup) out.push_back(&m);  // 派生类/先访问者优先，覆盖基类同签名条目
+        }
+        if (t->kind == TypeKind::Class && t->base) {
+            collect_methods(t->base, name, out, depth + 1);
+        }
+        for (auto& i : t->interfaces) {
+            collect_methods(i, name, out, depth + 1);
+        }
+    }
+
+    const MethodSig* Sema::choose_method(const std::vector<const MethodSig*>& cands,
+                                   const std::vector<Expr*>& args,
+                                   const std::string& what, Node* at) {
+        std::vector<TypePtr> atys;
+        for (auto* a : args) atys.push_back(check_expr(a));
+
+        std::vector<const MethodSig*> ok;
+        std::vector<std::vector<int>> ranks;
+        for (auto* sig : cands) {
+            if (sig->params.size() != args.size()) continue;
+            std::vector<int> r;
+            bool good = true;
+            for (size_t i = 0; i < args.size(); ++i) {
+                int k = rank_arg(args[i], atys[i], sig->params[i]);
+                if (k < 0) { good = false; break; }
+                r.push_back(k);
+            }
+            if (good) { ok.push_back(sig); ranks.push_back(std::move(r)); }
+        }
+        if (ok.empty()) err("no matching overload of " + what, at);
+
+        int best = -1;
+        for (size_t i = 0; i < ok.size(); ++i) {
+            bool unique = true;
+            for (size_t j = 0; j < ok.size(); ++j) {
+                if (i == j) continue;
+                if (dominates(ranks[j], ranks[i]) || ranks[j] == ranks[i]) {
+                    unique = false;
+                    break;
+                }
+            }
+            if (unique) {
+                if (best >= 0) { best = -1; break; }
+                best = static_cast<int>(i);
+            }
+        }
+        if (best < 0) err("ambiguous overload call of `" + what + "`", at);
+        return ok[static_cast<size_t>(best)];
+    }
+
+    const std::vector<TypePtr>* Sema::choose_ctor(const std::vector<std::vector<TypePtr>>& ctors,
+                                            const std::vector<Expr*>& args,
+                                            const std::string& what, Node* at) {
+        std::vector<TypePtr> atys;
+        for (auto* a : args) atys.push_back(check_expr(a));
+
+        std::vector<const std::vector<TypePtr>*> ok;
+        std::vector<std::vector<int>> ranks;
+        for (auto& cs : ctors) {
+            if (cs.size() != args.size()) continue;
+            std::vector<int> r;
+            bool good = true;
+            for (size_t i = 0; i < args.size(); ++i) {
+                int k = rank_arg(args[i], atys[i], cs[i]);
+                if (k < 0) { good = false; break; }
+                r.push_back(k);
+            }
+            if (good) { ok.push_back(&cs); ranks.push_back(std::move(r)); }
+        }
+        if (ok.empty()) err("no matching constructor for " + what, at);
+
+        int best = -1;
+        for (size_t i = 0; i < ok.size(); ++i) {
+            bool unique = true;
+            for (size_t j = 0; j < ok.size(); ++j) {
+                if (i == j) continue;
+                if (dominates(ranks[j], ranks[i]) || ranks[j] == ranks[i]) {
+                    unique = false;
+                    break;
+                }
+            }
+            if (unique) {
+                if (best >= 0) { best = -1; break; }
+                best = static_cast<int>(i);
+            }
+        }
+        if (best < 0) err("ambiguous constructor call of `" + what + "`", at);
+        return ok[static_cast<size_t>(best)];
+    }
+
+    void Sema::check_method_args(Call* c, const MethodSig* sig, const std::string& what) {
+        if (!c->named.empty()) err("method calls do not support named arguments", c);
+        if (c->args.size() != sig->params.size()) {
+            err(what + " expects " + std::to_string(sig->params.size()) + " arguments, but " +
+                    std::to_string(c->args.size()) + " were given",
+                c);
+        }
+        for (size_t i = 0; i < c->args.size(); ++i) {
+            check_assign(c->args[i].get(), sig->params[i], what + " argument");
+        }
+    }
+
+    TypePtr Sema::check_super_call(Call* c) {
+        if (!in_ctor_ || !super_ok_) {
+            err("`super(...)` must be the first statement of a constructor", c);
+        }
+        if (!cur_class_ || !cur_class_->base) err("the current class has no base class", c);
+        if (!c->named.empty()) err("constructor calls do not support named arguments", c);
+        const auto& ctors = cur_class_->base->ctors;
+        if (ctors.empty()) {
+            if (!c->args.empty()) err("base class has no matching constructor", c);
+        } else {
+            const auto* chosen = choose_ctor(ctors, raw_args(c->args), "base class", c);
+            for (size_t i = 0; i < c->args.size(); ++i) {
+                check_assign(c->args[i].get(), (*chosen)[i], "super argument");
+            }
+            c->ctor_pty = chosen;
+        }
+        c->callee_kind = "super";
+        return t_void();
+    }
+
+    [[noreturn]] void Sema::err_slice_elem_align(const TypePtr& elem, const Node* node) const {
+        err("type `" + elem->str() + "` has align(" + std::to_string(type_align(elem)) +
+                ") greater than 8: the data area of a dynamic array follows a 24-byte header, so elements can be aligned to at most 8 bytes; "
+                "use a fixed-size array or a pointer instead, or lower `align(N)`",
+            node);
+    }
+
+    TypePtr Sema::check_new(NewExpr* ne) {
+        TypePtr t = resolve_type(ne->type.get(), cur_);
+        if (ne->is_array) {
+            if (is_void(t)) err("dynamic array element cannot be void", ne);
+            if (ne->dims.empty()) err("dynamic array is missing its length", ne);
+            for (auto& d : ne->dims) {
+                TypePtr ct = check_expr(d.get());
+                if (!(ct && ct->is_integer())) {
+                    err("dynamic array length must be an integer", d.get());
+                }
+            }
+            if (t->kind == TypeKind::Struct && t->has_dtor) {
+                err("struct `" + t->str() +
+                        "` has a destructor and cannot be a dynamic array element (element construction and destruction are not implemented)",
+                    ne);
+            }
+            if (!ne->args.empty() || !ne->named.empty()) {
+                err("dynamic arrays cannot take constructor arguments", ne);
+            }
+            ne->class_ty = t;
+            if (ne->jagged_rank > 0) {
+                if (ne->dims.size() != 1) {
+                    err("a jagged array `new T[m][]` creates one dimension at a time; "
+                        "fill rows in a loop for two dimensions, or use `new T[m,n]` for a rectangular array",
+                        ne);
+                }
+                TypePtr row = t;
+                for (int i = 0; i < ne->jagged_rank; ++i) row = Type::make_slice(row);
+                ne->elem_ty = row;  // 外层数组的元素：T[]/T[][]/...
+                return Type::make_slice(row);
+            }
+            if (type_align(t) > 8) err_slice_elem_align(t, ne);
+            ne->elem_ty = t;
+            return Type::make_slice(t, false, static_cast<int>(ne->dims.size()));
+        }
+        if (t->kind != TypeKind::Class) err("`new` can only be used with a class or a dynamic array", ne);
+        if (t->is_abstract) err("abstract class `" + t->str() + "` cannot be instantiated with `new`", ne);
+        if (!ne->named.empty()) err("constructors do not support named arguments yet", ne);
+
+        const auto& ctors = t->ctors;
+        ne->has_ctor = !ctors.empty();
+        if (ctors.empty()) {
+            if (!ne->args.empty()) err("class `" + t->str() + "` has no matching constructor", ne);
+        } else {
+            const auto* chosen = choose_ctor(ctors, raw_args(ne->args), "class `" + t->str() + "`", ne);
+            const size_t idx = static_cast<size_t>(chosen - ctors.data());
+            if (idx < t->ctor_is_public.size() && !t->ctor_is_public[idx] &&
+                (!cur_ || cur_->name != t->unit)) {
+                err("constructor is not declared public and cannot be invoked with `new` from another unit", ne);
+            }
+            for (size_t i = 0; i < ne->args.size(); ++i) {
+                check_assign(ne->args[i].get(), (*chosen)[i], "constructor argument");
+            }
+            ne->ctor_pty = *chosen;
+        }
+        ne->class_ty = t;
+        return t;
+    }
+
+    void Sema::check_ctor_args(Call* c, const TypePtr& ty) {
+        const auto& fields = ty->fields;
+
+        // 跨 unit 的 `S(...)` 构造要求字段全部 public
+        if (cur_ && cur_->name != ty->unit) {
+            for (auto& f : fields) {
+                if (!f.is_public) {
+                    err("field `" + f.name + "` of struct `" + ty->str() +
+                            "` is not declared public and cannot be constructed from another unit",
+                        c);
+                }
+            }
+        }
+
+        if (c->args.empty() && c->named.empty()) {
+            c->field_order.clear();
+            return;
+        }
+
+        if (!c->named.empty()) {
+            std::unordered_map<std::string, size_t> fmap;
+            for (size_t i = 0; i < fields.size(); ++i) fmap.emplace(fields[i].name, i);
+
+            std::vector<int> order;
+            std::unordered_set<std::string> seen;
+            for (auto& [n, e] : c->named) {
+                auto it = fmap.find(n);
+                if (it == fmap.end()) {
+                    err("struct `" + ty->str() + "` has no field `" + n + "`", c);
+                }
+                if (!seen.insert(n).second) err("field `" + n + "` is initialized more than once", c);
+                const size_t idx = it->second;
+                order.push_back(static_cast<int>(idx));
+                check_assign(e.get(), fields[idx].type, "construction of `" + ty->str() + "`");
+            }
+            if (order.size() != fields.size()) {
+                err("construction of `" + ty->str() + "` must initialize every field", c);
+            }
+            c->field_order = std::move(order);
+            return;
+        }
+
+        if (c->args.size() != fields.size()) {
+            err("construction of `" + ty->str() + "` expects " + std::to_string(fields.size()) +
+                    " arguments, but " + std::to_string(c->args.size()) + " were given",
+                c);
+        }
+        c->field_order.clear();
+        for (size_t i = 0; i < fields.size(); ++i) {
+            check_assign(c->args[i].get(), fields[i].type, "construction of `" + ty->str() + "`");
+            c->field_order.push_back(static_cast<int>(i));
+        }
+    }
+
+    TypePtr Sema::check_builtin(Call* c, const std::string& name) {
+        c->callee_kind = "builtin";
+        c->builtin = name;
+        if (!c->named.empty()) err("builtin function `" + name + "` does not support named arguments", c);
+
+        if (name == "alloc") {
+            if (c->args.size() != 1) err("`alloc(bytes)` takes 1 argument", c);
+            if (!is_integer(check_expr(c->args[0].get()))) {
+                err("size passed to `alloc` must be an integer", c);
+            }
+            return Type::make_ptr(t_void());
+        }
+        if (name == "realloc") {
+            if (c->args.size() != 2) err("`realloc(p, bytes)` takes 2 arguments", c);
+            TypePtr p0 = check_expr(c->args[0].get());
+            if (!p0 || p0->kind != TypeKind::Ptr) {
+                err("first argument of `realloc` must be a pointer", c);
+            }
+            if (!is_integer(check_expr(c->args[1].get()))) {
+                err("size passed to `realloc` must be an integer", c);
+            }
+            return Type::make_ptr(t_void());
+        }
+        if (name == "free") {
+            if (c->args.size() != 1) err("`free(p)` takes 1 argument", c);
+            TypePtr p0 = check_expr(c->args[0].get());
+            if (!p0 || (p0->kind != TypeKind::Ptr && p0->kind != TypeKind::Null)) {
+                err("argument of `free` must be a pointer", c);
+            }
+            return t_void();
+        }
+        err("unknown builtin function `" + name + "`", c);
+    }
+
+    bool Sema::is_lvalue(Expr* e) {
+        if (!e) return false;
+        if (auto nm = dynamic_cast<Name*>(e)) {
+            return nm->ident != "true" && nm->ident != "false" && nm->ident != "null";
+        }
+        if (dynamic_cast<Index*>(e)) return true;
+        if (auto m = dynamic_cast<Member*>(e)) {
+            auto nm = dynamic_cast<Name*>(m->obj.get());
+            if (!nm) return true;
+            // 局部变量 / 本 unit 全局变量优先于同名 unit（`t.c = x` 中 t 是变量而不是 unit）
+            if (lookup_local(nm->ident)) return true;
+            if (info().globals.count(nm->ident)) return true;
+            return !infos_.count(nm->ident);
+        }
+        if (auto u = dynamic_cast<Unary*>(e)) return u->op == "*";
+        return false;
+    }
+
+    bool Sema::rooted_at_reference(Expr* e) {
+        while (e) {
+            if (auto m = dynamic_cast<Member*>(e)) {
+                e = m->obj.get();
+                continue;
+            }
+            if (auto ix = dynamic_cast<Index*>(e)) {
+                e = ix->base.get();
+                continue;
+            }
+            break;
+        }
+        if (!e || !e->ty) return false;
+        TypePtr t = e->ty;
+        if (is_reference_type(t)) return true;
+        if (t->kind == TypeKind::Array || t->kind == TypeKind::Slice) {
+            TypePtr el = t->elem;
+            while (el && (el->kind == TypeKind::Array || el->kind == TypeKind::Slice)) {
+                el = el->elem;
+            }
+            return is_reference_type(el);
+        }
+        return false;
+    }
+
+    void Sema::check_entry() {
+        auto it = infos_.find(entry_);
+        if (it == infos_.end()) throw SemaError("cannot find entry unit `" + entry_ + "`");
+        UnitInfo& ui = it->second;
+        // Python 版这里用 self.cur（此时是最后一个被检查的 unit）取 filename，
+        // 可能指错文件；这里显式指向入口 unit。
+        cur_ = ui.unit;
+
+        auto f = ui.funcs.find("main");
+        if (f == ui.funcs.end() || f->second.empty()) {
+            throw SemaError("unit `" + entry_ + "` has no `main` function");
+        }
+        FuncDecl* main = nullptr;
+        for (auto* cand : f->second) {
+            if (cand->params.empty()) {
+                main = cand;
+                break;
+            }
+        }
+        if (!main) {
+            // `int main(int argc, char** argv)`
+            for (auto* cand : f->second) {
+                if (cand->params.size() == 2) {
+                    main = cand;
+                    break;
+                }
+            }
+        }
+        if (!main) main = f->second.front();
+        if (!main->rty) err("`main` is missing its return type", main);
+        if (main->rty->str() != "int") err("`main` must return `int`", main);
+        if (main->params.empty()) return;
+        if (main->params.size() != 2) {
+            err("`main` must have either no parameters or exactly 2: `(int argc, char** argv)`", main);
+        }
+        // 第二个参数必须是 `char**`（argv 由 CRT 提供，最后一个元素是 null）
+        static auto is_char = [](const TypePtr& t) {
+            return t && t->kind == TypeKind::Prim && t->name == "char";
+        };
+        const TypePtr& p0 = main->pty[0];
+        const TypePtr& p1 = main->pty[1];
+        bool ok0 = p0 && same_type(p0, t_int());
+        bool ok1 = p1 && p1->kind == TypeKind::Ptr && p1->elem &&
+                   p1->elem->kind == TypeKind::Ptr && is_char(p1->elem->elem);
+        if (!ok0 || !ok1) {
+            err("`main` parameters must be `(int argc, char** argv)`", main);
+        }
+    }
+}  // namespace muc_detail

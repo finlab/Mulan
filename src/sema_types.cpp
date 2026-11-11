@@ -1,0 +1,547 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Zhang Guolong
+
+// 本文件包含 类型解析、作用域与 unit 检查（Sema 成员函数定义）。
+#include "sema_impl.hpp"
+
+namespace muc_detail {
+
+    TypePtr Sema::resolve_type(const TypeSpec* spec, Unit* u) {
+        if (!spec) err("missing type");
+        switch (spec->kind) {
+            case TypeSpec::K::Named: {
+                TypePtr t = resolve_named_type(spec->name, u, spec);
+                // C 模型：prim 的 const 需要独立类型节点（prim 工厂有单例缓存，不能就地改）
+                if (spec->is_const && t && t->kind == TypeKind::Prim) {
+                    auto c = std::make_shared<Type>(*t);
+                    c->is_const = true;
+                    return c;
+                }
+                return t;
+            }
+            case TypeSpec::K::Ptr: {
+                TypePtr elem = resolve_type(spec->elem.get(), u);
+                if (is_reference_type(elem)) {
+                    err_ts("pointers to class or interface types are not supported (reference types are already handles)", spec);
+                }
+                return Type::make_ptr(elem, spec->is_const);
+            }
+            case TypeSpec::K::Slice: {
+                TypePtr elem = resolve_type(spec->elem.get(), u);
+                if (is_void(elem)) err_ts("dynamic array element cannot be void", spec);
+                if (noncopyable_struct(elem)) {
+                    err_ts("struct `" + elem->str() +
+                               "` has a destructor and cannot be a dynamic array element",
+                           spec);
+                }
+                return Type::make_slice(elem, spec->is_const, spec->rank);
+            }
+            case TypeSpec::K::Array: {
+                TypePtr elem = resolve_type(spec->elem.get(), u);
+                if (is_void(elem)) err_ts("array element cannot be void", spec);
+                TypePtr base = elem;
+                while (base && base->kind == TypeKind::Array) base = base->elem;
+                if (noncopyable_struct(base)) {
+                    err_ts("struct `" + base->str() +
+                               "` has a destructor and cannot be an array element (array destruction is not implemented)",
+                           spec);
+                }
+                return Type::make_array(elem, spec->size);
+            }
+        }
+        err_ts("unknown type " + spec_text(spec), spec);
+    }
+
+    TypePtr Sema::find_type_named(const std::string& unit, const std::string& name,
+                            bool require_pub) const {
+        auto it = infos_.find(unit);
+        if (it == infos_.end()) return nullptr;
+        const UnitInfo& ui = it->second;
+        auto ok = [&](bool is_pub) { return !require_pub || is_pub; };
+        if (auto s = ui.structs.find(name); s != ui.structs.end()) {
+            return ok(s->second->is_public) ? s->second->ty : nullptr;
+        }
+        if (auto e = ui.enums.find(name); e != ui.enums.end()) {
+            return ok(e->second->is_public) ? e->second->ty : nullptr;
+        }
+        if (auto c = ui.classes.find(name); c != ui.classes.end()) {
+            return ok(c->second->is_public) ? c->second->ty : nullptr;
+        }
+        if (auto i = ui.interfaces.find(name); i != ui.interfaces.end()) {
+            return ok(i->second->is_public) ? i->second->ty : nullptr;
+        }
+        return nullptr;
+    }
+
+    TypePtr Sema::resolve_named_type(const std::string& name, Unit* u, const TypeSpec* spec) {
+        if (name == "void") return t_void();
+        if (is_prim_name(name)) return Type::make_prim(name);
+
+        // 多段 unit 名：从最长前缀开始匹配（`lib.a.b.T` → unit `lib.a.b` + 类型 `T`）
+        for (std::size_t pos = name.rfind('.'); pos != std::string::npos;) {
+            const std::string un = name.substr(0, pos);
+            const std::string tn = name.substr(pos + 1);
+            auto it = infos_.find(un);
+            if (it != infos_.end()) {
+                if (un != u->name && !unit_imported(un)) {
+                    err_ts("unit `" + un + "` is not imported with `use`", spec);
+                }
+                if (!unit_visible(un)) {
+                    err_ts("unit `" + un + "` is only visible within its library; cross-library use requires `public unit`", spec);
+                }
+                UnitInfo& ui = it->second;
+                auto need_pub = [&](bool is_pub) {
+                    if (un != u->name && !is_pub) {
+                        err_ts("type `" + un + "." + tn + "` is not declared public", spec);
+                    }
+                };
+                if (auto s = ui.structs.find(tn); s != ui.structs.end()) {
+                    need_pub(s->second->is_public);
+                    return s->second->ty;
+                }
+                if (auto e = ui.enums.find(tn); e != ui.enums.end()) {
+                    need_pub(e->second->is_public);
+                    return e->second->ty;
+                }
+                if (auto c = ui.classes.find(tn); c != ui.classes.end()) {
+                    need_pub(c->second->is_public);
+                    return c->second->ty;
+                }
+                if (auto i = ui.interfaces.find(tn); i != ui.interfaces.end()) {
+                    need_pub(i->second->is_public);
+                    return i->second->ty;
+                }
+                err_ts("unit `" + un + "` has no type `" + tn + "`", spec);
+            }
+            if (pos == 0) break;
+            pos = name.rfind('.', pos - 1);
+        }
+
+        // 当前 unit 优先（含私有类型，本地遮蔽导入）
+        if (TypePtr t = find_type_named(u->name, name, false)) return t;
+
+        // 直接 use 的 unit：只收 public 类型；多个来源同名 → 使用点报歧义
+        TypePtr found;
+        std::string found_unit;
+        for (auto& use : u->uses) {
+            if (!unit_visible(use->unit_name)) continue;
+            TypePtr t = find_type_named(use->unit_name, name, true);
+            if (!t) continue;
+            if (found) {
+                err_ts("type `" + name + "` is ambiguous: `" + found_unit + "." + name + "` and `" +
+                           use->unit_name + "." + name + "`; use a qualified name",
+                       spec);
+            }
+            found = t;
+            found_unit = use->unit_name;
+        }
+        if (found) return found;
+        if (UnitInfo* stdn = std_info()) {
+            if (auto s = stdn->structs.find(name); s != stdn->structs.end()) {
+                if (!s->second->is_public)
+                    err_ts("type `std.string." + name + "` is not declared public", spec);
+                return s->second->ty;
+            }
+            if (auto e = stdn->enums.find(name); e != stdn->enums.end()) {
+                if (!e->second->is_public)
+                    err_ts("type `std.string." + name + "` is not declared public", spec);
+                return e->second->ty;
+            }
+            if (auto c = stdn->classes.find(name); c != stdn->classes.end()) {
+                if (!c->second->is_public)
+                    err_ts("type `std.string." + name + "` is not declared public", spec);
+                return c->second->ty;
+            }
+            if (auto i = stdn->interfaces.find(name); i != stdn->interfaces.end()) {
+                if (!i->second->is_public)
+                    err_ts("type `std.string." + name + "` is not declared public", spec);
+                return i->second->ty;
+            }
+        }
+        err_ts("unknown type `" + name + "`", spec);
+    }
+
+    TypePtr Sema::find_type_in_expr(const std::string& name, const Node* at) {
+        if (TypePtr t = find_type_named(cur_->name, name, false)) return t;
+        TypePtr found;
+        std::string found_unit;
+        for (auto& use : cur_->uses) {
+            if (!unit_visible(use->unit_name)) continue;
+            TypePtr t = find_type_named(use->unit_name, name, true);
+            if (!t) continue;
+            if (found && !same_type(found, t)) {
+                err("type `" + name + "` is ambiguous: `" + found_unit + "." + name + "` and `" +
+                        use->unit_name + "." + name + "`; use a qualified name",
+                    at);
+            }
+            if (!found) {
+                found = t;
+                found_unit = use->unit_name;
+            }
+        }
+        if (found) return found;
+        if (UnitInfo* stdn = std_info()) {
+            if (auto e = stdn->enums.find(name); e != stdn->enums.end() && e->second->is_public) {
+                return e->second->ty;
+            }
+        }
+        return nullptr;
+    }
+
+    EnumConst* Sema::find_enum_member(const TypePtr& et, const std::string& member) {
+        if (!et || et->kind != TypeKind::Enum) return nullptr;
+        auto it = infos_.find(et->unit);
+        if (it == infos_.end() || !it->second.unit) return nullptr;
+        for (auto& d : it->second.unit->decls) {
+            auto ed = dynamic_cast<EnumDecl*>(d.get());
+            if (!ed || ed->name != et->name) continue;
+            long long value = 0;
+            bool has = false;
+            for (auto& [m, v] : ed->members) {
+                if (v.has_value()) {
+                    value = *v;
+                    has = true;
+                } else if (!has) {
+                    value = 0;
+                    has = true;
+                } else {
+                    value += 1;
+                }
+                if (m == member) {
+                    return intern_enum_const(it->second.unit->name, ed->name, m, value,
+                                             ed->ty ? ed->ty : et);
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    ConstMember* Sema::find_const_member_in(const TypePtr& t, const std::string& name) {
+        TypePtr cur = t;
+        int guard = 0;
+        while (cur && (cur->kind == TypeKind::Struct || cur->kind == TypeKind::Class) &&
+               guard++ < 1024) {
+            auto it = infos_.find(cur->unit);
+            if (it == infos_.end() || !it->second.unit) return nullptr;
+            std::vector<std::unique_ptr<ConstMember>>* list = nullptr;
+            for (auto& d : it->second.unit->decls) {
+                if (cur->kind == TypeKind::Struct) {
+                    auto sd = dynamic_cast<StructDecl*>(d.get());
+                    if (sd && sd->name == cur->name) {
+                        list = &sd->const_members;
+                        break;
+                    }
+                } else {
+                    auto cd = dynamic_cast<ClassDecl*>(d.get());
+                    if (cd && cd->name == cur->name) {
+                        list = &cd->const_members;
+                        break;
+                    }
+                }
+            }
+            if (!list) return nullptr;
+            for (auto& cm : *list) {
+                if (cm->name == name) return cm.get();
+            }
+            if (cur->kind != TypeKind::Class) return nullptr;  // struct 没有基类
+            cur = cur->base;
+        }
+        return nullptr;
+    }
+
+    bool Sema::const_member_visible(const ConstMember* cm) const {
+        if (!cm) return false;
+        if (cm->is_public) return true;
+        return cur_ && cm->owner && cur_->name == cm->owner->unit;
+    }
+
+    bool Sema::has_any_const_member(const TypePtr& t) {
+        TypePtr cur = t;
+        int guard = 0;
+        while (cur && (cur->kind == TypeKind::Struct || cur->kind == TypeKind::Class) &&
+               guard++ < 1024) {
+            auto it = infos_.find(cur->unit);
+            if (it == infos_.end() || !it->second.unit) return false;
+            bool found = false;
+            size_t count = 0;
+            for (auto& d : it->second.unit->decls) {
+                if (cur->kind == TypeKind::Struct) {
+                    auto sd = dynamic_cast<StructDecl*>(d.get());
+                    if (sd && sd->name == cur->name) {
+                        found = true;
+                        count = sd->const_members.size();
+                        break;
+                    }
+                } else {
+                    auto cd = dynamic_cast<ClassDecl*>(d.get());
+                    if (cd && cd->name == cur->name) {
+                        found = true;
+                        count = cd->const_members.size();
+                        break;
+                    }
+                }
+            }
+            if (!found) return false;
+            if (count > 0) return true;
+            if (cur->kind != TypeKind::Class) return false;
+            cur = cur->base;
+        }
+        return false;
+    }
+
+    void Sema::push() { scopes_.emplace_back(); }
+
+    void Sema::pop() {
+        if (!scopes_.empty()) scopes_.pop_back();
+    }
+
+    LocalVar* Sema::lookup_local(const std::string& name) const {
+        for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+            auto f = it->find(name);
+            if (f != it->end()) return f->second;
+        }
+        return nullptr;
+    }
+
+    void Sema::declare_local(LocalVar* lv) {
+        if (scopes_.empty()) scopes_.emplace_back();
+        Scope& sc = scopes_.back();
+        if (sc.count(lv->name)) err("duplicate declaration of `" + lv->name + "`", lv);
+        sc[lv->name] = lv;
+    }
+
+    EnumConst* Sema::lookup_enum_const_in(const std::string& unit_name, const std::string& name,
+                                    bool require_pub) {
+        auto it = infos_.find(unit_name);
+        if (it == infos_.end()) return nullptr;
+        // 按声明顺序遍历（Python 的 dict 保留插入顺序）
+        for (auto& d : it->second.unit->decls) {
+            auto ed = dynamic_cast<EnumDecl*>(d.get());
+            if (!ed) continue;
+            if (require_pub && !ed->is_public) continue;
+            long long value = 0;
+            bool has = false;
+            for (auto& [m, v] : ed->members) {
+                if (v.has_value()) {
+                    value = *v;
+                    has = true;
+                } else if (!has) {
+                    value = 0;
+                    has = true;
+                } else {
+                    value += 1;
+                }
+                if (m == name) return intern_enum_const(unit_name, ed->name, m, value, ed->ty);
+            }
+        }
+        return nullptr;
+    }
+
+    EnumConst* Sema::lookup_enum_const(const std::string& name) {
+        return lookup_enum_const_in(cur_->name, name, false);
+    }
+
+    void Sema::check_unit(Unit* u) {
+        cur_ = u;
+        for (auto& d : u->decls) {
+            if (auto g = dynamic_cast<GlobalVar*>(d.get())) recover([&] { check_global(g); });
+        }
+        // 同名函数的签名不能完全重复（重载必须参数不同）
+        for (auto& entry : infos_.at(u->name).funcs) {
+            auto& vec = entry.second;
+            if (entry.first == "main" && vec.size() > 1) {
+                err("`main` cannot be overloaded (at most one `main` per unit)", vec[1]);
+            }
+            if (vec.size() > 1) {
+                bool hasExtern = false, hasBody = false;
+                for (auto* f : vec) {
+                    if (f->is_extern) hasExtern = true;
+                    else hasBody = true;
+                }
+                if (hasExtern && hasBody) {
+                    err("function `" + entry.first + "` cannot be declared both `extern` and normal", vec[1]);
+                }
+                if (hasExtern) err("`extern` function `" + entry.first + "` cannot be overloaded", vec[1]);
+            }
+            for (size_t i = 0; i < vec.size(); ++i) {
+                for (size_t j = i + 1; j < vec.size(); ++j) {
+                    bool same = vec[i]->pty.size() == vec[j]->pty.size();
+                    if (same) {
+                        for (size_t k = 0; k < vec[i]->pty.size(); ++k) {
+                            if (!same_type(vec[i]->pty[k], vec[j]->pty[k])) {
+                                same = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (same) err("duplicate signature of function `" + entry.first + "`", vec[j]);
+                }
+            }
+        }
+        for (auto& d : u->decls) {
+            auto f = dynamic_cast<FuncDecl*>(d.get());
+            if (!f || f->is_extern) continue;
+            recover([&] { check_func(f); });
+        }
+        for (auto& d : u->decls) {
+            if (auto c = dynamic_cast<ClassDecl*>(d.get())) recover([&] { check_class(c); });
+        }
+        for (auto& d : u->decls) {
+            if (auto sd = dynamic_cast<StructDecl*>(d.get())) recover([&] { check_struct(sd); });
+        }
+        for (auto& d : u->decls) {
+            if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) recover([&] { check_interface(i); });
+        }
+    }
+
+    void Sema::check_global(GlobalVar* g) {
+        if (!g->rty) err("global variable `" + g->name + "` is missing its type", g);
+        if (noncopyable_struct(g->rty)) {
+            err("struct `" + g->rty->str() +
+                    "` has a destructor and cannot be a global variable (no exit-time destruction)",
+                g);
+        }
+        if (g->rty->kind == TypeKind::Struct && g->rty->needs_cleanup() &&
+            !is_str(g->rty)) {
+            err("struct `" + g->rty->str() +
+                    "` has reference fields and cannot be a global variable (no exit-time destruction)",
+                g);
+        }
+        if (g->is_extern) {
+            if (g->init) err("`extern` variable `" + g->name + "` cannot have an initializer", g);
+            return;
+        }
+        if (!g->init) {
+            if (g->is_const) err("`const` variable `" + g->name + "` must be initialized", g);
+            g->zero = true;
+            return;
+        }
+        // 先试新的编译期求值器（const 与非 const 全局变量都适用，结果缓存给后端）；
+        // 算不出来再回退到旧的 is_const_expr（聚合初始化 / string 字面量等）
+        {
+            ConstVal v;
+            if (eval_global_const(g, cur_->name, v)) return;
+        }
+        if (!is_const_expr(g->init.get())) {
+            err("initializer of unit-level variable `" + g->name + "` must be a compile-time constant", g);
+        }
+        check_decl_init(g->zero, g->rty, g->init.get(), "global initialization", g);
+    }
+
+    bool Sema::guarantees_return(Stmt* s) {
+        if (!s) return false;
+        if (dynamic_cast<ReturnStmt*>(s)) return true;
+        if (auto b = dynamic_cast<Block*>(s)) {
+            if (b->stmts.empty()) return false;
+            return guarantees_return(b->stmts.back().get());
+        }
+        if (auto i = dynamic_cast<IfStmt*>(s)) {
+            if (!i->els) return false;
+            return guarantees_return(i->then.get()) && guarantees_return(i->els.get());
+        }
+        // 值域覆盖全部时，switch 的所有分支都返回才算保证返回
+        if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
+            if (!sw->has_else && !sw->enum_exhaustive) return false;
+            if (sw->arms.empty()) return false;
+            for (auto& a : sw->arms) {
+                if (!guarantees_return(a->body.get())) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    void Sema::check_operator_decl(FuncDecl* f) {
+        const std::string sym = f->name.substr(8);
+        const size_t n = f->pty.size();
+        const bool unary_or_binary = (sym == "-" || sym == "+");
+        if (sym == "~") {
+            if (n != 1) err("`operator~` takes 1 parameter", f);
+        } else if (sym == "[]") {
+            if (n != 2) err("`operator[]` takes 2 parameters (container, index)", f);
+        } else if (sym == "[]=") {
+            if (n != 3) err("`operator[]=` takes 3 parameters (container, index, value)", f);
+            if (!is_void(f->rty)) err("`operator[]=` must return void", f);
+        } else if (unary_or_binary) {
+            if (n != 1 && n != 2) err("`operator" + sym + "` takes 1 or 2 parameters", f);
+        } else {
+            static const char* allowed[] = {"*", "/", "%", "<", "<=", ">", ">=", "==",
+                                            "!=", "&", "|", "^", "<<", ">>"};
+            bool ok = false;
+            for (auto* a : allowed) {
+                if (sym == a) { ok = true; break; }
+            }
+            if (!ok) err("operator `" + sym + "` cannot be overloaded", f);
+            if (n != 2) err("binary operators take 2 parameters", f);
+        }
+
+        bool has_user = false;
+        for (auto& p : f->pty) {
+            if (p->kind == TypeKind::Struct || p->kind == TypeKind::Class) has_user = true;
+            if (p->kind == TypeKind::Void) err("operator parameter cannot be void", f);
+        }
+        if (!has_user) err("operators require at least one struct or class operand", f);
+
+        if (sym == "==" || sym == "!=") {
+            for (auto& p : f->pty) {
+                if (p->kind == TypeKind::Class || p->kind == TypeKind::Interface) {
+                    err("`" + sym + "` on class or interface types is always identity comparison and cannot be overloaded", f);
+                }
+            }
+        }
+
+        if (sym == "<" || sym == "<=" || sym == ">" || sym == ">=" || sym == "==" || sym == "!=") {
+            if (!(f->rty && f->rty->kind == TypeKind::Prim && f->rty->name == "bool")) {
+                err("comparison operators must return `bool`", f);
+            }
+        }
+
+        if (sym == "[]" || sym == "[]=") {
+            if (!(f->pty[0]->kind == TypeKind::Struct || f->pty[0]->kind == TypeKind::Class)) {
+                err("first parameter of `operator" + sym + "` must be a struct or class", f);
+            }
+            if (!is_integer(f->pty[1])) err("index of `operator[]` must be an integer", f);
+        }
+    }
+
+    void Sema::check_func(FuncDecl* f) {
+        if (!f->rty) err("function `" + f->name + "` is missing its return type", f);
+        if (f->is_operator) check_operator_decl(f);
+        cur_func_ = f;
+        cur_ret_ = f->rty;
+        cur_name_ = f->name;
+        cur_class_ = nullptr;
+        in_ctor_ = false;
+        in_dtor_ = false;
+        scopes_.clear();
+        auto_groups_.clear();
+        scopes_.emplace_back();
+        loop_depth_ = 0;
+        f->param_locals.clear();
+
+        for (size_t i = 0; i < f->params.size() && i < f->pty.size(); ++i) {
+            Param* p = f->params[i].get();
+            auto lv = std::make_unique<LocalVar>();
+            lv->name = p->name;
+            lv->rty = f->pty[i];
+            lv->line = p->line;
+            lv->col = p->col;
+            declare_local(lv.get());
+            f->param_locals.push_back(std::move(lv));
+        }
+
+        if (f->body) check_block(f->body.get());
+
+        // 非 void 函数必须保证有返回值；main 例外（掉出等价 return 0）
+        if (!is_void(f->rty) && f->cname != "main" && !guarantees_return(f->body.get())) {
+            err("function `" + f->name + "` may reach the end of its body without returning a value", f);
+        }
+
+        scopes_.clear();
+        auto_groups_.clear();
+        cur_func_ = nullptr;
+        cur_ret_ = nullptr;
+        cur_name_.clear();
+        this_local_.clear();
+    }
+}  // namespace muc_detail

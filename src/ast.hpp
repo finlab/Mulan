@@ -48,9 +48,11 @@ struct EnumConst;
 struct CtorDecl;
 struct DtorDecl;
 struct MethodDecl;
+struct ConstMember;
 
 // 名字解析结果（sema 写入，codegen 读取）
-using Sym = std::variant<std::monostate, LocalVar*, GlobalVar*, FuncDecl*, EnumConst*, Type*>;
+using Sym = std::variant<std::monostate, LocalVar*, GlobalVar*, FuncDecl*, EnumConst*,
+                         ConstMember*, Type*>;
 
 // ---------------------------------------------------------------- 表达式
 
@@ -219,6 +221,29 @@ struct GlobalVar : Decl {
     TypePtr rty;
     bool zero = false;
     std::string cname;
+    // 编译期求值结果（仅 unit 级 const；求值失败时保持 false，回退到 codegen 的常量生成）
+    bool const_evaluated = false;
+    bool const_evaluating = false;
+    bool const_is_float = false;
+    long long const_ival = 0;
+    double const_fval = 0;
+};
+
+// 类型级编译期常量：`const int MaxAge = 20;`（只允许出现在 struct / class 体内）
+// 不占实例存储：不进 fields、不影响 sizeof / alignof / 布局 / ABI，也不参与构造/析构/RC。
+struct ConstMember : Node {
+    std::string name;
+    TypeSpecPtr spec;
+    ExprPtr init;
+    bool is_public = true;
+    // sema
+    TypePtr rty;   // 声明的类型（标量或枚举）
+    TypePtr owner;  // 声明它的 struct / class 类型
+    bool evaluated = false;
+    bool evaluating = false;  // 惰性求值中（循环依赖检测）
+    bool is_float = false;
+    long long ival = 0;
+    double fval = 0;
 };
 
 struct StructDecl : Decl {
@@ -226,6 +251,7 @@ struct StructDecl : Decl {
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
     // 字段的最终可见性（parser 在解析时按默认值/分段标签/成员前缀算好）
     std::unordered_map<std::string, bool> field_visibility;
+    std::vector<std::unique_ptr<ConstMember>> const_members;  // 类型级编译期常量
     std::vector<std::unique_ptr<MethodDecl>> methods;  // 值类型方法（静态派发）
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
@@ -380,6 +406,7 @@ struct ClassDecl : Decl {
     std::vector<std::string> bases;  // 第一个是基类，其余是接口
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
     std::unordered_map<std::string, bool> field_visibility;  // 字段的最终可见性
+    std::vector<std::unique_ptr<ConstMember>> const_members;  // 类型级编译期常量
     std::vector<std::unique_ptr<MethodDecl>> methods;
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;

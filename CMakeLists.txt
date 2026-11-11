@@ -41,10 +41,27 @@ add_executable(muc
   src/loader.cpp
   src/lexer.cpp
   src/parser.cpp
+  src/parser_unit.cpp
+  src/parser_stmt.cpp
+  src/parser_expr.cpp
   src/types.cpp
   src/mangle.cpp
   src/sema.cpp
+  src/sema_decl.cpp
+  src/sema_types.cpp
+  src/sema_class1.cpp
+  src/sema_class2.cpp
+  src/sema_const.cpp
+  src/sema_expr.cpp
+  src/sema_call.cpp
   src/codegen_llvm.cpp
+  src/codegen_support.cpp
+  src/codegen_runtime.cpp
+  src/codegen_expr.cpp
+  src/codegen_expr2.cpp
+  src/codegen_stmt.cpp
+  src/codegen_class.cpp
+  src/codegen_func.cpp
 )
 
 separate_arguments(LLVM_DEFS_LIST NATIVE_COMMAND "${LLVM_DEFINITIONS}")

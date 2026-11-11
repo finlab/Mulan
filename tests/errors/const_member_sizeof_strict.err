@@ -1,0 +1,2 @@
+initializer of const member `C`: cannot assign usize to int
+initializer of `G`: cannot assign usize to int

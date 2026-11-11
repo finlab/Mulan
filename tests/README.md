@@ -58,4 +58,7 @@ python tests/run_tests.py --keep-c        # 保留生成的中间产物（默认
 | `arrays` | `int[N]` 聚合初始化补零、值语义拷贝与传参、`len`、`for v in arr`、`for ref v in arr` 改元素 |
 | `forin_index` | 索引形态用户容器（`length()` + `operator[](C, usize)`，struct/class）、`for i, x`（数组真实下标、区间相对偏移）、临时容器只求值一次、空容器 |
 | `strings` | `len`/`s[i]`（含下标字面量、for-in 遍历）、`char[N] = "..."` 拷贝+NUL、`puts(&buf[0])`、写 NUL 截断 |
+| `unicode_escape` | `\u{...}`：字符串按 UTF-8 编码（1–4 字节、字节值与 `len`）、原始 UTF-8 等价、字符字面量单字节码点（含 `U+FF` → `char` 为 −1）、大小写十六进制与前导零 |
+| `const_member` | 类型级 `const`：各标量类型、常量互引/一元/比较、`sizeof`/`alignof`、`Type.Name`、方法内裸名、基类常量与派生类裸名、private 同 unit、unit 级 const 引用类型级常量、`sizeof` 不因常量改变、无符号 `>>` 常量与运行期一致、局部变量遮蔽常量 |
+| `const_global_init` | 非 `const` 全局的常量初始化：`int g = 1 + 2;`、`int G = Cfg.K;`、枚举/浮点/`long`、引用 unit 级 const，且全局仍可变 |
 | `ptr` | `&x`/`*p`（含复合赋值）、指针参数、`p[i]` 与指针算术、`alloc/free`、`null` 判断、`readonly int*`、`(*pp).field` |
