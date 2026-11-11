@@ -100,6 +100,26 @@ double parse_double(const std::string& text) {
     return std::strtod(text.c_str(), nullptr);
 }
 
+// 把码点按 UTF-8 追加到字节串（`\u{...}` 写进字符串字面量时使用）
+void append_utf8(std::string& out, int cp) {
+    unsigned v = static_cast<unsigned>(cp);
+    if (v < 0x80) {
+        out.push_back(static_cast<char>(v));
+    } else if (v < 0x800) {
+        out.push_back(static_cast<char>(0xC0u | (v >> 6)));
+        out.push_back(static_cast<char>(0x80u | (v & 0x3Fu)));
+    } else if (v < 0x10000) {
+        out.push_back(static_cast<char>(0xE0u | (v >> 12)));
+        out.push_back(static_cast<char>(0x80u | ((v >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (v & 0x3Fu)));
+    } else {
+        out.push_back(static_cast<char>(0xF0u | (v >> 18)));
+        out.push_back(static_cast<char>(0x80u | ((v >> 12) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | ((v >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (v & 0x3Fu)));
+    }
+}
+
 // ---------------------------------------------------------------- 词法器
 
 class Lexer {
@@ -329,23 +349,59 @@ private:
 
     // ------------------------------------------------------ 字符 / 字符串
 
-    int escape() {
+    // 转义结果：普通转义是单字节值；`\u{...}` 是 Unicode 码点（写进字符串时要 UTF-8 编码）
+    struct Escape {
+        int value;
+        bool is_codepoint;
+    };
+
+    // `\u{...}` 的 `{...}` 部分（`u` 已消费）：1–6 位十六进制码点
+    int unicode_codepoint(int line, int col) {
+        if (peek() != '{') throw err("`\\u` must be followed by `{...}`, e.g. `\\u{4E2D}`", line, col);
+        adv();
+        std::string hex;
+        while (i_ < n_ && peek() != '}') {
+            int c = peek();
+            if (!(is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+                throw err("`\\u{...}` expects hexadecimal digits", line, col);
+            }
+            hex.push_back(static_cast<char>(c));
+            adv();
+        }
+        if (i_ >= n_) throw err("unterminated `\\u{...}` escape", line, col);
+        adv();  // '}'
+        if (hex.empty()) throw err("`\\u{...}` expects at least one hexadecimal digit", line, col);
+        if (hex.size() > 6) throw err("`\\u{...}` accepts at most 6 hexadecimal digits", line, col);
+        long long v = std::strtoll(hex.c_str(), nullptr, 16);
+        char buf[80];
+        if (v > 0x10FFFF) {
+            std::snprintf(buf, sizeof(buf), "code point `U+%llX` is out of range (max U+10FFFF)", v);
+            throw err(buf, line, col);
+        }
+        if (v >= 0xD800 && v <= 0xDFFF) {
+            std::snprintf(buf, sizeof(buf), "surrogate code point `U+%llX` is not allowed", v);
+            throw err(buf, line, col);
+        }
+        return static_cast<int>(v);
+    }
+
+    Escape escape() {
         int line = line_;
         int col = col_;
         int ch = peek();
         adv();
         switch (ch) {
-            case 'n': return 0x0A;
-            case 't': return 0x09;
-            case 'r': return 0x0D;
-            case '0': return 0x00;
-            case '\\': return 0x5C;
-            case '\'': return 0x27;
-            case '"': return 0x22;
-            case 'a': return 0x07;
-            case 'b': return 0x08;
-            case 'f': return 0x0C;
-            case 'v': return 0x0B;
+            case 'n': return {0x0A, false};
+            case 't': return {0x09, false};
+            case 'r': return {0x0D, false};
+            case '0': return {0x00, false};
+            case '\\': return {0x5C, false};
+            case '\'': return {0x27, false};
+            case '"': return {0x22, false};
+            case 'a': return {0x07, false};
+            case 'b': return {0x08, false};
+            case 'f': return {0x0C, false};
+            case 'v': return {0x0B, false};
             default: break;
         }
         if (ch == 'x') {
@@ -353,9 +409,9 @@ private:
             if (h.size() != 2 || h.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
                 throw err("`\\x` must be followed by two hexadecimal digits", line, col);
             }
-            return static_cast<int>(std::strtol(h.c_str(), nullptr, 16));
+            return {static_cast<int>(std::strtol(h.c_str(), nullptr, 16)), false};
         }
-        if (ch == 'u') throw err("`\\u{...}` escape is not supported yet");
+        if (ch == 'u') return {unicode_codepoint(line, col), true};
         if (ch < 0) throw err("invalid escape sequence `\\`", line, col);
         throw err("invalid escape sequence `\\" + std::string(1, static_cast<char>(ch)) + "`", line, col);
     }
@@ -367,14 +423,25 @@ private:
         adv();  // 开头的 '
         if (peek() < 0) throw err("unterminated character literal", line, col);
         long long v = 0;
+        bool is_codepoint = false;
         if (peek() == '\\') {
             adv();
-            v = escape();
+            Escape e = escape();
+            v = e.value;
+            is_codepoint = e.is_codepoint;
         } else {
             int ch = peek();
             adv();
             if (ch > 0x7F) throw err("character literal only supports ASCII for now", line, col);
             v = ch;
+        }
+        if (is_codepoint && v > 0xFF) {
+            char buf[128];
+            std::snprintf(buf, sizeof(buf),
+                          "code point `U+%04llX` does not fit in a character literal (single byte); "
+                          "use a string literal instead",
+                          v);
+            throw err(buf, line, col);
         }
         if (peek() != '\'') throw err("character literal can only contain one character", line, col);
         adv();
@@ -399,7 +466,9 @@ private:
             if (ch == '\n') throw err("string literal cannot span multiple lines", line, col);
             if (ch == '\\') {
                 adv();
-                buf.push_back(static_cast<char>(escape() & 0xFF));
+                Escape e = escape();
+                if (e.is_codepoint) append_utf8(buf, e.value);
+                else buf.push_back(static_cast<char>(e.value & 0xFF));
                 continue;
             }
             adv();
