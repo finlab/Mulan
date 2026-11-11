@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build-test:
-    name: build & test (MSYS2 / mingw64)
+    name: build & test (MSYS2 UCRT64)
     runs-on: windows-latest
     env:
       # 测试输出含中文；CI 控制台默认 cp1252，强制 Python 用 UTF-8
@@ -27,17 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up MSYS2 (mingw64 toolchain + LLVM)
+      - name: Set up MSYS2 (UCRT64 toolchain + LLVM)
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: false
           install: >-
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-llvm
-            mingw-w64-x86_64-python
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-llvm
+            mingw-w64-ucrt-x86_64-python
 
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
