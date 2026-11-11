@@ -3,85 +3,139 @@
 [![CI](https://github.com/finlab/Mulan/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/finlab/Mulan/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-精巧、现代的类 C 小语言。保留 C 的硬能力（值语义、指针运算、手动内存、struct、C ABI），
-去掉历史包袱（预处理器、隐式收窄、整数真值、`do-while`、C 风格 `for`）。
+**简体中文** | [English](README.en.md)
 
-# 版本
+Mulan语言的设计目标：
 
-当前版本：**0.0.57**（版本规则与每次 build 的记录见 [`docs/versions.md`](docs/versions.md)）
+1、在C语法基础上进行限制、修改、及扩充，使其更安全、更明确、更顺手；
+2、编译型语言，具有接近c/c++的性能，保留C的底层表达能力；
+3、提供基于值和引用的两种对象机制，以提供基于RAII和RC的自动内存管理；
+4、异常、泛型、并发等其他现代语言特性
 
-- 语言规范：[`SPEC.md`](SPEC.md)（草案 v0.1，逐条标注「已定 / 建议 / 待定」）
-- 语法示例：[`example.mu`](example.mu)、[`math.mu`](math.mu)
+当前版本 **0.0.57**，尚未发布 1.0；语言规范见 [`SPEC.md`](SPEC.md)（草案 v0.2，逐条标注「已定 / 建议 / 待定」）。
 
-## 当前状态
+## 设计取舍
 
-| 组件 | 状态 |
+语言特色不在"加了什么"，而在**每条规则都能说出为什么**：
+
+| 决定 | 做法 | 理由 |
+|---|---|---|
+| **值与引用分离** | `struct` 值语义，`class` 引用语义，界限清晰 | 看到 `=` 就知道是拷贝还是共享 |
+| **共享必须显式** | 遍历默认值绑定，要改元素写 `for ref v in a` | 没有隐藏别名，没有意外的原地修改 |
+| **回收时机确定** | `class` 用原子引用计数；最后一个引用消失时析构立刻执行 | 无 GC 停顿，资源释放不靠"稍后" |
+| **环靠 `weak` 断** | `weak T` 非拥有引用；环必须手动打断 | 不做环收集器，行为可预测 |
+| **没有预处理器** | `unit` / `use` 模块 + `const` 常量 | 报错落在真实源码行，而不是展开后的宏 |
+| **没有隐式转换** | 只有无损加宽；其余一律 `as` | 截断与重解释永远是你亲手写的 |
+| **条件必须是 `bool`** | `if n` 编译错误，写 `n != 0` | 消灭 C 里 `=` / `==` 一类事故 |
+| **循环只有两种** | `while` + `for-in`（区间 / 数组 / 切片 / `string`） | 不需要在 `for(;;)`、`do-while` 之间权衡边界 |
+| **C ABI 是一等公民** | `extern` 直接声明 libc；`struct` 布局可控（`packed` / `align(N)`） | 和 C 共存，而不是取代 C |
+
+## 一段能跑的代码
+
+值类型、引用类型、接口多态、确定性析构，都在 30 行里：
+
+```c
+unit demo;
+
+extern int puts(const char* s);
+extern int printf(const char* fmt, ...);
+
+int live = 0;
+
+interface Shape {
+    double area();
+}
+
+struct Rect {                 // 值类型：栈上分配，赋值即拷贝，无引用计数
+    double w, h;
+    double area() { return w * h; }
+}
+
+class Circle : Shape {        // 引用类型：原子引用计数，析构时机确定
+    double r;
+    Circle(double rr) { r = rr; live += 1; }
+    ~Circle() { live -= 1; }
+    override double area() { return 3.14159 * r * r; }
+}
+
+int main() {
+    Rect box = {2.0, 3.0};
+
+    Shape[2] shapes = { new Circle(1.0), new Circle(2.0) };
+
+    double total = box.area();
+    for s in shapes {
+        total += s.area();
+    }
+
+    shapes[0] = null;         // 最后一个引用消失，两个 Circle 立即析构
+    shapes[1] = null;
+    if live == 0 and total > 21.70 and total < 21.72 {
+        puts("21.71, no survivors");
+    }
+    return 0;
+}
+```
+
+```console
+$ muc build demo.mu --run
+21.71, no survivors
+```
+
+这段代码里没有的是：预处理器、GC、隐式转换、`virtual` 关键字、`->` 运算符（统一用 `.`）。
+
+更多示例：[`example.mu`](example.mu)（完整语法巡礼）、[`math.mu`](math.mu)（跨 unit 调用）。
+
+## 语言现状
+
+**已实现**
+
+| 类别 | 内容 |
 |---|---|
-| 编译器主体（C++20，`src/`） | ✅ 移植完成 |
-| 词法 `src/lexer.cpp` | ✅ |
-| 语法 `src/parser.cpp` | ✅ |
-| 语义 `src/sema.cpp` | ✅ |
-| LLVM 后端 `src/codegen_llvm.cpp` | ✅ 唯一后端（LLVM C++ API → COFF，gcc 链接） |
-| 回归测试 `tests/` | ✅ 289 / 289（70 成功用例 + 206 必须报错 + 13 check） |
-| 语言边界审查 | [`docs/design-review.md`](docs/design-review.md) |
-| 标准库 | 无（只有内建函数 + libc） |
+| 类型 | 整数 / 浮点 / `bool` / `byte` / `char`；指针；定长数组；动态数组 `T[]`；切片；`string`；`struct`；`union`；`enum` |
+| 对象模型 | `class` + 单继承 + `interface`；默认虚方法；原子 RC；`weak`；构造器 / 析构器 `~T()`；运算符重载 |
+| 控制流 | `if` / `while` / `for-in` / `switch`（枚举穷尽检查）/ `break` / `continue` / `?:` |
+| 函数 | 递归、重载（有界规则）、`extern` 变参调用（0.0.57） |
+| 模块 | `unit` / `use` / `public` / `private`，同名 unit 自动加载 |
+| C 互操作 | `extern` 声明、C ABI、`struct` 布局控制（`packed` / `align(N)`） |
+| 工具链 | `check` / `dump` / `build`、`--emit-ir`、`-g` 生成 DWARF 调试信息、一次报出多个错误 |
 
-实现路线（见 `SPEC.md` §14）：**阶段 A** 生成 C99 验证语义（0.0.2 起已移除，代码保留在
-git 历史 `cf3af48`）；**阶段 B** 用 LLVM C++ API 直接构造 IR、产出 COFF 目标文件，再由 gcc 链接。
-当前只有 LLVM 后端。
+**尚未实现**（诚实清单）
 
-## 构建
-
-依赖：**CMake ≥ 3.20**、**Ninja**、**g++ ≥ 11**（C++20）、**gcc**（链接 LLVM 目标文件）、
-**LLVM ≥ 17**（开发库，必需）。
-
-```powershell
-# 没有 cmake/make 时可用 pip 装用户级版本
-python -m pip install cmake ninja
-
-# LLVM（MSYS2；会安装 llvm-libs / llvm-tools / lld）
-C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm mingw-w64-x86_64-llvm"
-```
-
-构建编译器（CMake 用 `LLVM_DIR` 定位 LLVM；未显式指定时自动探测 MSYS2 默认安装位置，
-其它平台的安装路径用 `-DLLVM_DIR=<path>/lib/cmake/llvm` 指定）：
-
-```powershell
-python -m cmake -S . -B build -G Ninja
-python -m cmake --build build
-# 产物：build/muc.exe
-```
-
-> 若 `cmake`/`ninja` 已在 PATH，直接 `cmake -S . -B build -G Ninja && cmake --build build` 即可。
+- 异常 `try` / `catch` / `throw`（设计已定，未实现）
+- 泛型（打算单态化，目前只预留了关键字与 mangling）
+- 闭包、函数指针、`goto`
+- 标准库（`libs/std/` 目前只有 `cstdio` 与 `string` 两个最小绑定）
+- `weak` 引用自动置空（当前需自行判断对象是否还活着）
+- 非 Windows 目标：后端固定 `x86_64-w64-windows-gnu`，产出 COFF
 
 ## 快速开始
 
+前置：**Windows + MSYS2**、CMake ≥ 3.20、Ninja、g++ ≥ 11（C++20）、gcc、LLVM ≥ 17 开发库。
+
 ```powershell
-# 语义检查
-build\muc.exe check example.mu
+# 1. LLVM（MSYS2）
+C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm mingw-w64-x86_64-llvm"
 
-# 查看 AST
-build\muc.exe dump math.mu
+# 2. 构建编译器（CMake 用 LLVM_DIR 定位 LLVM，未指定时自动探测 MSYS2 路径）
+python -m cmake -S . -B build -G Ninja
+python -m cmake --build build          # 产物：build/muc.exe
 
-# 编译 + 运行（生成 .ll + COFF .o，再用 gcc 链接）
-build\muc.exe build example.mu --run
-
-# 保留生成的 IR
-build\muc.exe build example.mu --emit-ir build/example.ll
-
-# 带调试信息（DWARF）：gdb 可断点 / 单步 / info locals
-build\muc.exe build example.mu -g
-
-# 回归测试
-$env:MUC_CMD = "build/muc.exe"
-python tests/run_tests.py
+# 3. 试一下
+build\muc.exe check example.mu         # 只做语义检查
+build\muc.exe dump  math.mu            # 打印 AST
+build\muc.exe build example.mu --run   # 编译 + 链接 + 运行
+build\muc.exe build example.mu -g      # 带 DWARF，可被 gdb 断点/单步
 ```
+
+依赖缺失时：`python -m pip install cmake ninja`；LLVM 装在非默认位置用
+`-DLLVM_DIR=<path>/lib/cmake/llvm` 指定。
 
 ## 诊断
 
-编译错误带源码片段与插入符，同一 unit 的多个错误会一次报出：
+多错误一次报出，带源码片段与插入符：
 
-```
+```console
 multi_errors.mu:4:19: error: undefined identifier `undefined_one`
   |
 4 | int f1() { return undefined_one; }
@@ -92,95 +146,47 @@ multi_errors.mu:5:19: error: undefined identifier `undefined_two`
   |                   ^
 ```
 
-## 目录结构
+## 编译器
+
+单文件可读的 C++20 实现，唯一后端是 LLVM C++ API（直接构造 IR → COFF 目标文件 → gcc 链接），
+不依赖除 LLVM 外的任何第三方库。
 
 ```
-src/               编译器（C++20）
-  main.cpp         命令行：check / dump / build
-  lexer.cpp        词法：关键字、字面量、嵌套块注释
-  parser.cpp       递归下降语法分析 -> AST
-  ast.hpp          AST 定义 + sema 注解契约
-  types.cpp/.hpp   类型模型
-  sema.cpp/.hpp    名字解析 / 类型检查 / 注解
-  codegen_llvm.cpp LLVM 后端（LLVM C++ API → COFF 目标文件，gcc 链接）
-  loader.cpp       unit 加载（use -> 同名 .mu）
+src/
+  lexer.cpp         词法：关键字、字面量、嵌套块注释
+  parser.cpp        递归下降语法分析 -> AST
+  sema.cpp          名字解析 / 类型检查 / 注解
+  codegen_llvm.cpp  LLVM 后端
+  loader.cpp        unit 加载（use -> 同名 .mu）
 docs/
-  llvm-backend.md  LLVM 后端设计说明与限制
+  llvm-backend.md   后端设计与限制
+  design-backlog.md 设计待定清单（讨论过程留档）
 tests/
-  cases/*.mu       成功用例（编译 + 运行 + 比对期望输出）
-  expected/*.txt
-  errors/*.mu      必须被拒绝的用例，*.err 每行一个必须出现的错误子串
-  run_tests.py     测试运行器（MUC_CMD 可配置）
-build/             生成物（.ll / .o / .exe），可随时删除
+  cases/            成功用例：编译 + 运行 + 比对期望输出
+  errors/           必须被拒绝的用例，*.err 每行一个必须出现的错误子串
+  check/            只需通过语义检查的用例
+  run_tests.py      回归运行器（MUC_CMD 可配置）
 ```
 
-## 语言要点（速查）
+质量门槛：**289 个用例全绿**（70 成功 + 206 必须报错 + 13 check），冷编译 `-Wall -Wextra` 零 warning，
+每次 push 由 CI 在干净的 MSYS2 环境重跑一遍。
 
-```c
-unit example;
-use math;
+## 文档
 
-extern int puts(readonly char* s);
-
-struct Point { int x, y; }
-
-int main() {
-    Point p = {3, 4};              // 声明用 = 初始化
-    Point q = Point(x = 1, y = 2); // 表达式用构造调用
-    Point z = {};                  // 聚合零值初始化（数组/结构体用 {}）
-
-    int[5] a = {1, 2, 3};          // 不足补零；数组是值类型
-    for v in a { }                 // 值绑定
-    for ref v in a { v *= 2; }     // 引用绑定
-    for i in 0..len(a) { }         // 半开区间
-
-    if not p.x == 0 and q.y > 0 { puts("ok"); }  // not 优先级低于比较
-
-    int* buf = alloc(len(a) * sizeof(int)) as int*;
-    free(buf as void*);
-    return 0;
-}
-```
-
-## 与 C 的关键差异
-
-| 主题 | C | Mulan |
-|---|---|---|
-| 逻辑运算 | `&& \|\| !` | `and` / `or` / `not`（`not` 是低优先级） |
-| 位取反 | `~` | `~`（与 C 相同；逻辑非用 `not`） |
-| 幂运算 | `pow()` | 只有 `pow()`，不提供运算符（`^` 是异或） |
-| 自增 | `++`/`--` | `x++` / `x--`（仅语句，无返回值） |
-| 条件 | 任意标量真值 | 必须是 `bool` |
-| 声明 | 声明符混杂 | 类型在前，`int* p, q;` 中两个都是指针 |
-| 初始化 | `T x = ...` | 声明只用 `=`：`T x = expr` / `= {...}` / `= {}`（聚合零值）/ 标量 `= 0`、`= null` |
-| 循环 | `for(;;)` / `do-while` | `while` + `for-in` |
-| 转换 | 大量隐式 | 仅无损加宽；其余 `as` |
-
-## 已知限制（阶段 A）
-
-- 数组类型用包装 struct 实现值语义，外部 C 结构体若含数组字段需手工对齐。
-- 数组长度只支持整数字面量。
-- 无 `switch`/`goto`/函数指针/可变参数/泛型/闭包/异常。
-- `alignof` 用 gcc 的 `offsetof` 技巧实现。
-- 切片字面量 `T[] s = {...}` 的生命周期是当前作用域（与 SPEC 一致）；返回它属于 UB。
-- 全局变量初始化只接受常量表达式（C 静态存储期限制）。
-
-## 质量检查
-
-- `tests/run_tests.py`：289 个用例（70 个成功 + 206 个必须报错 + 13 个 check），全绿。
-- 必须报错用例覆盖：`const`/`string` 可写性、`const` 必须初始化、`auto` 多声明符一致、枚举重复、枚举与整数隐式转换/跨枚举比较/枚举算术/枚举成员误用（不存在、赋值、取地址、非枚举类型限定）、`void*` 算术、`int`→枚举、非 void 函数掉出末尾、字面量溢出、`string`/切片与 `null` 比较、类型/参数/下标/构造错误等。
-- 编译器自身在 `-D_GLIBCXX_ASSERTIONS -fstack-protector-strong` 下重编后跑同一套测试（两个后端）全绿；
-  注意 `-D_GLIBCXX_DEBUG` 与 LLVM 共享库 ABI 不兼容，不能用于链接 LLVM 的构建。
-- 冷编译 `--clean-first` 零 warning（`-Wall -Wextra`）。
+| 文件 | 内容 |
+|---|---|
+| [`SPEC.md`](SPEC.md) | 语言规范，逐条标注已定 / 建议 / 待定 |
+| [`docs/llvm-backend.md`](docs/llvm-backend.md) | LLVM 后端设计与限制 |
+| [`docs/object-model-plan.md`](docs/object-model-plan.md) | 对象模型实现计划 |
+| [`docs/design-review.md`](docs/design-review.md) | 语言边界审查 |
+| [`docs/versions.md`](docs/versions.md) | 逐版本变更记录 |
 
 ## 许可
 
-本项目（编译器、运行时与工具链）以 **Apache License 2.0** 授权，全文见 [`LICENSE`](LICENSE)，
-第三方组件声明见 [`NOTICE`](NOTICE)。
+**Apache License 2.0**，全文见 [`LICENSE`](LICENSE)，第三方声明见 [`NOTICE`](NOTICE)。
 
-- 使用、修改、再分发均须遵守 Apache-2.0：保留版权与许可声明、随附 `NOTICE`、标注修改过的文件。
-- 提供**显式专利授权**及专利报复条款；Apache-2.0 **不授予商标权**。
-- 用木兰（Mulan）编写的程序，及 `muc` 由其生成的目标文件 / 可执行文件，**不是**编译器的衍生作品，
-  可按你自己的条款分发（Apache-2.0 对"仅链接 / 经由接口调用"的部分不视为衍生作品）。
-- 以 LLVM 为后端分发时，须同时遵守 LLVM 的 `Apache-2.0 WITH LLVM-exception`（见 `NOTICE`）。
-- 源文件首行统一带 `SPDX-License-Identifier: Apache-2.0`，便于工具自动识别许可。
+- 用木兰编写的程序、以及 `muc` 生成的目标文件 / 可执行文件，**不是**编译器的衍生作品，可按你选择的条款分发。
+- 以 LLVM 为后端分发时，同时遵守 `Apache-2.0 WITH LLVM-exception`。
+- 源文件首行统一带 `SPDX-License-Identifier: Apache-2.0`。
+
+<sub>项目名「Mulan / 木兰」与其它同名开源项目无关。</sub>
