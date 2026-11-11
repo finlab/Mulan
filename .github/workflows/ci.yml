@@ -17,11 +17,15 @@ jobs:
   build-test:
     name: build & test (MSYS2 / mingw64)
     runs-on: windows-latest
+    env:
+      # 测试输出含中文；CI 控制台默认 cp1252，强制 Python 用 UTF-8
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     defaults:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up MSYS2 (mingw64 toolchain + LLVM)
         uses: msys2/setup-msys2@v2
