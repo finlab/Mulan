@@ -81,6 +81,16 @@ static void enableUtf8Console() {}
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
 
+// Windows 上 std::system 经 cmd.exe 解析：正斜杠路径会被当成参数分隔而无法执行，
+// 因此传给 shell 前统一转成反斜杠（gcc 两种写法都接受）。
+static std::string native_path(std::string p) {
+#ifdef _WIN32
+    for (char& c : p)
+        if (c == '/') c = '\\';
+#endif
+    return p;
+}
+
 // ---------------------------------------------------------------- dump
 
 static void dump(const Node* n, int indent);
@@ -344,7 +354,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     }
     fs::path obj = build_dir / (base + ".o");
     llvm_emit_object(prog, obj.string(), ba.debug);
-    std::string cmd = ba.cc + " -o " + quote(out.string()) + " " + quote(obj.string());
+    std::string cmd = ba.cc + " -o " + quote(native_path(out.string())) + " " + quote(native_path(obj.string()));
     std::cout << "+ " << cmd << "\n";
     int rc = std::system(cmd.c_str());
     if (rc != 0) {
@@ -354,7 +364,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     }
     std::cout << "ok: " << out.string() << "\n";
     if (ba.run) {
-        return std::system(quote(out.string()).c_str());
+        return std::system(quote(native_path(out.string())).c_str());
     }
     return 0;
 }
