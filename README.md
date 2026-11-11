@@ -5,14 +5,17 @@
 
 **简体中文** | [English](README.en.md)
 
-Mulan语言的设计目标：
+Mulan语言的设计思路：
 
 1、在C语法基础上进行限制、修改、及扩充，使其更安全、更明确、更顺手；
+
 2、编译型语言，具有接近c/c++的性能，保留C的底层表达能力；
+
 3、提供基于值和引用的两种对象机制，以提供基于RAII和RC的自动内存管理；
+
 4、异常、泛型、并发等其他现代语言特性
 
-当前版本 **0.0.57**，尚未发布 1.0；语言规范见 [`SPEC.md`](SPEC.md)（草案 v0.2，逐条标注「已定 / 建议 / 待定」）。
+当前版本 **0.0.60**，尚未发布 1.0；语言规范见 [`SPEC.md`](SPEC.md)（草案 v0.2，逐条标注「已定 / 建议 / 待定」）。
 
 ## 设计取舍
 
@@ -107,7 +110,8 @@ $ muc build demo.mu --run
 - 闭包、函数指针、`goto`
 - 标准库（`libs/std/` 目前只有 `cstdio` 与 `string` 两个最小绑定）
 - `weak` 引用自动置空（当前需自行判断对象是否还活着）
-- 非 Windows 目标：后端固定 `x86_64-w64-windows-gnu`，产出 COFF
+- 非 Windows 目标：后端固定 `x86_64-w64-windows-gnu`，产出 COFF（方案已记录：
+  [`docs/portability-plan.md`](docs/portability-plan.md)，等语言机制完善后实施）
 
 ## 快速开始
 
@@ -131,46 +135,6 @@ build\muc.exe build examples\example.mu -g      # 带 DWARF，可被 gdb 断点/
 依赖缺失时：`python -m pip install cmake ninja`；LLVM 装在非默认位置用
 `-DLLVM_DIR=<path>/lib/cmake/llvm` 指定。
 
-## 诊断
-
-多错误一次报出，带源码片段与插入符：
-
-```console
-multi_errors.mu:4:19: error: undefined identifier `undefined_one`
-  |
-4 | int f1() { return undefined_one; }
-  |                   ^
-multi_errors.mu:5:19: error: undefined identifier `undefined_two`
-  |
-5 | int f2() { return undefined_two; }
-  |                   ^
-```
-
-## 编译器
-
-单文件可读的 C++20 实现，唯一后端是 LLVM C++ API（直接构造 IR → COFF 目标文件 → gcc 链接），
-不依赖除 LLVM 外的任何第三方库。
-
-```
-src/
-  lexer.cpp         词法：关键字、字面量、嵌套块注释
-  parser.cpp        递归下降语法分析 -> AST
-  sema.cpp          名字解析 / 类型检查 / 注解
-  codegen_llvm.cpp  LLVM 后端
-  loader.cpp        unit 加载（use -> 同名 .mu）
-docs/
-  llvm-backend.md   后端设计与限制
-  design-backlog.md 设计待定清单（讨论过程留档）
-tests/
-  cases/            成功用例：编译 + 运行 + 比对期望输出
-  errors/           必须被拒绝的用例，*.err 每行一个必须出现的错误子串
-  check/            只需通过语义检查的用例
-  run_tests.py      回归运行器（MUC_CMD 可配置）
-```
-
-质量门槛：**289 个用例全绿**（70 成功 + 206 必须报错 + 13 check），冷编译 `-Wall -Wextra` 零 warning，
-每次 push 由 CI 在干净的 MSYS2 环境重跑一遍。
-
 ## 文档
 
 | 文件 | 内容 |
@@ -179,6 +143,7 @@ tests/
 | [`docs/llvm-backend.md`](docs/llvm-backend.md) | LLVM 后端设计与限制 |
 | [`docs/object-model-plan.md`](docs/object-model-plan.md) | 对象模型实现计划 |
 | [`docs/design-review.md`](docs/design-review.md) | 语言边界审查 |
+| [`docs/portability-plan.md`](docs/portability-plan.md) | 跨平台方案（Linux / macOS / 交叉编译，暂缓实施） |
 | [`docs/versions.md`](docs/versions.md) | 逐版本变更记录 |
 
 ## 许可

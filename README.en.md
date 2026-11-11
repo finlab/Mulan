@@ -8,11 +8,14 @@
 Mulan's design goals:
 
 1. Start from C syntax and restrict, change, and extend it, so that it is safer, more explicit, and easier to use.
+
 2. A compiled language with performance close to C/C++, keeping C's low-level expressiveness.
+
 3. Two object mechanisms — value and reference — providing RAII- and RC-based automatic memory management.
+
 4. Exception handling, generics, concurrency, and other modern language features.
 
-Current version **0.0.57**, not yet 1.0. The language specification is [`SPEC.md`](SPEC.md)
+Current version **0.0.60**, not yet 1.0. The language specification is [`SPEC.md`](SPEC.md)
 (draft v0.2, with each rule marked as settled / suggested / open). It is written in Chinese.
 
 ## Design trade-offs
@@ -110,6 +113,8 @@ More examples: [`examples/example.mu`](examples/example.mu) (a tour of the synta
 - A standard library (`libs/std/` currently holds only minimal `cstdio` and `string` bindings)
 - Automatic nulling of outstanding `weak` references (you must check liveness yourself)
 - Non-Windows targets: the backend is fixed to `x86_64-w64-windows-gnu` and emits COFF
+  (plan recorded in [`docs/portability-plan.md`](docs/portability-plan.md), to be implemented
+  once the language mechanisms settle)
 
 ## Quick start
 
@@ -134,47 +139,6 @@ build\muc.exe build examples\example.mu -g      # with DWARF, so gdb can break a
 If a dependency is missing: `python -m pip install cmake ninja`. For LLVM installed elsewhere, pass
 `-DLLVM_DIR=<path>/lib/cmake/llvm`.
 
-## Diagnostics
-
-Multiple errors are reported in one pass, with a source snippet and a caret:
-
-```console
-multi_errors.mu:4:19: error: undefined identifier `undefined_one`
-  |
-4 | int f1() { return undefined_one; }
-  |                   ^
-multi_errors.mu:5:19: error: undefined identifier `undefined_two`
-  |
-5 | int f2() { return undefined_two; }
-  |                   ^
-```
-
-## Compiler
-
-A readable C++20 implementation in a handful of files. The only backend uses the LLVM C++ API
-(IR constructed directly, then a COFF object file, linked by gcc). It depends on nothing but LLVM.
-
-```
-src/
-  lexer.cpp         lexing: keywords, literals, nested block comments
-  parser.cpp        recursive-descent parsing -> AST
-  sema.cpp          name resolution / type checking / annotations
-  codegen_llvm.cpp  LLVM backend
-  loader.cpp        unit loading (use -> same-named .mu)
-docs/
-  llvm-backend.md   backend design and limitations
-  design-backlog.md open design questions (discussion log)
-tests/
-  cases/            success cases: compile, run, compare expected output
-  errors/           cases that must be rejected; *.err lists required error substrings
-  check/            cases that only need to pass semantic checks
-  run_tests.py      regression runner (compiler command configurable via MUC_CMD)
-```
-
-Quality bar: **289 test cases green** (70 success + 206 must-fail + 13 check), a clean build with
-`-Wall -Wextra` and zero warnings, and CI rerunning everything on a fresh MSYS2 environment for
-every push.
-
 ## Documentation
 
 | File | Contents |
@@ -183,6 +147,7 @@ every push.
 | [`docs/llvm-backend.md`](docs/llvm-backend.md) | LLVM backend design and limitations (Chinese) |
 | [`docs/object-model-plan.md`](docs/object-model-plan.md) | Object model implementation plan (Chinese) |
 | [`docs/design-review.md`](docs/design-review.md) | Language boundary review (Chinese) |
+| [`docs/portability-plan.md`](docs/portability-plan.md) | Cross-platform plan: Linux / macOS / cross-compilation, deferred (Chinese) |
 | [`docs/versions.md`](docs/versions.md) | Per-version change log (Chinese) |
 
 ## License
