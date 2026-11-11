@@ -86,7 +86,7 @@ $ muc build demo.mu --run
 What is *not* in this code: a preprocessor, a GC, implicit conversions, the `virtual` keyword,
 or the `->` operator (member access is always `.`).
 
-More examples: [`example.mu`](example.mu) (a tour of the syntax) and [`math.mu`](math.mu) (cross-unit calls).
+More examples: [`examples/example.mu`](examples/example.mu) (a tour of the syntax) and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 
 ## Language status
 
@@ -125,10 +125,10 @@ python -m cmake -S . -B build -G Ninja
 python -m cmake --build build          # output: build/muc.exe
 
 # 3. Try it
-build\muc.exe check example.mu         # semantic checks only
-build\muc.exe dump  math.mu            # print the AST
-build\muc.exe build example.mu --run   # compile, link, run
-build\muc.exe build example.mu -g      # with DWARF, so gdb can break and step
+build\muc.exe check examples\example.mu         # semantic checks only
+build\muc.exe dump  examples\math.mu            # print the AST
+build\muc.exe build examples\example.mu --run   # compile, link, run
+build\muc.exe build examples\example.mu -g      # with DWARF, so gdb can break and step
 ```
 
 If a dependency is missing: `python -m pip install cmake ninja`. For LLVM installed elsewhere, pass

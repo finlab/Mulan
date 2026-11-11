@@ -84,7 +84,7 @@ $ muc build demo.mu --run
 
 这段代码里没有的是：预处理器、GC、隐式转换、`virtual` 关键字、`->` 运算符（统一用 `.`）。
 
-更多示例：[`example.mu`](example.mu)（完整语法巡礼）、[`math.mu`](math.mu)（跨 unit 调用）。
+更多示例：[`examples/example.mu`](examples/example.mu)（完整语法巡礼）、[`examples/math.mu`](examples/math.mu)（跨 unit 调用）。
 
 ## 语言现状
 
@@ -122,10 +122,10 @@ python -m cmake -S . -B build -G Ninja
 python -m cmake --build build          # 产物：build/muc.exe
 
 # 3. 试一下
-build\muc.exe check example.mu         # 只做语义检查
-build\muc.exe dump  math.mu            # 打印 AST
-build\muc.exe build example.mu --run   # 编译 + 链接 + 运行
-build\muc.exe build example.mu -g      # 带 DWARF，可被 gdb 断点/单步
+build\muc.exe check examples\example.mu         # 只做语义检查
+build\muc.exe dump  examples\math.mu            # 打印 AST
+build\muc.exe build examples\example.mu --run   # 编译 + 链接 + 运行
+build\muc.exe build examples\example.mu -g      # 带 DWARF，可被 gdb 断点/单步
 ```
 
 依赖缺失时：`python -m pip install cmake ninja`；LLVM 装在非默认位置用

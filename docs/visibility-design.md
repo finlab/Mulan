@@ -175,7 +175,7 @@ int main() {
 | 位置 | 改动 |
 |---|---|
 | `libs/std/string.mu` | `pub` → `public` |
-| `math.mu` / `example.mu` | `pub` → `public` |
+| `examples/math.mu` / `examples/example.mu` | `pub` → `public` |
 | `tests/check`、`tests/errors` 的 `lib_*` | `pub` → `public` |
 | 全部文档 | `pub` → `public`/`private` |
 

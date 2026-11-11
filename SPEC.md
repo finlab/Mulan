@@ -1291,7 +1291,7 @@ unit example;
 
 ## 13. 示例
 
-见 [`example.mu`](./example.mu) 与 [`math.mu`](./math.mu)。示例对应本草案，尚未保证可编译。
+见 [`examples/example.mu`](./examples/example.mu) 与 [`examples/math.mu`](./examples/math.mu)。示例对应本草案，尚未保证可编译。
 
 ---
 

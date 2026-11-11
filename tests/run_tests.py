@@ -8,7 +8,7 @@
     $env:MUC_CMD = "build/muc.exe"; python tests/run_tests.py   (PowerShell)
 
 用法:
-    python tests/run_tests.py                 # 全部用例（含根目录 example.mu）
+    python tests/run_tests.py                 # 全部用例（含 examples/example.mu）
     python tests/run_tests.py --filter arith  # 只跑名字含 "arith" 的用例
     python tests/run_tests.py -v              # 失败时打印完整实际输出
     python tests/run_tests.py --keep-c        # 保留生成的 .c（默认编完即删）
@@ -74,8 +74,8 @@ def collect_cases() -> list[Case]:
     cases: list[Case] = []
     for src in sorted(CASES_DIR.glob("*.mu")):
         cases.append(Case(src.stem, src, EXPECTED_DIR / f"{src.stem}.txt"))
-    # 仓库根的 example.mu 也作为一个用例
-    cases.append(Case("example", ROOT / "example.mu", EXPECTED_DIR / "example.txt"))
+    # examples/example.mu 也作为一个用例
+    cases.append(Case("example", ROOT / "examples" / "example.mu", EXPECTED_DIR / "example.txt"))
     return cases
 
 

@@ -34,7 +34,7 @@ python tests/run_tests.py --keep-c        # 保留生成的中间产物（默认
 2. 写 `tests/expected/<name>.txt`：真实推导的期望输出（不要占位符）。
 3. 验证：`build\muc.exe check tests/cases/<name>.mu`，然后跑运行器。
 
-文件名即用例名；不需要在任何地方注册。仓库根的 `example.mu` 由运行器
+文件名即用例名；不需要在任何地方注册。`examples/example.mu` 由运行器
 自动作为一个用例（期望输出 `tests/expected/example.txt`）。
 
 ## 比较规则 / 已知限制

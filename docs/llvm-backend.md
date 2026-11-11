@@ -4,8 +4,8 @@
 这是编译器当前的唯一后端（0.0.2 起移除了 C99 后端，代码保留在 git 历史 `cf3af48`）。
 
 ```powershell
-build\muc.exe build example.mu --run
-build\muc.exe build example.mu --emit-ir build/example.ll
+build\muc.exe build examples\example.mu --run
+build\muc.exe build examples\example.mu --emit-ir build/example.ll
 ```
 
 ## 环境
@@ -56,7 +56,7 @@ build\muc.exe build example.mu --emit-ir build/example.ll
 
 ## 验证
 
-`tests/run_tests.py` 的 58 个用例全绿，`example.mu` 输出与 `tests/expected/example.txt` 逐行一致：
+`tests/run_tests.py` 的 289 个用例全绿，`examples/example.mu` 输出与 `tests/expected/example.txt` 逐行一致：
 
 ```powershell
 $env:MUC_CMD = "build/muc.exe"
