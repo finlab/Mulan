@@ -1,5 +1,8 @@
 # Mulan（木兰）
 
+[![CI](https://github.com/finlab/Mulan/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/finlab/Mulan/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 精巧、现代的类 C 小语言。保留 C 的硬能力（值语义、指针运算、手动内存、struct、C ABI），
 去掉历史包袱（预处理器、隐式收窄、整数真值、`do-while`、C 风格 `for`）。
 
