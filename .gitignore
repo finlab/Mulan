@@ -1,8 +1,27 @@
+# 构建产物
 build/
 build_dbg/
-__pycache__/
-*.pyc
+cmake-build-*/
+out/
 *.exe
 *.obj
 *.o
 *.ll
+*.pdb
+*.ilk
+
+# Python
+__pycache__/
+*.pyc
+
+# 编辑器 / 系统
+.vs/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地 AI 协作约定，不随仓库公开
+/AGENTS.md

@@ -17,8 +17,21 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # ---- LLVM 是唯一后端（必需） ----
-if(NOT LLVM_DIR AND EXISTS "C:/msys64/mingw64/lib/cmake/llvm/LLVMConfig.cmake")
-  set(LLVM_DIR "C:/msys64/mingw64/lib/cmake/llvm" CACHE PATH "LLVM cmake dir")
+# 指定方式（任一即可）：
+#   - -DLLVM_DIR=<path>/lib/cmake/llvm
+#   - 环境变量 LLVM_DIR
+#   - MSYS2 默认安装位置（自动探测，仅作提示）
+if(NOT LLVM_DIR)
+  foreach(_llvm_hint
+      "C:/msys64/mingw64/lib/cmake/llvm"
+      "C:/msys64/clang64/lib/cmake/llvm"
+      "C:/msys64/ucrt64/lib/cmake/llvm")
+    if(EXISTS "${_llvm_hint}/LLVMConfig.cmake")
+      set(LLVM_DIR "${_llvm_hint}" CACHE PATH "LLVM cmake dir")
+      break()
+    endif()
+  endforeach()
+  unset(_llvm_hint)
 endif()
 find_package(LLVM CONFIG REQUIRED)
 message(STATUS "muc: LLVM ${LLVM_PACKAGE_VERSION} (${LLVM_INSTALL_PREFIX})")

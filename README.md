@@ -5,7 +5,7 @@
 
 # 版本
 
-当前版本：**0.0.50**（版本规则与每次 build 的记录见 [`docs/versions.md`](docs/versions.md)）
+当前版本：**0.0.57**（版本规则与每次 build 的记录见 [`docs/versions.md`](docs/versions.md)）
 
 - 语言规范：[`SPEC.md`](SPEC.md)（草案 v0.1，逐条标注「已定 / 建议 / 待定」）
 - 语法示例：[`example.mu`](example.mu)、[`math.mu`](math.mu)
@@ -19,7 +19,7 @@
 | 语法 `src/parser.cpp` | ✅ |
 | 语义 `src/sema.cpp` | ✅ |
 | LLVM 后端 `src/codegen_llvm.cpp` | ✅ 唯一后端（LLVM C++ API → COFF，gcc 链接） |
-| 回归测试 `tests/` | ✅ 216 / 216（57 成功用例 + 146 必须报错 + 13 check） |
+| 回归测试 `tests/` | ✅ 289 / 289（70 成功用例 + 206 必须报错 + 13 check） |
 | 语言边界审查 | [`docs/design-review.md`](docs/design-review.md) |
 | 标准库 | 无（只有内建函数 + libc） |
 
@@ -40,7 +40,8 @@ python -m pip install cmake ninja
 C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm mingw-w64-x86_64-llvm"
 ```
 
-构建编译器（CMake 会自动在 `C:/msys64/mingw64/lib/cmake/llvm` 找 LLVM）：
+构建编译器（CMake 用 `LLVM_DIR` 定位 LLVM；未显式指定时自动探测 MSYS2 默认安装位置，
+其它平台的安装路径用 `-DLLVM_DIR=<path>/lib/cmake/llvm` 指定）：
 
 ```powershell
 python -m cmake -S . -B build -G Ninja
@@ -107,7 +108,7 @@ tests/
   expected/*.txt
   errors/*.mu      必须被拒绝的用例，*.err 每行一个必须出现的错误子串
   run_tests.py     测试运行器（MUC_CMD 可配置）
-build/             生成物（.c / .exe / .obj），可随时删除
+build/             生成物（.ll / .o / .exe），可随时删除
 ```
 
 ## 语言要点（速查）
@@ -163,7 +164,7 @@ int main() {
 
 ## 质量检查
 
-- `tests/run_tests.py`：216 个用例（57 个成功 + 146 个必须报错 + 13 个 check），全绿。
+- `tests/run_tests.py`：289 个用例（70 个成功 + 206 个必须报错 + 13 个 check），全绿。
 - 必须报错用例覆盖：`const`/`string` 可写性、`const` 必须初始化、`auto` 多声明符一致、枚举重复、枚举与整数隐式转换/跨枚举比较/枚举算术/枚举成员误用（不存在、赋值、取地址、非枚举类型限定）、`void*` 算术、`int`→枚举、非 void 函数掉出末尾、字面量溢出、`string`/切片与 `null` 比较、类型/参数/下标/构造错误等。
 - 编译器自身在 `-D_GLIBCXX_ASSERTIONS -fstack-protector-strong` 下重编后跑同一套测试（两个后端）全绿；
   注意 `-D_GLIBCXX_DEBUG` 与 LLVM 共享库 ABI 不兼容，不能用于链接 LLVM 的构建。
