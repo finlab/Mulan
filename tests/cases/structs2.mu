@@ -18,7 +18,7 @@ int main() {
     p.inner.a = 9;
     if o.inner.a == 1 and p.inner.a == 9 { puts("nested copy ok"); }
     if sum(o.inner) == 3 { puts("nested pass ok"); }
-    if o.name == "hi" and len(o.name) == 2 { puts("string field ok"); }
+    if o.name == "hi" and o.name.length() == 2 { puts("string field ok"); }
     if p.nums[0] == 7 { puts("array field copy ok"); }
 
     for ref v in o.nums {

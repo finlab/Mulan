@@ -1,6 +1,7 @@
 unit vis_multi_seg_type;
 
 int main() {
-    std.string.string s = "a".concat("b");
+    string s = "a";
+    std.string.string t = s.concat("b");
     return 0;
 }

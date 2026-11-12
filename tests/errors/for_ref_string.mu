@@ -1,1 +1,2 @@
-unit e17; int main() { for ref c in "ab" { } return 0; }
+unit e17;
+int main() { string s = "ab"; for ref c in s { } return 0; }

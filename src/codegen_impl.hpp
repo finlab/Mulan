@@ -264,11 +264,6 @@ struct Emitter {
 
     Value* descOf(const TypePtr& cls);
 
-    // std.string.string: the canonical string struct recognized by the compiler (fields p/n/owner)
-    TypePtr strType();
-
-    bool isStrType(const TypePtr& t);
-
     LType* lt(const TypePtr& t);
 
     // ------------------------------------------------------------ layout
@@ -373,9 +368,6 @@ struct Emitter {
 
     // owned dynamic array temporaries materialized inside a statement: released at the end of the statement
     void trackOwnedSliceTemp(Expr* e, Value* v, const TypePtr& ty);
-
-    // owned Str rvalue: materialized into a statement temporary, with the owner released at the end of the statement
-    Value* evalStrValue(Expr* e);
 
     void releaseAllScopes();
 
@@ -484,8 +476,7 @@ struct Emitter {
     Value* eval(Expr* e);
 
     // TypeSpec resolution for sizeof/alignof (depends only on the resolved type model)
-    TypePtr specType(TypeSpec* spec);
-    void curSpecUnitFix();
+
 
     // ------------------------------------------------------------ statements
     // Access alignment: fields/elements on a packed struct chain only guarantee 1-byte alignment, so the align of load/store

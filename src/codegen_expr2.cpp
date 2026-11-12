@@ -589,8 +589,9 @@ using ArgPack = Emitter::ArgPack;
         }
         if (auto v = dynamic_cast<NewExpr*>(e)) return evalNew(v);
         if (auto v = dynamic_cast<SizeofExpr*>(e)) {
-            // resolve spec via sema has already written e->ty=usize; the size needs the type itself: inferred from the spec
-            TypePtr t = specType(v->spec.get());
+            // sema resolved the type and stored it on the node; the backend never re-resolves type syntax
+            TypePtr t = v->spec_ty;
+            if (!t) fail("LLVM backend: sizeof/alignof without a resolved type", e->line, e->col);
             uint64_t n = v->which == "alignof" ? alignOf(t) : sizeOf(t);
             return ConstantInt::get(i64(), n);
         }
@@ -598,10 +599,6 @@ using ArgPack = Emitter::ArgPack;
             TypePtr st = v->seq->ty;
             int axis = 0;
             Value* axisV = nullptr;
-            if (isStrType(st)) {
-                Value* s = evalStrValue(v->seq.get());
-                return b.CreateExtractValue(s, {1});
-            }
             if (v->dim) {
                 if (auto il = dynamic_cast<IntLit*>(v->dim.get())) {
                     axis = static_cast<int>(il->value);
@@ -634,59 +631,5 @@ using ArgPack = Emitter::ArgPack;
         }
         fail("LLVM backend: unknown expression", e->line, e->col);
     }
-
-    // TypeSpec resolution for sizeof/alignof (depends only on the resolved type model)
-    TypePtr Emitter::specType(TypeSpec* spec) {
-        if (!spec) return nullptr;
-        curSpecUnitFix();
-        switch (spec->kind) {
-            case TypeSpec::K::Named: {
-                if (spec->name == "void") return Type::make_void();
-                if (spec->name == "string") return Type::make_string();
-                if (is_prim_name(spec->name)) return Type::make_prim(spec->name);
-                if (spec->name.find('.') != std::string::npos) {
-                    auto p = spec->name.find('.');
-                    std::string un = spec->name.substr(0, p), tn = spec->name.substr(p + 1);
-                    auto it = prog.infos.find(un);
-                    if (it != prog.infos.end()) {
-                        auto s = it->second.structs.find(tn);
-                        if (s != it->second.structs.end()) return s->second->ty;
-                        auto c = it->second.classes.find(tn);
-                        if (c != it->second.classes.end()) return c->second->ty;
-                        auto i2 = it->second.interfaces.find(tn);
-                        if (i2 != it->second.interfaces.end()) return i2->second->ty;
-                        auto e = it->second.enums.find(tn);
-                        if (e != it->second.enums.end()) return e->second->ty;
-                        auto al = it->second.aliases.find(tn);
-                        if (al != it->second.aliases.end() && al->second->resolved) return al->second->rty;
-                    }
-                }
-                auto it = prog.infos[curUnit].structs.find(spec->name);
-                if (it != prog.infos[curUnit].structs.end()) return it->second->ty;
-                auto c = prog.infos[curUnit].classes.find(spec->name);
-                if (c != prog.infos[curUnit].classes.end()) return c->second->ty;
-                auto i2 = prog.infos[curUnit].interfaces.find(spec->name);
-                if (i2 != prog.infos[curUnit].interfaces.end()) return i2->second->ty;
-                auto e = prog.infos[curUnit].enums.find(spec->name);
-                if (e != prog.infos[curUnit].enums.end()) return e->second->ty;
-                auto al = prog.infos[curUnit].aliases.find(spec->name);
-                if (al != prog.infos[curUnit].aliases.end() && al->second->resolved) return al->second->rty;
-                fail("LLVM backend: sizeof/alignof on unknown type " + spec->name);
-            }
-            case TypeSpec::K::Ptr:
-                return Type::make_ptr(specType(spec->elem.get()), spec->is_const);
-            case TypeSpec::K::Slice:
-                return Type::make_slice(specType(spec->elem.get()), spec->is_const);
-            case TypeSpec::K::Array:
-                return Type::make_array(specType(spec->elem.get()), spec->size);
-            case TypeSpec::K::Func: {
-                std::vector<TypePtr> ps;
-                for (auto& p : spec->params) ps.push_back(specType(p.get()));
-                return Type::make_func(ps, specType(spec->ret.get()));
-            }
-        }
-        fail("LLVM backend: unknown type spec");
-    }
-    void Emitter::curSpecUnitFix() {}
 
 }  // namespace muc_detail

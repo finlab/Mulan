@@ -60,7 +60,7 @@ int sum_ptr(const int* p, usize n) {
 
 // string is a builtin immutable UTF-8 view; s[i] yields a byte.
 void print_string(string s) {
-    for i in 0..len(s) {
+    for i in 0..s.length() {
         putchar(s[i]);
     }
 }
@@ -96,7 +96,7 @@ int main() {
     // int[5] x, y;     // both x and y are int[5]
     // Parens in conditions and loop heads are optional; the spec omits them. C-style if (cond) is still legal.
     const string greeting = "hello, Mulan";
-    puts(greeting);
+    puts(greeting.cstr());
 
     calls += 1;                // unit-level variable: starts at 0 after zero-init
     print_int(calls); putchar('\n');
@@ -129,7 +129,7 @@ int main() {
     int zeroed = 0;
     int[3] zeroarr = {};
     string empty_text = {};
-    if z.x == 0 and z.y == 0 and zeroed == 0 and zeroarr[2] == 0 and len(empty_text) == 0 {
+    if z.x == 0 and z.y == 0 and zeroed == 0 and zeroarr[2] == 0 and empty_text.length() == 0 {
         puts("zero-init ok");
     }
 

@@ -352,11 +352,9 @@ namespace muc_detail {
         }
         if (target->is_varargs) {
             // Arguments of `...` have no static type: only ABI passability is required (scalar / pointer / POD).
-            // `string` is passed as the underlying `const char*` by C semantics (corresponding to printf's %s).
             for (size_t i = params.size(); i < c->args.size(); ++i) {
                 TypePtr at = c->args[i]->ty;
                 if (!at) continue;
-                if (is_str(at)) continue;
                 if (at->needs_cleanup() || is_reference_type(at)) {
                     err("variadic argument " + std::to_string(i + 1) + " cannot be `" + at->str() +
                             "`: `...` cannot carry values that need reference counting",

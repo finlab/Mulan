@@ -202,6 +202,7 @@ struct NewExpr : Expr {
 struct SizeofExpr : Expr {
     TypeSpecPtr spec;
     std::string which;  // "sizeof" | "alignof"
+    TypePtr spec_ty;    // sema: the resolved type of `spec` (codegen must not re-resolve it)
 };
 
 struct Len : Expr {

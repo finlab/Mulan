@@ -11,7 +11,7 @@
 
 // Ref: a borrow (`ref T` / `ref const T`). It appears only in the return type position of a function/method,
 // and in parameter patterns (the parameter side is still recorded with the pty_ref boolean, see FuncDecl). It cannot be used as a variable/field/element type.
-enum class TypeKind { Void, Prim, String, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref, Func };
+enum class TypeKind { Void, Prim, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref, Func };
 
 struct Type;
 using TypePtr = std::shared_ptr<Type>;
@@ -67,7 +67,6 @@ struct Type {
 
     static TypePtr make_void();
     static TypePtr make_prim(const std::string& name);
-    static TypePtr make_string();
     static TypePtr make_ptr(const TypePtr& elem, bool is_const = false);
     static TypePtr make_ref(const TypePtr& elem, bool is_const = false);
     static TypePtr make_array(const TypePtr& elem, size_t size);
@@ -95,7 +94,6 @@ struct Type {
 
 // Global singletons
 TypePtr t_void();
-TypePtr t_string();
 TypePtr t_int();
 TypePtr t_bool();
 TypePtr t_null();

@@ -88,15 +88,11 @@ using ArgPack = Emitter::ArgPack;
             if (ty->kind == TypeKind::Array && sizeOf(ty->elem) == 1 &&
                 dynamic_cast<StringLit*>(e)) {
                 if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       char-array from string\n";
-                Value* s = stringConst(static_cast<StringLit*>(e)->value);
-                if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       A\n";
-                Value* sp = b.CreateExtractValue(s, {0});
-                Value* sl = b.CreateExtractValue(s, {1});
-                if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       B\n";
+                const std::string& bytes = static_cast<StringLit*>(e)->value;
+                Value* sp = stringConst(bytes);   // `const char*` to the static buffer
                 zeroMem(addr, ty, unaligned);
-                if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       C\n";
-                b.CreateMemCpy(addr, MaybeAlign(unaligned ? 1 : alignOf(ty)), sp, MaybeAlign(1), sl);
-                if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       D\n";
+                b.CreateMemCpy(addr, MaybeAlign(unaligned ? 1 : alignOf(ty)), sp, MaybeAlign(1),
+                               ConstantInt::get(i64(), bytes.size()));
                 return;
             }
             Value* v = coerce(e, ty);

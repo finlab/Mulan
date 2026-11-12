@@ -720,7 +720,14 @@ namespace muc_detail {
             }
             if (ty->kind == TypeKind::Array && is_char(ty->elem) &&
                 dynamic_cast<StringLit*>(e)) {
-                check_expr(e, str_type());
+                // A string literal initializes a fixed-size char/byte array (copied + NUL padded, 3.4).
+                const std::string& bytes = static_cast<StringLit*>(e)->value;
+                if (bytes.size() >= ty->array_size) {
+                    err("string literal (" + std::to_string(bytes.size()) + " bytes) does not fit in `" +
+                            ty->str() + "` (it needs room for the terminating NUL)",
+                        e);
+                }
+                check_expr(e);
                 return;
             }
             check_assign(e, ty, what);

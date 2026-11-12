@@ -39,7 +39,9 @@ namespace muc_detail {
             }
             return Type::make_prim("byte");  // a character literal is a byte by default
         }
-        if (dynamic_cast<StringLit*>(e)) return str_type();
+        // A string literal is a static, NUL-terminated UTF-8 byte buffer: its type is `const char*`,
+        // like C. Converting it to the library `string` goes through `implicit string(const char*)` (3.6).
+        if (dynamic_cast<StringLit*>(e)) return Type::make_ptr(Type::make_prim("char"), /*is_const=*/true);
         if (dynamic_cast<BoolLit*>(e)) return t_bool();
 
         if (dynamic_cast<NullLit*>(e)) {
@@ -102,10 +104,6 @@ namespace muc_detail {
                 if (n != 1) err("pointer accepts exactly one subscript", e);
                 return bt->elem;
             }
-            if (is_str(bt)) {
-                if (n != 1) err("`string` accepts exactly one subscript", e);
-                return Type::make_prim("byte");
-            }
             if (is_user_type(bt)) {
                 if (n != 1) err("user-defined `operator[]` takes exactly one subscript", e);
                 if (const MethodSig* mm = find_member_operator(bt, "operator[]", {ix->indices[0].get()}, e)) {
@@ -159,16 +157,13 @@ namespace muc_detail {
         if (auto sz = dynamic_cast<SizeofExpr*>(e)) {
             TypePtr t = resolve_type(sz->spec.get(), cur_);
             if (is_void(t)) err("`" + sz->which + "(void)` is invalid", e);
+            sz->spec_ty = t;  // codegen uses the resolved type (no re-resolution, see 3.16/string)
             e->ty = Type::make_prim("usize");
             return e->ty;
         }
 
         if (auto ln = dynamic_cast<Len*>(e)) {
             TypePtr t = check_expr(ln->seq.get());
-            if (is_str(t)) {
-                if (ln->dim) err("`string` length has no dimension argument", ln->dim.get());
-                return Type::make_prim("usize");
-            }
             if (ln->dim) {
                 TypePtr dt = check_expr(ln->dim.get());
                 if (!is_integer(dt)) err("dimension of `len(seq, k)` must be an integer", ln->dim.get());
@@ -888,11 +883,14 @@ namespace muc_detail {
         if (op == "==" || op == "!=") {
             if (lt->kind == TypeKind::Null || rt->kind == TypeKind::Null) {
                 const TypePtr& other = (lt->kind == TypeKind::Null) ? rt : lt;
-                if (is_str(other)) {
-                    err("`string` cannot be compared with `null` (use `len(s) == 0` or `s == \"\"`)", e);
-                }
                 if (other->kind == TypeKind::Slice) {
                     err("slice cannot be compared with `null` (use `len(s) == 0`)", e);
+                }
+                if (other->kind == TypeKind::Struct) {
+                    err("a struct value (`" + other->str() +
+                            "`) cannot be compared with `null`: structs are values, not handles (use a `class` "
+                            "for a nullable reference)",
+                        e);
                 }
                 if (other->kind == TypeKind::Ptr || other->kind == TypeKind::Slice ||
                     other->kind == TypeKind::Null || other->kind == TypeKind::Class ||
@@ -900,7 +898,6 @@ namespace muc_detail {
                     return t_bool();
                 }
             }
-            if (is_str(lt) && is_str(rt)) return t_bool();
             if (is_numeric(lt) && is_numeric(rt)) return t_bool();
             if (lt->kind == TypeKind::Func || rt->kind == TypeKind::Func) {
                 if (!same_type(lt, rt)) {
@@ -1009,11 +1006,6 @@ namespace muc_detail {
         // 3.16: a function value is a pointer; `void*` → function type requires `as`, and a function value → `void*` too
         if (dst->kind == TypeKind::Func && src->kind == TypeKind::Ptr) return true;
         if (src->kind == TypeKind::Func && dst->kind == TypeKind::Ptr) return true;
-        if (is_str(src) && dst->kind == TypeKind::Ptr && dst->elem &&
-            dst->elem->is_const &&
-            dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
-            return true;  // Str -> readonly char*/byte* (requires NUL termination)
-        }
         return false;
     }
 }  // namespace muc_detail

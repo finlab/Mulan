@@ -654,7 +654,7 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
             builtin = true;
         }
         if (is_cmp_op(sig->name) &&
-            (t->is_numeric() || t->kind == TypeKind::Ptr || t->kind == TypeKind::String) && want_ret &&
+            (t->is_numeric() || t->kind == TypeKind::Ptr) && want_ret &&
             want_ret->is_bool()) {
             builtin = true;
         }

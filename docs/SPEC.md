@@ -195,22 +195,32 @@ move  unsafe  typeof
 - Bounds checking: TBD (recommended in debug builds, configurable off in release; dynamic arrays checked by default).
 - All-zero/null values use `{}`: `int[5] a = {};`, `int[] s = {};`, `string s = {};` (aggregate types no longer support `= 0`).
 - **`string` is a value type provided by the std library** (not a language built-in type; for layout, buffer management, and the full API see
-  `lib-std-string.md`):
+  `lib-std-string.md`). **The compiler knows nothing about its layout** (0.0.89):
+  - **A string literal is a static, NUL-terminated UTF-8 byte buffer; its type is `const char*`** (as in C).
+    `string s = "abc";` and `string s = cstr;` go through the library's `implicit string(const char*)`
+    (a copy, one allocation, see 3.6); `"abc"` on its own stays `const char*` and is passed to C as is.
   - **Language-visible contract** (the part SPEC guarantees):
-    - The type of the literal `"abc"` is `string`; `string s = {}` is the empty string (zero value).
-    - **Immutable**: cannot be traversed with `for ref`, `s[i]` is read-only.
-    - The element type of `s[i]` is `byte`; `len(s)` is the **byte length**; `for c in s` iterates by byte.
-    - `==` / `!=` compare by **byte value** (not identity); the zero value equals `""`.
-    - Cannot be compared with `null` (use `len(s) == 0` or `s == ""`).
-    - `string → const char*` / `const byte*` implicit conversion (requires NUL termination; guaranteed for whole strings/literals).
-    - Usable as struct/class fields, array elements, parameters, return values; **copyable and destructible** (value semantics, copies are independent).
-  - Size: `sizeof(string)` is defined by the library and **no fixed value is promised**; to pass strings across the ABI use `const char*`.
-  - Construction and operations (`string(const char*)`, `length()`, `at`, `sub`, `concat`, `find`, `trim`, etc.)
-    are **library API**, see the library docs; they are not part of the language specification.
-  - Implementation status: the compiler still has built-in special cases for `string` (zero-allocation literals, direct wiring of `len`/`for-in`/`[]`/`==`,
-    implicit conversion to `const char*`), which is an **implementation optimization**, not a language mechanism; the prerequisite for "true library-ization" is user destructors on structs and
-    copy/assignment semantics (leftover from backlog U24).
-- Initializing a fixed-size `char[N]` from a `string` literal performs a byte copy: copies the content and appends NUL and zeros.
+    - `string s = {}` is the empty string (zero value); `s.length()` is the **byte length**
+      (`len` serves built-in sequences only, 6.4.3, so a string uses `length()`).
+    - **Immutable**: no `operator[]=`, so `s[i] = ...` is a compile error; `for ref` is not supported.
+    - `s[i]` yields `byte` (the library's member `operator[]`); `for c in s` iterates by byte through the
+      index form (`length()` + `operator[]`, 6.4.1).
+    - `==` / `!=` compare by **byte value** (library `operator==`); a string can be compared with a literal
+      directly (`s == "abc"`, `"abc" == s`); comparing a struct value with `null` is a compile error.
+    - C interop: `s.cstr()` returns the underlying `const char*` (NUL-terminated); the compiler no longer
+      converts a `string` to a pointer implicitly. `strlen(cstr)` gives the byte length of a C string.
+    - Usable as struct/class fields, array elements, parameters, return values; **copyable and destructible**
+      (value semantics, copies are independent).
+  - Size: `sizeof(string)` is defined by the library (currently 24 bytes: `byte* p; usize n; byte[] owner`);
+    to pass strings across the ABI use `const char*`.
+  - **A `string` cannot be a unit-level variable** (`const string G = "hi";` is an error): a struct with
+    reference-counted fields has no exit-time destruction. Use `const char* G = "hi";` and convert at the use point.
+  - Construction and operations (`string(const char*)`, `length()`, `at`, `sub`, `concat`, `operator[]`,
+    `operator==`, `cstr`, `strlen`, ...) are **library API**, see the library docs; they are not part of the
+    language specification. Everything about `string` that used to be compiler magic (`len`, `s[i]`, `for-in`,
+    `==`, the literal→string conversion) is now ordinary library code (member operators, 3.11).
+- Initializing a fixed-size `char[N]` from a string literal performs a byte copy: copies the content and appends NUL and zeros
+  (a literal that does not fit, including the terminating NUL, is a compile error).
 
 ### 3.4 Structs
 
@@ -378,7 +388,7 @@ enum Color { Red, Green, Blue }
 - Floating-point literals likewise adapt to the context: `float f = 1.5;` is legal; but `double` → `float` between **variables/expressions** still requires an explicit `as`.
 - Integer arithmetic: types smaller than `int` are promoted to `int` first; mixed sign/width follows the rules above, and it is an error when no implicit conversion is possible.
 - `bool` does not participate in numeric conversions; conditions must be `bool`.
-- `string` → `const char*` / `const byte*` is implicit (returns `p`, requires NUL termination).
+- A `string` no longer converts to a pointer implicitly: use `s.cstr()` (3.3). A string literal is itself a `const char*`.
 - `string` is not a numeric type and cannot be converted implicitly to/from pointers/integers.
 - **Implicit struct construction** (`implicit T(one_param)`, implemented 0.0.88): when a `struct` declares an
   `implicit` single-parameter constructor, a value whose type is implicitly convertible to that parameter can be
@@ -412,7 +422,7 @@ const int** s;          // **s is not writable; *s (the intermediate pointer) is
 
 - `const` applies to the **base type (innermost)**: `const int**` reads as "pointer to pointer to const int".
 - Only relaxing, never tightening: `int* → const int*` is implicit; `const int* → int*` requires an explicit `as` (unsafe).
-- `string → const char*` / `const byte*` is implicit (returns `p`; requires NUL termination).
+- A `string` no longer converts to a pointer implicitly: use `s.cstr()` (3.3).
 - `const` on a named-type binding constrains **this binding** only; it is not a read-only view and does not change the type:
   - Local / parameter: cannot be rebound (`c = null` is an error), and fields or elements cannot be written directly through it (`c.a = 1`, `s.x = 1` are errors);
   - a `class` handle can still be copied out and written through as usual; through a `const` binding **methods that modify the object can also be called**—the language provides no `const` methods (see 3.11, 12 table 98);
@@ -478,7 +488,9 @@ Usable for unit-level `const`, type-level `const` members, and enum member value
 - In constant expressions `and` / `or` **evaluate both sides** (at runtime they short-circuit); therefore `false and (1 / 0 == 0)` reports division by zero in a constant context;
 - Despite forward references and arbitrary declaration order, constants of the same name coming from `use` still **report ambiguity** under the normal name-resolution rules (they do not silently take the first);
 - Not supported: function calls (there are no `constexpr` functions), `?:` conditional expressions, pointers/strings/aggregate values participating in evaluation.
-  String and aggregate constants follow the old rules (`const string S = "hi";`, `const int[] G = {10, 20, 30};` continue to work).
+  Aggregate constants follow the old rules (`const int[] G = {10, 20, 30};` keeps working). **A `string` cannot be a
+  unit-level variable** (it holds reference-counted data, 3.3), so `const string S = "hi";` is a compile error —
+  write `const char* S = "hi";` and convert at the use point.
 - Enums are nominal types: enum members still require an explicit `as` to participate in arithmetic/comparison (`(Color.Red as int) * 2`).
 - **Initializers of unit-level variables** (including non-`const` globals such as `int g = 1 + 2;`, `int G = Cat.MaxAge;`) also go through this evaluator:
   if a constant can be computed it is emitted to the global data area as a constant; otherwise it falls back to the old literal/aggregate rules, and if that still fails it reports "must be a compile-time constant".
@@ -1095,7 +1107,8 @@ declaration and a return type must name the type with `type` first).
   literals, unary `-`/`+`/`not`, `as`, arithmetic/bitwise/comparison/`and`/`or`, and **references to other constants**
   (unit-level `const`, enum members, type-level `const` members) as well as `sizeof(T)` / `alignof(T)`;
   forward references are supported; `const int B = A + 1;`, `int g = 1 + 2;`, `int G = Cat.MaxAge;` are all legal. Cyclic dependencies and division by zero are errors.
-  String/aggregate constants are still written as literals or aggregate initialization (`const string S = "hi";`, `const int[] G = {10, 20, 30};`).
+  Aggregate constants are still written as literals or aggregate initialization (`const int[] G = {10, 20, 30};`).
+  A `string` value cannot be a unit-level variable (3.3): write `const char* S = "hi";` instead.
 - **Local `const`** may be initialized with a runtime expression (`const int x = f();` is legal); it simply cannot be assigned again after initialization.
 - A `const` inside a type body is a **type-level constant**, must be initialized on the spot, and must be a compile-time constant; see 3.7.1.
 - `static` has been removed (0.0.32): unit-level variables naturally have static storage duration; `static` local variables inside functions and `static` functions are not supported.
@@ -1265,7 +1278,9 @@ for i, x in seq { ... }    // with index/ordinal (see 6.4.4)
 ```
 
 - The parenthesized forms `for (x in seq)` / `for (i, x in seq)` / `for (ref x in seq)` are also accepted; canonical style omits the parentheses.
-- Built-in sequences: half-open range `a..b`, fixed-size arrays, slices, `string` (iterated byte by byte).
+- Built-in sequences: half-open range `a..b`, fixed-size arrays, slices. A `string` is iterated through the
+  index form of 6.4.1 (`length()` + the library's member `operator[]`, byte by byte) — the compiler has no
+  built-in knowledge of it.
 - **`for-in` is not supported for multidimensional arrays** (both `T[m,n,...]` and `T[,]` count): use an index loop; for a static multidimensional array you can take a row first and then iterate.
 - User types: lowered according to the **iteration forms** of 6.4.1–6.4.3 (**the index form is implemented; the cursor form is not implemented yet**);
   built-in sequences do not participate in form matching.
@@ -1452,7 +1467,7 @@ extern int printf(const char* fmt, ...);
   | `float` | `double` |
   | `bool` / `byte` / `char` / `short` / `ushort` | `int` |
   | enum | the underlying integer type |
-  | `string` | the underlying `const char*` (for `printf("%s", s)`) |
+  | `string` | **not allowed**: it holds reference-counted data; pass `s.cstr()` (a `const char*`) instead |
   | pointer / POD struct / union | unchanged |
 
 - Arguments to `...` do not participate in reference counting: types that contain RC (class/interface references, dynamic arrays, structs with reference fields or with a user destructor)
@@ -1617,7 +1632,7 @@ unit example;
 | Condition parentheses | Required | Optional, omitted in canonical style |
 | Conversions | Many implicit | Only widening that loses no range; otherwise `as` |
 | Arrays | Degenerate to pointers, mixed value semantics | Fixed-size arrays have value semantics; slices are explicit |
-| Strings | `char*` | std.string `string` (UTF-8; NUL guaranteed only for complete strings/literals) |
+| Strings | `char*` | a literal is a `const char*`; `string` is a library value type (UTF-8, RC-backed; `.cstr()` for C, `strlen()` for C-string length) |
 | Type casts | `(T)x` | `x as T` |
 | Function pointers | `int (*f)(int)` declarators | `(int) => int`; one word, no `*`, no declarator nesting; lambdas are non-capturing (3.16) |
 | Logic | `&&` / `\|\|` / `!` | `and` / `or` / `not` |
@@ -1646,7 +1661,7 @@ unit example;
 | 1 | Declaration syntax | Decided: C# style, type first, multiple variables share the type |
 | 2 | Whether condition parentheses are mandatory | Decided: optional, omitted in the spec; C style remains legal |
 | 3 | Fixed-width type naming (C names vs `i32`) | Use C names first |
-| 4 | Layout of `string` and conversion to `byte[]` | Decided: `string` is a **value type provided by the std library**, and the layout/buffer/RC/API are library implementation details (`lib-std-string.md`); the language only guarantees the visible contract of §3.3 |
+| 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are forbidden (RC data, no exit-time destruction) |
 | 5 | Whether arrays implicitly decay to pointers | No decay |
 | 6 | Whether dynamic arrays are included in phase one | Decided: included (`T[]` / `T[,]`, RC heap arrays) |
 | 7 | Bounds checking strategy | Checked in debug; configurable in release |
@@ -1661,7 +1676,7 @@ unit example;
 | 16 | Error handling convention | Exceptions were introduced in 0.0.81–0.0.82 (3.14): unchecked, `Exception` base class, `throw`/`try`/`catch`/`finally`; return codes/`null` remain for library APIs |
 | 17 | Module visibility / linkage modifiers | Implemented (0.0.30): `private`=within a unit, `public`=across units; struct members are public by default, class members are private by default; `public:`/`private:` section labels are supported; the library boundary = the first segment of the unit name, crossing libraries requires `public unit`; after `use`, public symbols can be used directly without a prefix; non-public symbols use `internal` linkage (see `visibility-design.md`) |
 | 18 | Struct alignment/packed | Implemented (0.0.42): `packed` (no arguments, equivalent to `pack(1)`) and `align(N)` (a power-of-two constant, covering overall alignment and tail padding) are **keyword modifiers**, orthogonal and composable; `N` is compared against the natural alignment, and `N < natural alignment` is an error. See 3.4 for details |
-| 19 | Details of the conversions between `string` and `byte[]`/`char[N]` | `string` is an immutable view; `char[N]` initialization copies byte by byte; the remaining conversions are library APIs (see the library documentation) |
+| 19 | Details of the conversions between `string` and `byte[]`/`char[N]` | `string` is an immutable library type; initializing a `char[N]` from a literal is a language rule (byte copy + NUL padding, 3.3); literal → `string` is the `implicit` constructor; the remaining conversions are library APIs |
 | 20 | Struct constructors / `this` | class constructors and `this` are covered in 3.11/3.12; structs still use aggregate construction |
 | 21 | Whether `elif` is syntax sugar | Decided (implemented): supported, equivalent to `else if` |
 | 22 | Storage and lifetime of dynamic array literals | `T[] a = {...}` allocates a new array (RC); borrowed views are not supported |
@@ -1704,7 +1719,7 @@ unit example;
 | 59 | Set of bitwise operators | Decided: `&` `\|` `~` (NOT) `^` (XOR) |
 | 60 | Exponentiation operator | Decided: no operator is provided; bitwise XOR has exclusive use of `^`; use `pow` (libc)/a library function for exponentiation |
 | 61 | If `^` were the exponentiation operator, what would XOR use | Deprecated: `^` is not the exponentiation operator, XOR keeps `^` |
-| 62 | `string` comparison semantics | Decided: `==`/`!=` compare byte values; no comparison with `null`; the zero value equals `""` (a library type contract, not a language special case) |
+| 62 | `string` comparison semantics | Decided (0.0.89): library `operator==` compares byte values, with overloads for `string` and `const char*` (a literal); `!=` is derived by negating; comparing a struct value with `null` is a compile error; the zero value equals `""` |
 | 63 | Floating-point literal narrowing | Decided: literals adapt to the context (`float f = 1.5;` is legal), but variables still require `as` |
 | 64 | Integer ↔ enum conversions | Decided: no implicit conversion in either direction, `as` is required (an enum is not a widening target for an integer, and an integer is not an implicit source for an enum) |
 | 65 | Upper limit of integer literals | Decided: `2^63-1`, exceeding it is an error |

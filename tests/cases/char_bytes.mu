@@ -28,7 +28,7 @@ int main() {
 
     // string is a UTF-8 byte view: s[i] and for-in both work on bytes
     string s = "中";                 // UTF-8: E4 B8 AD
-    if len(s) != 3 { puts("string bytes fail"); return 1; }
+    if s.length() != 3 { puts("string bytes fail"); return 1; }
     if s[0] != 0xE4 { puts("first byte fail"); return 1; }
     if s[1] != 0xB8 { puts("second byte fail"); return 1; }
     if s[2] != 0xAD { puts("third byte fail"); return 1; }

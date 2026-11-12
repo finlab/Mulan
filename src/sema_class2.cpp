@@ -182,7 +182,6 @@ namespace muc_detail {
         }
         if (auto ix = dynamic_cast<Index*>(t)) {
             TypePtr bt = ix->base->ty;
-            if (is_str(bt)) err("`string` is immutable; cannot write to elements (use `byte[]` or `str_concat` to build one)", t);
             if (bt && bt->kind == TypeKind::Slice && bt->elem && bt->elem->is_const)
                 err("cannot write through a `const` slice", t);
             if (bt && bt->kind == TypeKind::Ptr && bt->elem && bt->elem->is_const)
@@ -232,9 +231,6 @@ namespace muc_detail {
         if (auto ix = dynamic_cast<Index*>(s->target.get())) {
             TypePtr bt = check_expr(ix->base.get());
             if (is_user_type(bt)) {
-                if (is_str(bt))
-                    err("`string` is immutable; cannot write to elements (use `byte[]` or `str_concat` to build one)",
-                        s->target.get());
                 if (ix->indices.size() != 1)
                     err("user-defined `operator[]=` takes exactly one index", s->target.get());
                 TypePtr it = check_expr(ix->indices[0].get());
@@ -707,15 +703,12 @@ namespace muc_detail {
                 }
                 s->loop_kind = "slice";
                 s->elem_ty = st->elem;
-            } else if (is_str(st)) {
-                s->loop_kind = "string";
-                s->elem_ty = Type::make_prim("byte");
             } else if (st->kind == TypeKind::Struct || st->kind == TypeKind::Class) {
                 resolve_index_shape(s, st);
             } else {
                 err("`for-in` cannot iterate " + st->str() +
-                        " (supported: range, array, slice, string; user types must provide `length() -> usize` and "
-                        "`operator[](C, usize)`）",
+                        " (supported: range, array, slice; user types must provide `length() -> usize` and "
+                        "`operator[](usize) -> T`）",
                     s->seq.get());
             }
             s->seq_ty = st;

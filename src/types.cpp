@@ -71,11 +71,6 @@ TypePtr Type::make_prim(const std::string& name) {
     return t;
 }
 
-TypePtr Type::make_string() {
-    auto t = std::make_shared<Type>();
-    t->kind = TypeKind::String;
-    return t;
-}
 
 TypePtr Type::make_ptr(const TypePtr& elem, bool is_const) {
     auto t = std::make_shared<Type>();
@@ -177,8 +172,7 @@ std::string Type::str() const {
             return "void";
         case TypeKind::Prim:
             return is_const ? "const " + name : name;
-        case TypeKind::String:
-            return "string";
+
         case TypeKind::Ptr: {
             std::string base = elem_str(elem) + "*";
             return is_const ? "const " + base : base;
@@ -394,10 +388,6 @@ TypePtr t_void() {
     return t;
 }
 
-TypePtr t_string() {
-    static TypePtr t = Type::make_string();
-    return t;
-}
 
 TypePtr t_int() {
     static TypePtr t = Type::make_prim("int");
@@ -449,7 +439,6 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
     if (a->kind != b->kind) return false;
     switch (a->kind) {
         case TypeKind::Void:
-        case TypeKind::String:
         case TypeKind::Null:
         case TypeKind::Range:
             return true;
@@ -554,10 +543,10 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
     if (same_type(src, dst)) return true;
     if (!src || !dst) return false;
 
-    // null -> pointer / slice / string / class / interface / function value
+    // null -> pointer / slice / class / interface / function value
     if (src->kind == TypeKind::Null) {
         return dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice ||
-               dst->kind == TypeKind::String || dst->kind == TypeKind::Class ||
+               dst->kind == TypeKind::Class ||
                dst->kind == TypeKind::Interface || dst->kind == TypeKind::Func;
     }
 
@@ -591,19 +580,6 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
             return false;
         }
         return true;
-    }
-
-    // string -> const char* / const char[] | const byte[]
-    if (src->kind == TypeKind::String) {
-        if (dst->kind == TypeKind::Ptr && dst->elem && dst->elem->is_const) {
-            if (dst->elem->kind == TypeKind::Void) return true;
-            return dst->elem->kind == TypeKind::Prim && dst->elem->name == "char";
-        }
-        if (dst->kind == TypeKind::Slice && dst->elem && dst->elem->is_const) {
-            if (dst->elem->kind != TypeKind::Prim) return false;
-            return dst->elem->name == "char" || dst->elem->name == "byte";
-        }
-        return false;
     }
 
     // Numeric: only a widening that does not lose range is allowed

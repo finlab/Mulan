@@ -91,9 +91,9 @@ int main() {
     string s1 = "abc";
     string s2 = "de";
     string s3 = pick ? s1 : s2;
-    if len(s3) != 3 { puts("string fail"); return 18; }
+    if s3.length() != 3 { puts("string fail"); return 18; }
     string s4 = pick ? s1.concat(s2) : s2;
-    if len(s4) != 5 { puts("string owned fail"); return 19; }
+    if s4.length() != 5 { puts("string owned fail"); return 19; }
 
     puts("ternary ok");
     return 0;

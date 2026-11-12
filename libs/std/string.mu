@@ -1,7 +1,8 @@
 // mu standard library: string
 //
-// This is a pure mu implementation; the compiler only handles fast fallbacks for
-// literals, s[i], len, ==/!=, for-in and other canonical layouts.
+// A pure library type: the compiler knows nothing about its layout. A string literal is a
+// NUL-terminated UTF-8 `const char*`, and `string s = cstr;` goes through
+// `implicit string(const char*)` (a copy, one allocation).
 //
 // string is a value-type struct: assignment and argument passing copy the three
 // fields (p/n/owner); owner is an RC byte array that keeps the backing buffer alive.
@@ -15,8 +16,9 @@ private:
     byte[] owner;
 
 public:
-    // construct from a NUL-terminated C string (copies it, does not hold c)
-    string(const char* c) {
+    // construct from a NUL-terminated C string (copies it, does not hold c).
+    // `implicit`: `string s = "literal";` and `string s = cstr;` (3.6)
+    implicit string(const char* c) {
         usize count = 0;
         while c[count] != 0 {
             count += 1;
@@ -58,6 +60,49 @@ public:
     // NUL-terminated view; both literals and normal strings guarantee a trailing 0
     const char* cstr() {
         return p as const char*;
+    }
+
+    // ---------------------------------------------------------------- element access and comparison
+
+    // `s[i]`: byte access (bounds are a user responsibility until the bounds policy is settled, 8.2)
+    byte operator[](usize i) {
+        return p[i];
+    }
+
+    bool operator==(string o) {
+        if n != o.n {
+            return false;
+        }
+        usize i = 0;
+        while i < n {
+            if p[i] != o.p[i] {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    // compare with a NUL-terminated C string (literals): `s == "abc"`
+    bool operator==(const char* c) {
+        usize i = 0;
+        while i < n {
+            if c[i] == 0 or p[i] != (c[i] as byte) {
+                return false;
+            }
+            i += 1;
+        }
+        return c[i] == 0;
+    }
+
+    // `s + "literal"`: the literal is a `const char*` (3.6 implicit conversion is not used inside
+    // expressions, so the overload is explicit here)
+    string operator+(const char* c) {
+        return concat(string(c));
+    }
+
+    string operator+(string o) {
+        return concat(o);
     }
 
     // ---------------------------------------------------------------- slicing and concatenation
@@ -169,7 +214,21 @@ private:
     }
 }
 
-// operators can only be free functions (language limitation); thin wrappers over the member methods.
-public string operator+(string a, string b) {
-    return a.concat(b);
+// A C string on the left (`"abc" == s`): a free function because a member needs the receiver on the left.
+public bool operator==(const char* c, string s) {
+    return s == c;
+}
+
+public string operator+(const char* c, string s) {
+    return string(c) + s;
+}
+
+// Byte length of a NUL-terminated C string: the compiler has no builtin `len` for pointers,
+// so a literal's length is `strlen(literal)` (or convert to `string` and use `length()`).
+public usize strlen(const char* c) {
+    usize i = 0;
+    while c[i] != 0 {
+        i += 1;
+    }
+    return i;
 }

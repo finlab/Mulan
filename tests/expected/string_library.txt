@@ -1,0 +1,12 @@
+utf8 中
+8
+literal direct
+5
+101
+5
+ENM
+concat ok
+left concat ok
+hello!
+char array ok
+zero ok

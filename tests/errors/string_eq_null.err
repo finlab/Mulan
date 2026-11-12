@@ -1,1 +1,1 @@
-`string` cannot be compared with `null` (use `len(s) == 0` or `s == ""`)
+a struct value (`std.string.string`) cannot be compared with `null`

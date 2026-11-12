@@ -24,7 +24,6 @@ std::string type_code(const TypePtr& t) {
     switch (t->kind) {
         case TypeKind::Void: return "v";
         case TypeKind::Prim: return t->name;
-        case TypeKind::String: return "str";
         case TypeKind::Ptr: return "p_" + type_code(t->elem);
         case TypeKind::Ref: return "r_" + type_code(t->elem);
         case TypeKind::Array: return "a" + std::to_string(t->array_size) + "_" + type_code(t->elem);

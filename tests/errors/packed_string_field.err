@@ -1,1 +1,1 @@
-field `s` of packed struct `Bad` cannot be `string` (unaligned pointer access)
+holds reference-counted fields

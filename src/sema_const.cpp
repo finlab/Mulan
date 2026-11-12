@@ -102,6 +102,16 @@ namespace muc_detail {
                 return true;
             }
         }
+        // A string literal initializes a fixed-size char/byte array (copy + NUL padding, 3.4).
+        if (dst && dst->kind == TypeKind::Array && is_char(dst->elem) && dynamic_cast<StringLit*>(e)) {
+            const std::string& bytes = static_cast<StringLit*>(e)->value;
+            if (bytes.size() >= dst->array_size) {
+                err("string literal (" + std::to_string(bytes.size()) + " bytes) does not fit in `" +
+                        dst->str() + "` (it needs room for the terminating NUL)",
+                    e);
+            }
+            return true;
+        }
         if (src && dst && src->kind == TypeKind::Array && dst->kind == TypeKind::Slice) {
             // T[N] -> T[]; T[m,n] -> T[,] (match rank by nesting depth, element types must agree)
             TypePtr base = src;
@@ -116,11 +126,6 @@ namespace muc_detail {
             }
             return false;
         }
-        if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->elem &&
-            dst->elem->is_const &&
-            dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
-            return true;  // Str -> readonly char*/byte* (requires NUL termination)
-        }
         return implicit_ok(src, dst);
     }
 
@@ -128,6 +133,9 @@ namespace muc_detail {
         // Process-level pool: `Expr::conv` must stay valid after Sema is destroyed (codegen runs later).
         static std::deque<ImplicitConv> pool;
         if (!dst || !src) return nullptr;
+        // `null` is not a value that a conversion may consume: `s == null` must stay an error rather than
+        // building a string from a null C string.
+        if (src->kind == TypeKind::Null) return nullptr;
         if (dst->kind != TypeKind::Struct) return nullptr;  // value types only: a class conversion would be a hidden allocation
         if (same_type(dst, src)) return nullptr;
         for (size_t i = 0; i < dst->ctors.size(); ++i) {

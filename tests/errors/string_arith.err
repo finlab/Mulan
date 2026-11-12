@@ -1,1 +1,1 @@
-operator+ argument: cannot assign int to std.string.string
+has no `*` operator overload

@@ -1,7 +1,7 @@
 unit str_struct;
 extern int puts(const char* s);
 
-string G = "global";
+const char* G = "global";
 
 struct Box {
     string s;
@@ -20,20 +20,20 @@ Box mk() {
 int main() {
     // literal / length / indexing / byte iteration / value comparison
     string s = "abc";
-    if len(s) != 3 { return 1; }
+    if s.length() != 3 { return 1; }
     if s[0] != 'a' or s[2] != 'c' { return 2; }
     if s != "abc" { return 3; }
     if s == "abd" { return 4; }
-    if len("abc") != 3 or "abc"[1] != 'b' { return 5; }
+    string lit = "abc"; if lit.length() != 3 or lit[1] != 'b' { return 5; }
     int n = 0;
     for c in s { if c != 0 { n += 1; } }
     if n != 3 { return 6; }
-    for c in "xyz" { n += 1; }
+    string xyz = "xyz"; for c in xyz { n += 1; }
     if n != 6 { return 7; }
 
     // zero value / methods
     string z = {};
-    if len(z) != 0 { return 8; }
+    if z.length() != 0 { return 8; }
     if not z.empty() { return 9; }
     if s.empty() { return 10; }
     if s.length() != 3 { return 11; }
@@ -48,7 +48,7 @@ int main() {
     if u.length() != 6 or u != "abcxyz" { return 16; }
     string sub = u.sub(3, 3);
     if sub != "xyz" { return 17; }
-    if len(sub) != 3 { return 18; }
+    if sub.length() != 3 { return 18; }
     string f = string("cstr");
     if f != "cstr" { return 19; }
 
@@ -63,7 +63,7 @@ int main() {
     h.name = "held";
     if h.name != "held" { return 23; }
     h = null; // global string and char[N] literal initialization
-    if G != "global" or len(G) != 6 { return 24; }
+    string gv = G; if gv != "global" or gv.length() != 6 { return 24; }
     char[8] buf = "abc";
     if buf[2] != 'c' or buf[3] != 0 { return 25; }
 

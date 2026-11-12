@@ -27,14 +27,14 @@ void print_int(int v) {
 }
 
 void show(string s) {
-    for i in 0..len(s) {
+    for i in 0..s.length() {
         putchar(s[i]);
     }
     putchar('\n');
 }
 
 void show_bytes(string s) {
-    for i in 0..len(s) {
+    for i in 0..s.length() {
         print_int(s[i]);
         putchar(' ');
     }
@@ -44,15 +44,15 @@ void show_bytes(string s) {
 int main() {
     // ---------- ASCII code points ----------
     show("\u{41}\u{42}\u{43}");          // ABC
-    print_int(len("\u{41}") as int); putchar('\n');   // 1
+    print_int(strlen("\u{41}") as int); putchar('\n');   // 1
 
     // ---------- 2 / 3 / 4 byte code points encoded as UTF-8 ----------
     show("\u{E9}");                      // é
     show("\u{4E2D}\u{6587}");            // Chinese text
     show("\u{1F600}");                   // 😀
-    print_int(len("\u{E9}") as int); putchar('\n');     // 2
-    print_int(len("\u{4E2D}") as int); putchar('\n');   // 3
-    print_int(len("\u{1F600}") as int); putchar('\n');  // 4
+    print_int(strlen("\u{E9}") as int); putchar('\n');     // 2
+    print_int(strlen("\u{4E2D}") as int); putchar('\n');   // 3
+    print_int(strlen("\u{1F600}") as int); putchar('\n');  // 4
 
     // ---------- UTF-8 bytes ----------
     show_bytes("\u{4E2D}");              // 228 184 173

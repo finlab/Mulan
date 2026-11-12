@@ -8,7 +8,7 @@ int main() {
     if a == b { puts("eq ok"); }
     if a != c { puts("ne ok"); }
     if z == "" { puts("zero eq empty ok"); }
-    if len(z) == 0 { puts("len ok"); }
+    if z.length() == 0 { puts("len ok"); }
     if a == "abc" { puts("literal eq ok"); }
     return 0;
 }

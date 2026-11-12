@@ -28,7 +28,7 @@ void print_int(int v) {
 
 // string parameter: iterate and print directly
 void show(string s) {
-    for i in 0..len(s) {
+    for i in 0..s.length() {
         putchar(s[i]);
     }
     putchar('\n');
@@ -42,7 +42,7 @@ int main() {
 
     // ---------- s[i] yields a byte (char, unsigned); string literals may be indexed directly ----------
     int sum = 0;
-    for i in 0..len("abc") {
+    for i in 0..strlen("abc") {
         sum += "abc"[i];
     }
     print_int(sum); putchar('\n');       // 97 + 98 + 99 = 294

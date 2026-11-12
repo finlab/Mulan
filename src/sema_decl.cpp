@@ -45,25 +45,7 @@ namespace muc_detail {
         return nullptr;
     }
 
-    TypePtr Sema::str_type() {
-        if (UnitInfo* std = std_info()) {
-            auto it = std->structs.find("string");
-            if (it != std->structs.end()) return it->second->ty;
-        }
-        return nullptr;
-    }
-
-    bool Sema::is_str(const TypePtr& t) {
-        TypePtr s = str_type();
-        return t && s && same_type(t, s);
-    }
-
     bool Sema::implicit_ok(const TypePtr& src, const TypePtr& dst) {
-        if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->elem &&
-            dst->elem->is_const &&
-            dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
-            return true;  // Str -> readonly char*/byte* (NUL terminated)
-        }
         return implicitly_convertible(src, dst);
     }
 
@@ -462,11 +444,6 @@ namespace muc_detail {
                     TypePtr base = f.type;
                     while (base && base->kind == TypeKind::Array) base = base->elem;
                     if (!base) continue;
-                    if (is_str(base)) {
-                        err("field `" + f.name + "` of packed " + kw + " `" + sd->name +
-                                "` cannot be `string` (unaligned pointer access)",
-                            sd);
-                    }
                     if (base->kind == TypeKind::Slice) {
                         err("field `" + f.name + "` of packed " + kw + " `" + sd->name +
                                 "` cannot be a dynamic array `" + base->str() + "` (unaligned pointer access)",
@@ -475,6 +452,12 @@ namespace muc_detail {
                     if (is_reference_type(base)) {
                         err("field `" + f.name + "` of packed " + kw + " `" + sd->name +
                                 "` cannot be a `class` or `interface` reference (unaligned pointer access)",
+                            sd);
+                    }
+                    if (base->kind == TypeKind::Struct && base->needs_cleanup()) {
+                        err("field `" + f.name + "` of packed " + kw + " `" + sd->name + "` cannot be `" +
+                                base->str() +
+                                "`: it holds reference-counted fields, which need aligned access",
                             sd);
                     }
                 }
@@ -525,7 +508,7 @@ namespace muc_detail {
                     err(kw + " `" + sd->name + "` cannot contain itself by value", sd);
                 }
                 if (spec->weak) err("`weak` can only be used on class fields", sd);
-                if (sd->is_union && (is_str(ft) || ft->needs_cleanup())) {
+                if (sd->is_union && ft->needs_cleanup()) {
                     err("field `" + fname + "` of union `" + sd->name + "` cannot be `" + ft->str() +
                             "`: union members cannot hold values that need reference counting",
                         sd);

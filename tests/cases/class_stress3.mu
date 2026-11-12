@@ -12,7 +12,7 @@ class B : A {
     int own;
     B(int v, int o) { super(v); own = o; }
     ~B() { }
-    int f(string s) { return len(s) as int + own; }
+    int f(string s) { return s.length() as int + own; }
     int call_super(int x) { return super.f(x); }
     int g2() { return g() + own; }
 }

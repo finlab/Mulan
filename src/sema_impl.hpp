@@ -144,11 +144,6 @@ private:
 
     UnitInfo* std_info();
 
-    // The canonical string struct in std.string (its name is just `string`)
-    TypePtr str_type();
-
-    bool is_str(const TypePtr& t);
-
     // std.exception.Exception: the root of every throwable/catchable class
     UnitInfo* exception_info();
 

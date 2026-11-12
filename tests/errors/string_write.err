@@ -1,1 +1,1 @@
-`string` is immutable; cannot write to elements
+does not support subscript assignment

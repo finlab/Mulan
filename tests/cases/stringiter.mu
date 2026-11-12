@@ -39,7 +39,7 @@ int main() {
     // global string constant
     const string g = "global";
     const string h = g;
-    if len(h) == 6 and h[0] == 'g' { puts("const string ok"); }
+    if h.length() == 6 and h[0] == 'g' { puts("const string ok"); }
 
     // 32-bit boundary literal
     uint u = 0xFFFFFFFF;

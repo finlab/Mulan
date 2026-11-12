@@ -498,16 +498,6 @@ namespace muc_detail {
     }
 
     // owned Str rvalue: materialized into a statement temporary, with the owner released at the end of the statement
-    Value* Emitter::evalStrValue(Expr* e) {
-        Value* v = eval(e);
-        if (valueOwned(e)) {
-            auto* tmp = entryAlloca(lt(strType()), "str.tmp", alignOf(strType()));
-            b.CreateStore(v, tmp);
-            stmtTemps.emplace_back(tmp, strType());
-        }
-        return v;
-    }
-
     void Emitter::releaseAllScopes() {
         for (size_t i = refScopes.size(); i > 0; --i) {
             auto& scope = refScopes[i - 1];

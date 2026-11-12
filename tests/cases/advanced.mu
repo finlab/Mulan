@@ -35,7 +35,7 @@ int main() {
     if d == 2 { puts("ptr diff ok"); }
 
     string s2 = "a\tb";
-    if len(s2) == 3 and s2[1] == 9 { puts("escape ok"); }
+    if s2.length() == 3 and s2[1] == 9 { puts("escape ok"); }
 
     int x = 1;
     if true {

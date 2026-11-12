@@ -30,8 +30,6 @@ static bool is_numeric(const TypePtr& t) {
         LType* tt = lt(to);
         if (ft == tt) return v;
 
-        if (isStrType(from) && to->kind == TypeKind::Ptr)
-            return b.CreateExtractValue(v, {0});
         if (from->kind == TypeKind::Null) return Constant::getNullValue(tt);
         if (from->kind == TypeKind::Class && to->kind == TypeKind::Interface) {
             Value* dp = b.CreateGEP(i8(), v, ConstantInt::get(i64(), 8));
@@ -213,12 +211,6 @@ static bool is_numeric(const TypePtr& t) {
                 idxs.push_back(convertTo(eval(ie.get()), ie->ty,
                                          Type::make_prim("usize"), ix->line, ix->col));
             }
-            if (isStrType(bt)) {
-                if (idxs.size() != 1) fail("LLVM backend: `string` accepts exactly one index", ix->line, ix->col);
-                Value* sv = evalStrValue(ix->base.get());
-                Value* p = b.CreateExtractValue(sv, {0});
-                return b.CreateGEP(i8(), p, idxs[0]);
-            }
             if (bt->kind == TypeKind::Array) {
                 Value* addr = addrOf(ix->base.get());
                 TypePtr curTy = bt;
@@ -244,10 +236,6 @@ static bool is_numeric(const TypePtr& t) {
             if (bt->kind == TypeKind::Ptr) {
                 if (idxs.size() != 1) fail("LLVM backend: wrong number of pointer indices", ix->line, ix->col);
                 return gep(lt(bt->elem), eval(ix->base.get()), idxs[0]);
-            }
-            if (bt->kind == TypeKind::String) {
-                Value* sv = eval(ix->base.get());
-                return gep(i8(), b.CreateExtractValue(sv, {0}), idxs[0]);
             }
             fail("LLVM backend: type is not indexable", ix->line, ix->col);
         }
@@ -356,21 +344,6 @@ static bool is_numeric(const TypePtr& t) {
             phi->addIncoming(ConstantInt::get(i1(), op == "and" ? 0 : 1), lhsEnd);
             phi->addIncoming(r, rhsEnd);
             return phi;
-        }
-
-        // string == / !=
-        if ((op == "==" || op == "!=") && isStrType(lt_) && isStrType(rt_)) {
-            Value* l = evalStrValue(e->left.get());
-            Value* r = evalStrValue(e->right.get());
-            Value* lp = b.CreateExtractValue(l, {0});
-            Value* ll = b.CreateExtractValue(l, {1});
-            Value* rp = b.CreateExtractValue(r, {0});
-            Value* rl = b.CreateExtractValue(r, {1});
-            auto memcmpFn = libFn("memcmp", i32(), {ptrTy(), ptrTy(), i64()});
-            Value* cmp = b.CreateCall(memcmpFn, {lp, rp, b.CreateSelect(
-                                                            b.CreateICmpULT(ll, rl), ll, rl)});
-            Value* eq = b.CreateAnd(b.CreateICmpEQ(ll, rl), b.CreateICmpEQ(cmp, ConstantInt::get(i32(), 0)));
-            return op == "==" ? eq : b.CreateNot(eq);
         }
 
         // the operands are evaluated only once (all later branches reuse them)
@@ -526,10 +499,6 @@ static bool is_numeric(const TypePtr& t) {
     // C default argument promotion: integers smaller than int -> int, float -> double, everything else unchanged (required by the C varargs ABI)
     Value* Emitter::promoteVararg(Value* v, const TypePtr& t) {
         if (!t) return v;
-        if (isStrType(t)) {
-            // a `string` view is passed as the underlying `const char*` following C semantics (printf's %s)
-            return b.CreateExtractValue(v, {0});
-        }
         if (t->kind == TypeKind::Prim) {
             const std::string& n = t->name;
             if (n == "float") return b.CreateFPExt(v, LType::getDoubleTy(ctx));

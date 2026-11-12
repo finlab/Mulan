@@ -272,27 +272,6 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return mod->getOrInsertGlobal(class_desc_name(cls->unit, cls->name), descTy);
     }
 
-    // std.string.string: the canonical string struct recognized by the compiler (fields p/n/owner)
-    TypePtr Emitter::strType() {
-        if (strMeta) return strMeta;
-        for (auto& u : prog.units) {
-            if (u->name != "std.string") continue;
-            for (auto& d : u->decls) {
-                auto sd = dynamic_cast<StructDecl*>(d.get());
-                if (sd && sd->name == "string" && sd->ty) {
-                    strMeta = sd->ty;
-                    return strMeta;
-                }
-            }
-        }
-        fail("std.string.string is not defined");
-    }
-
-    bool Emitter::isStrType(const TypePtr& t) {
-        TypePtr s = strType();
-        return t && s && same_type(t, s);
-    }
-
     LType* Emitter::lt(const TypePtr& t) {
         if (!t) return i32();
         switch (t->kind) {
@@ -329,18 +308,15 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return Constant::getNullValue(ty);
     }
 
+    // A string literal (3.3): a static, NUL-terminated UTF-8 buffer. Its value is a `const char*`.
     Value* Emitter::stringConst(const std::string& bytes) {
         auto it = strCache.find(bytes);
         if (it != strCache.end()) return it->second;
         Constant* arr = ConstantDataArray::getString(ctx, bytes, true);
         auto* gv = new GlobalVariable(*mod, arr->getType(), true, GlobalValue::PrivateLinkage,
                                       arr, ".str");
-        TypePtr st = strType();
-        Constant* c = ConstantStruct::get(
-            cast<LStruct>(lt(st)),
-            {gv, ConstantInt::get(i64(), bytes.size()), Constant::getNullValue(ptrTy())});
-        strCache[bytes] = c;
-        return c;
+        strCache[bytes] = gv;
+        return gv;
     }
 
     // ------------------------------------------------------------ reference counting runtime
@@ -583,9 +559,6 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         if (!ie) fail("LLVM backend: unknown initializer");
         Expr* e = ie->expr.get();
         if (auto il = dynamic_cast<IntLit*>(e)) {
-            if (isStrType(ty)) {
-                fail("LLVM backend: cannot initialize `string` from an integer");
-            }
             if (ty->kind == TypeKind::Slice && il->value == 0) {
                 return Constant::getNullValue(ct);
             }
@@ -617,7 +590,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
             }
         }
         if (auto sl = dynamic_cast<StringLit*>(e)) {
-            if (isStrType(ty)) return cast<Constant>(stringConst(sl->value));
+            if (ty->kind == TypeKind::Ptr) return cast<Constant>(stringConst(sl->value));
             if (ty->kind == TypeKind::Array && sizeOf(ty->elem) == 1) {
                 std::vector<uint8_t> buf(ty->array_size, 0);
                 for (size_t i = 0; i < sl->value.size() && i + 1 < buf.size(); ++i)

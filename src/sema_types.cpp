@@ -461,8 +461,7 @@ namespace muc_detail {
                     "` has a destructor and cannot be a global variable (no exit-time destruction)",
                 g);
         }
-        if (g->rty->kind == TypeKind::Struct && g->rty->needs_cleanup() &&
-            !is_str(g->rty)) {
+        if (g->rty->kind == TypeKind::Struct && g->rty->needs_cleanup()) {
             err("struct `" + g->rty->str() +
                     "` has reference fields and cannot be a global variable (no exit-time destruction)",
                 g);
