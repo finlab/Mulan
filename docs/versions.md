@@ -10,6 +10,12 @@
 
 ## Releases
 
+### 0.0.86 — 2026-11-12
+
+**Out-of-range shift counts in constant expressions + stale status text**: a shift by ≥ the bit width (and a negative shift count) inside a constant expression is now reported directly (`shift count 40 is out of range for `int` (0..31)`) instead of returning "not evaluable", which let `check` pass and then failed in the backend with "global initializer must be a constant" pointing at a standard-library line. Valid shifts (`1 << 31`, `(1 as long) << 40`) still evaluate. Documentation: the non-goal list no longer claims dynamic arrays are unimplemented (they are built in; only library container classes are missing), the two duplicated open-question numbers (110/111) were renumbered so the table runs 110–119, the `deinit` row now points at the implemented `~T()` destructor, and backlog U33 is marked implemented (S1 static satisfaction and S4 constraint dispatch, with the S3/S5 dynamic channel closed). Added 2 must-fail cases (`shift_count_overflow`, `shift_count_negative`).
+
+**Tests**: 432/432 (115 pass + 300 must-fail + 17 check)
+
 ### 0.0.85 — 2026-11-12
 
 **Signed division overflow in constant expressions, test-runner hardening, documentation drift**: `MIN / -1` and `MIN % -1` are now rejected in a constant expression (both 32-bit and 64-bit) with an explicit diagnostic instead of silently wrapping for `int` and reporting "not a compile-time constant" for `long`. The specification records division/remainder overflow as UB (like division by zero) and keeps the two's-complement wraparound promise for `+`/`-`/`*` only — the CPU traps on the division, so a runtime `MIN / -1` is UB by contract; `-x` wraps. `tests/run_tests.py` now discovers `main` in `examples/*.mu` by scanning code with comments and string/char literals stripped (comments or formatting no longer hide or fake an entry point) and deletes only the artifacts of the current invocation (`build/<case>.o`, `build/tests/<case>.exe`) instead of globbing `build/`, so a developer's own `.o`/`.ll` files survive a test run. Documentation: dropped the stale `!` operator from the constant-expression lists, corrected `tests/README.md` (`~` is the complement, `const` instead of `readonly`, no `++` expression), narrowed the `const`-on-function-type rule to named aliases (with a parser hint), and refreshed the SPEC header version plus the enum section status. Added 2 must-fail cases (`div_overflow_int`, `rem_overflow_long`).
@@ -28,7 +34,7 @@
 
 **Tests**: 418/418 (113 pass + 289 must-fail + 16 check)
 
-**Docs only (no code change, version not bumped)**: added SPEC 3.16 — function types `(T1, T2) => R` (a one-word value, binary compatible with a C function pointer, no declarators and no `*`) and non-capturing lambdas `(int a) => expr` / `(int a) => { ... }` with a return type inferred from the body; block- and unit-level declarations plus return types never use an anonymous function type (`auto` for locals, a `type` alias elsewhere), while fields and parameters may; a free function name is already a function value (`&f` is rejected) while methods are not values. Cross-references updated in 2.3, 3.2, 7, 10, 11 and 12 (#10, #114–#117); backlog U35 records the decisions, the rejected alternatives and the future two-word `delegate`.
+**Docs only (no code change, version not bumped)**: added SPEC 3.16 — function types `(T1, T2) => R` (a one-word value, binary compatible with a C function pointer, no declarators and no `*`) and non-capturing lambdas `(int a) => expr` / `(int a) => { ... }` with a return type inferred from the body; block- and unit-level declarations plus return types never use an anonymous function type (`auto` for locals, a `type` alias elsewhere), while fields and parameters may; a free function name is already a function value (`&f` is rejected) while methods are not values. Cross-references updated in 2.3, 3.2, 7, 10, 11 and 12 (#10, #116–#119); backlog U35 records the decisions, the rejected alternatives and the future two-word `delegate`.
 
 ### 0.0.82 — 2026-11-12
 

@@ -1551,7 +1551,7 @@ unit example;
 ## 10. Phase-one non-goals
 
 - Multiple inheritance (class allows single inheritance only)
-- Dynamic arrays / container classes (to be provided later as reference types)
+- Container classes (`List`, `Map`, ...): library-level collections are not provided; dynamic arrays `T[]` / `T[,]` are built in (3.3)
 - Platform unwinding tables / personality routines (exceptions use the B2 TLS-flag lowering, 3.14)
 - Capturing closures (non-capturing lambdas and function values are in scope, see 3.16)
 - GC/ownership/borrow checking
@@ -1694,7 +1694,7 @@ unit example;
 | 72 | Arrays of class | Decided: both static `Cat[N]` and dynamic `Cat[]` are supported (RC per element) |
 | 73 | `sizeof`/`alignof` on a class | Decided (implemented): a class takes the handle size (8), an interface takes the interface value size (16); the object size is not exposed |
 | 74 | Multithreaded reference counting | Decided (see 94): atomic RC (relaxed), objects may be shared across threads; the `--single-thread` non-atomic fast path is still undecided |
-| 75 | User destructor `deinit` | Not done in phase one; fields are released in reverse declaration order |
+| 75 | User destructor `deinit` | Not provided under that name: user destructors are written `~T()` and are implemented (see 3.13 / #92); fields are released in reverse declaration order |
 | 76 | Inheritance model | Decided: single inheritance + multiple interface implementations; no multiple inheritance (see 3.9/3.10) |
 | 77 | Virtual methods | Decided: virtual by default; overrides/implementations are written `override` |
 | 78 | Abstract classes | Decided: having unimplemented methods makes a class implicitly abstract and it cannot be `new`ed |
@@ -1731,14 +1731,14 @@ unit example;
 | 109 | Bit-fields | Decided (0.0.62): **explicitly not done**. No C-style `int x : 3;` is provided, nor is any Zig/Rust-style explicit bit-width syntax; the allocation order and cross-unit boundaries are implementation-defined, which conflicts with predictable layout. Alternatives: mask+shift / `byte[N]`+offset / `packed`+accessors / a C shim (see 3.4) |
 | 110 | A generic interface as a value type / a value type as an interface value | **Decided (0.0.75): explicitly not done**. Without borrow checking, a value type → interface value necessarily boxes (heap allocation + RC), at a cost comparable to `new`ing a class object, and it loses explicit lifetimes and downcasting; runtime polymorphism is fully covered by `class`, and heterogeneous value collections use sum types (10.1). Generic interfaces serve only as constraints (3.15.7); `struct S : I` provides only static satisfaction (U33). If borrow checking is introduced in the future, zero-cost borrows of the `ref I` form can be re-evaluated |
 | 111 | `const` members in generic types / generic interface inheritance | Undecided: `const` members of generic structs/classes and `interface IList<T> : ISeq<T>` are errors for now |
-| 110 | Type alias `type A = B;` | Decided (0.0.62): `type` is a **contextual keyword** (it is parsed as an alias only at the start of a declaration, `type Ident =`; elsewhere it is still an identifier, which protects the `type` field of C-interop structs); each declaration declares one alias; aliases are transparent (not newtypes) (see 4.5) |
-| 111 | Range extensions `..=` / `step` / reverse order | Decided (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`); reverse order relies on an **explicit negative step**, `a..b` does not reverse automatically; `step 0` is a compile error; the step size is limited to compile-time constants (see 6.4) |
-| 112 | Range expansion in array initialization | Decided (0.0.62): in `int[10] a = {1, 2, 5..9, 10};` the `5..9` expands to 5,6,7,8; the endpoints must be compile-time constants; only `..` is supported inside braces (it does not take `..=`/`step`); after expansion it participates in "zero-pad when short / error when too long" (see 4.1) |
-| 113 | `switch` extensions | Decided (0.0.62): **explicitly not done** (the expression form/guards/bindings/or-patterns/type branches/destructuring/`case`/fallthrough); the matched type is limited to integers and enums (see 6.6) |
-| 114 | Function type syntax | Decided and implemented (3.16, 0.0.84): `(T1, T2) => R`; a one-word pointer value with no `*` and no declarator nesting; `sizeof` = pointer size; `=>` has lowest precedence and is right-associative; `*`/`[]` bind to the return type; block-/unit-level declarations never begin with an anonymous function type and a return type is never anonymous (use `auto` or a `type` alias), while fields and parameters may |
-| 115 | Lambdas | Decided and implemented (3.16, 0.0.84): `(int a) => expr` or `(int a) => { ... }`; parameter types are always written; the return type is inferred from the body (all `return` types must be identical; no `return expr` means `void`); **no captures**; each lambda is a hidden `private` function (C ABI, no allocation); stateful callbacks use `class` + single-method `interface` |
-| 116 | Free function / method values | Decided and implemented (3.16, 0.0.84): a free function name is already a function value (no `&`, and `&f` is an error); overloaded names need a target type; generic function names cannot be used as values; `u.f` and `extern` functions are values; **methods are not values** |
-| 117 | Capturing closures | Decided: phase-one non-goal; if added later, a separate two-word `delegate` type (`{code, env}`), never a fatter `fn` |
+| 112 | Type alias `type A = B;` | Decided (0.0.62): `type` is a **contextual keyword** (it is parsed as an alias only at the start of a declaration, `type Ident =`; elsewhere it is still an identifier, which protects the `type` field of C-interop structs); each declaration declares one alias; aliases are transparent (not newtypes) (see 4.5) |
+| 113 | Range extensions `..=` / `step` / reverse order | Decided (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`); reverse order relies on an **explicit negative step**, `a..b` does not reverse automatically; `step 0` is a compile error; the step size is limited to compile-time constants (see 6.4) |
+| 114 | Range expansion in array initialization | Decided (0.0.62): in `int[10] a = {1, 2, 5..9, 10};` the `5..9` expands to 5,6,7,8; the endpoints must be compile-time constants; only `..` is supported inside braces (it does not take `..=`/`step`); after expansion it participates in "zero-pad when short / error when too long" (see 4.1) |
+| 115 | `switch` extensions | Decided (0.0.62): **explicitly not done** (the expression form/guards/bindings/or-patterns/type branches/destructuring/`case`/fallthrough); the matched type is limited to integers and enums (see 6.6) |
+| 116 | Function type syntax | Decided and implemented (3.16, 0.0.84): `(T1, T2) => R`; a one-word pointer value with no `*` and no declarator nesting; `sizeof` = pointer size; `=>` has lowest precedence and is right-associative; `*`/`[]` bind to the return type; block-/unit-level declarations never begin with an anonymous function type and a return type is never anonymous (use `auto` or a `type` alias), while fields and parameters may |
+| 117 | Lambdas | Decided and implemented (3.16, 0.0.84): `(int a) => expr` or `(int a) => { ... }`; parameter types are always written; the return type is inferred from the body (all `return` types must be identical; no `return expr` means `void`); **no captures**; each lambda is a hidden `private` function (C ABI, no allocation); stateful callbacks use `class` + single-method `interface` |
+| 118 | Free function / method values | Decided and implemented (3.16, 0.0.84): a free function name is already a function value (no `&`, and `&f` is an error); overloaded names need a target type; generic function names cannot be used as values; `u.f` and `extern` functions are values; **methods are not values** |
+| 119 | Capturing closures | Decided: phase-one non-goal; if added later, a separate two-word `delegate` type (`{code, env}`), never a fatter `fn` |
 
 ---
 

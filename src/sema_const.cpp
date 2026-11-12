@@ -434,7 +434,15 @@ namespace muc_detail {
             if (!l.ty || !r.ty || !l.ty->is_integer() || !r.ty->is_integer()) return false;
             if (l.ty->kind == TypeKind::Enum || r.ty->kind == TypeKind::Enum) return false;
             const int bits = l.ty->bits() > 0 ? l.ty->bits() : 64;
-            if (r.i < 0 || r.i >= bits) return false;
+            // Out-of-range shift counts are UB at run time (8.2): report them here instead of returning
+            // "not evaluable", which used to let `check` pass and fail later in the backend.
+            if (r.i < 0) err("shift count " + std::to_string(r.i) + " must be non-negative", e);
+            if (r.i >= bits) {
+                err("shift count " + std::to_string(r.i) + " is out of range for `" + l.ty->str() +
+                        "` (0.." + std::to_string(bits - 1) +
+                        "); shifting by the bit width or more is undefined behavior",
+                    e);
+            }
             long long v = l.i;
             if (op == "<<") {
                 v = static_cast<long long>(static_cast<unsigned long long>(v) << r.i);
