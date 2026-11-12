@@ -25,10 +25,10 @@ GitHub profile [@finlab](https://github.com/finlab) and ask for a private channe
 The compiler is the attack surface. Reports are in scope when they involve:
 
 - **Miscompilation** — accepted source that produces code whose behaviour
-  differs from `SPEC.md` (especially silently wrong values, missing bounds or
+  differs from `docs/SPEC.md` (especially silently wrong values, missing bounds or
   lifetime checks, or `const`/visibility restrictions being bypassed).
 - **Memory-safety holes** — accepted programs that read or write out of bounds,
-  use freed memory, or double-free without a diagnostic, when `SPEC.md` says
+  use freed memory, or double-free without a diagnostic, when `docs/SPEC.md` says
   the construct must be rejected.
 - **Generated-code injection** — source constructs that alter the emitted
   object file / linker invocation in ways the language does not allow.
@@ -38,7 +38,7 @@ The compiler is the attack surface. Reports are in scope when they involve:
 
 Out of scope:
 
-- Programs that are explicitly undefined behaviour per `SPEC.md`.
+- Programs that are explicitly undefined behaviour per `docs/SPEC.md`.
 - Crashes that require a hand-crafted malformed input to the compiler binary
   itself (robustness reports are welcome, but are treated as ordinary bugs).
 - Issues in LLVM, MSYS2, or third-party libraries — please report those upstream.

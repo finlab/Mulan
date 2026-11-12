@@ -15,7 +15,7 @@ Mulan语言的设计思路：
 
 4、异常、泛型、并发等其他现代语言特性
 
-当前版本 **0.0.60**，尚未发布 1.0；语言规范见 [`SPEC.md`](SPEC.md)（草案 v0.2，逐条标注「已定 / 建议 / 待定」）。
+当前版本 **0.0.75**，尚未发布 1.0；语言规范见 [`docs/SPEC.md`](docs/SPEC.md)（草案 v0.2，逐条标注「已定 / 建议 / 待定」）。
 
 ## 设计取舍
 
@@ -139,12 +139,12 @@ build\muc.exe build examples\example.mu -g      # 带 DWARF，可被 gdb 断点/
 
 | 文件 | 内容 |
 |---|---|
-| [`SPEC.md`](SPEC.md) | 语言规范，逐条标注已定 / 建议 / 待定 |
+| [`docs/SPEC.md`](docs/SPEC.md) | 语言规范，逐条标注已定 / 建议 / 待定 |
 | [`docs/llvm-backend.md`](docs/llvm-backend.md) | LLVM 后端设计与限制 |
 | [`docs/object-model-plan.md`](docs/object-model-plan.md) | 对象模型实现计划 |
-| [`docs/design-review.md`](docs/design-review.md) | 语言边界审查 |
 | [`docs/portability-plan.md`](docs/portability-plan.md) | 跨平台方案（Linux / macOS / 交叉编译，暂缓实施） |
 | [`docs/versions.md`](docs/versions.md) | 逐版本变更记录 |
+| [`docs/code-map.md`](docs/code-map.md) | 代码地图：概念 → 文件/函数索引 |
 
 ## 许可
 

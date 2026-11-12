@@ -20,7 +20,7 @@
 | 动态类型 | 第一阶段不做；异构值优先库级 Variant/和类型；`dynamic`/`any` 仅预留 |
 | 作用域 | 声明不写 `T x(...)`；`Point p` 未初始化，`= {}` 零初始化；unit 级变量直接声明，默认 `private` |
 | 对象模型 | 值与引用分离：`struct` 值类型；`class` 引用类型（单继承 + 接口；默认虚方法；原子 RC + weak；无 GC/环收集器） |
-| 字符串 | `string`（std 库提供的值类型：UTF-8 字节序列、不可变；布局与 API 见 [库文档](./docs/lib-std-string.md)） |
+| 字符串 | `string`（std 库提供的值类型：UTF-8 字节序列、不可变；布局与 API 见 [库文档](./lib-std-string.md)） |
 | 泛型 | **单态化**（每个实参组合一份代码）；`<>` 语法；约束用 `interface` + `&`/`\|`；`Self` 指实现者；约束**结构化匹配**，内置类型零成本满足；详见 3.15 |
 | 内存 | 指针 + `alloc/free/realloc`（裸内存）；`class` 用 `new` + 原子引用计数（提前释放写 `x = null`）；无 GC、无借用检查 |
 | 控制流 | `if/else`、`while`、`for-in`、`break/continue/return`；条件必须是 `bool`；强制花括号 |
@@ -133,7 +133,7 @@ move  unsafe  typeof
 | `long` / `ulong` | 8 | 有/无符号 64 位 |
 | `float` / `double` | 4 / 8 | IEEE-754 |
 | `usize` / `isize` | 指针宽 | 平台相关；用于大小、下标 |
-| `string` | 由库定义 | std 库的值类型：UTF-8 字节序列、不可变；布局/`sizeof`/API 见 [库文档](./docs/lib-std-string.md) |
+| `string` | 由库定义 | std 库的值类型：UTF-8 字节序列、不可变；布局/`sizeof`/API 见 [库文档](./lib-std-string.md) |
 | `void` | — | 无值；只能作返回类型或 `void*` 的基类型 |
 
 - 第一阶段不引入 `wchar`、`decimal`、`i8/u8` 等别名；`decimal` 后续作为库实现。
@@ -193,7 +193,7 @@ move  unsafe  typeof
 - 边界检查：待定（建议 debug 构建检查，release 可配置关闭；动态数组默认检查）。
 - 全零/空值用 `{}`：`int[5] a = {};`、`int[] s = {};`、`string s = {};`（聚合类型不再支持 `= 0`）。
 - **`string` 是 std 库提供的值类型**（不是语言内建类型；布局、缓冲区管理与完整 API 见
-  [`docs/lib-std-string.md`](./docs/lib-std-string.md)）：
+  [`docs/lib-std-string.md`](./lib-std-string.md)）：
   - **语言可见契约**（SPEC 保证的部分）：
     - 字面量 `"abc"` 的类型是 `string`；`string s = {}` 是空串（零值）。
     - **不可变**：不能 `for ref` 遍历，`s[i]` 只读。
@@ -1377,7 +1377,7 @@ unit example;
 - **unit 名与文件映射**（已实现）：unit 名可含点号，`unit std.string` 对应 `libs/std/string.mu`
   （点号映射为目录分隔）。库搜索路径依次为：入口文件所在目录、`-I` 指定目录（可多次）、
   环境变量 `MUC_LIBS`、当前目录及其祖先目录下的 `libs` 与 `libs/std`。
-- 可见性（**已实现（0.0.30）**，详见 [`docs/visibility-design.md`](docs/visibility-design.md)）：
+- 可见性（**已实现（0.0.30）**，详见 [`docs/visibility-design.md`](./visibility-design.md)）：
   - 两个修饰符：`private` = 本 unit 内可见；`public` = 跨 unit 可见。
   - 默认值：顶层声明 `private`；struct 成员 `public`；class 成员 `private`。
   - struct / class 体内支持 `public:` / `private:` 分段标签，后续成员沿用该默认值；
@@ -1475,7 +1475,7 @@ unit example;
 | 1 | 声明语法 | 已定：C# 风格，类型在前，多变量共享类型 |
 | 2 | 条件括号是否强制 | 已定：可选，规范省略；C 式仍合法 |
 | 3 | 固定宽度类型命名（C 名 vs `i32`） | 先用 C 名 |
-| 4 | `string` 的布局与 `byte[]` 转换 | 已定：`string` 是 **std 库提供的值类型**，布局/缓冲区/RC/API 属库实现（[`docs/lib-std-string.md`](./docs/lib-std-string.md)）；语言只保证 §3.3 的可见契约 |
+| 4 | `string` 的布局与 `byte[]` 转换 | 已定：`string` 是 **std 库提供的值类型**，布局/缓冲区/RC/API 属库实现（[`docs/lib-std-string.md`](./lib-std-string.md)）；语言只保证 §3.3 的可见契约 |
 | 5 | 数组是否隐式衰减为指针 | 不衰减 |
 | 6 | 动态数组是否纳入第一阶段 | 已定：纳入（`T[]` / `T[,]`，RC 堆数组） |
 | 7 | 边界检查策略 | debug 检查；release 可配 |
@@ -1592,7 +1592,7 @@ unit example;
 
 ## 13. 示例
 
-见 [`examples/example.mu`](./examples/example.mu) 与 [`examples/math.mu`](./examples/math.mu)。示例对应本草案，尚未保证可编译。
+见 [`examples/example.mu`](../examples/example.mu) 与 [`examples/math.mu`](../examples/math.mu)。示例对应本草案，尚未保证可编译。
 
 ---
 

@@ -15,7 +15,7 @@ Mulan's design goals:
 
 4. Exception handling, generics, concurrency, and other modern language features.
 
-Current version **0.0.60**, not yet 1.0. The language specification is [`SPEC.md`](SPEC.md)
+Current version **0.0.75**, not yet 1.0. The language specification is [`docs/SPEC.md`](docs/SPEC.md)
 (draft v0.2, with each rule marked as settled / suggested / open). It is written in Chinese.
 
 ## Design trade-offs
@@ -143,12 +143,12 @@ If a dependency is missing: `python -m pip install cmake ninja`. For LLVM instal
 
 | File | Contents |
 |---|---|
-| [`SPEC.md`](SPEC.md) | Language specification, each rule marked settled / suggested / open (Chinese) |
+| [`docs/SPEC.md`](docs/SPEC.md) | Language specification, each rule marked settled / suggested / open (Chinese) |
 | [`docs/llvm-backend.md`](docs/llvm-backend.md) | LLVM backend design and limitations (Chinese) |
 | [`docs/object-model-plan.md`](docs/object-model-plan.md) | Object model implementation plan (Chinese) |
-| [`docs/design-review.md`](docs/design-review.md) | Language boundary review (Chinese) |
 | [`docs/portability-plan.md`](docs/portability-plan.md) | Cross-platform plan: Linux / macOS / cross-compilation, deferred (Chinese) |
 | [`docs/versions.md`](docs/versions.md) | Per-version change log (Chinese) |
+| [`docs/code-map.md`](docs/code-map.md) | Code map: concept → file/function index (Chinese) |
 
 ## License
 

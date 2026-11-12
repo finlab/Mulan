@@ -2,7 +2,7 @@
 
 > 本文档描述 `string` 的**实现细节与库 API**。
 > 语言层可见契约（不可变、`len` 按字节、`s[i]` 是 `byte`、`==` 按字节、隐式转 `const char*` 等）
-> 写在 [`SPEC.md` §3.3](../SPEC.md)，本文不重复；两者冲突以 SPEC 为准。
+> 写在 [`docs/SPEC.md` §3.3](./SPEC.md)，本文不重复；两者冲突以 SPEC 为准。
 >
 > 结论先行：**`string` 是库类型，不是语言机制**。语言只保证上面那组可见契约；
 > 下面的布局、缓冲区、RC 与 API 都属于库，可以演进。
@@ -43,12 +43,12 @@ struct string {
 | `trim()` | 去掉首尾 ASCII 空白 |
 
 UTF-8 细节：字符串按**字节**索引与遍历（`s[i]`、`for c in s`、`len(s)` 都不是码点语义）。
-按码点遍历的 API（`chars()` 等）尚未实现，见 [design-backlog U3](./design-backlog.md)。
+按码点遍历的 API（`chars()` 等）尚未实现，见 [design-backlog U3](../agents/design-backlog.md)。
 
 ## 3. 现状与遗留
 
 - 编译器目前把 `string` 当**内建特例**处理（字面量零 RC、`len`/`for-in`/`[]`/`==` 直连、
   隐式转 `const char*`），与「库类型」的文档定位不一致，属于**实现优化欠账**。
 - 真正「库化」（去掉内建特例、改为普通 struct + 库定义成员）的前置条件：
-  struct 用户析构器与拷贝/赋值语义（`design-backlog.md` U24 遗留的「含析构器 struct 仍禁拷贝」）。
+  struct 用户析构器与拷贝/赋值语义（`../agents/design-backlog.md` U24 遗留的「含析构器 struct 仍禁拷贝」）。
 - 在这之前，改动 `string` 布局需要同步改 codegen 的 canonical 布局假设。

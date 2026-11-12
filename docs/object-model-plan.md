@@ -92,7 +92,7 @@
 - 文档更新 + 版本号（0.0.3、0.0.4 正式构建 + 全量测试）
 - 当时明确**第一阶段不支持**（SPEC 表 98–100）：`readonly` class 视图/`readonly` 方法（**0.0.61 起明确不做**）、
   `ref` 参数（**0.0.62 已实现，0.0.63 扩展借用返回**）、`interface` → 派生接口向下转换；异常/泛型/并发为后续里程碑
-- 设计建议与开放问题统一记录在 [`design-backlog.md`](./design-backlog.md)，敲定后再批量实现
+- 设计建议与开放问题统一记录在 [`design-backlog.md`](../agents/design-backlog.md)，敲定后再批量实现
 
 ## 当前状态
 
