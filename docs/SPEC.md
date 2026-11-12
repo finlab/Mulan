@@ -20,7 +20,7 @@
 | 动态类型 | 第一阶段不做；异构值优先库级 Variant/和类型；`dynamic`/`any` 仅预留 |
 | 作用域 | 声明不写 `T x(...)`；`Point p` 未初始化，`= {}` 零初始化；unit 级变量直接声明，默认 `private` |
 | 对象模型 | 值与引用分离：`struct` 值类型；`class` 引用类型（单继承 + 接口；默认虚方法；原子 RC + weak；无 GC/环收集器） |
-| 字符串 | `string`（std 库提供的值类型：UTF-8 字节序列、不可变；布局与 API 见 [库文档](./lib-std-string.md)） |
+| 字符串 | `string`（std 库提供的值类型：UTF-8 字节序列、不可变；布局与 API 见 库文档） |
 | 泛型 | **单态化**（每个实参组合一份代码）；`<>` 语法；约束用 `interface` + `&`/`\|`；`Self` 指实现者；约束**结构化匹配**，内置类型零成本满足；详见 3.15 |
 | 内存 | 指针 + `alloc/free/realloc`（裸内存）；`class` 用 `new` + 原子引用计数（提前释放写 `x = null`）；无 GC、无借用检查 |
 | 控制流 | `if/else`、`while`、`for-in`、`break/continue/return`；条件必须是 `bool`；强制花括号 |
@@ -133,7 +133,7 @@ move  unsafe  typeof
 | `long` / `ulong` | 8 | 有/无符号 64 位 |
 | `float` / `double` | 4 / 8 | IEEE-754 |
 | `usize` / `isize` | 指针宽 | 平台相关；用于大小、下标 |
-| `string` | 由库定义 | std 库的值类型：UTF-8 字节序列、不可变；布局/`sizeof`/API 见 [库文档](./lib-std-string.md) |
+| `string` | 由库定义 | std 库的值类型：UTF-8 字节序列、不可变；布局/`sizeof`/API 见 库文档 |
 | `void` | — | 无值；只能作返回类型或 `void*` 的基类型 |
 
 - 第一阶段不引入 `wchar`、`decimal`、`i8/u8` 等别名；`decimal` 后续作为库实现。
@@ -193,7 +193,7 @@ move  unsafe  typeof
 - 边界检查：待定（建议 debug 构建检查，release 可配置关闭；动态数组默认检查）。
 - 全零/空值用 `{}`：`int[5] a = {};`、`int[] s = {};`、`string s = {};`（聚合类型不再支持 `= 0`）。
 - **`string` 是 std 库提供的值类型**（不是语言内建类型；布局、缓冲区管理与完整 API 见
-  [`docs/lib-std-string.md`](./lib-std-string.md)）：
+  `lib-std-string.md`）：
   - **语言可见契约**（SPEC 保证的部分）：
     - 字面量 `"abc"` 的类型是 `string`；`string s = {}` 是空串（零值）。
     - **不可变**：不能 `for ref` 遍历，`s[i]` 只读。
@@ -1377,7 +1377,7 @@ unit example;
 - **unit 名与文件映射**（已实现）：unit 名可含点号，`unit std.string` 对应 `libs/std/string.mu`
   （点号映射为目录分隔）。库搜索路径依次为：入口文件所在目录、`-I` 指定目录（可多次）、
   环境变量 `MUC_LIBS`、当前目录及其祖先目录下的 `libs` 与 `libs/std`。
-- 可见性（**已实现（0.0.30）**，详见 [`docs/visibility-design.md`](./visibility-design.md)）：
+- 可见性（**已实现（0.0.30）**，详见 `visibility-design.md`）：
   - 两个修饰符：`private` = 本 unit 内可见；`public` = 跨 unit 可见。
   - 默认值：顶层声明 `private`；struct 成员 `public`；class 成员 `private`。
   - struct / class 体内支持 `public:` / `private:` 分段标签，后续成员沿用该默认值；
@@ -1475,7 +1475,7 @@ unit example;
 | 1 | 声明语法 | 已定：C# 风格，类型在前，多变量共享类型 |
 | 2 | 条件括号是否强制 | 已定：可选，规范省略；C 式仍合法 |
 | 3 | 固定宽度类型命名（C 名 vs `i32`） | 先用 C 名 |
-| 4 | `string` 的布局与 `byte[]` 转换 | 已定：`string` 是 **std 库提供的值类型**，布局/缓冲区/RC/API 属库实现（[`docs/lib-std-string.md`](./lib-std-string.md)）；语言只保证 §3.3 的可见契约 |
+| 4 | `string` 的布局与 `byte[]` 转换 | 已定：`string` 是 **std 库提供的值类型**，布局/缓冲区/RC/API 属库实现（`lib-std-string.md`）；语言只保证 §3.3 的可见契约 |
 | 5 | 数组是否隐式衰减为指针 | 不衰减 |
 | 6 | 动态数组是否纳入第一阶段 | 已定：纳入（`T[]` / `T[,]`，RC 堆数组） |
 | 7 | 边界检查策略 | debug 检查；release 可配 |
@@ -1488,7 +1488,7 @@ unit example;
 | 14 | 参数默认可变性 | 可变（C 语义） |
 | 15 | `main` 带参数 | **已实现**：`int main(int argc, char** argv)`，`argv` 以 null 结尾；其余签名报错 |
 | 16 | 错误处理约定 | 返回码 + `null`；不引入异常 |
-| 17 | 模块可见性/命名修饰 | 已实现（0.0.30）：`private`=unit 内、`public`=跨 unit；struct 成员默认 public、class 成员默认 private；支持 `public:`/`private:` 分段标签；库边界 = unit 名第一段，跨库需 `public unit`；`use` 后 public 符号可直接无前缀使用；非 public 符号用 `internal` linkage（见 `docs/visibility-design.md`） |
+| 17 | 模块可见性/命名修饰 | 已实现（0.0.30）：`private`=unit 内、`public`=跨 unit；struct 成员默认 public、class 成员默认 private；支持 `public:`/`private:` 分段标签；库边界 = unit 名第一段，跨库需 `public unit`；`use` 后 public 符号可直接无前缀使用；非 public 符号用 `internal` linkage（见 `visibility-design.md`） |
 | 18 | 结构体对齐/packed | 已实现（0.0.42）：`packed`（无参数，等价 `pack(1)`）与 `align(N)`（2 的幂常量，覆盖整体对齐、尾部补齐）为**关键字修饰符**，正交可组合；`N` 与自然对齐比较，`N < 自然对齐` 报错。详见 3.4 |
 | 19 | `string` 与 `byte[]`/`char[N]` 的转换细节 | `string` 不可变视图；`char[N]` 初始化按字节拷贝；其余转换属库 API（见库文档） |
 | 20 | 结构体构造函数 / `this` | class 构造器与 `this` 见 3.11/3.12；struct 仍用聚合构造 |
@@ -1612,7 +1612,7 @@ unit example;
     引用数组逐元素 RC、`as` 向下转换（desc 基类链）、临时值释放；端到端用例 41 个。
   - **第一阶段不支持**：`const` **方法 / 深度只读视图（已定不做）**、`ref` 参数、`interface` 向派生接口的向下转换（见 12 表 98–100）；
     跨线程 RC 压力验证后续补。
-  - 特征矩阵与偏差见 `docs/object-model-plan.md`。
+  - 特征矩阵与偏差见 `object-model-plan.md`。
 - **异常**：设计已定（3.14），实现前先做 Windows EH ABI spike；并发的语言级支持为后续里程碑。
 - **泛型**：已实现单态化（3.15，0.0.64–0.0.72）。实例化 = 克隆 AST + 替换类型参数 + 规范化命名，
   因此后端不需要感知泛型；剩余项为泛型接口继承。

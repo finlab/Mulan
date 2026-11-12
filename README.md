@@ -111,7 +111,7 @@ $ muc build demo.mu --run
 - 标准库（`libs/std/` 目前只有 `cstdio` 与 `string` 两个最小绑定）
 - `weak` 引用自动置空（当前需自行判断对象是否还活着）
 - 非 Windows 目标：后端固定 `x86_64-w64-windows-gnu`，产出 COFF（方案已记录：
-  [`docs/portability-plan.md`](docs/portability-plan.md)，等语言机制完善后实施）
+  跨平台方案已记录（内部文档），等语言机制完善后实施）
 
 ## 快速开始
 
@@ -140,11 +140,8 @@ build\muc.exe build examples\example.mu -g      # 带 DWARF，可被 gdb 断点/
 | 文件 | 内容 |
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | 语言规范，逐条标注已定 / 建议 / 待定 |
-| [`docs/llvm-backend.md`](docs/llvm-backend.md) | LLVM 后端设计与限制 |
-| [`docs/object-model-plan.md`](docs/object-model-plan.md) | 对象模型实现计划 |
-| [`docs/portability-plan.md`](docs/portability-plan.md) | 跨平台方案（Linux / macOS / 交叉编译，暂缓实施） |
-| [`docs/versions.md`](docs/versions.md) | 逐版本变更记录 |
-| [`docs/code-map.md`](docs/code-map.md) | 代码地图：概念 → 文件/函数索引 |
+
+> 设计草案、实现规划与决策记录属于内部工作文档，不随仓库发布。
 
 ## 许可
 

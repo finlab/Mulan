@@ -113,8 +113,8 @@ More examples: [`examples/example.mu`](examples/example.mu) (a tour of the synta
 - A standard library (`libs/std/` currently holds only minimal `cstdio` and `string` bindings)
 - Automatic nulling of outstanding `weak` references (you must check liveness yourself)
 - Non-Windows targets: the backend is fixed to `x86_64-w64-windows-gnu` and emits COFF
-  (plan recorded in [`docs/portability-plan.md`](docs/portability-plan.md), to be implemented
-  once the language mechanisms settle)
+  (the cross-platform plan is recorded internally and will be implemented once the language
+  mechanisms settle)
 
 ## Quick start
 
@@ -144,11 +144,9 @@ If a dependency is missing: `python -m pip install cmake ninja`. For LLVM instal
 | File | Contents |
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | Language specification, each rule marked settled / suggested / open (Chinese) |
-| [`docs/llvm-backend.md`](docs/llvm-backend.md) | LLVM backend design and limitations (Chinese) |
-| [`docs/object-model-plan.md`](docs/object-model-plan.md) | Object model implementation plan (Chinese) |
-| [`docs/portability-plan.md`](docs/portability-plan.md) | Cross-platform plan: Linux / macOS / cross-compilation, deferred (Chinese) |
-| [`docs/versions.md`](docs/versions.md) | Per-version change log (Chinese) |
-| [`docs/code-map.md`](docs/code-map.md) | Code map: concept → file/function index (Chinese) |
+
+> Design drafts, implementation plans and decision records are internal working documents and are
+> not published with the repository.
 
 ## License
 
