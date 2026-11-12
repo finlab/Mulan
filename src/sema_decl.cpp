@@ -32,6 +32,19 @@ namespace muc_detail {
         return it == infos_.end() ? nullptr : &it->second;
     }
 
+    UnitInfo* Sema::exception_info() {
+        auto it = infos_.find("std.exception");
+        return it == infos_.end() ? nullptr : &it->second;
+    }
+
+    TypePtr Sema::exception_type() {
+        if (UnitInfo* ex = exception_info()) {
+            auto it = ex->classes.find("Exception");
+            if (it != ex->classes.end()) return it->second->ty;
+        }
+        return nullptr;
+    }
+
     TypePtr Sema::str_type() {
         if (UnitInfo* std = std_info()) {
             auto it = std->structs.find("string");
@@ -63,7 +76,7 @@ namespace muc_detail {
     }
 
     bool Sema::unit_imported(const std::string& uname) const {
-        return uname == "std.string" || uses_unit(uname);
+        return uname == "std.string" || uname == "std.exception" || uses_unit(uname);
     }
 
     std::string Sema::lib_of(const std::string& unit_name) {

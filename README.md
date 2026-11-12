@@ -13,7 +13,7 @@ Mulan's design goals:
 
 4. Exception handling, generics, concurrency, and other modern language features.
 
-Current version **0.0.80**, not yet 1.0. The language specification is [`docs/SPEC.md`](docs/SPEC.md)
+Current version **0.0.83**, not yet 1.0. The language specification is [`docs/SPEC.md`](docs/SPEC.md)
 (draft v0.2, with each rule marked as settled / suggested / open).
 
 ## Design trade-offs
@@ -87,7 +87,9 @@ $ muc build demo.mu --run
 What is *not* in this code: a preprocessor, a GC, implicit conversions, the `virtual` keyword,
 or the `->` operator (member access is always `.`).
 
-More examples: [`examples/example.mu`](examples/example.mu) (a tour of the syntax) and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
+More examples: [`examples/example.mu`](examples/example.mu) (a tour of the syntax),
+[`examples/generics.mu`](examples/generics.mu) (monomorphized generics with structural constraints)
+and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 
 ## Language status
 
@@ -98,6 +100,7 @@ More examples: [`examples/example.mu`](examples/example.mu) (a tour of the synta
 | Types | Integers / floating point / `bool` / `byte` / `char`; pointers; fixed-size arrays; dynamic arrays `T[]`; slices; `string`; `struct`; `union`; `enum` |
 | Object model | `class` with single inheritance and `interface`; virtual by default; atomic RC; `weak` (auto-nulled when the target is destroyed); constructors and destructors `~T()`; operator overloading |
 | Generics | `<>` syntax with monomorphization; `interface` + `&`/`\|` constraints; `Self`; structural constraint matching (0.0.64–0.0.72) |
+| Exceptions | Unchecked `try` / `catch` / `throw` / `finally`; `Exception` base class; class matching; RC cleanup; B2 TLS-flag lowering with no platform unwind tables; module-local may-throw optimization (0.0.81–0.0.83) |
 | Control flow | `if` / `while` / `for-in` / `switch` (exhaustive over enums) / `break` / `continue` / `?:` |
 | Functions | Recursion, overloading (bounded rules), variadic `extern` calls (0.0.57) |
 | Modules | `unit` / `use` / `public` / `private`; units are loaded from same-named files |
@@ -106,10 +109,10 @@ More examples: [`examples/example.mu`](examples/example.mu) (a tour of the synta
 
 **Not implemented yet**
 
-- Exceptions `try` / `catch` / `throw` (designed, not built)
+- Cross-library may-throw summaries / explicit `nothrow` contracts (module-local may-throw analysis is implemented in 0.0.83)
 - Method-level generics, type-argument deduction, specialization, generic `extern` / generic type aliases (see SPEC 3.15)
 - Closures, function pointers, `goto`
-- A standard library (`libs/std/` currently holds only minimal `cstdio` and `string` bindings)
+- A standard library (`libs/std/` currently holds only minimal `cstdio`, `string`, and `exception` bindings)
 - Non-Windows targets: the backend is fixed to `x86_64-w64-windows-gnu` and emits COFF
 
 ## Quick start

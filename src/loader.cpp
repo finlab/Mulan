@@ -168,6 +168,8 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
 
     // standard library string unit: always loaded as an implicit dependency (string literals need its type).
     (void)visit(find_file("std.string"));
+    // Exception is the root of every throwable class; import it implicitly like std.string.
+    (void)visit(find_file("std.exception"));
 
     Unit* entry_unit = visit(entry_path);
     entry_name = entry_unit->name;

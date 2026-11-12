@@ -76,6 +76,13 @@ using ArgPack = Emitter::ArgPack;
                 for (auto* v : pack.vals) vals.push_back(v);
                 b.CreateCall(callee, vals);
                 releaseTemps(pack);
+                // A cleanup-free struct has no later owner that would notice the pending flag,
+                // so check here.  Structs with cleanup are handled by the LocalVar post-init
+                // check or by the enclosing object's destructor.
+                if (!st->needs_cleanup() &&
+                    mayThrow.mayThrowCname(ctor_cname(st->unit, st->name, *cpty))) {
+                    emitCheckPending();
+                }
                 return;
             }
             if (ty->kind == TypeKind::Array && sizeOf(ty->elem) == 1 &&
@@ -208,6 +215,14 @@ using ArgPack = Emitter::ArgPack;
             if (auto lv = dynamic_cast<LocalVar*>(s)) std::cerr << " " << lv->name;
             std::cerr << "\n";
         }
+        if (auto th = dynamic_cast<ThrowStmt*>(s)) {
+            emitThrow(th->value.get());
+            return;
+        }
+        if (auto tr = dynamic_cast<TryStmt*>(s)) {
+            emitTry(tr);
+            return;
+        }
         if (auto b0 = dynamic_cast<Block*>(s)) {
             block(b0);
             return;
@@ -216,6 +231,12 @@ using ArgPack = Emitter::ArgPack;
             AllocaInst* slot = slotFor(lv);
             if (lv->init) {
                 initInto(slot, lv->rty, lv->init.get());
+                // The local is not in refScopes yet. If initialization threw (a struct
+                // constructor, or a nested constructor inside an aggregate), release the
+                // zero-initialized/partially constructed local before propagating.
+                if (needsCleanup(lv->rty) && !lv->by_ref) {
+                    emitCheckPendingWith([&] { emitReleaseValue(slot, lv->rty); });
+                }
             } else if (isRefKind(lv->rty)) {
                 b.CreateStore(Constant::getNullValue(lt(lv->rty)), slot);
             } else if (lv->rty && lv->rty->kind == TypeKind::Struct) {
@@ -225,6 +246,9 @@ using ArgPack = Emitter::ArgPack;
                         FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
                     if (lv->rty->needs_cleanup()) zeroMem(slot, lv->rty);
                     b.CreateCall(ctor, {slot});
+                    if (mayThrow.mayThrowCname(ctor_cname(lv->rty->unit, lv->rty->name, {}))) {
+                        emitCheckPendingWith([&] { emitReleaseValue(slot, lv->rty); });
+                    }
                 } else if (needsCleanup(lv->rty)) {
                     zeroMem(slot, lv->rty);
                 }
@@ -380,6 +404,7 @@ using ArgPack = Emitter::ArgPack;
         }
         if (dynamic_cast<BreakStmt*>(s)) {
             if (loops.empty()) fail("LLVM backend: `break` outside of a loop");
+            emitFinallyForLoopExit();
             destroyTempsFrom(0);
             if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().second);
@@ -389,6 +414,7 @@ using ArgPack = Emitter::ArgPack;
         }
         if (dynamic_cast<ContinueStmt*>(s)) {
             if (loops.empty()) fail("LLVM backend: `continue` outside of a loop");
+            emitFinallyForLoopExit();
             destroyTempsFrom(0);
             if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().first);
@@ -398,11 +424,13 @@ using ArgPack = Emitter::ArgPack;
         }
         if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
             if (!rs->value) {
+                emitFinallyBodies(finallyStack.size());
                 destroyTempsFrom(0);
                 releaseAllScopes();
                 b.CreateRetVoid();
             } else {
                 Value* rv = prepareReturn(rs->value.get());
+                emitFinallyBodies(finallyStack.size());
                 destroyTempsFrom(0);
                 releaseAllScopes();
                 b.CreateRet(rv);
@@ -494,6 +522,7 @@ using ArgPack = Emitter::ArgPack;
             Value* recv =
                 (sty->kind == TypeKind::Class) ? b.CreateLoad(lt(sty), seqAddr) : seqAddr;
             Value* n = emitMethodCallVals(s->len_sig, recv, sty, {}, s);
+            if (mayThrow.mayThrowMethod(s->len_sig, sty)) emitCheckPending();
             n = convertTo(n, s->len_sig->ret, us);
 
             auto* idx = entryAlloca(i64(), "for.idx");

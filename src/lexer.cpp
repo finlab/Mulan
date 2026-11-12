@@ -49,6 +49,7 @@ const std::unordered_set<std::string>& keywords() {
         "usize",    "isize",    "and",     "or",       "not",
         "class",    "interface", "new",    "del",     "weak",     "this",     "super",
         "override", "operator",  "packed",   "union",
+        "try",      "catch",     "throw",    "finally",
     };
     return kws;
 }

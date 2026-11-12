@@ -39,8 +39,11 @@ themselves may print non-ASCII text (see `unicode_escape`), and CI sets `PYTHONU
 2. Write `tests/expected/<name>.txt`: the genuinely derived expected output (no placeholders).
 3. Verify: `build\muc.exe check tests/cases/<name>.mu`, then run the runner.
 
-The file name is the case name; nothing needs to be registered anywhere. `examples/example.mu`
-is automatically run as a case by the runner (expected output `tests/expected/example.txt`).
+The file name is the case name; nothing needs to be registered anywhere. Every `examples/*.mu`
+that defines `main` is also run as a case by the runner, with expected output
+`tests/expected/<name>.txt` (`examples/example.mu` → `example.txt`,
+`examples/generics.mu` → `generics.txt`); units without `main` (`examples/math.mu`) are skipped
+because they are libraries for the multi-unit example.
 
 ## Comparison rules / known limitations
 
@@ -68,3 +71,6 @@ is automatically run as a case by the runner (expected output `tests/expected/ex
 | `const_member` | type-level `const`: every scalar type, constants referring to each other / unary / comparison, `sizeof`/`alignof`, `Type.Name`, bare names inside methods, base-class constants and bare names in derived classes, private same-unit access, unit-level const referring to type-level constants, `sizeof` unchanged by constants, unsigned `>>` constants consistent with runtime, locals shadowing constants |
 | `const_global_init` | constant initialization of non-`const` globals: `int g = 1 + 2;`, `int G = Cfg.K;`, enum/float/`long`, referencing unit-level const, with globals still mutable |
 | `ptr` | `&x`/`*p` (including compound assignment), pointer parameters, `p[i]` and pointer arithmetic, `alloc/free`, `null` checks, `readonly int*`, `(*pp).field` |
+| `exception_*` | unchecked `throw`/`try`/`catch`: class matching in written order, base-class catch, nested propagation, rethrow, RC cleanup on unwinding, constructor-throw cleanup, throw from methods/interface calls, loop-local cleanup |
+| `finally_*` | `finally` on normal/catch/return/break/continue/exception paths, nested finally order, RC cleanup before/after finally, forbidden control flow in finally |
+| `exception_maythrow*` | module-local may-throw analysis: nothrow free functions/recursion/struct methods and nothrow construction still work, may-throw calls still catch |

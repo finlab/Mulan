@@ -216,6 +216,27 @@ std::vector<StmtPtr> Parser::parse_stmt() {
         out.push_back(std::move(s));
         return out;
     }
+    if (at_kw("throw")) {
+        const Token tt = advance();
+        ExprPtr value = parse_expr();
+        forbid_inc_expr();
+        semicolon();
+        auto s = std::make_unique<ThrowStmt>();
+        s->value = std::move(value);
+        s->line = tt.line;
+        s->col = tt.col;
+        std::vector<StmtPtr> out;
+        out.push_back(std::move(s));
+        return out;
+    }
+    if (at_kw("try")) {
+        std::vector<StmtPtr> out;
+        out.push_back(parse_try());
+        return out;
+    }
+    if (at_kw("catch") || at_kw("finally")) {
+        throw err("`catch`/`finally` must follow a `try` block");
+    }
     if (at_kw("del")) {
         const Token dt = advance();
         throw err_at("`del` has been removed: write `x = null;` to release a reference (same semantics)", dt);
@@ -588,5 +609,34 @@ std::unique_ptr<Stmt> Parser::parse_switch() {
         node->arms.push_back(std::move(arm));
     }
     expect_op("}");
+    return node;
+}
+
+std::unique_ptr<Stmt> Parser::parse_try() {
+    const Token tk = expect_kw("try");
+    auto node = std::make_unique<TryStmt>();
+    node->line = tk.line;
+    node->col = tk.col;
+    node->body = parse_block();
+    while (at_kw("catch")) {
+        const Token ck = advance();
+        auto c = std::make_unique<CatchClause>();
+        c->line = ck.line;
+        c->col = ck.col;
+        expect_op("(");
+        c->name = expect_ident("catch variable name").text;
+        expect_op(":");
+        c->spec = parse_type();
+        expect_op(")");
+        c->body = parse_block();
+        node->catches.push_back(std::move(c));
+    }
+    if (at_kw("finally")) {
+        advance();
+        node->finally_body = parse_block();
+    }
+    if (node->catches.empty() && !node->finally_body) {
+        throw err_at("`try` requires at least one `catch` or `finally`", tk);
+    }
     return node;
 }

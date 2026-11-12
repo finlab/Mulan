@@ -419,6 +419,25 @@ struct ReturnStmt : Stmt {
     ExprPtr value;
 };
 
+struct ThrowStmt : Stmt {
+    ExprPtr value;
+};
+
+struct CatchClause : Node {
+    std::string name;
+    TypeSpecPtr spec;
+    std::unique_ptr<Block> body;
+    // sema
+    TypePtr rty;                     // the caught class type
+    std::unique_ptr<LocalVar> var;   // catch binding (borrow; read-only)
+};
+
+struct TryStmt : Stmt {
+    std::unique_ptr<Block> body;
+    std::vector<std::unique_ptr<CatchClause>> catches;
+    std::unique_ptr<Block> finally_body;
+};
+
 // ---------------------------------------------------------------- Object model declarations
 
 struct MethodDecl : Node {

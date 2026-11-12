@@ -77,8 +77,12 @@ def collect_cases() -> list[Case]:
     cases: list[Case] = []
     for src in sorted(CASES_DIR.glob("*.mu")):
         cases.append(Case(src.stem, src, EXPECTED_DIR / f"{src.stem}.txt"))
-    # examples/example.mu also runs as a case
-    cases.append(Case("example", ROOT / "examples" / "example.mu", EXPECTED_DIR / "example.txt"))
+    # examples/*.mu that define `main` also run as cases; the rest are library units
+    # for the multi-unit example (such as examples/math.mu).
+    for src in sorted(ROOT.glob("examples/*.mu")):
+        if "int main" not in src.read_text(encoding="utf-8"):
+            continue
+        cases.append(Case(src.stem, src, EXPECTED_DIR / f"{src.stem}.txt"))
     return cases
 
 

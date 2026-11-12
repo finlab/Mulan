@@ -85,7 +85,9 @@ using ArgPack = Emitter::ArgPack;
         } else {
             cArg = loadAt(lt(sty), seqAddr, unaligned);
         }
-        return b.CreateCall(callee, {cArg, idxVal});
+        Value* r = b.CreateCall(callee, {cArg, idxVal});
+        if (mayThrow.mayThrowFunc(f)) emitCheckPending();
+        return r;
     }
 
     // Call a free function / operator / method (static dispatch)
@@ -114,6 +116,9 @@ using ArgPack = Emitter::ArgPack;
         }
         Value* r = b.CreateCall(callee, pack.vals);
         releaseTemps(pack);
+        // C functions never throw; a mu_lan function is checked only when the
+        // conservative may-throw analysis cannot prove it nothrow.
+        if (!f->is_extern && mayThrow.mayThrowFunc(f)) emitCheckPending();
         return r;
     }
 
@@ -168,6 +173,9 @@ using ArgPack = Emitter::ArgPack;
             for (auto* v : pack.vals) vals.push_back(v);
             b.CreateCall(callee, vals);
             releaseTemps(pack);
+            if (mayThrow.mayThrowCname(ctor_cname(cls->unit, cls->name, ne->ctor_pty))) {
+                emitCheckPendingWith([&] { emitRelease(p); });
+            }
         } else {
             // implicit default construction: call the parameterless constructor declared by the nearest ancestor (it keeps chaining to its own base class)
             TypePtr b0 = cls->base;
@@ -182,6 +190,9 @@ using ArgPack = Emitter::ArgPack;
                             ctor_cname(b0->unit, b0->name, {}),
                             FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
                         b.CreateCall(callee, {p});
+                        if (mayThrow.mayThrowCname(ctor_cname(b0->unit, b0->name, {}))) {
+                            emitCheckPendingWith([&] { emitRelease(p); });
+                        }
                     }
                     break;
                 }
@@ -241,6 +252,9 @@ using ArgPack = Emitter::ArgPack;
             for (auto* v : pack.vals) vals.push_back(v);
             b.CreateCall(callee, vals);
             releaseTemps(pack);
+            if (mayThrow.mayThrowCname(ctor_cname(st->unit, st->name, *cpty))) {
+                emitCheckPendingWith([&] { emitReleaseValue(tmp, st); });
+            }
             return b.CreateLoad(lt(st), tmp);
         }
         if (c->callee_kind == "struct_method") {
@@ -260,6 +274,7 @@ using ArgPack = Emitter::ArgPack;
             for (auto* v : pack.vals) vals.push_back(v);
             Value* r = b.CreateCall(callee, vals);
             releaseTemps(pack);
+            if (mayThrow.mayThrowMethod(sig, sig->owner)) emitCheckPending();
             return r;
         }
         if (c->callee_kind == "method") {
@@ -282,6 +297,7 @@ using ArgPack = Emitter::ArgPack;
             Value* r = emitMethodCallVals(sig, recv, recvTy, pack.vals, c);
             releaseTemps(pack);
             if (recvOwned) emitReleaseRef(recv, recvTy);
+            if (mayThrow.mayThrowMethod(sig, recvTy)) emitCheckPending();
             return r;
         }
         if (c->callee_kind == "super") {
@@ -299,6 +315,7 @@ using ArgPack = Emitter::ArgPack;
                 for (auto* v : pack.vals) vals.push_back(v);
                 Value* r = b.CreateCall(callee, vals);
                 releaseTemps(pack);
+                if (mayThrow.mayThrowMethod(sig, sig->owner)) emitCheckPending();
                 return r;
             }
             // super(...): call the base class constructor, then restore the derived class's desc
@@ -321,6 +338,9 @@ using ArgPack = Emitter::ArgPack;
                 for (auto* v : pack.vals) vals.push_back(v);
                 b.CreateCall(callee, vals);
                 releaseTemps(pack);
+                if (mayThrow.mayThrowCname(ctor_cname(base->unit, base->name, pty ? *pty : empty))) {
+                    emitCheckPending();
+                }
             }
             if (curClassTy) {
                 Value* p = b.CreateLoad(ptrTy(), thisSlot);

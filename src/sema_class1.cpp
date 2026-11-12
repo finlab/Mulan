@@ -17,6 +17,7 @@ namespace muc_detail {
         cur_name_ = name;
         in_ctor_ = false;
         in_dtor_ = false;
+        in_finally_ = false;
         auto self = std::make_unique<LocalVar>();
         self->name = "this";
         self->rty = cls;
@@ -554,11 +555,54 @@ namespace muc_detail {
         } else if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
             check_switch(sw);
         } else if (dynamic_cast<BreakStmt*>(s)) {
+            if (in_finally_) err("`break` is not allowed inside `finally`", s);
             if (loop_depth_ == 0) err("`break` can only appear in a loop", s);
         } else if (dynamic_cast<ContinueStmt*>(s)) {
+            if (in_finally_) err("`continue` is not allowed inside `finally`", s);
             if (loop_depth_ == 0) err("`continue` can only appear in a loop", s);
         } else if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
+            if (in_finally_) err("`return` is not allowed inside `finally`", rs);
             check_return(rs);
+        } else if (auto ts = dynamic_cast<ThrowStmt*>(s)) {
+            if (in_finally_) err("`throw` is not allowed inside `finally`; an escaping exception aborts", ts);
+            if (in_dtor_) err("a destructor must not throw", ts);
+            TypePtr t = check_expr(ts->value.get());
+            TypePtr ex = exception_type();
+            if (!ex) err("std.exception.Exception is not available", ts);
+            if (!t || t->kind != TypeKind::Class || !is_subclass_of(t, ex)) {
+                err("`throw` requires an `Exception` subclass, found " + (t ? t->str() : std::string("void")),
+                    ts);
+            }
+        } else if (auto tr = dynamic_cast<TryStmt*>(s)) {
+            check_block(tr->body.get());
+            TypePtr ex = exception_type();
+            if (!ex) err("std.exception.Exception is not available", tr);
+            for (auto& c : tr->catches) {
+                TypePtr ct = resolve_type(c->spec.get(), cur_);
+                c->rty = ct;
+                if (!ct || ct->kind != TypeKind::Class || !is_subclass_of(ct, ex)) {
+                    err("`catch` type must be an `Exception` subclass, found " +
+                            (ct ? ct->str() : std::string("void")),
+                        c.get());
+                }
+                auto lv = std::make_unique<LocalVar>();
+                lv->name = c->name;
+                lv->rty = ct;
+                lv->is_const = true;
+                lv->line = c->line;
+                lv->col = c->col;
+                c->var = std::move(lv);
+                push();
+                declare_local(c->var.get());
+                check_block(c->body.get());
+                pop();
+            }
+            if (tr->finally_body) {
+                const bool saved = in_finally_;
+                in_finally_ = true;
+                check_block(tr->finally_body.get());
+                in_finally_ = saved;
+            }
         } else if (auto b = dynamic_cast<Block*>(s)) {
             check_block(b);
         } else {

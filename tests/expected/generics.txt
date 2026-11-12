@@ -1,0 +1,5 @@
+max<int>(3, 41) = 41
+sum<int>        = 6
+sum<Money>      = 42 cents
+max<Money>      = 42 cents
+generics ok

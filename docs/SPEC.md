@@ -2,9 +2,9 @@
 
 > Date: drafted on 2026-11-07; the object model (class / single inheritance / interface / overload / constructor) was added on 2026-11-09;
 > 2026-11-10: added `switch` and the conditional expression `?:`, and aligned the specification with the implementation for behaviors that were implemented but undocumented (version 0.0.46)
-> Status: draft, current through version 0.0.80. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
+> Status: draft, current through version 0.0.83. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
-> Non-goals for phase one: multiple inheritance, exceptions, closures, GC, a preprocessor, reflection. (Generics have landed, see 3.15; destructors are specified in 3.13.)
+> Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor, reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
 
 ---
 
@@ -487,7 +487,7 @@ class Cat {
 - They may also declare **type-level compile-time constants** such as `const int K = 3;` (no instance storage, accessed via `Cat.K`, see 3.7.1); class members are private by default.
 - Construction: `new Cat(...)`; the parameter rules are the same as for struct construction (positional or named, all fields must be given).
   `new Cat` / `new Cat()` means all fields are zero-initialized (numeric 0, references null, `string` empty).
-  A failed `new` means `abort()` (the language has no exceptions; a constructed reference is never null).
+  A failed `new` means `abort()` (allocation failure is not reported through exceptions; a constructed reference is never null).
 - `new` is only for `class`, not for `struct` (structs keep value construction `Point(...)`).
 - Initialization / assignment:
   - `Cat b = a;` copies the handle (strong reference +1)
@@ -707,14 +707,15 @@ class File {
 - It cannot be called manually; setting the handle to null (`c = null;`) only decrements the reference, and it triggers only when the count reaches zero.
 - A cycle never reaches zero, so the destructors in a cycle never run (only after a weak reference breaks the cycle).
 - A destructor must not store `this` into a field/global (that would resurrect the object); in phase one this can be constrained by documentation for now.
-- When a constructor fails (`abort`), the destructor is not run.
+- When a constructor aborts, the destructor is not run; when a constructor throws, the partially constructed object is cleaned up as described in 3.14.
 - A destructor may run on any thread (when the object is shared); resource release must be thread-safe.
 
-### 3.14 Exceptions (design decided, not yet implemented)
+### 3.14 Exceptions (implemented in 0.0.81–0.0.83)
 
 ```c
 class MyError : Exception {
     int code;
+    MyError(string msg, int c) { super(msg); code = c; }
 }
 
 void f() {
@@ -726,20 +727,24 @@ void g() {
         f();
     } catch (e: MyError) {
         puts(e.message);
-    } finally {
-        cleanup();
     }
 }
 ```
 
 - **Unchecked**: functions do not declare `throws` and any function may throw; the caller bears the risk.
-- Only subclasses of `Exception` may `throw`/`catch`; `Exception` is the **base class** (single inheritance; an error class cannot inherit from any other base class).
-- `catch` matches by class/interface and in written order; it relies on the `type_id` in the class descriptor and on the base class/interface chain.
-- `finally` runs on every exit path (normal, `return`, `break`, `continue`, exception).
-- An exception object is an RC-managed class handle; a `catch` parameter is a borrow; uncaught → `abort`.
-- Destructors must be `nothrow`; when a constructor throws, a `constructed` flag is used for partial cleanup.
+- Only subclasses of `std.exception.Exception` may `throw`/`catch`; `Exception` is the **base class** (single inheritance).
+- `throw expr;` is a statement; `expr` must be an `Exception` handle (not `null`).
+- `catch (e: T)` matches by the class descriptor's base chain, in written order; `e` is a read-only borrow. `T` must be a class derived from `Exception`; an interface is not a valid catch type.
+- `finally` runs on every exit of the `try` statement: normal completion, a matched `catch`, `return`, `break`, `continue`, and an exception that is caught or propagated. It runs once per exit.
+- A `finally` body must not `return`, `break`, `continue`, or `throw` directly (compile errors). A nested `try/catch` inside `finally` is allowed; an exception that escapes it aborts, i.e. cleanup code must not throw.
+- An exception object is an RC-managed class handle. The runtime pending slot owns one strong reference; a catch scope owns it until the scope ends. `throw e;` inside a catch rethrows (retains the object).
+- Destructors must not throw; a pending exception inside a destructor aborts.
+- Uncaught → `abort` at `main` (or at a thread/foreign-call boundary).
 - Exceptions do not cross the C ABI and do not cross threads.
-- The Windows unwinding ABI (SEH / Itanium) is validated with a spike first, and only then is the implementation decided.
+- A constructor may throw: the partially constructed object is zero-initialized and released through its destructor, then the exception propagates.
+- **Implementation (B2)**: the function ABI is unchanged. A thread-local pending slot (`flag` + object pointer) is checked after every mu_lan call. On `throw`, the function releases its active scopes and returns a dummy value with the flag set; callers propagate it until a matching `catch`. `extern "C"` calls are not checked. No platform unwind tables, personality functions or unwinding runtime are needed; only libc and TLS are used, keeping Windows/Linux/macOS on one lowering.
+- **May-throw optimization (0.0.83)**: a conservative module-local analysis marks functions whose bodies are visible and cannot return with a pending exception. Calls to them skip the pending check; every external/precompiled/static-library/dynamic-library/unknown-indirect target is treated as may-throw, so the optimization never constrains the future library ABI. Cross-library summaries and `nothrow` contracts are not implemented.
+- `finally` is emitted by duplicating its body on each exit path, so it needs no platform EH support. Internal design notes: `agents/eh-b2-design.md`.
 
 ---
 
@@ -1182,7 +1187,7 @@ class List { Iter iterator() { ... } }
 - Releasing a reference: `c = null;` (since 0.0.47 `del` has been removed; see 3.8 / 8.3).
 - `do-while`, C-style `for`, and `goto` are not provided.
 - `switch` is covered in 6.6: no fallthrough, and branch bodies must use braces.
-- No exceptions, no `try/catch`; for fatal errors use `abort()` (libc) or return an error code.
+- Exceptions use `try`/`catch`/`throw` (3.14); for fatal errors `abort()` (libc) is still available.
 
 ### 6.6 switch (implemented in 0.0.45)
 
@@ -1405,7 +1410,7 @@ unit example;
 
 - Multiple inheritance (class allows single inheritance only)
 - Dynamic arrays / container classes (to be provided later as reference types)
-- Exception/panic unwinding
+- Platform unwinding tables / personality routines (exceptions use the B2 TLS-flag lowering, 3.14)
 - Closures/lambdas
 - GC/ownership/borrow checking
 - Unrestricted operator overloading (only the limited set in 3.11 is allowed)
@@ -1487,7 +1492,7 @@ unit example;
 | 13 | Local type inference | Decided: `auto x = expr;`; locals only, an initializer is required; all declarators must have the same type |
 | 14 | Default mutability of parameters | Mutable (C semantics) |
 | 15 | `main` with parameters | **Implemented**: `int main(int argc, char** argv)`, `argv` is null-terminated; other signatures are errors |
-| 16 | Error handling convention | Return codes + `null`; no exceptions are introduced |
+| 16 | Error handling convention | Exceptions were introduced in 0.0.81–0.0.82 (3.14): unchecked, `Exception` base class, `throw`/`try`/`catch`/`finally`; return codes/`null` remain for library APIs |
 | 17 | Module visibility / linkage modifiers | Implemented (0.0.30): `private`=within a unit, `public`=across units; struct members are public by default, class members are private by default; `public:`/`private:` section labels are supported; the library boundary = the first segment of the unit name, crossing libraries requires `public unit`; after `use`, public symbols can be used directly without a prefix; non-public symbols use `internal` linkage (see `visibility-design.md`) |
 | 18 | Struct alignment/packed | Implemented (0.0.42): `packed` (no arguments, equivalent to `pack(1)`) and `align(N)` (a power-of-two constant, covering overall alignment and tail padding) are **keyword modifiers**, orthogonal and composable; `N` is compared against the natural alignment, and `N < natural alignment` is an error. See 3.4 for details |
 | 19 | Details of the conversions between `string` and `byte[]`/`char[N]` | `string` is an immutable view; `char[N]` initialization copies byte by byte; the remaining conversions are library APIs (see the library documentation) |
@@ -1564,11 +1569,11 @@ unit example;
 | 90 | Static arrays of class | Decided: allowed (forbidden for structs); retain/release per element |
 | 91 | `[]` overloading | Decided: `operator[]` reads, `operator[]=` writes; explicitly distinguished, no `&`/`const` |
 | 92 | User destructors | Decided: `~T()`, executed when the RC reaches zero; derived runs before base |
-| 93 | Exception model | Decided: unchecked, an `Exception` base class, `finally`; see 3.14 (not yet implemented) |
+| 93 | Exception model | Implemented (0.0.81–0.0.83): unchecked, `Exception` base class, class catch, `finally`, module-local may-throw optimization; see 3.14 |
 | 94 | RC thread model | Decided: atomic RC (relaxed), objects may be shared across threads |
 | 95 | Generics roadmap | Decided + implemented (0.0.64–0.0.72): monomorphization, `<>` syntax, structural constraints, `Self`; see 3.15 for details |
 | 96 | Reserved words | Decided: see 2.5 |
-| 97 | Exception unwinding ABI | Undecided: do an SEH/Itanium spike first |
+| 97 | Exception unwinding ABI | Resolved by B2 (0.0.81): no platform unwinding ABI; a thread-local pending slot + call-site checks; no `.eh_frame`/`.pdata`/personality dependency |
 | 98 | `const` class views / `const` methods | Decided (0.0.61): **explicitly not done** — no const view types are introduced and no const methods are provided; `const` serves only as a **read-only binding marker** for named types (locals/parameters: not rebindable, fields cannot be written directly through them) and as a qualifier for the pointee of pointers/slices; use a read-only `interface` when a read-only API boundary is needed |
 | 99 | `ref` parameters / return values | Implemented (0.0.62 for parameters; extended in 0.0.63): `ref` is a binding mode rather than a storable type — `ref T p` / `ref const T p` / `ref T f()`, and no `T&` is introduced; primitive types/enums/pointers/pure-value structs can be borrowed; a returned borrow must originate from a `ref` parameter, `this`, a global, or pointer/slice storage, and the result is not storable (it can only be written through on the spot / passed as a borrow / used with `for ref`); borrowing a local, a by-value parameter, or a temporary is a compile error; method/constructor parameters and `extern` do not support it (see 3.8, backlog U8) |
 | 100 | Downcast from an `interface` to a derived `interface` | Decided: not supported in phase one (only upcasts are allowed; `as` is an error) |
@@ -1613,11 +1618,11 @@ See [`examples/example.mu`](../examples/example.mu) and [`examples/math.mu`](../
   - **Not supported in phase one**: `const` **methods / deep read-only views (decided not to do)**, `ref` parameters, downcasts from an `interface` to a derived interface (see 12 table 98–100);
     cross-thread RC stress validation will follow.
   - See `object-model-plan.md` for the feature matrix and the deviations.
-- **Exceptions**: the design is decided (3.14); before implementing, do a Windows EH ABI spike first; language-level support for concurrency is a later milestone.
+- **Exceptions**: `throw`/`try`/`catch`/`finally`, class matching and RC cleanup are implemented in 0.0.81–0.0.82 using the B2 lowering (3.14); 0.0.83 adds a conservative module-local may-throw optimization with external/unknown targets always conservatively checked. No platform EH ABI is involved.
 - **Generics**: monomorphization is implemented (3.15, 0.0.64–0.0.72). Instantiation = clone the AST + substitute the type parameters + canonicalize the name,
   so the backend does not need to be aware of generics; the remaining item is generic interface inheritance.
 - Manual memory maps directly onto libc `malloc/free/realloc`; the runtime only needs a small amount of entry/support code.
-- There is no need for GC/exceptions/stack maps, so the backend has a wider choice than managed languages.
+- There is no need for GC or stack maps; exceptions use a TLS pending flag rather than platform unwind tables, so the backend keeps its libc-only portability.
 - `for-in` degradation: ranges → index loops; arrays/slices → index loops with a cached length; the target of `continue` must point at the "advance point".
 - `const` single assignment and `const` not participating in code generation are both front-end/optimization-friendly facts.
 - Declaration parsing: after `Type name` only `=` or `;` follows; a function is `Type name(params) { ... }`, so there is no need to distinguish whether `T x(...)` is a variable or a function.

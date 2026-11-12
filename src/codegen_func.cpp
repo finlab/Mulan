@@ -48,6 +48,12 @@ namespace muc_detail {
         stmtTemps.clear();
         curFn = fn;
         curRetTy = f->rty;
+        curIsEntry = (f->name == "main");
+        inNothrow = false;
+        ehStack.clear();
+        finallyStack.clear();
+        abortBases.clear();
+        ehLocals.clear();
         allocaBB = BasicBlock::Create(ctx, "allocas", fn);
         bodyBB = BasicBlock::Create(ctx, "entry", fn);
         ab.SetInsertPoint(allocaBB);
@@ -144,6 +150,7 @@ namespace muc_detail {
     }
 
     void Emitter::run() {
+        mayThrow = computeMayThrow(prog);
         // target
         std::string tripleStr = "x86_64-w64-windows-gnu";
         std::string err;

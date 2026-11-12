@@ -518,9 +518,7 @@ namespace muc_detail {
     // Release the owned rvalues materialized during statement execution (those registered after mark), keeping reverse order
     void Emitter::destroyTempsFrom(size_t mark) {
         if (stmtTemps.size() <= mark) return;
-        for (size_t i = stmtTemps.size(); i > mark; --i) {
-            emitReleaseValue(stmtTemps[i - 1].first, stmtTemps[i - 1].second);
-        }
+        emitReleaseTempsFrom(mark);
         stmtTemps.resize(mark);
     }
 

@@ -194,6 +194,14 @@ namespace muc_detail {
                 return resolve_alias(a->second, stdn->unit);
             }
         }
+        // Exception is an implicit dependency as well (the root of every throwable class).
+        if (UnitInfo* ex = exception_info()) {
+            if (auto c = ex->classes.find(name); c != ex->classes.end()) {
+                if (!c->second->is_public)
+                    err_ts("type `std.exception." + name + "` is not declared public", spec);
+                return c->second->ty;
+            }
+        }
         err_ts("unknown type `" + name + "`", spec);
     }
 
@@ -467,6 +475,8 @@ namespace muc_detail {
     bool Sema::guarantees_return(Stmt* s) {
         if (!s) return false;
         if (dynamic_cast<ReturnStmt*>(s)) return true;
+        // `throw` never falls through: it is a terminating path for the return-value check.
+        if (dynamic_cast<ThrowStmt*>(s)) return true;
         if (auto b = dynamic_cast<Block*>(s)) {
             if (b->stmts.empty()) return false;
             return guarantees_return(b->stmts.back().get());
@@ -474,6 +484,15 @@ namespace muc_detail {
         if (auto i = dynamic_cast<IfStmt*>(s)) {
             if (!i->els) return false;
             return guarantees_return(i->then.get()) && guarantees_return(i->els.get());
+        }
+        // A try guarantees a return when its body and every catch body do; an unmatched exception
+        // propagates instead of falling through, so it also counts as a terminating path.
+        if (auto tr = dynamic_cast<TryStmt*>(s)) {
+            if (!guarantees_return(tr->body.get())) return false;
+            for (auto& c : tr->catches) {
+                if (!guarantees_return(c->body.get())) return false;
+            }
+            return true;
         }
         // When the value domain is fully covered, a switch guarantees a return only if all of its arms return
         if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
@@ -549,6 +568,7 @@ namespace muc_detail {
         cur_class_ = nullptr;
         in_ctor_ = false;
         in_dtor_ = false;
+        in_finally_ = false;
         scopes_.clear();
         auto_groups_.clear();
         scopes_.emplace_back();

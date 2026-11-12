@@ -340,6 +340,27 @@ StmtPtr clone_stmt(const Stmt& s) {
         r->value = p->value ? clone_expr(*p->value) : nullptr;
         return r;
     }
+    if (auto p = dynamic_cast<const ThrowStmt*>(&s)) {
+        auto r = mk<ThrowStmt>(s);
+        r->value = p->value ? clone_expr(*p->value) : nullptr;
+        return r;
+    }
+    if (auto p = dynamic_cast<const TryStmt*>(&s)) {
+        auto r = mk<TryStmt>(s);
+        r->body = p->body ? clone_block(*p->body) : nullptr;
+        r->catches.reserve(p->catches.size());
+        for (const auto& c : p->catches) {
+            auto cc = std::make_unique<CatchClause>();
+            cc->name = c->name;
+            cc->spec = c->spec ? clone_type_spec(*c->spec) : nullptr;
+            cc->body = c->body ? clone_block(*c->body) : nullptr;
+            cc->line = c->line;
+            cc->col = c->col;
+            r->catches.push_back(std::move(cc));
+        }
+        r->finally_body = p->finally_body ? clone_block(*p->finally_body) : nullptr;
+        return r;
+    }
     return nullptr;
 }
 

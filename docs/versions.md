@@ -10,6 +10,24 @@
 
 ## Releases
 
+### 0.0.83 — 2026-11-12
+
+**Conservative module-local may-throw optimization**: added `src/may_throw.cpp`, a whole-program fixpoint over visible function, constructor and struct-method bodies. A call whose callee is proven not to return with a pending exception skips the B2 pending-flag check; free functions, operators, constructors, local struct construction, `new`, `super(...)`, `for-in` `length()`/`operator[]`, and struct methods use the summary. Class/interface dispatch, external/precompiled/static-library/dynamic-library and otherwise unknown targets are conservatively may-throw, so the optimization does not constrain the future library ABI. Catch barriers are over-approximated; destructors and `finally` are nothrow (an escaping exception aborts). Added 3 runtime cases (nothrow free/recursive/struct-method code, may-throw struct methods, and a cleanup-free struct constructor that throws).
+
+**Tests**: 418/418 (113 pass + 289 must-fail + 16 check)
+
+### 0.0.82 — 2026-11-12
+
+**Exceptions stage 2: `finally`**: `finally` now runs on every exit of the `try` statement — normal completion, a matched `catch`, `return`, `break`, `continue`, and an exception that is caught or propagated — exactly once per exit. Nested `try/finally` runs inner before outer. The finally body is emitted by duplicating it on each exit path, so no platform EH support is needed. A `finally` body must not use `return` / `break` / `continue` / `throw` directly (compile errors); a nested `try/catch` is allowed, but an exception escaping it aborts (cleanup must not throw). While the finally body runs, the pending exception is saved and temporarily cleared, so ordinary calls inside `finally` do not observe the in-flight exception; the original pending state is restored afterwards. Interface catch is explicitly not supported: `catch` accepts only classes derived from `Exception`. Added 10 runtime cases (normal/catch/no-match/return/catch-return/break/continue/nested/throw-from-catch/inner-catch) and 4 must-fail cases; removed the old "finally unsupported" error case.
+
+**Tests**: 415/415 (110 pass + 289 must-fail + 16 check)
+
+### 0.0.81 — 2026-11-12
+
+**Exceptions stage 1 (B2 lowering)**: implemented `throw`, `try`, and `catch` (class matching in written order over the descriptor base chain), read-only catch bindings, RC cleanup on unwinding, constructor-throw cleanup, uncaught `abort` at `main`, and `std.exception.Exception` as an implicit standard-library unit. The function ABI is unchanged: a thread-local pending slot (`flag` + object pointer) is checked after every mu_lan call; a throwing function releases its active scopes and returns a dummy value with the flag set, and callers propagate it until a matching `catch`. `extern "C"` calls are not checked. No `.eh_frame`/`.pdata`/personality/unwind runtime is involved, so Windows/Linux/macOS share one lowering and the libc-only portability is preserved. `finally` was not yet implemented and an interface is not a valid `catch` type (catch accepts `Exception` subclasses only); may-throw analysis is stage 3. Added `libs/std/exception.mu`, 12 runtime cases (including a generic function carrying try/throw, a destructor that calls a mu_lan method while unwinding, a destructor that catches a local throw, and exception-object ownership across a catch), and 5 must-fail cases. Cleanup runs with the pending flag temporarily cleared, so ordinary calls inside destructors do not see the in-flight exception; a destructor may still catch locally, and a nested throw that escapes unwinding aborts.
+
+**Tests**: 402/402 (100 pass + 286 must-fail + 16 check)
+
 ### 0.0.80 — 2026-11-12
 
 **English comments + English docs**: translated all 874 Chinese comment lines across the 42 files in `src/` with one consistent terminology; added the English editions of the specification (1633 lines, section-for-section parity with the Chinese text) and of the version history (79 entries). String literals (user-visible diagnostics) are untouched, and the full suite verifies no behavioural change.
@@ -18,7 +36,9 @@
 
 **Stale statements corrected (same documentation follow-up)**: the README no longer lists generics and automatic `weak` nulling as unimplemented (both have shipped and are covered by tests), gains a generics row, narrows the SPDX claim to `src/`, and drops the reference to an internal cross-platform plan; the SPEC header no longer calls destructors a non-goal and states the version it is current through; the public changelog no longer points at an internal glossary; CMake now requires `LLVM ≥ 17`, matching the README.
 
-**Tests**: 384/384 (87 pass + 281 must-fail + 16 check)
+**Generics showcase example (documentation follow-up, no version bump)**: added `examples/generics.mu`, a commented walkthrough of monomorphization — a generic `struct Vec<T>` with methods, constrained free functions (`max<T: IOrdered>`, `sum<T: IAddable>` taking a nested `Vec<T>`), and a user type (`Money`) that satisfies the constraints structurally with no `implements` clause. The test runner now auto-discovers every `examples/*.mu` that defines `main` (instead of hardcoding `examples/example.mu`) and compares it against `tests/expected/<name>.txt`, so the example is itself a regression case (`generics.txt`). No compiler changes.
+
+**Tests**: 385/385 (88 pass + 281 must-fail + 16 check)
 
 ### 0.0.79 — 2026-11-12
 

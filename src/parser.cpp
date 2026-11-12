@@ -20,6 +20,7 @@ Parser::Parser(const std::string& src, const std::string& filename)
     type_names_.insert("string");
     // std.string is always an implicit dependency (string literals need its type)
     module_names_.insert("std.string");
+    module_names_.insert("std.exception");
 }
 
 // ---------------------------------------------------------------- public interface

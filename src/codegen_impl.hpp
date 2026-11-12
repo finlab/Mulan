@@ -11,11 +11,13 @@
 
 #include "common.hpp"
 #include "mangle.hpp"
+#include "may_throw.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <typeinfo>
 #include <map>
@@ -120,6 +122,7 @@ struct Emitter {
 
     Program& prog;
     bool wantDebug = false;
+    MayThrowInfo mayThrow;
     LLVMContext ctx;
     std::unique_ptr<Module> mod;
     std::unique_ptr<TargetMachine> tm;
@@ -159,6 +162,44 @@ struct Emitter {
     std::vector<size_t> loopScopeDepth;
     // owned struct/array temporaries materialized by taking their address inside a statement, released together at the end of the statement
     std::vector<std::pair<Value*, TypePtr>> stmtTemps;
+
+    // ------------------------------------------------------------ exceptions (B2: TLS pending slot + call-site checks)
+    struct EHContext {
+        BasicBlock* dispatch = nullptr;  // catch dispatch block of the innermost try
+        size_t scopeDepth = 0;           // refScopes depth at try entry
+        size_t tempDepth = 0;            // stmtTemps size at try entry
+        size_t finallyDepth = 0;         // finallyStack size after pushing this try's finally
+    };
+    struct FinallyCtx {
+        Block* body = nullptr;
+        int loopDepth = 0;               // loops.size() at try entry (break/continue filtering)
+    };
+    std::vector<EHContext> ehStack;
+    std::vector<FinallyCtx> finallyStack;  // outer -> inner
+    std::vector<size_t> abortBases;        // cleanup contexts that must not let an exception escape
+    std::vector<std::unique_ptr<LocalVar>> ehLocals;  // synthetic catch owners
+    GlobalVariable* ehSlot = nullptr;
+    bool curIsEntry = false;   // main: an uncaught exception aborts instead of returning a dummy
+    bool inNothrow = false;    // destructors: any pending exception aborts
+
+    void ensureEHSlot();
+    Value* loadPendingFlag();
+    Value* loadPendingObj();
+    void storePending(Value* obj);
+    void storePendingState(Value* obj, Value* flag);
+    void clearPending();
+    void emitCheckPending();
+    void emitCheckPendingWith(const std::function<void()>& onThrow);
+    void emitReleaseTempsFrom(size_t mark);
+    void emitUnwindCurrent(const std::function<void()>& onThrow = {});
+    void emitReturnDummy();
+    void emitThrow(Expr* e);
+    void emitTry(TryStmt* t);
+    void emitFinallyBody(Block* body);
+    void emitFinallyBodies(size_t count);
+    void emitFinallyForLoopExit();
+    void emitAbortIfPending();
+    Value* emitDescMatches(Value* desc, Value* target);
 
 
     // class object layout (model): { i64 rc, ptr desc } fixed at 16 bytes, fields start at 16 and are laid out per type_align.

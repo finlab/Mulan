@@ -65,6 +65,8 @@ add_executable(muc
   src/codegen_llvm.cpp
   src/codegen_support.cpp
   src/codegen_runtime.cpp
+  src/codegen_eh.cpp
+  src/may_throw.cpp
   src/codegen_expr.cpp
   src/codegen_expr2.cpp
   src/codegen_stmt.cpp

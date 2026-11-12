@@ -91,6 +91,7 @@ private:
     TypePtr cur_class_;
     bool in_ctor_ = false;
     bool in_dtor_ = false;
+    bool in_finally_ = false;
     bool super_ok_ = false;
     std::vector<std::unique_ptr<LocalVar>> this_local_;
     std::vector<Scope> scopes_;
@@ -126,6 +127,11 @@ private:
     TypePtr str_type();
 
     bool is_str(const TypePtr& t);
+
+    // std.exception.Exception: the root of every throwable/catchable class
+    UnitInfo* exception_info();
+
+    TypePtr exception_type();
 
     bool implicit_ok(const TypePtr& src, const TypePtr& dst);
 
@@ -240,6 +246,7 @@ private:
             errors_.push_back(e.what());
             scopes_.clear();
             loop_depth_ = 0;
+            in_finally_ = false;
             auto_groups_.clear();
             direct_init_expr_ = nullptr;
             if (errors_.size() >= kMaxErrors) throw MuErrorList(errors_);

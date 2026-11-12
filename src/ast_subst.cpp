@@ -166,6 +166,19 @@ void subst_stmt(Stmt& s, const TypeBindings& b) {
         if (p->value) subst_expr(*p->value, b);
         return;
     }
+    if (auto p = dynamic_cast<ThrowStmt*>(&s)) {
+        if (p->value) subst_expr(*p->value, b);
+        return;
+    }
+    if (auto p = dynamic_cast<TryStmt*>(&s)) {
+        if (p->body) subst_block(*p->body, b);
+        for (auto& c : p->catches) {
+            if (c->spec) subst_type_spec(*c->spec, b);
+            if (c->body) subst_block(*c->body, b);
+        }
+        if (p->finally_body) subst_block(*p->finally_body, b);
+        return;
+    }
 }
 
 namespace {

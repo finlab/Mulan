@@ -192,6 +192,12 @@ namespace muc_detail {
     void Emitter::beginBody(Function* fn, const TypePtr& ret) {
         curFn = fn;
         curRetTy = ret;
+        curIsEntry = false;
+        inNothrow = false;
+        ehStack.clear();
+        finallyStack.clear();
+        abortBases.clear();
+        ehLocals.clear();
         refScopes.clear();
         loopScopeDepth.clear();
         stmtTemps.clear();
@@ -226,6 +232,10 @@ namespace muc_detail {
         refScopes.clear();
         loopScopeDepth.clear();
         stmtTemps.clear();
+        ehStack.clear();
+        finallyStack.clear();
+        abortBases.clear();
+        ehLocals.clear();
         curClassTy = nullptr;
         curThis = nullptr;
         thisSlot = nullptr;
@@ -316,6 +326,9 @@ namespace muc_detail {
                     ctor_cname(c->ty->base->unit, c->ty->base->name, {}),
                     FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
                 b.CreateCall(baseCtor, {curThis});
+                if (mayThrow.mayThrowCname(ctor_cname(c->ty->base->unit, c->ty->base->name, {}))) {
+                    emitCheckPending();
+                }
                 Value* dp2 = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
                 b.CreateStore(descOf(c->ty), dp2);
             }
@@ -404,10 +417,13 @@ namespace muc_detail {
                                     : GlobalValue::InternalLinkage);
         curClassTy = c->ty;
         beginBody(fn);
+        inNothrow = true;  // destructors must not throw; a pending exception aborts
+        abortBases.push_back(ehStack.size());
         curThis = fn->getArg(0);
         thisSlot = entryAlloca(ptrTy(), "this");
         b.CreateStore(curThis, thisSlot);
         if (c->dtor && c->dtor->body) block(c->dtor->body.get());
+        abortBases.pop_back();
 
         // release the reference fields declared by this class (in reverse order); weak fields only unregister
         size_t total = c->ty->fields.size();
@@ -535,9 +551,11 @@ namespace muc_detail {
                                     : GlobalValue::InternalLinkage);
         curClassTy = sd->ty;
         beginBody(fn);
+        abortBases.push_back(ehStack.size());
         thisSlot = entryAlloca(ptrTy(), "this");
         b.CreateStore(fn->getArg(0), thisSlot);
         block(sd->dtor->body.get());
+        abortBases.pop_back();
         // after the user destructor body, release the references field by field (in reverse order)
         for (size_t k = sd->ty->fields.size(); k > 0; --k) {
             size_t idx = k - 1;
