@@ -280,7 +280,6 @@ static bool is_numeric(const TypePtr& t) {
 
     Value* Emitter::coerce(Expr* e, const TypePtr& to) {
         if (e && e->conv) {
-            if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       implicit conv " << e->conv->cname << "\n";
             // Implicit struct construction (3.6): materialize the value through its `implicit` constructor.
             // The constructor takes the source value, so the argument is evaluated as its own type.
             const ImplicitConv& c = *e->conv;
