@@ -1,0 +1,9 @@
+struct ok
+alias-of-alias ok
+ptr ok
+sizeof ok
+width ok
+slice ok
+const ok
+array elem ok
+fixed array ok

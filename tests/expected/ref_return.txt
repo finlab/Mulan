@@ -1,0 +1,9 @@
+ref index write ok
+ref index compound ok
+pass element to ref param ok
+ref index read ok
+method ref return ok
+ref const read ok
+for ref over user type ok
+inline storage ref receiver ok
+struct element borrow ok

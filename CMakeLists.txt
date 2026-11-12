@@ -44,11 +44,14 @@ add_executable(muc
   src/parser_unit.cpp
   src/parser_stmt.cpp
   src/parser_expr.cpp
+  src/ast_clone.cpp
+  src/ast_subst.cpp
   src/types.cpp
   src/mangle.cpp
   src/sema.cpp
   src/sema_decl.cpp
   src/sema_types.cpp
+  src/sema_generic.cpp
   src/sema_class1.cpp
   src/sema_class2.cpp
   src/sema_const.cpp

@@ -152,9 +152,20 @@ using ArgPack = Emitter::ArgPack;
                 auto* st = cast<LStruct>(lt(ty));
                 Value* inner = gep(st, addr, {ConstantInt::get(i64(), 0),
                                                        ConstantInt::get(i32(), 0)});
-                for (size_t i = 0; i < ia->items.size() && i < ty->array_size; ++i) {
+                size_t i = 0;
+                for (auto& it : ia->items) {
+                    if (auto rg = dynamic_cast<InitRange*>(it.second.get())) {
+                        for (long long k = 0; k < rg->count && i < ty->array_size; ++k, ++i) {
+                            Value* p = gep(lt(ty->elem), inner, ConstantInt::get(i64(), i));
+                            Value* v = ConstantInt::get(lt(ty->elem), static_cast<uint64_t>(rg->lo_val + k));
+                            b.CreateStore(v, p);
+                        }
+                        continue;
+                    }
+                    if (i >= ty->array_size) break;
                     Value* p = gep(lt(ty->elem), inner, ConstantInt::get(i64(), i));
-                    initInto(p, ty->elem, ia->items[i].second.get(), unaligned);
+                    initInto(p, ty->elem, it.second.get(), unaligned);
+                    ++i;
                 }
                 return;
             }
@@ -417,19 +428,22 @@ using ArgPack = Emitter::ArgPack;
             auto* re = dynamic_cast<RangeExpr*>(s->seq.get());
             TypePtr vt = s->var_ty;
             Value* lo = convertTo(eval(re->lo.get()), re->lo->ty, vt);
-            Value* hi = convertTo(eval(re->hi.get()), re->hi->ty, vt);
+            Value* hiV = convertTo(eval(re->hi.get()), re->hi->ty, vt);
+            const bool down = s->step_val < 0;
+            Value* stepV = ConstantInt::get(lt(vt), static_cast<uint64_t>(s->step_val));
             b.CreateStore(lo, varSlot);
+            if (idxSlot) b.CreateStore(ConstantInt::get(cast<IntegerType>(lt(Type::make_prim("usize"))), 0), idxSlot);
             b.CreateBr(condBB);
             b.SetInsertPoint(condBB);
             Value* cur = b.CreateLoad(lt(vt), varSlot);
-            b.CreateCondBr(b.CreateICmpSLT(cur, hi), bodyBB2, endBB);
-            b.SetInsertPoint(bodyBB2);
-            if (idxSlot) {
-                TypePtr us = Type::make_prim("usize");
-                Value* curv = b.CreateLoad(lt(vt), varSlot);
-                Value* diff = b.CreateSub(curv, lo);
-                b.CreateStore(convertTo(diff, vt, us), idxSlot);
+            Value* cmp = nullptr;
+            if (!down) {
+                cmp = re->inclusive ? b.CreateICmpSLE(cur, hiV) : b.CreateICmpSLT(cur, hiV);
+            } else {
+                cmp = re->inclusive ? b.CreateICmpSGE(cur, hiV) : b.CreateICmpSGT(cur, hiV);
             }
+            b.CreateCondBr(cmp, bodyBB2, endBB);
+            b.SetInsertPoint(bodyBB2);
             loops.push_back({incBB, endBB});
             loopScopeDepth.push_back(refScopes.size());
             block(s->body.get());
@@ -438,7 +452,12 @@ using ArgPack = Emitter::ArgPack;
             if (!hasTerm(b.GetInsertBlock())) b.CreateBr(incBB);
             b.SetInsertPoint(incBB);
             Value* c2 = b.CreateLoad(lt(vt), varSlot);
-            b.CreateStore(b.CreateAdd(c2, ConstantInt::get(lt(vt), 1)), varSlot);
+            b.CreateStore(b.CreateAdd(c2, stepV), varSlot);
+            if (idxSlot) {
+                TypePtr us = Type::make_prim("usize");
+                Value* iv = b.CreateLoad(lt(us), idxSlot);
+                b.CreateStore(b.CreateAdd(iv, ConstantInt::get(cast<IntegerType>(lt(us)), 1)), idxSlot);
+            }
             b.CreateBr(condBB);
             b.SetInsertPoint(endBB);
             return;
@@ -486,10 +505,16 @@ using ArgPack = Emitter::ArgPack;
             b.SetInsertPoint(bodyBB2);
             Value* ci2 = b.CreateLoad(i64(), idx);
             if (idxSlot) b.CreateStore(ci2, idxSlot);
-            b.CreateStore(emitOperatorIndexCall(s->idx_fn, seqAddr, sty, ci2, seqUnaligned),
-                          varSlot);
+            Value* ev = emitOperatorIndexCall(s->idx_fn, seqAddr, sty, ci2, seqUnaligned);
+            if (s->idx_fn && is_borrow_type(s->idx_fn->rty)) {
+                // 借用元素：ref 绑定存指针；值绑定当场读出来
+                if (s->by_ref) b.CreateStore(ev, varSlot);
+                else b.CreateStore(loadAt(lt(s->elem_ty), ev, false), varSlot);
+            } else {
+                b.CreateStore(ev, varSlot);
+            }
             // 调用结果是 owned 值：本轮结束（正常/break/continue）时释放
-            const bool ownVar = needsCleanup(s->elem_ty);
+            const bool ownVar = !s->by_ref && needsCleanup(s->elem_ty);
             const size_t outerDepth = refScopes.size();
             loops.push_back({incBB, endBB});
             pushRefScope();

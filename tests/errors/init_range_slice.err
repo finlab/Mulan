@@ -1,0 +1,1 @@
+range fill (`a..b`) is only allowed in fixed-size array initializers

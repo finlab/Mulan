@@ -1,0 +1,1 @@
+range endpoints in an array initializer must be compile-time integer constants

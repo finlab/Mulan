@@ -27,11 +27,14 @@ struct Node {
 
 struct TypeSpec {
     enum class K { Named, Ptr, Array, Slice } kind = K::Named;
-    std::string name;          // Named: "int" / "Point" / "math.Point"
+    std::string name;          // Named: "int" / "Point" / "math.Point" / "Vec"
+    // Named 且为泛型实例化时非空：`Vec<int>` 的实参（`Vec` 本身是模板）。
+    std::vector<std::unique_ptr<TypeSpec>> args;
     std::unique_ptr<TypeSpec> elem;
     size_t size = 0;           // Array
     int rank = 1;              // Slice：维数
     bool is_const = false;  // C 模型：该类型节点是否 const（前缀 const 修饰基类型，`* const` 修饰指针层）
+    bool is_self = false;   // 接口体内的 `Self`（指实现者类型）；仅 interface 成员签名允许
     bool weak = false;         // class 字段的 weak 修饰
     int line = 0;
     int col = 0;
@@ -44,8 +47,7 @@ using TypeSpecPtr = std::unique_ptr<TypeSpec>;
 struct LocalVar;
 struct GlobalVar;
 struct FuncDecl;
-struct EnumConst;
-struct CtorDecl;
+struct EnumConst;struct CtorDecl;
 struct DtorDecl;
 struct MethodDecl;
 struct ConstMember;
@@ -101,6 +103,8 @@ struct Index : Expr {
     std::vector<ExprPtr> indices;  // a[i] / a[i,j] / a[i,j,k]
     // sema: 用户类型下标走运算符重载时记录选中的函数
     FuncDecl* get_func = nullptr;
+    bool by_ref = false;      // `operator[]` 返回借用：表达式类型是 referent，值是元素地址
+    bool ref_const = false;   // 该借用是否只读（`ref const T`）
 };
 
 struct Unary : Expr {
@@ -136,6 +140,8 @@ struct Call : Expr {
     ExprPtr callee;
     std::vector<ExprPtr> args;
     std::vector<std::pair<std::string, ExprPtr>> named;
+    // 泛型调用的显式类型实参：`f<int>(x)`（空 = 普通调用）
+    std::vector<TypeSpecPtr> type_args;
     // sema
     std::string callee_kind;  // "func" | "ctor" | "builtin" | "method" | "super"
     FuncDecl* func = nullptr;
@@ -144,6 +150,8 @@ struct Call : Expr {
     std::vector<int> field_order;
     const MethodSig* method = nullptr;      // 选中的方法/接口默认方法
     const std::vector<TypePtr>* ctor_pty = nullptr;  // 选中的构造器（super 用）
+    bool by_ref = false;      // 被调用函数/方法返回借用（表达式类型是 referent，值是地址）
+    bool ref_const = false;   // 该借用是否只读（`ref const T`）
 };
 
 struct NewExpr : Expr {
@@ -174,6 +182,7 @@ struct Len : Expr {
 struct RangeExpr : Expr {
     ExprPtr lo;
     ExprPtr hi;
+    bool inclusive = false;  // `..=`：包含上界
 };
 
 // ---------------------------------------------------------------- 初始化器
@@ -193,12 +202,33 @@ struct InitAggregate : Init {
     std::vector<std::pair<std::string, InitPtr>> items;
 };
 
+// 花括号里的区间填充：`{1, 2, 5..9, 10}`（仅定长数组，端点须编译期常量）
+struct InitRange : Init {
+    ExprPtr lo;
+    ExprPtr hi;
+    // sema
+    long long lo_val = 0;
+    long long count = 0;  // 展开后的元素个数（a >= b 时为 0）
+};
+
 // ---------------------------------------------------------------- 声明
+
+// 泛型类型参数：`<T, U: I>` / `<T: int | long>`。
+// 约束先支持扁平列表 + 单一运算符（全 `&` 或全 `|`）；混用报错（见 parse_type_params）。
+struct TypeParam {
+    enum class Op { None, And, Or } op = Op::None;
+    std::string name;
+    std::vector<TypeSpecPtr> bounds;  // 空 = 无约束
+    int line = 0;
+    int col = 0;
+};
 
 struct Decl : Node {
     // 可见性：默认仅在所属 unit 内可见；public 表示跨 unit 可见。
     // unit 的可见性见 Unit::is_public（`public unit foo;`）。
     bool is_public = false;
+    std::vector<TypeParam> type_params;  // 空 = 非泛型
+    bool is_template = false;            // sema：泛型模板，不直接检查/发射，仅供实例化
     virtual ~Decl() = default;
 };
 
@@ -206,13 +236,27 @@ struct UseDecl : Decl {
     std::string unit_name;
 };
 
+// 类型别名：`type A = B;`——透明别名（不产生新类型），每条声明只能定义一个。
+// `type` 是**上下文关键字**：只有声明起始位置 `type Ident =` 才按别名解析。
+struct TypeAliasDecl : Decl {
+    std::string name;
+    TypeSpecPtr spec;
+    // sema
+    TypePtr rty;             // 解析结果（memo；等价于底层类型）
+    bool resolved = false;
+    bool resolving = false;  // 循环依赖检测
+};
+
 struct Param : Node {
     std::string name;
     TypeSpecPtr spec;
+    // `const` 是参数绑定的只读标记（不是类型限定）：进入函数体后不可重绑定、不可经它写字段。
+    bool is_const = false;
+    // `ref` 参数：借用调用方的变量（C 侧传指针），不可存储/返回。
+    bool by_ref = false;
 };
 
-struct GlobalVar : Decl {
-    std::string name;
+struct GlobalVar : Decl {    std::string name;
     TypeSpecPtr spec;
     InitPtr init;
     bool is_extern = false;
@@ -248,6 +292,8 @@ struct ConstMember : Node {
 
 struct StructDecl : Decl {
     std::string name;
+    std::vector<std::string> bases;  // 只能列接口（`struct S : I1, I2`），见 backlog U33
+    std::vector<TypeSpecPtr> base_specs;  // 与 bases 平行；泛型基类需要结构化实参
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
     // 字段的最终可见性（parser 在解析时按默认值/分段标签/成员前缀算好）
     std::unordered_map<std::string, bool> field_visibility;
@@ -289,7 +335,8 @@ struct LocalVar : Stmt {
     TypePtr rty;
     bool zero = false;
     std::string cname;
-    bool by_ref = false;  // for-in ref 绑定：C 侧是 T*，使用点解引用
+    bool by_ref = false;  // for-in ref 绑定 / ref 参数：C 侧是 T*，使用点解引用
+    bool is_ref_param = false;  // `ref` 参数：不可重绑定（for-in 的 ref 变量可以写元素）
     int group = 0;        // 同一声明语句的多个声明符共享（用于 auto 一致性检查）
 };
 
@@ -321,6 +368,8 @@ struct ForInStmt : Stmt {
     bool has_idx = false;      // `for i, x in seq`
     std::string idx_name;
     ExprPtr seq;
+    ExprPtr step;              // `for i in a..b step n`（仅区间；n 须非零编译期常量）
+    long long step_val = 1;    // sema：步长（含符号）
     std::unique_ptr<Block> body;
     // sema
     std::string loop_kind;  // "range" | "array" | "slice" | "string" | "index"
@@ -340,6 +389,7 @@ struct SwitchPat {
     ExprPtr lo;
     ExprPtr hi;  // 区间上界（is_range 时非空）
     bool is_range = false;
+    bool inclusive = false;  // `..=`：含上界（sema 归一化为半开区间的 vhi）
     // sema
     long long vlo = 0;
     long long vhi = 0;
@@ -374,6 +424,9 @@ struct ReturnStmt : Stmt {
 struct MethodDecl : Node {
     std::string name;
     TypeSpecPtr ret;
+    bool ret_ref = false;  // `ref T m()`：返回借用
+    // 接口里的运算符签名：`T operator+(T a, T b);`（无 this，参数表含全部操作数）
+    bool is_operator = false;
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;  // nullptr = 抽象方法
     bool is_override = false;
@@ -404,6 +457,7 @@ struct DtorDecl : Node {
 struct ClassDecl : Decl {
     std::string name;
     std::vector<std::string> bases;  // 第一个是基类，其余是接口
+    std::vector<TypeSpecPtr> base_specs;  // 与 bases 平行；泛型基类需要结构化实参
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
     std::unordered_map<std::string, bool> field_visibility;  // 字段的最终可见性
     std::vector<std::unique_ptr<ConstMember>> const_members;  // 类型级编译期常量
@@ -416,6 +470,7 @@ struct ClassDecl : Decl {
 struct InterfaceDecl : Decl {
     std::string name;
     std::vector<std::string> bases;
+    std::vector<TypeSpecPtr> base_specs;  // 与 bases 平行
     std::vector<std::unique_ptr<MethodDecl>> methods;
     TypePtr ty;
 };
@@ -423,6 +478,7 @@ struct InterfaceDecl : Decl {
 struct FuncDecl : Decl {
     std::string name;
     TypeSpecPtr ret;
+    bool ret_ref = false;  // `ref T f()`：返回借用
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;
     bool is_extern = false;
@@ -431,6 +487,8 @@ struct FuncDecl : Decl {
     // sema
     TypePtr rty;
     std::vector<TypePtr> pty;
+    std::vector<bool> pty_ref;   // 每个参数是否为 `ref` 借用（C 侧一个指针）
+    std::vector<bool> pty_cref;  // `ref const T`：只读借用
     std::vector<std::unique_ptr<LocalVar>> param_locals;
     std::string cname;
     FuncDecl* sym = nullptr;  // self
@@ -442,4 +500,7 @@ struct Unit : Node {
     bool is_public = false;  // `public unit foo;`：跨库可见
     std::vector<std::unique_ptr<UseDecl>> uses;
     std::vector<std::unique_ptr<Decl>> decls;
+    // 泛型模板（`type_params` 非空）在 sema 收集阶段移到这里：第一阶段不参与常规检查，
+    // 只供实例化器按 `(unit, name, args)` 查找。
+    std::vector<std::unique_ptr<Decl>> templates;
 };

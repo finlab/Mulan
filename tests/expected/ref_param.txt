@@ -1,0 +1,6 @@
+ref write ok
+const ref read ok
+const ref call ok
+ref again ok
+array elem ref ok
+value call ok

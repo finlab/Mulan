@@ -9,7 +9,9 @@
 #include <string>
 #include <vector>
 
-enum class TypeKind { Void, Prim, String, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range };
+// Ref：借用（`ref T` / `ref const T`）。只出现在函数/方法的返回类型位置，
+// 以及参数模式（参数侧仍用 pty_ref 布尔记录，见 FuncDecl）。不可作变量/字段/元素类型。
+enum class TypeKind { Void, Prim, String, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref };
 
 struct Type;
 using TypePtr = std::shared_ptr<Type>;
@@ -30,6 +32,12 @@ struct MethodSig {
     bool is_override = false;
     bool is_public = true;  // 默认私有由 class 方法显式覆盖；struct/接口方法恒公开
     TypePtr owner;  // 声明该方法的 class/interface（sema 填）
+    // 接口成员的两类形态（U34 M3）：
+    //   is_operator = true  → 静态签名（`T operator+(T,T)`），无 this，只用于约束
+    //   ret_self / params_self → 该位置来自 `Self`，约束检查时替换为实参类型
+    bool is_operator = false;
+    bool ret_self = false;
+    std::vector<bool> params_self;
 };
 
 struct Type {
@@ -57,6 +65,7 @@ struct Type {
     static TypePtr make_prim(const std::string& name);
     static TypePtr make_string();
     static TypePtr make_ptr(const TypePtr& elem, bool is_const = false);
+    static TypePtr make_ref(const TypePtr& elem, bool is_const = false);
     static TypePtr make_array(const TypePtr& elem, size_t size);
     static TypePtr make_slice(const TypePtr& elem, bool is_const = false, int rank = 1);
     static TypePtr make_struct(const std::string& unit, const std::string& name);
@@ -98,6 +107,8 @@ size_t type_size(const TypePtr& t);
 bool is_class_type(const TypePtr& t);
 bool is_interface_type(const TypePtr& t);
 bool is_reference_type(const TypePtr& t);  // class / interface
+bool is_borrow_type(const TypePtr& t);     // ref T（借用）
+TypePtr referent_of(const TypePtr& t);     // ref T -> T，其它原样返回
 bool is_subclass_of(const TypePtr& sub, const TypePtr& base);
 bool implements_interface(const TypePtr& t, const TypePtr& iface);
 bool implicitly_convertible(const TypePtr& src, const TypePtr& dst);

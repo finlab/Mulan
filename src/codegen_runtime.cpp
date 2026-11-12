@@ -555,6 +555,8 @@ namespace muc_detail {
 
     // 返回 class 引用时把借用变成一份新的强引用
     Value* Emitter::prepareReturn(Expr* e) {
+        // `ref T f()`：返回的是元素地址（借用），不拷贝也不 retain
+        if (is_borrow_type(curRetTy)) return addrOf(e);
         Value* v = coerce(e, curRetTy);
         if (isRefKind(curRetTy)) {
             if (!ownsReference(e)) emitRetainRef(v, curRetTy);

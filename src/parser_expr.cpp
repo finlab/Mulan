@@ -27,10 +27,13 @@ TypeSpecPtr clone_spec(const TypeSpec& s) {
     auto out = std::make_unique<TypeSpec>();
     out->kind = s.kind;
     out->name = s.name;
+    out->args.reserve(s.args.size());
+    for (const auto& a : s.args) out->args.push_back(a ? clone_spec(*a) : nullptr);
     out->elem = s.elem ? clone_spec(*s.elem) : nullptr;
     out->size = s.size;
     out->rank = s.rank;
     out->is_const = s.is_const;
+    out->is_self = s.is_self;
     out->weak = s.weak;
     out->line = s.line;
     out->col = s.col;
@@ -75,6 +78,95 @@ bool Parser::is_module_prefix(const std::string& s) const {
     return false;
 }
 
+// 泛型实参列表：`<int, Vec<long>>`（在 `parse_type` 中被 `name <` 触发）
+std::vector<std::unique_ptr<TypeSpec>> Parser::parse_type_args() {
+    std::vector<std::unique_ptr<TypeSpec>> args;
+    expect_op("<");
+    if (at_op(">")) throw err("type argument list cannot be empty");
+    for (;;) {
+        args.push_back(parse_type());
+        if (at_op(",")) {
+            advance();
+            continue;
+        }
+        break;
+    }
+    expect_gt();
+    return args;
+}
+
+// 声明处的泛型参数列表：`<T>` / `<K, V>` / `<T: IList<int> & IComparable>`
+std::vector<TypeParam> Parser::parse_type_params() {
+    std::vector<TypeParam> out;
+    if (!at_op("<")) return out;
+    advance();
+    if (at_op(">")) throw err("generic parameter list cannot be empty");
+    for (;;) {
+        const Token nt = expect_ident("type parameter name");
+        TypeParam p;
+        p.name = nt.text;
+        p.line = nt.line;
+        p.col = nt.col;
+        if (at_op(":")) {
+            advance();
+            for (;;) {
+                const Token bt = peek();
+                TypeSpecPtr b;
+                if (bt.kind == TokKind::Kw && prims().count(bt.text) != 0) {
+                    advance();
+                    b = make_named_spec(bt.text, bt.line, bt.col);
+                } else if (bt.kind == TokKind::Ident) {
+                    advance();
+                    std::string qn = bt.text;
+                    while (at_op(".")) {
+                        advance();
+                        qn += ".";
+                        qn += expect_ident("type name").text;
+                    }
+                    b = make_named_spec(qn, bt.line, bt.col);
+                } else {
+                    throw err("expected constraint type but got " + bt.describe());
+                }
+                if (at_op("<")) b->args = parse_type_args();
+                p.bounds.push_back(std::move(b));
+                if (at_op("&") || at_op("|")) {
+                    const TypeParam::Op next_op = at_op("&") ? TypeParam::Op::And : TypeParam::Op::Or;
+                    if (p.op != TypeParam::Op::None && p.op != next_op) {
+                        throw err("`&` and `|` cannot be mixed in one constraint list; "
+                                  "split it into separate type parameters");
+                    }
+                    p.op = next_op;
+                    advance();
+                    continue;
+                }
+                break;
+            }
+        }
+        out.push_back(std::move(p));
+        if (at_op(",")) {
+            advance();
+            continue;
+        }
+        break;
+    }
+    expect_gt();
+    return out;
+}
+
+// 类型实参的右尖括号：词法上的 `>>` 拆成两个 `>`（`Vec<Vec<int>>`）
+Token Parser::expect_gt() {
+    if (at_op(">>")) {
+        Token split = toks_[pos_];
+        split.text = ">";
+        toks_[pos_].text = ">";
+        using Diff = std::vector<Token>::difference_type;
+        toks_.insert(toks_.begin() + static_cast<Diff>(pos_) + 1, split);
+        return advance();
+    }
+    if (!at_op(">")) throw err("expected `>` but got " + peek().describe());
+    return advance();
+}
+
 TypeSpecPtr Parser::parse_type() {
     bool base_const = false;
     if (at_kw("const")) {
@@ -98,6 +190,8 @@ TypeSpecPtr Parser::parse_type() {
     } else {
         throw err("expected type name but got " + t.describe());
     }
+    if (at_op("<")) spec->args = parse_type_args();
+    if (spec->kind == TypeSpec::K::Named && spec->name == "Self") spec->is_self = true;
     if (base_const) spec->is_const = true;
     return type_suffixes(std::move(spec), t);
 }
@@ -125,6 +219,7 @@ TypeSpecPtr Parser::parse_type_base() {
     } else {
         throw err("expected type name but got " + t.describe());
     }
+    if (at_op("<")) spec->args = parse_type_args();
     if (base_const) spec->is_const = true;
     while (at_op("*")) {
         const Token tok = advance();
@@ -458,10 +553,31 @@ ExprPtr Parser::parse_postfix() {
 }
 
 ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
+    std::vector<TypeSpecPtr> pending_type_args;  // `f<int>(...)` 的类型实参
     for (;;) {
         const Token t = peek();
+        // 泛型调用：`name<...>(`。试探解析失败则回退为比较表达式。
+        if (t.is_op("<") && pending_type_args.empty() && dynamic_cast<Name*>(e.get())) {
+            const std::size_t save = pos_;
+            bool ok = false;
+            try {
+                std::vector<TypeSpecPtr> args = parse_type_args();
+                if (at_op("(")) {
+                    pending_type_args = std::move(args);
+                    ok = true;
+                }
+            } catch (const MuError&) {
+                ok = false;
+            }
+            if (!ok) pos_ = save;
+            if (ok) continue;
+        }
         if (t.is_op("(")) {
             e = parse_call(std::move(e));
+            if (!pending_type_args.empty()) {
+                static_cast<Call*>(e.get())->type_args = std::move(pending_type_args);
+                pending_type_args.clear();
+            }
             continue;
         }
         if (t.is_op("[")) {

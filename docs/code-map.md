@@ -86,6 +86,6 @@ mangle.cpp       符号名修饰
 ```powershell
 cmake --build build --clean-first          # 冷编译（零 warning 基线）
 $env:MUC_CMD = "build/muc.exe"
-python tests/run_tests.py                  # 全量（当前 328/328）
+python tests/run_tests.py                  # 全量（当前 370/370）
 python tests/run_tests.py --filter const   # 只跑相关用例
 ```

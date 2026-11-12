@@ -1,1 +1,1 @@
-user types do not support `for ref` (`operator[]` returns a value); use `for i,
+user types do not support `for ref` unless `operator[]` returns `ref T`

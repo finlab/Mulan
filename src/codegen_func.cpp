@@ -19,7 +19,8 @@ namespace muc_detail {
     void Emitter::emitFunction(FuncDecl* f) {
         if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm] emit " << f->name << "\n";
         std::vector<LType*> ptys;
-        for (auto& t : f->pty) ptys.push_back(lt(t));
+        for (size_t i = 0; i < f->pty.size(); ++i)
+            ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
         auto* ft = FunctionType::get(lt(f->rty), ptys, false);
         Function* fn = cast<Function>(mod->getOrInsertFunction(f->cname, ft).getCallee());
         fn->setLinkage((f->is_extern || f->is_public || f->name == "main")
@@ -56,7 +57,9 @@ namespace muc_detail {
         for (auto& a : fn->args()) {
             LocalVar* pl = i < f->param_locals.size() ? f->param_locals[i].get() : nullptr;
             if (pl) {
-                auto* slot = entryAlloca(lt(pl->rty), sane(pl->name), alignOf(pl->rty));
+                const bool iref = i < f->pty_ref.size() && f->pty_ref[i];
+                LType* slotTy = (pl->by_ref || iref) ? ptrTy() : lt(pl->rty);
+                auto* slot = entryAlloca(slotTy, sane(pl->name), alignOf(pl->rty));
                 slots[pl] = slot;
                 b.SetInsertPoint(bodyBB);
                 b.CreateStore(&a, slot);
@@ -209,7 +212,8 @@ namespace muc_detail {
                 if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
                     if (f->is_extern) {
                         std::vector<LType*> ptys;
-                        for (auto& t : f->pty) ptys.push_back(lt(t));
+                        for (size_t i = 0; i < f->pty.size(); ++i)
+                            ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
                         mod->getOrInsertFunction(
                             f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
                     }

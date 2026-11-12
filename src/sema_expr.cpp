@@ -114,7 +114,9 @@ namespace muc_detail {
                 auto f = choose_overload(cands, {ix->base.get(), ix->indices[0].get()},
                                          "operator[]", e);
                 ix->get_func = f;
-                return f->rty;
+                ix->by_ref = is_borrow_type(f->rty);
+                ix->ref_const = ix->by_ref && f->rty->is_const;
+                return referent_of(f->rty);
             }
             err("type " + bt->str() + " cannot be subscripted", e);
         }

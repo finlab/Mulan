@@ -28,6 +28,7 @@ struct UnitInfo {
     std::unordered_map<std::string, EnumDecl*> enums;
     std::unordered_map<std::string, ClassDecl*> classes;
     std::unordered_map<std::string, InterfaceDecl*> interfaces;
+    std::unordered_map<std::string, TypeAliasDecl*> aliases;  // 类型别名（type A = B;）
 };
 
 struct Program {

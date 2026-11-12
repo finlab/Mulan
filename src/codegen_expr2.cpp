@@ -70,11 +70,15 @@ using ArgPack = Emitter::ArgPack;
     Value* Emitter::emitOperatorIndexCall(FuncDecl* f, Value* seqAddr, const TypePtr& sty, Value* idxVal,
                                           bool unaligned) {
         std::vector<LType*> ptys;
-        for (auto& t : f->pty) ptys.push_back(lt(t));
+        for (size_t i = 0; i < f->pty.size(); ++i)
+            ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
         FunctionCallee callee =
             mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, false));
         Value* cArg = nullptr;
-        if (sty->kind == TypeKind::Class) {
+        const bool recv_ref = !f->pty_ref.empty() && f->pty_ref[0];
+        if (recv_ref) {
+            cArg = seqAddr;  // 借用接收者：直接把容器地址传进去
+        } else if (sty->kind == TypeKind::Class) {
             cArg = b.CreateLoad(lt(sty), seqAddr);
         } else if (!f->pty.empty() && f->pty[0] && f->pty[0]->kind == TypeKind::Ptr) {
             cArg = seqAddr;
@@ -87,11 +91,22 @@ using ArgPack = Emitter::ArgPack;
     // 调用自由函数/运算符/方法（静态派发）
     Value* Emitter::emitUserCall(FuncDecl* f, const std::vector<Expr*>& args) {
         std::vector<LType*> ptys;
-        for (auto& t : f->pty) ptys.push_back(lt(t));
+        for (size_t i = 0; i < f->pty.size(); ++i)
+            ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
         FunctionCallee callee =
             mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
-        std::vector<Expr*> named(args.begin(), args.begin() + std::min(args.size(), f->pty.size()));
-        ArgPack pack = prepareArgs(named, f->pty);
+        ArgPack pack;
+        for (size_t i = 0; i < args.size() && i < f->pty.size(); ++i) {
+            if (i < f->pty_ref.size() && f->pty_ref[i]) {
+                pack.vals.push_back(addrOf(args[i]));  // 借用：callee 不拥有，调用后不清理
+                continue;
+            }
+            Value* v = coerce(args[i], f->pty[i]);
+            if (needsCleanup(f->pty[i]) && convOwns(args[i], f->pty[i])) {
+                pack.owned.emplace_back(v, f->pty[i]);
+            }
+            pack.vals.push_back(v);
+        }
         if (f->is_varargs) {
             for (size_t i = f->pty.size(); i < args.size(); ++i) {
                 pack.vals.push_back(promoteVararg(eval(args[i]), args[i]->ty));
@@ -317,24 +332,9 @@ using ArgPack = Emitter::ArgPack;
         // 普通函数调用
         FuncDecl* f = c->func;
         if (!f) fail("LLVM backend: call is missing its target function", c->line, c->col);
-        std::vector<LType*> ptys;
-        for (auto& t : f->pty) ptys.push_back(lt(t));
-        FunctionCallee callee = mod->getOrInsertFunction(
-            f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
         std::vector<Expr*> rawArgs;
         for (auto& a : c->args) rawArgs.push_back(a.get());
-        std::vector<Expr*> namedArgs(rawArgs.begin(),
-                                     rawArgs.begin() + std::min(rawArgs.size(), f->pty.size()));
-        ArgPack pack = prepareArgs(namedArgs, f->pty);
-        if (f->is_varargs) {
-            for (size_t i = f->pty.size(); i < rawArgs.size(); ++i) {
-                Expr* a = rawArgs[i];
-                pack.vals.push_back(promoteVararg(eval(a), a->ty));
-            }
-        }
-        Value* r = b.CreateCall(callee, pack.vals);
-        releaseTemps(pack);
-        return r;
+        return emitUserCall(f, rawArgs);
     }
 
     // 块是否已有终结指令（getTerminator 在空块上会断言）
@@ -440,7 +440,9 @@ using ArgPack = Emitter::ArgPack;
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
             if (ix->get_func) {
-                return emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
+                Value* r = emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
+                if (ix->by_ref) return loadAt(lt(e->ty), r, unalignedExpr(e));
+                return r;
             }
             return loadAt(lt(e->ty), addrOf(e), unalignedExpr(e));
         }
@@ -472,7 +474,11 @@ using ArgPack = Emitter::ArgPack;
             }
             return convertTo(eval(v->expr.get()), v->expr->ty, e->ty, v->line, v->col);
         }
-        if (auto v = dynamic_cast<Call*>(e)) return evalCall(v);
+        if (auto v = dynamic_cast<Call*>(e)) {
+            Value* r = evalCall(v);
+            if (v->by_ref) return loadAt(lt(e->ty), r, false);
+            return r;
+        }
         if (auto v = dynamic_cast<NewExpr*>(e)) return evalNew(v);
         if (auto v = dynamic_cast<SizeofExpr*>(e)) {
             // resolve spec via sema 已写入 e->ty=usize；尺寸需要类型本身：由 spec 推断
@@ -543,6 +549,8 @@ using ArgPack = Emitter::ArgPack;
                         if (i2 != it->second.interfaces.end()) return i2->second->ty;
                         auto e = it->second.enums.find(tn);
                         if (e != it->second.enums.end()) return e->second->ty;
+                        auto al = it->second.aliases.find(tn);
+                        if (al != it->second.aliases.end() && al->second->resolved) return al->second->rty;
                     }
                 }
                 auto it = prog.infos[curUnit].structs.find(spec->name);
@@ -553,6 +561,8 @@ using ArgPack = Emitter::ArgPack;
                 if (i2 != prog.infos[curUnit].interfaces.end()) return i2->second->ty;
                 auto e = prog.infos[curUnit].enums.find(spec->name);
                 if (e != prog.infos[curUnit].enums.end()) return e->second->ty;
+                auto al = prog.infos[curUnit].aliases.find(spec->name);
+                if (al != prog.infos[curUnit].aliases.end() && al->second->resolved) return al->second->rty;
                 fail("LLVM backend: sizeof/alignof on unknown type " + spec->name);
             }
             case TypeSpec::K::Ptr:

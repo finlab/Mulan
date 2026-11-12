@@ -25,7 +25,9 @@ namespace muc_detail {
                     c->callee_kind =
                         cur_class_->kind == TypeKind::Struct ? "struct_method" : "method";
                     c->method = sig;
-                    return sig->ret;
+                    c->by_ref = is_borrow_type(sig->ret);
+                    c->ref_const = c->by_ref && sig->ret->is_const;
+                    return referent_of(sig->ret);
                 }
             }
         }
@@ -38,6 +40,22 @@ namespace muc_detail {
                 err("`" + nm->ident + "` is a variable, not a function", c);
             }
             // 候选：当前 unit + 直接 use 的 unit（只收 public）+ std.string（隐式）
+            if (!c->type_args.empty()) {
+                // 泛型函数优先；否则视为泛型 struct 的值构造
+                Decl* tdecl = find_generic_template(nm->ident, cur_);
+                if (dynamic_cast<FuncDecl*>(tdecl)) {
+                    target = instantiate_func(c, nm->ident, cur_);
+                    nm->kind = "func";
+                    nm->sym = target;
+                } else {
+                    TypePtr sty = instantiate_generic_named(nm->ident, c->type_args, cur_);
+                    if (!sty || sty->kind != TypeKind::Struct) {
+                        err("`" + nm->ident + "<...>` is not a generic function or struct", c);
+                    }
+                    struct_ty = sty;
+                    nm->kind = "type";
+                }
+            } else {
             std::vector<FuncDecl*> cands;
             auto add_funcs = [&](UnitInfo& o, bool require_pub) {
                 auto f = o.funcs.find(nm->ident);
@@ -97,6 +115,7 @@ namespace muc_detail {
                     err("undefined function `" + nm->ident + "`", c);
                 }
             }
+            }
         } else if (auto m = dynamic_cast<Member*>(callee)) {
             Expr* obj = m->obj.get();
             // super.method(...)
@@ -117,7 +136,9 @@ namespace muc_detail {
                 m->kind = "method";
                 c->callee_kind = "super";
                 c->method = sig;
-                return sig->ret;
+                c->by_ref = is_borrow_type(sig->ret);
+                c->ref_const = c->by_ref && sig->ret->is_const;
+                return referent_of(sig->ret);
             }
 
             std::string uname;
@@ -142,7 +163,9 @@ namespace muc_detail {
                     m->kind = "method";
                     c->callee_kind = "method";
                     c->method = sig;
-                    return sig->ret;
+                    c->by_ref = is_borrow_type(sig->ret);
+                    c->ref_const = c->by_ref && sig->ret->is_const;
+                    return referent_of(sig->ret);
                 }
                 if (ot && ot->kind == TypeKind::Struct) {
                     std::vector<const MethodSig*> ms;
@@ -158,7 +181,9 @@ namespace muc_detail {
                     m->kind = "method";
                     c->callee_kind = "struct_method";
                     c->method = sig;
-                    return sig->ret;
+                    c->by_ref = is_borrow_type(sig->ret);
+                    c->ref_const = c->by_ref && sig->ret->is_const;
+                    return referent_of(sig->ret);
                 }
                 err("`" + m->name + "` is not a function", c);
             }
@@ -220,6 +245,8 @@ namespace muc_detail {
         if (!target) err("only functions and struct constructors can be called", c);
         c->callee_kind = "func";
         c->func = target;
+        c->by_ref = is_borrow_type(target->rty);
+        c->ref_const = c->by_ref && target->rty->is_const;
         const auto& params = target->pty;
 
         if (!c->named.empty()) {
@@ -237,6 +264,35 @@ namespace muc_detail {
                 c);
         }
         for (size_t i = 0; i < params.size() && i < c->args.size(); ++i) {
+            const bool is_ref = i < target->pty_ref.size() && target->pty_ref[i];
+            if (is_ref) {
+                Expr* a = c->args[i].get();
+                TypePtr at = check_expr(a);
+                if (!is_lvalue(a) && !is_borrow_expr(a)) {
+                    err("argument " + std::to_string(i + 1) + " of `" + target->name +
+                            "` must be an addressable variable: a `ref` parameter borrows the caller's storage",
+                        a);
+                }
+                if (!same_type(at, params[i])) {
+                    err("argument " + std::to_string(i + 1) + " of `" + target->name + "` must be `" +
+                            params[i]->str() + "` (found `" + at->str() +
+                            "`): `ref` parameters do not convert",
+                        a);
+                }
+                const bool is_cref = i < target->pty_cref.size() && target->pty_cref[i];
+                if (!is_cref) {
+                    if (root_is_const(a)) {
+                        err("cannot bind a readonly (`const`) variable to a mutable `ref` parameter", a);
+                    }
+                    if (auto* bc = dynamic_cast<Call*>(a); bc && bc->by_ref && bc->ref_const) {
+                        err("cannot bind a readonly (`ref const`) borrow to a mutable `ref` parameter", a);
+                    }
+                    if (auto* bi = dynamic_cast<Index*>(a); bi && bi->by_ref && bi->ref_const) {
+                        err("cannot bind a readonly (`ref const`) borrow to a mutable `ref` parameter", a);
+                    }
+                }
+                continue;
+            }
             check_assign(c->args[i].get(), params[i], "argument of call to `" + target->name + "`");
         }
         if (target->is_varargs) {
@@ -253,7 +309,7 @@ namespace muc_detail {
                 }
             }
         }
-        return target->rty;
+        return referent_of(target->rty);
     }
 
     int Sema::rank_arg(Expr* e, const TypePtr& aty, const TypePtr& p) {
@@ -293,6 +349,42 @@ namespace muc_detail {
     bool Sema::is_user_type(const TypePtr& t) {
         return t && (t->kind == TypeKind::Struct || t->kind == TypeKind::Class ||
                      t->kind == TypeKind::Interface);
+    }
+
+    bool Sema::borrowable_type(const TypePtr& t) {
+        if (!t) return false;
+        switch (t->kind) {
+            case TypeKind::Prim:
+            case TypeKind::Enum:
+            case TypeKind::Ptr: return true;
+            case TypeKind::Struct:
+                return !t->is_union && !t->has_dtor && !has_ref_fields(t);
+            default: return false;  // void / string / slice / class / interface / module / null / range / ref
+        }
+    }
+
+    // `ref T` / `ref const T` / `T` 的返回类型解析（方法与自由函数共用）。
+    TypePtr Sema::make_borrow_ret(TypeSpec* spec, bool ret_ref, Node* at, Unit* u, const std::string& what) {
+        const bool ret_const = ret_ref && spec && spec->is_const;
+        if (ret_ref && spec) spec->is_const = false;
+        TypePtr rt = resolve_type(spec, u);
+        if (!ret_ref) return rt;
+        if (is_void(rt)) err("`" + what + "`: `ref` return type cannot be `void`", at);
+        if (!borrowable_type(rt)) {
+            err("`" + what + "`: `" + rt->str() +
+                    "` cannot be returned by `ref` (borrows are limited to non-reference-counted values)",
+                at);
+        }
+        return Type::make_ref(rt, ret_const);
+    }
+
+    void Sema::resolve_method_ret(MethodDecl* m, Unit* u) {
+        m->rty = make_borrow_ret(m->ret.get(), m->ret_ref, m, u, "method `" + m->name + "`");
+        if (noncopyable_struct(referent_of(m->rty))) {
+            err("struct `" + referent_of(m->rty)->str() +
+                    "` has a destructor and cannot be returned by value (use a pointer)",
+                m);
+        }
     }
 
     bool Sema::has_ref_fields(const TypePtr& t) {

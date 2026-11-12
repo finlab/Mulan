@@ -45,6 +45,7 @@ namespace muc_detail {
             auto lv = std::make_unique<LocalVar>();
             lv->name = params[i]->name;
             lv->rty = pty[i];
+            lv->is_const = params[i]->is_const;
             lv->line = params[i]->line;
             lv->col = params[i]->col;
             declare_local(lv.get());
@@ -246,6 +247,45 @@ namespace muc_detail {
     }
 
     void Sema::check_struct(StructDecl* sd) {
+        // U33 S1：`struct S : I1, I2` —— 只能列接口；静态满足，不产生值类型。
+        for (size_t i = 0; i < sd->base_specs.size(); ++i) {
+            if (!sd->base_specs[i]) continue;
+            TypePtr bt = resolve_type(sd->base_specs[i].get(), cur_);
+            if (!bt) continue;
+            if (bt->kind != TypeKind::Interface) {
+                err("`" + sd->bases[i] + "`: only interfaces are allowed after `:` on a struct", sd);
+            }
+            // 接口方法（含接口继承链；默认方法也要求显式实现，见 backlog U33）
+            std::vector<const MethodSig*> reqs;
+            std::function<void(const TypePtr&, int)> collect = [&](const TypePtr& itf, int depth) {
+                if (!itf || depth > 64) return;
+                for (const auto& m : itf->methods) reqs.push_back(&m);
+                for (const auto& p : itf->interfaces) collect(p, depth + 1);
+            };
+            collect(bt, 0);
+            for (const MethodSig* req : reqs) {
+                if (req->is_operator) continue;  // 运算符不进 vtable，也不要求成员实现
+                const MethodSig* impl = nullptr;
+                for (const auto& m : sd->ty->methods) {
+                    if (same_sig(m, *req)) {
+                        impl = &m;
+                        break;
+                    }
+                }
+                if (!impl) {
+                    err("struct `" + sd->name + "` must implement `" + req->name + "` of interface `" +
+                            bt->name + "`",
+                        sd);
+                    continue;
+                }
+                if (!impl->is_override) {
+                    err("method `" + req->name + "` of struct `" + sd->name + "` implements `" + bt->name +
+                            "." + req->name + "` and must be marked `override`",
+                        sd);
+                }
+            }
+        }
+
         check_const_members(sd->const_members, sd->ty, sd->is_union ? "union" : "struct", sd->name);
         std::unordered_set<std::string> seen;
         for (auto& m : sd->methods) {
@@ -645,6 +685,11 @@ namespace muc_detail {
         if (auto ia = dynamic_cast<InitAggregate*>(init)) {
             check_aggregate(ia, ty, what);
             return;
+        }
+        if (dynamic_cast<InitRange*>(init)) {
+            err("range fill (`a..b`) is only allowed in fixed-size array initializers; "
+                "write the elements out or use an index loop",
+                node);
         }
         err("unknown initializer", node);
     }

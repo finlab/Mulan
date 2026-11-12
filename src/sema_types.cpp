@@ -10,6 +10,15 @@ namespace muc_detail {
         if (!spec) err("missing type");
         switch (spec->kind) {
             case TypeSpec::K::Named: {
+                if (spec->is_self) {
+                    if (!cur_class_ || cur_class_->kind != TypeKind::Interface) {
+                        err_ts("`Self` is only allowed inside an interface", spec);
+                    }
+                    return cur_class_;
+                }
+                if (!spec->args.empty()) {
+                    return instantiate_generic(spec, u);
+                }
                 TypePtr t = resolve_named_type(spec->name, u, spec);
                 // C 模型：prim 的 const 需要独立类型节点（prim 工厂有单例缓存，不能就地改）
                 if (spec->is_const && t && t->kind == TypeKind::Prim) {
@@ -53,7 +62,7 @@ namespace muc_detail {
     }
 
     TypePtr Sema::find_type_named(const std::string& unit, const std::string& name,
-                            bool require_pub) const {
+                            bool require_pub) {
         auto it = infos_.find(unit);
         if (it == infos_.end()) return nullptr;
         const UnitInfo& ui = it->second;
@@ -70,7 +79,25 @@ namespace muc_detail {
         if (auto i = ui.interfaces.find(name); i != ui.interfaces.end()) {
             return ok(i->second->is_public) ? i->second->ty : nullptr;
         }
+        if (auto a = ui.aliases.find(name); a != ui.aliases.end()) {
+            return ok(a->second->is_public) ? resolve_alias(a->second, ui.unit) : nullptr;
+        }
         return nullptr;
+    }
+
+    TypePtr Sema::resolve_alias(TypeAliasDecl* a, Unit* owner) {
+        if (a->resolved) return a->rty;
+        if (a->resolving) {
+            err("circular type alias definition involving `" + a->name + "`", a);
+        }
+        struct Guard {
+            bool& flag;
+            ~Guard() { flag = false; }
+        } guard{a->resolving};
+        a->resolving = true;
+        a->rty = resolve_type(a->spec.get(), owner);
+        a->resolved = true;
+        return a->rty;
     }
 
     TypePtr Sema::resolve_named_type(const std::string& name, Unit* u, const TypeSpec* spec) {
@@ -110,6 +137,10 @@ namespace muc_detail {
                 if (auto i = ui.interfaces.find(tn); i != ui.interfaces.end()) {
                     need_pub(i->second->is_public);
                     return i->second->ty;
+                }
+                if (auto a = ui.aliases.find(tn); a != ui.aliases.end()) {
+                    need_pub(a->second->is_public);
+                    return resolve_alias(a->second, ui.unit);
                 }
                 err_ts("unit `" + un + "` has no type `" + tn + "`", spec);
             }
@@ -156,6 +187,11 @@ namespace muc_detail {
                 if (!i->second->is_public)
                     err_ts("type `std.string." + name + "` is not declared public", spec);
                 return i->second->ty;
+            }
+            if (auto a = stdn->aliases.find(name); a != stdn->aliases.end()) {
+                if (!a->second->is_public)
+                    err_ts("type `std.string." + name + "` is not declared public", spec);
+                return resolve_alias(a->second, stdn->unit);
             }
         }
         err_ts("unknown type `" + name + "`", spec);
@@ -524,6 +560,9 @@ namespace muc_detail {
             auto lv = std::make_unique<LocalVar>();
             lv->name = p->name;
             lv->rty = f->pty[i];
+            lv->is_const = p->is_const;
+            lv->by_ref = p->by_ref;
+            lv->is_ref_param = p->by_ref;
             lv->line = p->line;
             lv->col = p->col;
             declare_local(lv.get());

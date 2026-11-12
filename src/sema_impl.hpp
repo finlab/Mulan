@@ -101,6 +101,13 @@ private:
     std::unordered_map<int, TypePtr> auto_groups_;  // auto 同一声明的推断结果
     Expr* direct_init_expr_ = nullptr;  // 当前正在检查的直接初始化表达式（构造器就地构造）
 
+    // ------------------------------------------------------------ 泛型（U34）
+    std::unordered_map<std::string, Decl*> generic_templates_;  // "unit.Name" → 模板声明
+    std::unordered_map<std::string, TypePtr> generic_insts_;    // "unit.Vec<int>" → 实例类型
+    std::unordered_map<std::string, FuncDecl*> generic_func_insts_;  // "unit.f<int>" → 实例函数
+    std::unordered_set<std::string> generic_busy_;              // 实例化中（防递归）
+    std::vector<std::unique_ptr<Decl>> generic_decls_;          // 实例化产物（生命周期）
+
     // ------------------------------------------------------------ 工具
 
     [[noreturn]] void err(const std::string& msg, const Node* node = nullptr) const;
@@ -182,9 +189,27 @@ private:
     // ------------------------------------------------------------ 类型解析
     TypePtr resolve_type(const TypeSpec* spec, Unit* u);
 
+    // ------------------------------------------------------------ 泛型实例化（U34）
+    // 收集 `Unit::templates` 到 `generic_templates_`（collect 阶段末尾调用一次）
+    void index_templates();
+    // `spec` 是带实参的类型语法（`Vec<int>`）；返回实例类型，必要时克隆模板并注册
+    TypePtr instantiate_generic(const TypeSpec* spec, Unit* u);
+    // `Name<args>`（来自调用点，如泛型 struct 的值构造 `Pair<int,long>(...)`）
+    TypePtr instantiate_generic_named(const std::string& name,
+                                      const std::vector<TypeSpecPtr>& args, Unit* u);
+    // 按名字找泛型模板（本 unit 优先，其次唯一后缀匹配）；没有则返回 nullptr
+    Decl* find_generic_template(const std::string& full, Unit* u);
+    // 自由函数单态化：`c->type_args` 是显式类型实参；返回实例函数（已跑 check_func）
+    FuncDecl* instantiate_func(Call* c, const std::string& base, Unit* u);
+    // 结构化约束检查（U34 M3b）：`t` 是否满足 `p` 的每个 bound（`&` 全满足 / `|` 任一）
+    void check_bound(const TypePtr& t, const TypeParam& p, Unit* u, const Node* at);
+    bool satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::string* why);
+
     // 在指定 unit 中按名字找类型；require_pub 时只返回 public 声明。
     TypePtr find_type_named(const std::string& unit, const std::string& name,
-                            bool require_pub) const;
+                            bool require_pub);
+    // 类型别名：惰性解析 + 循环检测（`type A = B; type B = A;` 报错）
+    TypePtr resolve_alias(TypeAliasDecl* a, Unit* owner);
 
     TypePtr resolve_named_type(const std::string& name, Unit* u, const TypeSpec* spec);
 
@@ -477,6 +502,18 @@ private:
     // 是否含 RC 管理的引用字段（class/interface/切片/string/数组递归）；
     // 只看字段，不看用户析构器（含析构器的 struct 仍允许取址，通过指针使用）。
     static bool has_ref_fields(const TypePtr& t);
+
+    // 返回借用的来源检查（ref 参数 / this / 全局 / 指针·切片间接 / 透传借用）
+    bool borrow_root_ok(Expr* e);
+    // 表达式本身是否是一个借用值（`ref T f()` 调用 / 返回借用的下标）
+    static bool is_borrow_expr(Expr* e);
+
+    // 可否作借用（`ref`）的 referent：非引用计数、非 void、非 class/interface/string/切片。
+    static bool borrowable_type(const TypePtr& t);
+
+    // 解析方法与运算符的返回类型（处理 `ref` 前缀 + 借用 referent 校验）。
+    void resolve_method_ret(MethodDecl* m, Unit* u);
+    TypePtr make_borrow_ret(TypeSpec* spec, bool ret_ref, Node* at, Unit* u, const std::string& what);
 
     // 运算符查找范围：当前 unit + use 引入的 unit + 操作数类型所属 unit（ADL 风格）。
     // 未导入 unit 的运算符不可见，避免无关 unit 之间意外冲突。

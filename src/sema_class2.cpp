@@ -94,12 +94,33 @@ namespace muc_detail {
             for (auto& item : items) {
                 if (!item.first.empty()) err("array initializers cannot use named fields", init);
             }
-            if (items.size() > ty->array_size) {
+            // 区间填充：`{1, 2, 5..9, 10}`（端点须编译期常量，仅整数元素类型）
+            size_t total = 0;
+            for (auto& item : items) {
+                if (auto rg = dynamic_cast<InitRange*>(item.second.get())) {
+                    if (!is_integer(ty->elem)) {
+                        err("range fill requires an integer element type (found `" + ty->elem->str() + "`)", rg);
+                    }
+                    long long lo = 0, hi = 0;
+                    if (!eval_const_int(rg->lo.get(), lo) || !eval_const_int(rg->hi.get(), hi)) {
+                        err("range endpoints in an array initializer must be compile-time integer constants", rg);
+                    }
+                    rg->lo_val = lo;
+                    rg->count = hi > lo ? hi - lo : 0;  // 空区间（lo >= hi）合法 = 0 个元素
+                    total += static_cast<size_t>(rg->count);
+                    continue;
+                }
+                total += 1;
+            }
+            if (total > ty->array_size) {
                 err("array of length " + std::to_string(ty->array_size) + " was given " +
-                        std::to_string(items.size()) + " initializers",
+                        std::to_string(total) + " initializers",
                     init);
             }
-            for (auto& item : items) check_init_into(ty->elem, item.second.get(), what, init);
+            for (auto& item : items) {
+                if (dynamic_cast<InitRange*>(item.second.get())) continue;
+                check_init_into(ty->elem, item.second.get(), what, init);
+            }
             return;
         }
 
@@ -110,6 +131,9 @@ namespace muc_detail {
             }
             for (auto& item : items) {
                 if (!item.first.empty()) err("slice initializers cannot use named fields", init);
+                if (dynamic_cast<InitRange*>(item.second.get())) {
+                    err("range fill (`a..b`) is only allowed in fixed-size array initializers", item.second.get());
+                }
             }
             for (auto& item : items) check_init_into(ty->elem, item.second.get(), what, init);
             return;
@@ -139,6 +163,16 @@ namespace muc_detail {
     void Sema::check_writable(Expr* t) {
         if (auto n = dynamic_cast<Name*>(t)) {
             if (n->ident == "this") err("cannot assign to `this`", t);
+            if (auto lv = std::get_if<LocalVar*>(&n->sym); lv && *lv && (*lv)->is_ref_param) {
+                // 标量/枚举/指针借用：赋值即写穿调用方变量（结构体借用仍走字段赋值，见 SPEC「不可重绑定」）
+                TypePtr rt = (*lv)->rty;
+                const bool scalar = rt && (rt->kind == TypeKind::Prim ||
+                                           rt->kind == TypeKind::Enum ||
+                                           rt->kind == TypeKind::Ptr);
+                if (!scalar) {
+                    err("cannot rebind a `ref` parameter: it borrows the caller's variable", t);
+                }
+            }
             if (root_is_const(t)) err("`" + n->ident + "` is a `const` binding and cannot be assigned", t);
             return;
         }
@@ -184,7 +218,16 @@ namespace muc_detail {
     }
 
     void Sema::check_assign_stmt(AssignStmt* s) {
-        if (!is_lvalue(s->target.get())) err("left side of an assignment must be assignable", s);
+        if (!is_lvalue(s->target.get())) {
+            // `ref T f()` 的调用结果也是可写左值（写穿借用）
+            if (auto* c = dynamic_cast<Call*>(s->target.get())) {
+                check_expr(c);
+                if (c->ref_const) err("cannot assign through a readonly (`ref const`) return value", s);
+                if (!c->by_ref) err("left side of an assignment must be assignable", s);
+            } else {
+                err("left side of an assignment must be assignable", s);
+            }
+        }
 
         if (auto ix = dynamic_cast<Index*>(s->target.get())) {
             TypePtr bt = check_expr(ix->base.get());
@@ -196,17 +239,26 @@ namespace muc_detail {
                     err("user-defined `operator[]=` takes exactly one index", s->target.get());
                 TypePtr it = check_expr(ix->indices[0].get());
                 if (!is_integer(it)) err("index must be an integer", s->target.get());
-                if (s->op != "=") err("user-defined subscript assignment only supports `=`", s);
-                auto cands = collect_operators("[]=", {bt, it});
-                if (cands.empty()) {
-                    err("type `" + bt->str() + "` does not support subscript assignment (no `operator[]=`)", s);
+                // 先解析 `[]`：若它返回借用（`ref T`），该下标就是可写左值，直接走通用赋值路径
+                if (!collect_operators("[]", {bt, it}).empty()) check_expr(ix);
+                if (ix->by_ref) {
+                    if (ix->ref_const)
+                        err("cannot assign through a readonly (`ref const`) subscript", s->target.get());
+                    check_writable(s->target.get());
+                    // 不 return：落到下面的通用赋值/复合赋值检查
+                } else {
+                    if (s->op != "=") err("user-defined subscript assignment only supports `=`", s);
+                    auto cands = collect_operators("[]=", {bt, it});
+                    if (cands.empty()) {
+                        err("type `" + bt->str() + "` does not support subscript assignment (no `operator[]=`)", s);
+                    }
+                    check_writable(s->target.get());
+                    s->set_func = choose_overload(cands,
+                                                  {ix->base.get(), ix->indices[0].get(),
+                                                   s->value.get()},
+                                                  "operator[]=", s);
+                    return;
                 }
-                check_writable(s->target.get());
-                s->set_func = choose_overload(cands,
-                                              {ix->base.get(), ix->indices[0].get(),
-                                               s->value.get()},
-                                              "operator[]=", s);
-                return;
             }
         }
 
@@ -260,7 +312,73 @@ namespace muc_detail {
             return;
         }
         if (is_void(rt)) err("`void` function or method `" + cur_name_ + "` cannot return a value", s);
+        if (is_borrow_type(rt)) {
+            TypePtr base = rt->elem;
+            TypePtr vt = check_expr(s->value.get());
+            if (!same_type(vt, base)) {
+                err("return value must be `" + base->str() + "` (found `" +
+                        (vt ? vt->str() : "void") + "`) for a `ref` return type",
+                    s->value.get());
+            }
+            if (!is_lvalue(s->value.get())) {
+                if (!is_borrow_expr(s->value.get())) {
+                    err("a `ref` return value must borrow a variable (a temporary cannot be returned by reference)",
+                        s->value.get());
+                }
+            }
+            if (!borrow_root_ok(s->value.get())) {
+                err("returned reference must borrow a `ref` parameter, `this`, a global, or pointer/slice-backed storage",
+                    s->value.get());
+            }
+            if (!rt->is_const && root_is_const(s->value.get())) {
+                err("cannot return a mutable `ref` to a readonly (`const`) location; declare the return type as `ref const`",
+                    s->value.get());
+            }
+            return;
+        }
         check_assign(s->value.get(), rt, "return value");
+    }
+
+    // 返回借用的来源是否稳定：ref 参数 / this / 全局 / 路径上经过指针或切片（堆存储）/ 透传借用。
+    bool Sema::borrow_root_ok(Expr* e) {
+        bool heap = false;
+        while (e) {
+            if (auto* m = dynamic_cast<Member*>(e)) {
+                TypePtr ot = m->obj->ty;
+                if (ot && (ot->kind == TypeKind::Ptr || ot->kind == TypeKind::Slice)) heap = true;
+                e = m->obj.get();
+                continue;
+            }
+            if (auto* ix = dynamic_cast<Index*>(e)) {
+                TypePtr bt = ix->base->ty;
+                if (bt && (bt->kind == TypeKind::Ptr || bt->kind == TypeKind::Slice)) heap = true;
+                if (ix->by_ref) heap = true;  // 借用元素本身指向稳定存储
+                e = ix->base.get();
+                continue;
+            }
+            if (auto* u = dynamic_cast<Unary*>(e)) {
+                if (u->op == "*") { heap = true; e = u->operand.get(); continue; }
+                break;
+            }
+            break;
+        }
+        if (heap) return true;
+        if (!e) return false;
+        if (auto* n = dynamic_cast<Name*>(e)) {
+            if (n->ident == "this") return true;
+            if (n->kind == "field" && n->implicit_this) return true;  // 隐式 this 字段
+            if (auto* lv = std::get_if<LocalVar*>(&n->sym); lv && *lv) return (*lv)->by_ref;
+            if (std::get_if<GlobalVar*>(&n->sym)) return true;
+            return false;
+        }
+        if (auto* c = dynamic_cast<Call*>(e)) return c->by_ref;
+        return false;
+    }
+
+    bool Sema::is_borrow_expr(Expr* e) {
+        if (auto* c = dynamic_cast<Call*>(e)) return c->by_ref;
+        if (auto* ix = dynamic_cast<Index*>(e)) return ix->by_ref;
+        return false;
     }
 
     void Sema::check_cond(Expr* e, const std::string& what) {
@@ -384,10 +502,15 @@ namespace muc_detail {
                             p.lo.get());
                     }
                     p.vhi = pattern_value(p.hi.get(), st);
+                    if (p.inclusive) {
+                        if (p.vhi == LLONG_MAX) {
+                            err("switch range upper bound is too large for an inclusive range (`..=`)", p.hi.get());
+                        }
+                        ++p.vhi;  // 归一化为半开区间 [vlo, vhi)
+                    }
                     if (p.vlo >= p.vhi) {
-                        err("switch range `" + std::to_string(p.vlo) + ".." +
-                                std::to_string(p.vhi) +
-                                "` is empty: the upper bound of a half-open range must be greater than the lower bound",
+                        err("switch range `" + std::to_string(p.vlo) + (p.inclusive ? "..=" : "..") +
+                                std::to_string(p.inclusive ? p.vhi - 1 : p.vhi) + "` is empty",
                             p.lo.get());
                     }
                     iv.hi = p.vhi;
@@ -490,7 +613,7 @@ namespace muc_detail {
 
         s->loop_kind = "index";
         s->seq_ty = st;
-        s->elem_ty = picked->rty;
+        s->elem_ty = referent_of(picked->rty);
         s->len_sig = len;
         s->idx_fn = picked;
     }
@@ -511,6 +634,16 @@ namespace muc_detail {
             s->loop_kind = "range";
             s->seq_ty = t_range();
             s->elem_ty = vt;
+            if (s->step) {
+                TypePtr st = check_expr(s->step.get());
+                if (!is_integer(st)) err("`step` must be an integer", s->step.get());
+                long long v = 0;
+                if (!eval_const_int(s->step.get(), v)) {
+                    err("`step` must be a compile-time integer constant", s->step.get());
+                }
+                if (v == 0) err("`step` must not be zero", s->step.get());
+                s->step_val = v;
+            }
         } else {
             TypePtr st = check_expr(s->seq.get());
             if (!st) err("`for-in` is missing a sequence", s);
@@ -547,9 +680,14 @@ namespace muc_detail {
         if (s->by_ref && s->loop_kind == "string") {
             err("`string` is immutable and cannot be iterated with `for ref`", s);
         }
-        if (s->by_ref && s->loop_kind == "index") {
-            err("user types do not support `for ref` (`operator[]` returns a value); use `for i, x` with `c[i] = ...` instead",
+        if (s->by_ref && s->loop_kind == "index" &&
+            !(s->idx_fn && is_borrow_type(s->idx_fn->rty))) {
+            err("user types do not support `for ref` unless `operator[]` returns `ref T`; use `for i, x` with `c[i] = ...` instead",
                 s->seq.get());
+        }
+        if (s->by_ref && s->loop_kind == "index" && s->idx_fn && is_borrow_type(s->idx_fn->rty) &&
+            s->idx_fn->rty->is_const) {
+            err("`for ref` requires a mutable borrow: `operator[]` returns `ref const T`", s->seq.get());
         }
         if (s->by_ref && s->loop_kind == "range") {
             err("`for ref` cannot be used on a range loop", s);

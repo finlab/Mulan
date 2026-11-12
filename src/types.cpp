@@ -85,6 +85,14 @@ TypePtr Type::make_ptr(const TypePtr& elem, bool is_const) {
     return t;
 }
 
+TypePtr Type::make_ref(const TypePtr& elem, bool is_const) {
+    auto t = std::make_shared<Type>();
+    t->kind = TypeKind::Ref;
+    t->elem = elem;
+    t->is_const = is_const;
+    return t;
+}
+
 TypePtr Type::make_array(const TypePtr& elem, size_t size) {
     auto t = std::make_shared<Type>();
     t->kind = TypeKind::Array;
@@ -166,6 +174,10 @@ std::string Type::str() const {
         case TypeKind::Ptr: {
             std::string base = elem_str(elem) + "*";
             return is_const ? "const " + base : base;
+        }
+        case TypeKind::Ref: {
+            std::string base = elem_str(elem);
+            return is_const ? "ref const " + base : "ref " + base;
         }
         case TypeKind::Array: {
             // 嵌套静态数组显示为 T[m,n,...]
@@ -427,6 +439,7 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
             return a->name == b->name;
         case TypeKind::Ptr:
         case TypeKind::Slice:
+        case TypeKind::Ref:
             // C 模型：const 只是视图限定，不改变类型的相等性
             return a->rank == b->rank && same_type(a->elem, b->elem);
         case TypeKind::Array:
@@ -448,6 +461,8 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
 bool is_class_type(const TypePtr& t) { return t && t->kind == TypeKind::Class; }
 bool is_interface_type(const TypePtr& t) { return t && t->kind == TypeKind::Interface; }
 bool is_reference_type(const TypePtr& t) { return is_class_type(t) || is_interface_type(t); }
+bool is_borrow_type(const TypePtr& t) { return t && t->kind == TypeKind::Ref; }
+TypePtr referent_of(const TypePtr& t) { return is_borrow_type(t) ? t->elem : t; }
 
 bool is_subclass_of(const TypePtr& sub, const TypePtr& base) {
     if (!sub || !base || base->kind != TypeKind::Class) return false;

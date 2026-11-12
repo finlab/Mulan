@@ -5,6 +5,20 @@
 
 #include "ast.hpp"
 
+// 符号名安全化：泛型实例名（`Box<int>`）里的 `<` `>` `,` 空格等不能进符号
+static std::string ident_safe(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 4);
+    for (unsigned char c : s) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+            out += static_cast<char>(c);
+        } else {
+            out += '_';
+        }
+    }
+    return out;
+}
+
 std::string type_code(const TypePtr& t) {
     if (!t) return "v";
     switch (t->kind) {
@@ -12,13 +26,14 @@ std::string type_code(const TypePtr& t) {
         case TypeKind::Prim: return t->name;
         case TypeKind::String: return "str";
         case TypeKind::Ptr: return "p_" + type_code(t->elem);
+        case TypeKind::Ref: return "r_" + type_code(t->elem);
         case TypeKind::Array: return "a" + std::to_string(t->array_size) + "_" + type_code(t->elem);
         case TypeKind::Slice:
             return "s" + std::to_string(t->rank) + "_" + type_code(t->elem);
-        case TypeKind::Struct: return "S_" + t->unit + "_" + t->name;
-        case TypeKind::Enum: return "E_" + t->unit + "_" + t->name;
-        case TypeKind::Class: return "C_" + t->unit + "_" + t->name;
-        case TypeKind::Interface: return "I_" + t->unit + "_" + t->name;
+        case TypeKind::Struct: return "S_" + t->unit + "_" + ident_safe(t->name);
+        case TypeKind::Enum: return "E_" + t->unit + "_" + ident_safe(t->name);
+        case TypeKind::Class: return "C_" + t->unit + "_" + ident_safe(t->name);
+        case TypeKind::Interface: return "I_" + t->unit + "_" + ident_safe(t->name);
         case TypeKind::Module: return "m_" + t->unit;
         case TypeKind::Null: return "null";
         case TypeKind::Range: return "rng";
@@ -51,7 +66,7 @@ std::string op_code(const std::string& sym) {
 std::string func_code_name(const std::string& name) {
     const std::string prefix = "operator";
     if (name.rfind(prefix, 0) == 0) return "op_" + op_code(name.substr(prefix.size()));
-    return name;
+    return ident_safe(name);  // `f<int>` → `f_int_`（泛型实例的符号唯一性）
 }
 
 std::string mangle_unit(const std::string& unit, const std::string& name) {
@@ -61,32 +76,37 @@ std::string mangle_unit(const std::string& unit, const std::string& name) {
 std::string func_cname(const std::string& unit, FuncDecl* f) {
     if (f->is_extern) return f->name;
     std::string out = mangle_unit(unit, func_code_name(f->name));
-    for (auto& t : f->pty) out += "__" + type_code(t);
+    for (size_t i = 0; i < f->pty.size(); ++i) {
+        // 借用参数在 C 侧是 T*，符号名里必须区分，否则 f(T) 与 f(ref T) 会撞名
+        const bool by_ref = i < f->pty_ref.size() && f->pty_ref[i];
+        out += by_ref ? "__r" : "__";
+        out += type_code(f->pty[i]);
+    }
     return out;
 }
 
 std::string method_cname(const std::string& unit, const std::string& owner,
                          const std::string& name, const std::vector<TypePtr>& params) {
-    std::string out = "mu_" + unit + "_M" + owner + "_" + name;
+    std::string out = "mu_" + unit + "_M" + ident_safe(owner) + "_" + name;
     for (auto& t : params) out += "__" + type_code(t);
     return out;
 }
 
 std::string ctor_cname(const std::string& unit, const std::string& owner,
                        const std::vector<TypePtr>& params) {
-    std::string out = "mu_" + unit + "_C" + owner;
+    std::string out = "mu_" + unit + "_C" + ident_safe(owner);
     for (auto& t : params) out += "__" + type_code(t);
     return out;
 }
 
 std::string dtor_cname(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_D" + owner;
+    return "mu_" + unit + "_D" + ident_safe(owner);
 }
 
 std::string class_desc_name(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_desc_" + owner;
+    return "mu_" + unit + "_desc_" + ident_safe(owner);
 }
 
 std::string class_vtable_name(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_vt_" + owner;
+    return "mu_" + unit + "_vt_" + ident_safe(owner);
 }

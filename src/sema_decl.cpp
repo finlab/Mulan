@@ -122,6 +122,24 @@ namespace muc_detail {
     }
 
     void Sema::collect() {
+        // 第一阶段：泛型模板只保留、不参与常规检查（移到 Unit::templates）。
+        // 这让「声明可以写、使用报未实现」成为稳定状态，且不影响非泛型代码。
+        for (auto& u : units_) {
+            std::vector<std::unique_ptr<Decl>> keep;
+            std::vector<std::unique_ptr<Decl>> tmpl;
+            keep.reserve(u->decls.size());
+            for (auto& d : u->decls) {
+                if (!d->type_params.empty()) {
+                    d->is_template = true;
+                    tmpl.push_back(std::move(d));
+                } else {
+                    keep.push_back(std::move(d));
+                }
+            }
+            u->decls = std::move(keep);
+            u->templates = std::move(tmpl);
+        }
+        index_templates();
         std::unordered_set<std::string> seen_units;
         for (auto& u : units_) {
             if (!seen_units.insert(u->name).second) {
@@ -150,6 +168,9 @@ namespace muc_detail {
                 } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
                     if (ui.interfaces.count(i->name)) err("duplicate definition of interface `" + i->name + "`", i);
                     ui.interfaces[i->name] = i;
+                } else if (auto a = dynamic_cast<TypeAliasDecl*>(d.get())) {
+                    if (ui.aliases.count(a->name)) err("duplicate definition of type alias `" + a->name + "`", a);
+                    ui.aliases[a->name] = a;
                 } else if (auto g = dynamic_cast<GlobalVar*>(d.get())) {
                     if (ui.globals.count(g->name)) err("duplicate definition of variable `" + g->name + "`", g);
                     ui.globals[g->name] = g;
@@ -172,6 +193,8 @@ namespace muc_detail {
                     nm = c->name;
                 } else if (auto i = dynamic_cast<InterfaceDecl*>(node)) {
                     nm = i->name;
+                } else if (auto a = dynamic_cast<TypeAliasDecl*>(node)) {
+                    nm = a->name;
                 } else if (auto g = dynamic_cast<GlobalVar*>(node)) {
                     nm = g->name;
                 } else {
@@ -514,12 +537,7 @@ namespace muc_detail {
 
             sd->ty->methods.clear();
             for (auto& m : sd->methods) {
-                m->rty = resolve_type(m->ret.get(), u);
-                if (noncopyable_struct(m->rty)) {
-                    err("struct `" + m->rty->str() +
-                            "` has a destructor and cannot be returned by value (use a pointer)",
-                        m.get());
-                }
+                resolve_method_ret(m.get(), u);
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
@@ -536,7 +554,7 @@ namespace muc_detail {
                 sig.ret = m->rty;
                 sig.params = m->pty;
                 sig.is_abstract = false;
-                sig.is_override = false;
+                sig.is_override = m->is_override;
                 sig.is_public = m->is_public;
                 sig.owner = sd->ty;
                 sd->ty->methods.push_back(std::move(sig));
@@ -598,12 +616,7 @@ namespace muc_detail {
             c->ty->methods.clear();
             c->ty->is_abstract = false;
             for (auto& m : c->methods) {
-                m->rty = resolve_type(m->ret.get(), u);
-                if (noncopyable_struct(m->rty)) {
-                    err("struct `" + m->rty->str() +
-                            "` has a destructor and cannot be returned by value (use a pointer)",
-                        m.get());
-                }
+                resolve_method_ret(m.get(), u);
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
@@ -690,13 +703,10 @@ namespace muc_detail {
                 itf->ty->interfaces.push_back(bt);
             }
             itf->ty->methods.clear();
+            TypePtr saved_class = cur_class_;
+            cur_class_ = itf->ty;  // 让签名里的 `Self` 解析为接口类型
             for (auto& m : itf->methods) {
-                m->rty = resolve_type(m->ret.get(), u);
-                if (noncopyable_struct(m->rty)) {
-                    err("struct `" + m->rty->str() +
-                            "` has a destructor and cannot be returned by value (use a pointer)",
-                        m.get());
-                }
+                resolve_method_ret(m.get(), u);
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
@@ -715,9 +725,13 @@ namespace muc_detail {
                 sig.is_abstract = !m->body;
                 sig.is_override = false;
                 sig.owner = itf->ty;
+                sig.is_operator = m->is_operator;
+                sig.ret_self = m->ret && m->ret->is_self;
+                for (auto& p : m->params) sig.params_self.push_back(p->spec && p->spec->is_self);
                 itf->ty->methods.push_back(std::move(sig));
                 m->cname = method_cname(u->name, itf->name, m->name, m->pty);
             }
+            cur_class_ = saved_class;
         }
 
         // 枚举：检查成员重复（类型已在 place_structs 建好）
@@ -742,11 +756,13 @@ namespace muc_detail {
         for (auto& d : u->decls) {
             auto f = dynamic_cast<FuncDecl*>(d.get());
             if (!f) continue;
-            f->rty = resolve_type(f->ret.get(), u);
-            if (noncopyable_struct(f->rty)) {
-                err("struct `" + f->rty->str() + "` has a destructor and cannot be returned by value (use a pointer)", f);
+            f->rty = make_borrow_ret(f->ret.get(), f->ret_ref, f, u, "function `" + f->name + "`");
+            if (noncopyable_struct(referent_of(f->rty))) {
+                err("struct `" + referent_of(f->rty)->str() + "` has a destructor and cannot be returned by value (use a pointer)", f);
             }
             f->pty.clear();
+            f->pty_ref.clear();
+            f->pty_cref.clear();
             for (auto& p : f->params) {
                 TypePtr pt = resolve_type(p->spec.get(), u);
                 if (is_void(pt)) err("parameter `" + p->name + "` cannot be void", p.get());
@@ -755,7 +771,25 @@ namespace muc_detail {
                             "` has a destructor and can only be passed by pointer (passing by value would copy)",
                         p.get());
                 }
+                if (p->by_ref) {
+                    if (f->is_extern) {
+                        err("`extern` functions cannot take `ref` parameters (`&` borrows are a language mechanism)", p.get());
+                    }
+                    if (!borrowable_type(pt)) {
+                        if (pt->kind == TypeKind::Struct && pt->is_union) {
+                            err("`ref` parameters cannot borrow a union value", p.get());
+                        }
+                        if (pt->kind == TypeKind::Struct) {
+                            err("struct `" + pt->str() +
+                                    "` cannot be borrowed by `ref` (it contains reference-counted fields or a destructor)",
+                                p.get());
+                        }
+                        err("`ref` parameters can only borrow a struct or scalar value (found `" + pt->str() + "`)", p.get());
+                    }
+                }
                 f->pty.push_back(pt);
+                f->pty_ref.push_back(p->by_ref);
+                f->pty_cref.push_back(p->by_ref && p->is_const);
             }
             if (f->is_extern) {
                 if (contains_reference_type(f->rty)) {
@@ -798,6 +832,14 @@ Program Sema::run() {
     for (auto& u : units_) check_unit(u.get());
     if (!errors_.empty()) throw MuErrorList(std::move(errors_));
     check_entry();
+
+    // 泛型实例化产物的所有权交给 unit（Program 只持有 units；Sema 销毁后不能悬空）
+    if (!generic_decls_.empty()) {
+        if (!units_.empty()) {
+            for (auto& d : generic_decls_) units_.front()->decls.push_back(std::move(d));
+        }
+        generic_decls_.clear();
+    }
 
     Program prog;
     prog.units = std::move(units_);

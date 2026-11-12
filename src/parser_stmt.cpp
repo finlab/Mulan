@@ -27,7 +27,7 @@ static const std::unordered_set<std::string>& assign_ops() {
 
 // ---------------------------------------------------------------- 函数
 
-std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs) {
+std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool allow_ref) {
     expect_op("(");
     std::vector<std::unique_ptr<Param>> params;
     bool saw_varargs = false;
@@ -53,11 +53,27 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs) {
                     "parameter must be written as `type name`; each parameter declares its own type, shared types like `int a, b` are not supported",
                     ptok);
             }
+            // `ref` 参数（借用）：`ref T p` / `ref const T p`。`ref` 是绑定模式，不是类型。
+            bool by_ref = false;
+            if (at_kw("ref")) {
+                if (!allow_ref) {
+                    throw err_at("`ref` parameters are only supported on free functions (methods and constructors are not supported yet)",
+                                 peek());
+                }
+                advance();
+                by_ref = true;
+            }
             TypeSpecPtr spec = parse_type();
+            // `const` 是绑定的只读标记，不进入参数类型（与局部声明一致）：
+            // `const Cat c` / `const int x` 让参数绑定只读；`const int* p` 的 const 在 pointee 上，绑定仍可重绑。
+            const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
+            if (is_const) spec->is_const = false;
             std::string pname = expect_ident("parameter name").text;
             auto p = std::make_unique<Param>();
             p->name = std::move(pname);
             p->spec = std::move(spec);
+            p->is_const = is_const;
+            p->by_ref = by_ref;
             p->line = ptok.line;
             p->col = ptok.col;
             params.push_back(std::move(p));
@@ -70,11 +86,12 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs) {
     return params;
 }
 
-std::unique_ptr<FuncDecl> Parser::parse_func(std::string name, TypeSpecPtr ret, const Token& tk) {
+std::unique_ptr<FuncDecl> Parser::parse_func(std::string name, TypeSpecPtr ret, bool ret_ref, const Token& tk) {
     auto fn = std::make_unique<FuncDecl>();
     fn->name = std::move(name);
     fn->ret = std::move(ret);
-    fn->params = parse_params();
+    fn->ret_ref = ret_ref;
+    fn->params = parse_params(nullptr, /*allow_ref=*/true);
     fn->body = parse_block();
     fn->is_extern = false;
     fn->line = tk.line;
@@ -140,6 +157,9 @@ std::vector<StmtPtr> Parser::parse_stmt() {
         return out;
     }
     if (t.kind == TokKind::Op && t.text == ";") throw err("empty statement `;` is not supported");
+    if (at_kw("ref")) {
+        throw err("`ref` is a binding mode, not a type: it cannot be used to declare a variable (only parameters and return types)");
+    }
     if (at_kw("if")) {
         std::vector<StmtPtr> out;
         out.push_back(parse_if());
@@ -321,6 +341,9 @@ std::vector<StmtPtr> Parser::parse_local(bool is_const, bool is_auto) {
     }
 
     TypeSpecPtr spec;
+    if (!is_auto && at_kw("ref")) {
+        throw err_at("`ref` is a binding mode, not a type: a variable cannot be declared as `ref T`", peek());
+    }
     if (!is_auto) spec = parse_type();
     // C 模型：无后缀的 `const T` 是变量绑定 const；`const T*` 的 const 属于 pointee
     if (spec && spec->kind == TypeSpec::K::Named && spec->is_const) is_const = true;
@@ -379,6 +402,22 @@ InitPtr Parser::parse_init() {
     auto ie = std::make_unique<InitExpr>();
     ie->expr = parse_expr();
     forbid_inc_expr();
+    if (at_op("..") || at_op("..=")) {
+        if (at_op("..=")) {
+            throw err_at("`..=` is not supported in brace initializers; use a half-open `a..b` range", peek());
+        }
+        advance();  // ..
+        auto rg = std::make_unique<InitRange>();
+        rg->lo = std::move(ie->expr);
+        rg->hi = parse_expr();
+        forbid_inc_expr();
+        rg->line = t.line;
+        rg->col = t.col;
+        if (peek().kind == TokKind::Ident && peek().text == "step") {
+            throw err_at("`step` is not supported in brace initializers: use consecutive ranges instead", peek());
+        }
+        return rg;
+    }
     ie->line = t.line;
     ie->col = t.col;
     return ie;
@@ -462,15 +501,28 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     std::string var = std::move(first);
     expect_kw("in");
     ExprPtr seq = parse_expr();
-    if (at_op("..")) {
+    if (at_op("..") || at_op("..=")) {
+        const bool inclusive = at_op("..=");
         advance();
         ExprPtr hi = parse_expr();
         auto range = std::make_unique<RangeExpr>();
         range->lo = std::move(seq);
         range->hi = std::move(hi);
+        range->inclusive = inclusive;
         range->line = tk.line;
         range->col = tk.col;
         seq = std::move(range);
+    }
+    ExprPtr step;
+    if (peek().kind == TokKind::Ident && peek().text == "step") {
+        if (!dynamic_cast<RangeExpr*>(seq.get())) {
+            throw err_at("`step` is only allowed on integer ranges (`for i in a..b step n`)", peek());
+        }
+        advance();  // step
+        step = parse_expr();
+        if (peek().kind == TokKind::Ident && peek().text == "step") {
+            throw err_at("only one `step` is allowed per loop", peek());
+        }
     }
     if (paren) expect_op(")");
     std::unique_ptr<Block> body = parse_block();
@@ -480,6 +532,7 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     node->has_idx = has_idx;
     node->idx_name = std::move(idx_name);
     node->seq = std::move(seq);
+    node->step = std::move(step);
     node->body = std::move(body);
     node->line = tk.line;
     node->col = tk.col;
@@ -512,10 +565,14 @@ std::unique_ptr<Stmt> Parser::parse_switch() {
             for (;;) {
                 SwitchPat pat;
                 pat.lo = parse_expr();
-                if (at_op("..")) {
-                    advance();
+                if (at_op("..") || at_op("..=")) {
                     pat.is_range = true;
+                    pat.inclusive = at_op("..=");
+                    advance();
                     pat.hi = parse_expr();
+                }
+                if (peek().kind == TokKind::Ident && peek().text == "step") {
+                    throw err_at("`step` is not allowed in a switch pattern: list the values or use a range", peek());
                 }
                 arm->pats.push_back(std::move(pat));
                 if (!at_op(",")) break;

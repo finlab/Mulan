@@ -100,6 +100,33 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             continue;
         }
 
+        // 上下文关键字 `type`：`type Ident = <type>;`（透明类型别名，每条只定义一个）
+        if (peek().kind == TokKind::Ident && peek().text == "type" && peek(1).kind == TokKind::Ident &&
+            peek(2).is_op("=")) {
+            if (has_layout) {
+                throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` or `union` declaration",
+                             layout_tok);
+            }
+            advance();  // type
+            auto d = std::make_unique<TypeAliasDecl>();
+            const Token name_tok = expect_ident("type alias name");
+            d->name = name_tok.text;
+            d->line = name_tok.line;
+            d->col = name_tok.col;
+            expect_op("=");
+            d->spec = parse_type();
+            if (at_op(",")) {
+                throw err_at("`type` declares exactly one alias; write a separate `type` declaration for each", name_tok);
+            }
+            if (at_op("{")) {
+                throw err_at("`type` defines an alias, not a type: write `type " + d->name + " = <type>;`", name_tok);
+            }
+            semicolon();
+            d->is_public = is_pub;
+            unit->decls.push_back(std::move(d));
+            continue;
+        }
+
         if (at_kw("struct") || at_kw("union")) {
             const bool is_union = at_kw("union");
             auto d = parse_struct(is_union);
@@ -161,19 +188,29 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         if (at_kw("auto")) throw err("`auto` cannot be used for unit-level variables; an explicit type is required");
 
         // 函数定义或 unit 级变量
-        TypeSpecPtr spec = parse_type();
+        bool ret_ref = false;
+        TypeSpecPtr spec = parse_return_type(ret_ref);
         if (at_kw("operator")) {
-            auto f = parse_operator_func(std::move(spec), tk);
+            auto f = parse_operator_func(std::move(spec), ret_ref, tk);
             f->is_public = is_pub;
             unit->decls.push_back(std::move(f));
             continue;
         }
-        if (peek().kind == TokKind::Ident && peek(1).is_op("(")) {
+        if (peek().kind == TokKind::Ident && (peek(1).is_op("(") || peek(1).is_op("<"))) {
             const Token name_tok = advance();
-            auto f = parse_func(name_tok.text, std::move(spec), name_tok);
+            std::vector<TypeParam> tps = parse_type_params();
+            const std::unordered_set<std::string> saved_type_names = type_names_;
+            for (const auto& p : tps) type_names_.insert(p.name);
+            auto f = parse_func(name_tok.text, std::move(spec), ret_ref, name_tok);
+            f->type_params = std::move(tps);
+            type_names_ = saved_type_names;
             f->is_public = is_pub;
             unit->decls.push_back(std::move(f));
         } else {
+            if (ret_ref) {
+                throw err_at("`ref` can only modify a return type (`ref T f(...)`); a variable cannot have a reference type",
+                             tk);
+            }
             // unit 级变量：默认 private，public 由前缀控制
             auto globals = parse_global_list(std::move(spec), false);
             for (auto& g : globals) g->is_public = is_pub;
@@ -185,13 +222,15 @@ std::unique_ptr<Unit> Parser::parse_unit() {
 }
 
 std::unique_ptr<Decl> Parser::parse_extern(const Token& tk) {
-    TypeSpecPtr spec = parse_type();
+    bool ret_ref = false;
+    TypeSpecPtr spec = parse_return_type(ret_ref);
     const Token name_tok = expect_ident("external symbol name");
     if (at_op("(")) {
+        if (ret_ref) throw err_at("`extern` functions cannot return a reference (`ref` borrows are a language mechanism)", tk);
         auto fn = std::make_unique<FuncDecl>();
         fn->name = name_tok.text;
         fn->ret = std::move(spec);
-        fn->params = parse_params(&fn->is_varargs);
+        fn->params = parse_params(&fn->is_varargs, /*allow_ref=*/true);
         fn->is_extern = true;
         fn->is_public = true;  // `extern` 声明隐式公开（parser 已禁止与 public 同写）
         fn->line = tk.line;
@@ -200,6 +239,7 @@ std::unique_ptr<Decl> Parser::parse_extern(const Token& tk) {
         return fn;
     }
     auto gv = std::make_unique<GlobalVar>();
+    if (ret_ref) throw err_at("`ref` can only modify a return type; an extern variable cannot have a reference type", tk);
     gv->name = name_tok.text;
     gv->spec = std::move(spec);
     gv->is_extern = true;
@@ -215,10 +255,19 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
     const Token tk = expect_kw(kw);
     std::string name = expect_ident(std::string(kw) + " name").text;
     type_names_.insert(name);
+    std::vector<TypeParam> tps = parse_type_params();
+    const std::unordered_set<std::string> saved_type_names = type_names_;
+    for (const auto& p : tps) type_names_.insert(p.name);
+    if (is_union && at_op(":")) throw err("union cannot implement interfaces");
+    std::vector<TypeSpecPtr> base_specs;
+    std::vector<std::string> bases = parse_base_list(&base_specs);
     expect_op("{");
 
     auto decl = std::make_unique<StructDecl>();
     decl->name = name;
+    decl->bases = std::move(bases);
+    decl->base_specs = std::move(base_specs);
+    decl->type_params = std::move(tps);
     decl->line = tk.line;
     decl->col = tk.col;
     decl->is_union = is_union;
@@ -262,13 +311,36 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
         if (at_kw("weak")) {
             throw err("`weak` can only be used on class fields");
         }
-        TypeSpecPtr spec = parse_type();
+        // `type` 在这个位置不是别名声明（别名只能写在 unit 级），给明确诊断
+        if (peek().kind == TokKind::Ident && peek().text == "type" && peek(1).kind == TokKind::Ident &&
+            peek(2).is_op("=")) {
+            throw err_at("type aliases must be declared at unit scope (outside `" + std::string(kw) + " " + name + "`)",
+                         peek());
+        }
+        bool prefix_override = false;
+        if (at_kw("override")) {
+            advance();
+            prefix_override = true;
+        }
+        bool ret_ref = false;
+        TypeSpecPtr spec = parse_return_type(ret_ref);
         const Token name_tok = expect_ident("field or method name");
         if (at_op("(")) {
             if (is_union) throw err("union `" + name + "` cannot have methods");
-            decl->methods.push_back(parse_method(std::move(spec), name_tok));
+            decl->methods.push_back(parse_method(std::move(spec), ret_ref, name_tok));
             decl->methods.back()->is_public = member_pub;
+            if (prefix_override) decl->methods.back()->is_override = true;
             continue;
+        }
+        if (prefix_override) {
+            throw err_at("`override` can only be used on a method", name_tok);
+        }
+        if (ret_ref) {
+            throw err_at("`ref` can only modify a method return type; a field cannot have a reference type", name_tok);
+        }
+        if (at_op(":")) {
+            throw err_at("bit-fields are not supported: use explicit shifts/masks or a `byte[N]` field with offset constants",
+                         name_tok);
         }
         if (spec->is_const) {
             // 类型级编译期常量：`const T NAME = <const-expr>;`
@@ -301,7 +373,13 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
         for (;;) {
             if (!at_op(",")) break;
             advance();
-            std::string fname = expect_ident("field name").text;
+            const Token extra = expect_ident("field name");
+            if (at_op(":")) {
+                throw err_at(
+                    "bit-fields are not supported: use explicit shifts/masks or a `byte[N]` field with offset constants",
+                    extra);
+            }
+            std::string fname = extra.text;
             decl->field_visibility[fname] = member_pub;
             decl->fields.emplace_back(std::move(fname), clone_spec(*spec));
         }
@@ -309,6 +387,7 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
     }
     expect_op("}");
     if (at_op(";")) advance();
+    type_names_ = saved_type_names;
     return decl;
 }
 
@@ -361,12 +440,59 @@ std::string Parser::parse_qualified_name() {
     return n;
 }
 
-std::vector<std::string> Parser::parse_base_list() {
+// 类型语法 → 显示字符串（仅用于泛型基类在 M1 阶段的占位名）
+static std::string spec_display(const TypeSpec& s) {
+    switch (s.kind) {
+        case TypeSpec::K::Named: {
+            std::string n = s.name;
+            if (!s.args.empty()) {
+                n += "<";
+                for (size_t i = 0; i < s.args.size(); ++i) {
+                    if (i) n += ", ";
+                    n += spec_display(*s.args[i]);
+                }
+                n += ">";
+            }
+            return n;
+        }
+        case TypeSpec::K::Ptr:
+            return spec_display(*s.elem) + "*";
+        case TypeSpec::K::Slice:
+            return spec_display(*s.elem) + "[]";
+        case TypeSpec::K::Array:
+            return spec_display(*s.elem) + "[" + std::to_string(s.size) + "]";
+    }
+    return s.name;
+}
+
+// 接口体内的 `Self` 由 `TypeSpec::is_self` 标记，sema 解析为接口类型并在约束检查时替换。
+
+std::vector<std::string> Parser::parse_base_list(std::vector<TypeSpecPtr>* specs) {
     std::vector<std::string> bases;
     if (!at_op(":")) return bases;
     advance();
     for (;;) {
-        bases.push_back(parse_qualified_name());
+        const Token nt = peek();
+        std::string n = parse_qualified_name();
+        auto bs = std::make_unique<TypeSpec>();
+        bs->kind = TypeSpec::K::Named;
+        bs->name = n;
+        bs->line = nt.line;
+        bs->col = nt.col;
+        if (at_op("<")) {
+            // 泛型基类（`class Box<T> : Base<T>`）：字符串按显示名拼接保底，
+            // 结构化实参进 base_specs（实例化时替换类型参数）。
+            std::vector<std::unique_ptr<TypeSpec>> args = parse_type_args();
+            n += "<";
+            for (size_t i = 0; i < args.size(); ++i) {
+                if (i) n += ", ";
+                n += spec_display(*args[i]);
+                bs->args.push_back(std::move(args[i]));
+            }
+            n += ">";
+        }
+        bases.push_back(std::move(n));
+        if (specs) specs->push_back(std::move(bs));
         if (at_op(",")) {
             advance();
             continue;
@@ -376,10 +502,11 @@ std::vector<std::string> Parser::parse_base_list() {
     return bases;
 }
 
-std::unique_ptr<MethodDecl> Parser::parse_method(TypeSpecPtr ret, const Token& name_tok) {
+std::unique_ptr<MethodDecl> Parser::parse_method(TypeSpecPtr ret, bool ret_ref, const Token& name_tok) {
     auto m = std::make_unique<MethodDecl>();
     m->name = name_tok.text;
     m->ret = std::move(ret);
+    m->ret_ref = ret_ref;
     m->line = name_tok.line;
     m->col = name_tok.col;
     m->params = parse_params();
@@ -420,12 +547,18 @@ std::unique_ptr<Decl> Parser::parse_class() {
     const Token tk = expect_kw("class");
     const Token nm = expect_ident("class name");
     type_names_.insert(nm.text);
+    std::vector<TypeParam> tps = parse_type_params();
+    const std::unordered_set<std::string> saved_type_names = type_names_;
+    for (const auto& p : tps) type_names_.insert(p.name);
 
     auto cd = std::make_unique<ClassDecl>();
     cd->name = nm.text;
+    cd->type_params = std::move(tps);
     cd->line = tk.line;
     cd->col = tk.col;
-    cd->bases = parse_base_list();
+    std::vector<TypeSpecPtr> base_specs;
+    cd->bases = parse_base_list(&base_specs);
+    cd->base_specs = std::move(base_specs);
 
     expect_op("{");
     bool cur_pub = false;  // class 默认 private
@@ -467,16 +600,20 @@ std::unique_ptr<Decl> Parser::parse_class() {
             advance();
             prefix_weak = true;
         }
-        TypeSpecPtr spec = parse_type();
+        bool ret_ref = false;
+        TypeSpecPtr spec = parse_return_type(ret_ref);
         if (prefix_weak) spec->weak = true;
         const Token name_tok = expect_ident("member name");
         if (at_op("(")) {
             if (prefix_weak) throw err_at("`weak` can only be used on fields, not on methods", name_tok);
-            auto m = parse_method(std::move(spec), name_tok);
+            auto m = parse_method(std::move(spec), ret_ref, name_tok);
             if (prefix_override) m->is_override = true;
             m->is_public = member_pub;
             cd->methods.push_back(std::move(m));
             continue;
+        }
+        if (ret_ref) {
+            throw err_at("`ref` can only modify a method return type; a field cannot have a reference type", name_tok);
         }
         if (prefix_override) throw err_at("`override` can only be used on methods", name_tok);
         if (spec->is_const) {
@@ -514,6 +651,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
     }
     expect_op("}");
     if (at_op(";")) advance();
+    type_names_ = saved_type_names;
     return cd;
 }
 
@@ -521,12 +659,18 @@ std::unique_ptr<Decl> Parser::parse_interface() {
     const Token tk = expect_kw("interface");
     const Token nm = expect_ident("interface name");
     type_names_.insert(nm.text);
+    std::vector<TypeParam> tps = parse_type_params();
+    const std::unordered_set<std::string> saved_type_names = type_names_;
+    for (const auto& p : tps) type_names_.insert(p.name);
 
     auto id = std::make_unique<InterfaceDecl>();
     id->name = nm.text;
+    id->type_params = std::move(tps);
     id->line = tk.line;
     id->col = tk.col;
-    id->bases = parse_base_list();
+    std::vector<TypeSpecPtr> base_specs;
+    id->bases = parse_base_list(&base_specs);
+    id->base_specs = std::move(base_specs);
 
     expect_op("{");
     while (!at_op("}")) {
@@ -536,16 +680,59 @@ std::unique_ptr<Decl> Parser::parse_interface() {
         if (at_kw("const")) {
             throw err("interface `" + id->name + "` does not support const members");
         }
-        TypeSpecPtr spec = parse_type();
+        bool ret_ref = false;
+        TypeSpecPtr spec = parse_return_type(ret_ref);
+        if (at_kw("operator")) {
+            id->methods.push_back(parse_interface_operator(std::move(spec), ret_ref));
+            continue;
+        }
         const Token name_tok = expect_ident("method name");
-        id->methods.push_back(parse_method(std::move(spec), name_tok));
+        id->methods.push_back(parse_method(std::move(spec), ret_ref, name_tok));
     }
     expect_op("}");
     if (at_op(";")) advance();
+    type_names_ = saved_type_names;
     return id;
 }
 
-std::unique_ptr<FuncDecl> Parser::parse_operator_func(TypeSpecPtr ret, const Token& tk) {
+TypeSpecPtr Parser::parse_return_type(bool& ret_ref) {
+    ret_ref = false;
+    if (at_kw("ref")) {
+        advance();
+        ret_ref = true;
+    }
+    return parse_type();
+}
+
+std::unique_ptr<MethodDecl> Parser::parse_interface_operator(TypeSpecPtr ret, bool ret_ref) {
+    const Token tk = expect_kw("operator");
+    std::string sym;
+    if (at_op("[")) {
+        advance();
+        expect_op("]");
+        sym = "[]";
+        if (at_op("=")) {
+            advance();
+            sym = "[]=";
+        }
+    } else if (peek().kind == TokKind::Op) {
+        sym = advance().text;
+    } else {
+        throw err("expected operator symbol after `operator`");
+    }
+    auto m = std::make_unique<MethodDecl>();
+    m->name = "operator" + sym;
+    m->ret = std::move(ret);
+    m->ret_ref = ret_ref;
+    m->is_operator = true;
+    m->line = tk.line;
+    m->col = tk.col;
+    m->params = parse_params();
+    semicolon();
+    return m;
+}
+
+std::unique_ptr<FuncDecl> Parser::parse_operator_func(TypeSpecPtr ret, bool ret_ref, const Token& tk) {
     expect_kw("operator");
     std::string sym;
     if (at_op("[")) {
@@ -565,10 +752,11 @@ std::unique_ptr<FuncDecl> Parser::parse_operator_func(TypeSpecPtr ret, const Tok
     auto f = std::make_unique<FuncDecl>();
     f->name = "operator" + sym;
     f->ret = std::move(ret);
+    f->ret_ref = ret_ref;
     f->line = tk.line;
     f->col = tk.col;
     f->is_operator = true;
-    f->params = parse_params();
+    f->params = parse_params(nullptr, /*allow_ref=*/true);
     f->body = parse_block();
     return f;
 }

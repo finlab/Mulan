@@ -1,1 +1,1 @@
-switch range `5..5` is empty: the upper bound of a half-open range must be
+switch range `5..5` is empty

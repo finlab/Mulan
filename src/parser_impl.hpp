@@ -112,16 +112,20 @@ private:
     std::unique_ptr<Decl> parse_enum();
     std::unique_ptr<Decl> parse_class();
     std::unique_ptr<Decl> parse_interface();
-    std::unique_ptr<FuncDecl> parse_operator_func(TypeSpecPtr ret, const Token& tk);
-    std::unique_ptr<MethodDecl> parse_method(TypeSpecPtr ret, const Token& name_tok);
+    std::unique_ptr<FuncDecl> parse_operator_func(TypeSpecPtr ret, bool ret_ref, const Token& tk);
+    std::unique_ptr<MethodDecl> parse_method(TypeSpecPtr ret, bool ret_ref, const Token& name_tok);
+    // 接口里的运算符签名：`T operator+(T a, T b);`（无 this）
+    std::unique_ptr<MethodDecl> parse_interface_operator(TypeSpecPtr ret, bool ret_ref);
+    // 返回类型：`ref T` / `ref const T` / `T`。`ref` 只在返回位置被消费，不进入通用类型语法。
+    TypeSpecPtr parse_return_type(bool& ret_ref);
     std::unique_ptr<CtorDecl> parse_ctor(const Token& name_tok);
     std::unique_ptr<DtorDecl> parse_dtor();
-    std::vector<std::string> parse_base_list();
+    std::vector<std::string> parse_base_list(std::vector<TypeSpecPtr>* specs = nullptr);
     std::string parse_qualified_name();
     std::vector<std::unique_ptr<GlobalVar>> parse_global();
     std::vector<std::unique_ptr<GlobalVar>> parse_global_list(TypeSpecPtr spec, bool is_const);
-    std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, const Token& tk);
-    std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr);
+    std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, bool ret_ref, const Token& tk);
+    std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr, bool allow_ref = false);
 
     // ------------------------------------------------------ 类型
 
@@ -130,6 +134,11 @@ private:
     TypeSpecPtr parse_type();
     TypeSpecPtr parse_type_base();  // 不含数组后缀（供 `new T[n]` 使用）
     TypeSpecPtr type_suffixes(TypeSpecPtr spec, const Token& t);
+    // 泛型：`<T, U: IList<int> & IComparable>`（声明处）与 `<int, long>`（使用处）
+    std::vector<TypeParam> parse_type_params();
+    std::vector<std::unique_ptr<TypeSpec>> parse_type_args();
+    // 类型实参嵌套时把词法上的 `>>` 当作两个 `>`（`Vec<Vec<int>>`）
+    Token expect_gt();
 
     // ------------------------------------------------------ 语句
 

@@ -197,6 +197,10 @@ static bool is_numeric(const TypePtr& t) {
             return fieldSlot(st, ot, base, m->field_index);
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
+            if (ix->by_ref) {
+                // `operator[]` 返回借用：调用结果就是元素地址
+                return emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
+            }
             TypePtr bt = ix->base->ty;
             std::vector<Value*> idxs;
             for (auto& ie : ix->indices) {
@@ -243,6 +247,12 @@ static bool is_numeric(const TypePtr& t) {
         }
         if (auto u = dynamic_cast<Unary*>(e)) {
             if (u->op == "*") return eval(u->operand.get());
+        }
+        if (auto c = dynamic_cast<Call*>(e)) {
+            if (c->by_ref) {
+                // `ref T f()`：调用结果就是借用地址
+                return evalCall(c);
+            }
         }
         // 其它表达式：先求值到临时量
         Value* v = eval(e);
