@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// Mulan 类型模型
+// Mulan type model
 //
-// 设计：TypePtr 指向不可变的值对象；Struct 的 fields 在先建占位、后填充
-// （对应 Python 版 StructType 的两阶段构造），因此这里不用 const。
+// Design: TypePtr points to immutable value objects; a Struct's fields are created as a placeholder first and filled in later
+// (mirroring the two-stage construction of StructType in the Python version), so no const is used here.
 #include "types.hpp"
 
 #include <algorithm>
@@ -15,8 +15,8 @@
 
 namespace {
 
-// ---------------------------------------------------------------- 基本类型表
-// 与 Python 的 INT_BITS / INT_SIGNED 一一对应（顺序即 prim_names() 的顺序）。
+// ---------------------------------------------------------------- Built-in type table
+// One-to-one with the Python INT_BITS / INT_SIGNED (the order is the order of prim_names()).
 struct IntInfo {
     const char* name;
     int bits;
@@ -45,12 +45,12 @@ const IntInfo* find_int(const std::string& n) {
 
 bool is_float_name(const std::string& n) { return n == "float" || n == "double"; }
 
-// 类型文本化的兜底：指针/数组的 elem 理论上不会为空，但错误路径上不要崩。
+// Fallback for the type text: the elem of a pointer/array is theoretically never null, but the error path must not crash.
 std::string elem_str(const TypePtr& t) { return t ? t->str() : std::string("void"); }
 
 }  // namespace
 
-// ---------------------------------------------------------------- 工厂函数
+// ---------------------------------------------------------------- Factory functions
 
 TypePtr Type::make_void() {
     auto t = std::make_shared<Type>();
@@ -59,8 +59,8 @@ TypePtr Type::make_void() {
 }
 
 TypePtr Type::make_prim(const std::string& name) {
-    // 基本类型不可变，按名字缓存可让 `prim("int")` 与 t_int() 共享同一对象。
-    // 编译器是单线程的，函数内 static 无需加锁。
+    // Built-in types are immutable, so caching them by name lets `prim("int")` and t_int() share the same object.
+    // The compiler is single-threaded, so a function-local static needs no locking.
     static std::unordered_map<std::string, TypePtr> cache;
     auto it = cache.find(name);
     if (it != cache.end()) return it->second;
@@ -161,7 +161,7 @@ TypePtr Type::make_range() {
     return t;
 }
 
-// ---------------------------------------------------------------- 文本化
+// ---------------------------------------------------------------- Textual form
 
 std::string Type::str() const {
     switch (kind) {
@@ -180,7 +180,7 @@ std::string Type::str() const {
             return is_const ? "ref const " + base : "ref " + base;
         }
         case TypeKind::Array: {
-            // 嵌套静态数组显示为 T[m,n,...]
+            // A nested static array is displayed as T[m,n,...]
             std::vector<std::string> dims;
             const Type* cur = this;
             while (cur->kind == TypeKind::Array) {
@@ -214,10 +214,10 @@ std::string Type::str() const {
     return "?";
 }
 
-// ---------------------------------------------------------------- 判定
+// ---------------------------------------------------------------- Predicates
 
 bool Type::is_integer() const {
-    if (kind == TypeKind::Enum) return true;  // 枚举底层是 int
+    if (kind == TypeKind::Enum) return true;  // an enum is backed by int
     if (kind != TypeKind::Prim) return false;
     return find_int(name) != nullptr;
 }
@@ -229,14 +229,14 @@ bool Type::is_bool() const { return kind == TypeKind::Prim && name == "bool"; }
 bool Type::is_numeric() const { return is_integer() || is_float(); }
 
 int Type::bits() const {
-    if (kind != TypeKind::Prim) return 0;  // 枚举没有位宽概念（Python 版此处会 AttributeError）
+    if (kind != TypeKind::Prim) return 0;  // an enum has no bit width concept (the Python version raises AttributeError here)
     if (is_float()) return name == "float" ? 32 : 64;
     if (const IntInfo* p = find_int(name)) return p->bits;
     return 0;
 }
 
 bool Type::is_signed() const {
-    if (kind != TypeKind::Prim) return true;  // 与 INT_SIGNED.get(name, True) 一致
+    if (kind != TypeKind::Prim) return true;  // consistent with INT_SIGNED.get(name, True)
     if (const IntInfo* p = find_int(name)) return p->is_signed;
     return true;
 }
@@ -254,7 +254,7 @@ bool Type::needs_cleanup() const {
             return false;
         case TypeKind::Array:
             return elem && elem->needs_cleanup();
-        case TypeKind::Slice: return true;  // 动态数组：句柄持有 RC
+        case TypeKind::Slice: return true;  // dynamic array: the handle holds an RC
         default: return false;
     }
 }
@@ -275,10 +275,10 @@ int Type::field_index(const std::string& fname) const {
     return -1;
 }
 
-// ---------------------------------------------------------------- 布局
+// ---------------------------------------------------------------- Layout
 //
-// packed / align(N) 的唯一实现（codegen 的 alignOf / sizeOf 委托到这里）。
-// 递归带深度上限，避免畸形类型（不存在的按值环）把编译器递归爆栈。
+// The only implementation of packed / align(N) (codegen's alignOf / sizeOf delegate here).
+// The recursion has a depth limit so that a malformed type (a nonexistent by-value cycle) cannot blow the compiler's stack.
 
 namespace {
 
@@ -303,7 +303,7 @@ size_t align_impl(const TypePtr& t, int depth) {
             if (t->is_packed) return t->align_req > 0 ? static_cast<size_t>(t->align_req) : 1;
             size_t natural = 1;
             for (const auto& f : t->fields) natural = std::max(natural, align_impl(f.type, depth + 1));
-            // align(N) 要求 N >= 自然对齐（sema 已校验）；这里取 max 保证不塌陷
+            // align(N) requires N >= the natural alignment (sema already validates it); taking the max here prevents it from collapsing
             if (t->align_req > 0) return std::max(natural, static_cast<size_t>(t->align_req));
             return natural;
         }
@@ -329,7 +329,7 @@ size_t size_impl(const TypePtr& t, int depth) {
         case TypeKind::Array: return size_impl(t->elem, depth + 1) * t->array_size;
         case TypeKind::Struct: {
             if (t->is_union) {
-                // union：所有成员偏移 0，size = max(成员 size)
+                // union: all members at offset 0, size = max(member size)
                 size_t maxsz = 0, natural = 1;
                 for (const auto& f : t->fields) {
                     natural = std::max(natural, align_impl(f.type, depth + 1));
@@ -347,12 +347,12 @@ size_t size_impl(const TypePtr& t, int depth) {
             for (const auto& f : t->fields) {
                 size_t fa = align_impl(f.type, depth + 1);
                 natural = std::max(natural, fa);
-                // packed：字段连续累加，无内部填充
+                // packed: the fields are accumulated contiguously, with no internal padding
                 if (!t->is_packed) off = align_up(off, fa);
                 off += size_impl(f.type, depth + 1);
             }
             if (t->is_packed) {
-                // 无尾部填充；只有 align(N) 才补齐到 N 的倍数
+                // No tail padding; only align(N) rounds up to a multiple of N
                 if (t->align_req > 0) off = align_up(off, static_cast<size_t>(t->align_req));
                 return off;
             }
@@ -369,7 +369,7 @@ size_t size_impl(const TypePtr& t, int depth) {
 size_t type_align(const TypePtr& t) { return align_impl(t, 0); }
 size_t type_size(const TypePtr& t) { return size_impl(t, 0); }
 
-// ---------------------------------------------------------------- 单例
+// ---------------------------------------------------------------- Singletons
 
 TypePtr t_void() {
     static TypePtr t = Type::make_void();
@@ -401,7 +401,7 @@ TypePtr t_range() {
     return t;
 }
 
-// ---------------------------------------------------------------- 基本类型名
+// ---------------------------------------------------------------- Built-in type names
 
 const std::vector<std::string>& prim_names() {
     static const std::vector<std::string> names = [] {
@@ -423,7 +423,7 @@ bool is_prim_name(const std::string& n) {
     return false;
 }
 
-// ---------------------------------------------------------------- 类型相等
+// ---------------------------------------------------------------- Type equality
 
 bool same_type(const TypePtr& a, const TypePtr& b) {
     if (a == b) return true;
@@ -440,7 +440,7 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
         case TypeKind::Ptr:
         case TypeKind::Slice:
         case TypeKind::Ref:
-            // C 模型：const 只是视图限定，不改变类型的相等性
+            // C model: const is only a view qualifier and does not change type equality
             return a->rank == b->rank && same_type(a->elem, b->elem);
         case TypeKind::Array:
             return a->array_size == b->array_size && same_type(a->elem, b->elem);
@@ -448,7 +448,7 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
         case TypeKind::Enum:
         case TypeKind::Class:
         case TypeKind::Interface:
-            // 结构体/枚举/class/interface 按 (unit, name) 比较
+            // struct/enum/class/interface are compared by (unit, name)
             return a->unit == b->unit && a->name == b->name;
         case TypeKind::Module:
             return a->unit == b->unit;
@@ -456,7 +456,7 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
     return false;
 }
 
-// ---------------------------------------------------------------- 转换规则
+// ---------------------------------------------------------------- Conversion rules
 
 bool is_class_type(const TypePtr& t) { return t && t->kind == TypeKind::Class; }
 bool is_interface_type(const TypePtr& t) { return t && t->kind == TypeKind::Interface; }
@@ -514,11 +514,11 @@ bool widens_int(const TypePtr& src, const TypePtr& dst) {
     if (ss && ds) return db > sb;
     if (!ss && !ds) return db > sb;
     if (!ss && ds) return db > sb;
-    return false;  // 有符号 -> 无符号：一律不允许隐式
+    return false;  // signed -> unsigned: never allowed implicitly
 }
 
 bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
-    // C 模型：const 只能放宽，不能收紧（same_type 忽略 const，必须先拦）
+    // C model: const can only be relaxed, never tightened (same_type ignores const, so it must be rejected first)
     if (src && dst && src->kind == dst->kind) {
         if (src->kind == TypeKind::Ptr || src->kind == TypeKind::Slice) {
             if (src->elem && dst->elem && src->elem->is_const && !dst->elem->is_const) {
@@ -529,18 +529,18 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
     if (same_type(src, dst)) return true;
     if (!src || !dst) return false;
 
-    // null -> 指针 / 切片 / string / class / interface
+    // null -> pointer / slice / string / class / interface
     if (src->kind == TypeKind::Null) {
         return dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice ||
                dst->kind == TypeKind::String || dst->kind == TypeKind::Class ||
                dst->kind == TypeKind::Interface;
     }
 
-    // class / interface 子类型（单继承 + 接口）
+    // class / interface subtypes (single inheritance + interfaces)
     if (is_subclass_of(src, dst)) return true;
     if (implements_interface(src, dst)) return true;
 
-    // 指针：T* -> const T*；去掉 const 必须显式 as
+    // Pointer: T* -> const T*; dropping const requires an explicit as
     if (src->kind == TypeKind::Ptr && dst->kind == TypeKind::Ptr) {
         if (src->elem && src->elem->is_const && !(dst->elem && dst->elem->is_const)) {
             return false;
@@ -549,12 +549,12 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         return same_type(src->elem, dst->elem);
     }
 
-    // 数组 -> 切片
+    // Array -> slice
     if (src->kind == TypeKind::Array && dst->kind == TypeKind::Slice) {
         return same_type(src->elem, dst->elem);
     }
 
-    // 切片：T[] -> const T[]；反过来必须显式 as
+    // Slice: T[] -> const T[]; the reverse requires an explicit as
     if (src->kind == TypeKind::Slice && dst->kind == TypeKind::Slice) {
         if (!same_type(src->elem, dst->elem)) return false;
         if (src->elem && src->elem->is_const && !(dst->elem && dst->elem->is_const)) {
@@ -576,7 +576,7 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         return false;
     }
 
-    // 数值：只允许值域不丢失的加宽
+    // Numeric: only a widening that does not lose range is allowed
     if (src->kind == TypeKind::Prim && dst->kind == TypeKind::Prim) {
         if (src->is_integer() && dst->is_integer()) return widens_int(src, dst);
         if (src->is_float() && dst->is_float()) {
@@ -585,15 +585,15 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         return false;
     }
 
-    // 枚举是名义类型：与整数之间没有隐式转换，双向都必须显式 `as`。
-    // （见 SPEC §3.5；判定放在这里意味着参数/返回值/赋值/字面量适配都不接受枚举）
+    // An enum is a nominal type: there is no implicit conversion to or from an integer, and both directions require an explicit `as`.
+    // (See SPEC §3.5; placing the check here means that parameter/return value/assignment/literal adaptation all reject enums)
 
     return false;
 }
 
 bool promote_int_literal(long long v, const TypePtr& dst) {
     if (!dst) return false;
-    // 枚举不是整数的隐式目标：需要显式 `as`
+    // an enum is not an implicit target for an integer: an explicit `as` is required
     if (dst->kind != TypeKind::Prim) return false;
     if (dst->is_float()) return true;
     if (!dst->is_integer()) return false;
@@ -601,7 +601,7 @@ bool promote_int_literal(long long v, const TypePtr& dst) {
     const int bits = dst->bits();
     if (bits <= 0) return false;
     if (bits >= 64) {
-        // 有符号 64 位能表示全部 long long；无符号 64 位只接受非负值。
+        // A signed 64-bit value can represent every long long; an unsigned 64-bit value only accepts non-negative values.
         return dst->is_signed() ? true : v >= 0;
     }
     if (dst->is_signed()) {
@@ -614,7 +614,7 @@ bool promote_int_literal(long long v, const TypePtr& dst) {
 
 TypePtr usual_arith(const TypePtr& a_in, const TypePtr& b_in) {
     if (!a_in || !b_in) return nullptr;
-    // 枚举不参与算术/位运算（同类型比较除外，见 sema 的 check_binary）。
+    // An enum does not take part in arithmetic/bitwise operations (except comparisons of the same type, see check_binary in sema).
     if (a_in->kind == TypeKind::Enum || b_in->kind == TypeKind::Enum) return nullptr;
     TypePtr a = a_in;
     TypePtr b = b_in;
@@ -626,13 +626,13 @@ TypePtr usual_arith(const TypePtr& a_in, const TypePtr& b_in) {
         return Type::make_prim("float");
     }
 
-    // 小于 int 的一律提升到 int（C 语义：8/16 位都能被 int 表示）
+    // Anything narrower than int is promoted to int (C semantics: 8/16-bit values are all representable in int)
     if (a->bits() < 32) a = t_int();
     if (b->bits() < 32) b = t_int();
 
     if (a->bits() != b->bits()) return a->bits() > b->bits() ? a : b;
 
-    // 同宽：都为有符号或都为无符号时取其一；混合符号按 C 语义取无符号
+    // Same width: the first one is taken when both are signed or both are unsigned; for mixed signs C semantics takes the unsigned one
     if (a->is_signed() && b->is_signed()) return a;
     if (!a->is_signed() && !b->is_signed()) return a;
     return b->is_signed() ? a : b;

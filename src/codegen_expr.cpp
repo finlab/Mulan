@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含表达式代码生成（转换、地址、二元/三元、参数准备）（Emitter 成员函数定义）。
+// This file contains expression code generation (conversion, addresses, binary/ternary, argument preparation) (Emitter member function definitions).
 
 #include "codegen_impl.hpp"
 
@@ -22,7 +22,7 @@ static bool is_numeric(const TypePtr& t) {
 }
 
 
-    // ------------------------------------------------------------ 表达式
+    // ------------------------------------------------------------ expressions
     Value* Emitter::convertTo(Value* v, const TypePtr& from, const TypePtr& to, int line,
                               int col) {
         if (!from || !to || same_type(from, to)) return v;
@@ -76,8 +76,8 @@ static bool is_numeric(const TypePtr& t) {
         return false;
     }
 
-    // 该表达式的地址是否可能未满足其类型的自然对齐（packed 结构链上的字段/数组元素）。
-    // 保守判定：取不到时按自然对齐处理（规范里 `&p.field` 的解引用本身就是 UB）。
+    // whether the address of this expression may fail to satisfy its type's natural alignment (a field/array element on a packed struct chain).
+    // Conservative decision: when it cannot be determined, treat it as naturally aligned (in the spec, dereferencing `&p.field` is itself UB).
     bool Emitter::unalignedExpr(Expr* e) {
         if (!e) return false;
         if (auto m = dynamic_cast<Member*>(e)) {
@@ -88,8 +88,8 @@ static bool is_numeric(const TypePtr& t) {
             }
             if (ot && ot->kind == TypeKind::Class && m->field_index >= 0 &&
                 m->field_index < static_cast<int>(ot->fields.size())) {
-                // class 字段按模型对齐排布；若该字段仍落在未满足自身对齐的偏移上（理论上不该发生），
-                // 保守按未对齐处理（例如含 packed 结构体字段时其成员访问）。
+                // class fields are laid out per the model's alignment; if the field still lands on an offset that does not satisfy its own alignment (which should not happen in theory),
+                // conservatively treat it as unaligned (for example member access through a packed struct field).
                 uint64_t fa = alignOf(ot->fields[m->field_index].type);
                 if (fa > 1 && classFieldOffset(ot, m->field_index) % fa != 0) return true;
                 return unalignedExpr(m->obj.get());
@@ -111,7 +111,7 @@ static bool is_numeric(const TypePtr& t) {
             return false;
         }
         if (auto n = dynamic_cast<Name*>(e)) {
-            // struct 方法内直接访问字段：this 指向的 packed 结构可能未对齐
+            // direct field access inside a struct method: the packed struct pointed to by this may be unaligned
             if (n->kind == "field" && n->implicit_this) {
                 return curClassTy && curClassTy->kind == TypeKind::Struct && curClassTy->is_packed;
             }
@@ -127,8 +127,8 @@ static bool is_numeric(const TypePtr& t) {
         return false;
     }
 
-    // 带校验的 GEP：把 LLVM 的断言错误变成可读的诊断。
-    // 注意：第 0 个下标是"指针步进"，从第 1 个下标起才按聚合类型逐层索引。
+    // Checked GEP: turn LLVM's assertion errors into readable diagnostics.
+    // Note: index 0 is the "pointer stride"; indexing by aggregate type starts at index 1.
     Value* Emitter::gep(LType* ty, Value* ptr, std::initializer_list<Value*> idxs, int line,
                         int col) {
         LType* cur = ty;
@@ -160,8 +160,8 @@ static bool is_numeric(const TypePtr& t) {
     Value* Emitter::addrOf(Expr* e) {
         if (auto n = dynamic_cast<Name*>(e)) {
             if (n->ident == "this") {
-                // `this` 是当前对象的引用：struct 的接收者本身是对象地址，
-                // class/interface 的接收者是句柄（值），定位到句柄槽即可。
+                // `this` is a reference to the current object: for a struct the receiver is itself the object address,
+                // for class/interface the receiver is a handle (a value), so locating the handle slot is enough.
                 if (curClassTy && curClassTy->kind == TypeKind::Struct)
                     return b.CreateLoad(ptrTy(), thisSlot);
                 return thisSlot;
@@ -198,7 +198,7 @@ static bool is_numeric(const TypePtr& t) {
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
             if (ix->by_ref) {
-                // `operator[]` 返回借用：调用结果就是元素地址
+                // `operator[]` returns a borrow: the call result is the element address
                 return emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
             }
             TypePtr bt = ix->base->ty;
@@ -250,15 +250,15 @@ static bool is_numeric(const TypePtr& t) {
         }
         if (auto c = dynamic_cast<Call*>(e)) {
             if (c->by_ref) {
-                // `ref T f()`：调用结果就是借用地址
+                // `ref T f()`: the call result is the borrowed address
                 return evalCall(c);
             }
         }
-        // 其它表达式：先求值到临时量
+        // other expressions: evaluate into a temporary first
         Value* v = eval(e);
         auto* tmp = entryAlloca(v->getType(), "tmp", e->ty ? alignOf(e->ty) : 0);
         b.CreateStore(v, tmp);
-        // owned 的 struct/array 右值被物化后，语句结束时要释放其引用字段
+        // after an owned struct/array rvalue is materialized, its reference fields are released at the end of the statement
         if (e->ty && needsCleanup(e->ty) && valueOwned(e) &&
             (e->ty->kind == TypeKind::Struct || e->ty->kind == TypeKind::Array ||
              e->ty->kind == TypeKind::Slice)) {
@@ -287,7 +287,7 @@ static bool is_numeric(const TypePtr& t) {
     Value* Emitter::coerce(Expr* e, const TypePtr& to) {
         if (e && to && to->kind == TypeKind::Slice && e->ty &&
             e->ty->kind == TypeKind::Array) {
-            // 定长数组 -> 动态数组：按嵌套维度分配并复制（不再提供借用视图）
+            // fixed-size array -> dynamic array: allocate and copy by nested dimension (no borrowed view is provided anymore)
             return emitDynArrayFromArray(addrOf(e), e->ty, to);
         }
         return convertTo(eval(e), e->ty, to);
@@ -339,11 +339,11 @@ static bool is_numeric(const TypePtr& t) {
             return op == "==" ? eq : b.CreateNot(eq);
         }
 
-        // 操作数只求值一次（后面所有分支复用）
+        // the operands are evaluated only once (all later branches reuse them)
         Value* l = eval(e->left.get());
         Value* r = eval(e->right.get());
 
-        // 指针算术
+        // pointer arithmetic
         if ((op == "+" || op == "-") && lt_->kind == TypeKind::Ptr && is_integer(rt_)) {
             Value* n = convertTo(r, rt_, Type::make_prim("isize"));
             return gep(lt(lt_->elem), l, n);
@@ -369,7 +369,7 @@ static bool is_numeric(const TypePtr& t) {
                 if (lt_->kind == TypeKind::Null) lobj = Constant::getNullValue(ptrTy());
                 if (rt_->kind == TypeKind::Null) robj = Constant::getNullValue(ptrTy());
                 Value* cmp = compareOp(op, lobj, robj, false, false);
-                // 比较后释放临时的 owned 引用（new / 返回引用的调用）
+                // release the temporary owned references after the comparison (new / a call returning a reference)
                 if (ownsReference(e->left.get())) emitReleaseRef(l, lt_);
                 if (ownsReference(e->right.get())) emitReleaseRef(r, rt_);
                 return cmp;
@@ -386,7 +386,7 @@ static bool is_numeric(const TypePtr& t) {
             if (same_type(lt_, rt_) && lt_->kind == TypeKind::Prim && lt_->is_bool()) {
                 return compareOp(op, l, r, false, false);
             }
-            // 枚举：只与同一枚举比较，按底层 int 的有符号序比较（SPEC §3.5）
+            // enum: only compared with the same enum, using the signed order of the underlying int (SPEC §3.5)
             if (lt_->kind == TypeKind::Enum && rt_->kind == TypeKind::Enum &&
                 same_type(lt_, rt_)) {
                 l = convertTo(l, lt_, Type::make_prim("int"));
@@ -424,7 +424,7 @@ static bool is_numeric(const TypePtr& t) {
         fail("LLVM backend: unknown binary operator " + op, e->line, e->col);
     }
 
-    // 条件表达式：只求值被选中的分支，结果物化到 entry 块的结果槽后按 owned 值返回。
+    // Conditional expression: only the selected branch is evaluated; the result is materialized into the entry block's result slot and returned as an owned value.
     Value* Emitter::evalTernary(Ternary* e) {
         Value* cond = eval(e->cond.get());
         BasicBlock* thenBB = BasicBlock::Create(ctx, "tern.then", curFn);
@@ -448,9 +448,9 @@ static bool is_numeric(const TypePtr& t) {
         return loadAt(lt(ty), res);
     }
 
-    // 把分支值写入结果槽：借用源逐字段 retain，owned 源直接转移所有权（与 initInto 一致）
+    // Write the branch value into the result slot: a borrowed source is retained field by field, an owned source transfers ownership directly (consistent with initInto)
     void Emitter::emitTernaryArm(Value* addr, Expr* src, const TypePtr& ty) {
-        if (!addr) {  // void 分支：只求值
+        if (!addr) {  // void branch: only evaluate
             eval(src);
             return;
         }
@@ -479,7 +479,7 @@ static bool is_numeric(const TypePtr& t) {
         ArgPack pack;
         for (size_t i = 0; i < args.size() && i < ptys.size(); ++i) {
             Value* v = coerce(args[i], ptys[i]);
-            // 参数按借用传递（callee 不释放）；只有调用者持有所有权的实参临时值才需在调用后清理
+            // parameters are passed as borrows (the callee does not release them); only argument temporaries whose ownership the caller holds need cleanup after the call
             if (needsCleanup(ptys[i]) && convOwns(args[i], ptys[i])) {
                 pack.owned.emplace_back(v, ptys[i]);
             }
@@ -488,11 +488,11 @@ static bool is_numeric(const TypePtr& t) {
         return pack;
     }
 
-    // C 默认实参提升：比 int 小的整型 → int，float → double，其余原样（C varargs ABI 要求）
+    // C default argument promotion: integers smaller than int -> int, float -> double, everything else unchanged (required by the C varargs ABI)
     Value* Emitter::promoteVararg(Value* v, const TypePtr& t) {
         if (!t) return v;
         if (isStrType(t)) {
-            // `string` 视图按 C 语义传底层 `const char*`（printf 的 %s）
+            // a `string` view is passed as the underlying `const char*` following C semantics (printf's %s)
             return b.CreateExtractValue(v, {0});
         }
         if (t->kind == TypeKind::Prim) {

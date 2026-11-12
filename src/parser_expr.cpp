@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 语法分析 —— 类型与表达式
+// Parsing — types and expressions
 #include "parser_impl.hpp"
 
 #include <memory>
@@ -13,7 +13,7 @@ using namespace muc_detail;
 
 namespace muc_detail {
 
-// 与 mtypes.PRIM_NAMES 一致（parser.py 的 PRIMS）；`string` 已改为 core.Str 结构体
+// matches mtypes.PRIM_NAMES (PRIMS in parser.py); `string` is now the core.Str struct
 static const std::unordered_set<std::string>& prims() {
     static const std::unordered_set<std::string> s = {
         "byte",  "char",   "short", "ushort", "int",   "uint",  "long",
@@ -22,7 +22,7 @@ static const std::unordered_set<std::string>& prims() {
     return s;
 }
 
-// 一条声明中的多个声明符共享同一个类型语法；深度复制以各持一份所有权的 TypeSpec。
+// Multiple declarators in one declaration share a single type syntax; deep-copy so each owns its own TypeSpec.
 TypeSpecPtr clone_spec(const TypeSpec& s) {
     auto out = std::make_unique<TypeSpec>();
     out->kind = s.kind;
@@ -51,7 +51,7 @@ static TypeSpecPtr make_named_spec(const std::string& name, int line, int col) {
 
 }  // namespace muc_detail
 
-// ---------------------------------------------------------------- 类型
+// ---------------------------------------------------------------- types
 
 bool Parser::is_type_start(const Token& t) const {
     if (t.kind == TokKind::Kw) {
@@ -61,13 +61,13 @@ bool Parser::is_type_start(const Token& t) const {
     }
     if (t.kind == TokKind::Ident) {
         if (type_names_.count(t.text) != 0) return true;
-        // 限定类型 `math.Point` / `std.string.string` / `lib.a.b.T`
+        // qualified type `math.Point` / `std.string.string` / `lib.a.b.T`
         if (peek(1).is_op(".") && is_module_prefix(t.text)) return true;
     }
     return false;
 }
 
-// 是否是某个已导入 unit 名（或 std.string）的点号前缀。
+// Whether this is the dotted prefix of an imported unit name (or std.string).
 bool Parser::is_module_prefix(const std::string& s) const {
     for (const auto& m : module_names_) {
         if (m == s) return true;
@@ -78,7 +78,7 @@ bool Parser::is_module_prefix(const std::string& s) const {
     return false;
 }
 
-// 泛型实参列表：`<int, Vec<long>>`（在 `parse_type` 中被 `name <` 触发）
+// generic argument list: `<int, Vec<long>>` (triggered by `name <` in `parse_type`)
 std::vector<std::unique_ptr<TypeSpec>> Parser::parse_type_args() {
     std::vector<std::unique_ptr<TypeSpec>> args;
     expect_op("<");
@@ -95,7 +95,7 @@ std::vector<std::unique_ptr<TypeSpec>> Parser::parse_type_args() {
     return args;
 }
 
-// 声明处的泛型参数列表：`<T>` / `<K, V>` / `<T: IList<int> & IComparable>`
+// generic parameter list at a declaration: `<T>` / `<K, V>` / `<T: IList<int> & IComparable>`
 std::vector<TypeParam> Parser::parse_type_params() {
     std::vector<TypeParam> out;
     if (!at_op("<")) return out;
@@ -153,7 +153,7 @@ std::vector<TypeParam> Parser::parse_type_params() {
     return out;
 }
 
-// 类型实参的右尖括号：词法上的 `>>` 拆成两个 `>`（`Vec<Vec<int>>`）
+// right angle bracket of type arguments: split a lexical `>>` into two `>` (`Vec<Vec<int>>`)
 Token Parser::expect_gt() {
     if (at_op(">>")) {
         Token split = toks_[pos_];
@@ -288,7 +288,7 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
                 break;
             }
             expect_op("]");
-            // 反向包装：int[2,3] -> Array(Array(int,3),2)
+            // wrap in reverse: int[2,3] -> Array(Array(int,3),2)
             for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
                 auto arr = std::make_unique<TypeSpec>();
                 arr->kind = TypeSpec::K::Array;
@@ -306,7 +306,7 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
     return spec;
 }
 
-// ---------------------------------------------------------------- 表达式
+// ---------------------------------------------------------------- expressions
 
 ExprPtr Parser::make_binary(const std::string& op, ExprPtr left, ExprPtr right,
                             const Token& tok) {
@@ -325,10 +325,10 @@ ExprPtr Parser::parse_ternary() {
     const Token tok = advance();
     auto node = std::make_unique<Ternary>();
     node->cond = std::move(cond);
-    node->then_e = parse_ternary();  // 中间分支允许嵌套 `?:`
+    node->then_e = parse_ternary();  // the middle branch may nest `?:`
     if (!at_op(":")) throw err_at("expected `:` after `?`", peek());
     advance();
-    node->else_e = parse_ternary();  // 右结合：`a ? b : c ? d : e` = `a ? b : (c ? d : e)`
+    node->else_e = parse_ternary();  // right-associative: `a ? b : c ? d : e` = `a ? b : (c ? d : e)`
     node->line = tok.line;
     node->col = tok.col;
     return node;
@@ -467,7 +467,7 @@ ExprPtr Parser::parse_unary() {
                 break;
             }
             expect_op("]");
-            // new T[m][]：外层数组的元素是 T[]（空槽，稍后逐行 new）
+            // new T[m][]: each element of the outer array is a T[] (empty slot, rows are newed later)
             while (at_op("[")) {
                 if (!peek(1).is_op("]")) {
                     throw err_at("`new T[m][n]` is not jagged array syntax: use `new T[m,n]` for rectangular arrays; for jagged arrays, allocate the outer array first and fill the rows in a loop", peek());
@@ -553,10 +553,10 @@ ExprPtr Parser::parse_postfix() {
 }
 
 ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
-    std::vector<TypeSpecPtr> pending_type_args;  // `f<int>(...)` 的类型实参
+    std::vector<TypeSpecPtr> pending_type_args;  // type arguments of `f<int>(...)`
     for (;;) {
         const Token t = peek();
-        // 泛型调用：`name<...>(`。试探解析失败则回退为比较表达式。
+        // generic call: `name<...>(`. If the trial parse fails, fall back to a comparison expression.
         if (t.is_op("<") && pending_type_args.empty() && dynamic_cast<Name*>(e.get())) {
             const std::size_t save = pos_;
             bool ok = false;
@@ -600,14 +600,14 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
             continue;
         }
         if (t.is_op(".")) {
-            // 多段 unit 名：`lib.a.b.f` 中 `lib.a.b` 是 unit，合并成单个 Name，
-            // 避免被拆成三层成员访问。按最长已导入前缀匹配。
+            // multi-segment unit name: in `lib.a.b.f`, `lib.a.b` is the unit; merge them into a single Name
+            // so it is not split into three nested member accesses. Match by longest imported prefix.
             if (auto* n = dynamic_cast<Name*>(e.get());
                 n && peek(1).kind == TokKind::Ident) {
                 const std::string cand = n->ident + "." + peek(1).text;
                 if (module_names_.count(cand)) {
                     advance();  // '.'
-                    advance();  // 成员名
+                    advance();  // member name
                     n->ident = cand;
                     continue;
                 }

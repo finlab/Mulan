@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 语法分析
+// Parsing
 #pragma once
 
 #include <memory>

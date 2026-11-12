@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// muc（Mulan 语言编译器）—— 公共基础设施（错误、字符串工具）
+// muc (Mulan language compiler) — shared infrastructure (errors, string utilities)
 #pragma once
 
 #include <fstream>
@@ -11,7 +11,7 @@
 
 namespace mu_detail {
 
-// 读取源文件第 line 行（1-based）；读不到返回空串
+// Reads line `line` of the source file (1-based); returns an empty string if it cannot be read
 inline std::string read_source_line(const std::string& file, int line) {
     if (file.empty() || line <= 0) return {};
     std::ifstream in(file, std::ios::binary);
@@ -24,8 +24,8 @@ inline std::string read_source_line(const std::string& file, int line) {
     return s;
 }
 
-// 渲染「源码行 + 插入符」片段。col 是 1-based 字节列（与词法位置一致）；
-// tab 展开为 4 列，多字节 UTF-8 字符按 2 列（CJK 全角）估算显示宽度。
+// Renders a "source line + caret" snippet. col is a 1-based byte column (consistent with lexical positions);
+// tabs expand to 4 columns, and multi-byte UTF-8 characters are estimated at 2 columns (CJK full width).
 inline std::string render_snippet(const std::string& file, int line, int col) {
     const std::string src = read_source_line(file, line);
     if (src.empty()) return {};
@@ -60,7 +60,7 @@ inline std::string render_snippet(const std::string& file, int line, int col) {
         visual += w;
         i += static_cast<size_t>(bytes);
     }
-    if (caret < 0) caret = visual;  // col 超出行尾：插在末尾
+    if (caret < 0) caret = visual;  // col is past the end of the line: place the caret at the end
 
     const std::string num = std::to_string(line);
     const std::string pad(num.size(), ' ');
@@ -94,7 +94,7 @@ struct MuError : std::runtime_error {
         }
         if (!loc.empty()) loc += ": ";
         std::string out = loc + "error: " + m;
-        // 有位置信息时附带源码行与插入符（读不到源文件则省略）
+        // appends the source line and caret when position information is available (omitted if the source file cannot be read)
         const std::string snippet = mu_detail::render_snippet(f, l, c);
         if (!snippet.empty()) out += "\n" + snippet;
         return out;
@@ -109,7 +109,7 @@ struct SemaError : MuError {
     using MuError::MuError;
 };
 
-// 一次编译收集到的多个错误（统一输出，而不是遇到第一个就停）
+// Multiple errors collected during one compilation (reported together instead of stopping at the first one)
 struct MuErrorList : std::runtime_error {
     std::vector<std::string> messages;
     explicit MuErrorList(std::vector<std::string> msgs)

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含 赋值兼容与编译期常量求值（Sema 成员函数定义）。
+// This file holds assignment compatibility and compile-time constant evaluation (definitions of Sema members).
 #include "sema_impl.hpp"
 
 namespace muc_detail {
@@ -68,7 +68,7 @@ namespace muc_detail {
     }
 
     bool Sema::assignable(Expr* e, const TypePtr& src, const TypePtr& dst) {
-        // C 模型：const 只能放宽，不能收紧（same_type 忽略 const，必须先拦）
+        // C model: const may only be relaxed, never tightened (same_type ignores const, so this must be caught first)
         if (src && dst && src->kind == dst->kind &&
             (src->kind == TypeKind::Ptr || src->kind == TypeKind::Slice) &&
             src->elem && dst->elem && src->elem->is_const && !dst->elem->is_const) {
@@ -82,13 +82,13 @@ namespace muc_detail {
             }
             if (il->value == 0 && dst &&
                 (dst->kind == TypeKind::Class || dst->kind == TypeKind::Interface)) {
-                il->ty = dst;  // `Cat c = 0` 等价于 null
+                il->ty = dst;  // `Cat c = 0` is equivalent to null
                 return true;
             }
         }
         if (dynamic_cast<CharLit*>(e) && dst && is_prim(dst) && dst->is_integer() &&
             dst->bits() == 8) {
-            e->ty = dst;  // 字符字面量适配到 char / byte
+            e->ty = dst;  // character literal adapts to char / byte
             return true;
         }
         if (dynamic_cast<NullLit*>(e) && dst) {
@@ -99,7 +99,7 @@ namespace muc_detail {
             }
         }
         if (src && dst && src->kind == TypeKind::Array && dst->kind == TypeKind::Slice) {
-            // T[N] -> T[]；T[m,n] -> T[,]（按嵌套层数匹配 rank，元素类型一致）
+            // T[N] -> T[]; T[m,n] -> T[,] (match rank by nesting depth, element types must agree)
             TypePtr base = src;
             size_t depth = 0;
             while (base && base->kind == TypeKind::Array) {
@@ -115,7 +115,7 @@ namespace muc_detail {
         if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->elem &&
             dst->elem->is_const &&
             dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
-            return true;  // Str -> readonly char*/byte*（要求 NUL 结尾）
+            return true;  // Str -> readonly char*/byte* (requires NUL termination)
         }
         return implicit_ok(src, dst);
     }
@@ -163,7 +163,7 @@ namespace muc_detail {
             if (v.is_float) {
                 d = v.f;
             } else if (v.ty && v.ty->kind == TypeKind::Prim && !v.ty->is_signed()) {
-                // 无符号 64 位的值以补码位模式存在 v.i 里，转浮点要按无符号解释
+                // A 64-bit unsigned value sits in v.i as a two's-complement bit pattern; converting to float must interpret it as unsigned
                 d = static_cast<double>(static_cast<unsigned long long>(v.i));
             } else {
                 d = static_cast<double>(v.i);
@@ -185,8 +185,8 @@ namespace muc_detail {
             v.ty = dst;
             return;
         }
-        // 整数字面量适配到浮点目标（`const double D = 2;`）与浮点字面量适配
-        // 到 float / double（`const float F = 1.5;`），与变量初始化规则一致
+        // Integer literal adapts to a floating-point target (`const double D = 2;`) and floating-point literal adapts
+        // to float / double (`const float F = 1.5;`), consistent with the variable initialization rules
         if ((v.lit || v.flit) && dst->is_float()) {
             v = cast_const(v, dst);
             v.ty = dst;
@@ -194,8 +194,8 @@ namespace muc_detail {
             v.flit = false;
             return;
         }
-        // 字符字面量按位模式适配到 8 位整数目标（`const char C = '\u{e9}';`），
-        // 与运行期 check_expr_impl 一致：不做有符号值域检查，只截断位模式
+        // A character literal adapts bit-pattern-wise to an 8-bit integer target (`const char C = '\u{e9}';`),
+        // consistent with run-time check_expr_impl: no signed range check, only bit-pattern truncation
         if (v.clit && is_prim(dst) && dst->is_integer() && dst->bits() == 8) {
             v.i = normalize_int(v.i, dst);
             v.ty = dst;
@@ -288,7 +288,7 @@ namespace muc_detail {
     }
 
     bool Sema::eval_const_name(Name* e, const TypePtr& self_ty, Sema::ConstVal& out) {
-        // 1. 当前类型的类型级常量（裸名，含基类链）
+        // 1. Type-level constants of the current type (bare name, including the base class chain)
         if (self_ty) {
             if (ConstMember* cm = find_const_member_in(self_ty, e->ident)) {
                 if (!const_member_visible(cm)) {
@@ -299,19 +299,19 @@ namespace muc_detail {
                 return eval_const_member(cm, out);
             }
         }
-        // 2. 本 unit 的变量：只有 unit 级 const 能参与求值
+        // 2. Variables of this unit: only unit-level const can take part in evaluation
         UnitInfo& ui = info();
         if (auto g = ui.globals.find(e->ident); g != ui.globals.end()) {
             if (!g->second->is_const) return false;
             return eval_global_const(g->second, cur_->name, out);
         }
-        // 3. 本 unit 的枚举成员（裸名）
+        // 3. Enum members of this unit (bare name)
         if (EnumConst* ec = lookup_enum_const(e->ident)) {
             out.ty = ec->ty;
             out.i = ec->value;
             return true;
         }
-        // 4. 直接 use 的 unit（只收 public；多个同名 const 候选报歧义，与 check_name 一致）
+        // 4. Directly `use`d units (public only; several same-name const candidates are an ambiguity error, consistent with check_name)
         GlobalVar* imp_g = nullptr;
         std::string imp_g_unit;
         EnumConst* imp_ec = nullptr;
@@ -322,7 +322,7 @@ namespace muc_detail {
             if (it == infos_.end()) continue;
             UnitInfo& o = it->second;
             if (auto g = o.globals.find(e->ident); g != o.globals.end() && g->second->is_public) {
-                // 非 const 候选不能参与常量求值：继续找其它 unit 里的 const 候选
+                // A non-const candidate cannot take part in constant evaluation: keep looking for const candidates in other units
                 if (!g->second->is_const) continue;
                 if (imp_g) {
                     err("`" + e->ident + "` is ambiguous: `" + imp_g_unit + "." + e->ident + "` and `" +
@@ -372,7 +372,7 @@ namespace muc_detail {
 
     bool Sema::eval_const_member_expr(Member* e, Sema::ConstVal& out) {
         TypePtr et = const_expr_base_type(e->obj.get());
-        if (!et) return false;  // `obj.Name` 不是编译期常量（常量不占实例内存）
+        if (!et) return false;  // `obj.Name` is not a compile-time constant (constants do not occupy instance memory)
         if (et->kind == TypeKind::Enum) {
             EnumConst* ec = find_enum_member(et, e->name);
             if (!ec) return false;
@@ -408,10 +408,10 @@ namespace muc_detail {
             bool res = false;
             if (l.ty && r.ty && l.ty->kind == TypeKind::Enum &&
                 r.ty->kind == TypeKind::Enum) {
-                // 枚举底层是有符号 int
+                // An enum is backed by a signed int
                 res = cmp_const(op, l.i, r.i);
             } else {
-                // 与运行期一致：先按 usual_arith 求公共类型，把操作数舍入到该类型再比较
+                // Consistent with run time: first compute the common type via usual_arith, round the operands to it, then compare
                 TypePtr ct = usual_arith(l.ty, r.ty);
                 if (!ct) return false;
                 const ConstVal a = cast_const(l, ct);
@@ -439,8 +439,8 @@ namespace muc_detail {
             if (op == "<<") {
                 v = static_cast<long long>(static_cast<unsigned long long>(v) << r.i);
             } else {
-                // 运行期无条件用 AShr（按声明位宽的算术右移）：常量路径必须一致，
-                // 因此先按位宽把补码位模式符号扩展到 64 位，再算术右移，最后归一化。
+                // Run time unconditionally uses AShr (arithmetic right shift by the declared width): the constant path must agree,
+                // so sign-extend the two's-complement bit pattern to 64 bits by that width, shift arithmetically, then normalize.
                 v = sext_bits(v, bits) >> r.i;
             }
             out.ty = l.ty;
@@ -449,10 +449,10 @@ namespace muc_detail {
         }
 
         if (l.is_float || r.is_float) {
-            if (op == "%") return false;  // 浮点取模没有语义
+            if (op == "%") return false;  // floating-point modulo has no semantics
             TypePtr rt = usual_arith(l.ty, r.ty);
             if (!rt) return false;
-            // 先把操作数舍入到公共类型（float 用 float 精度），再运算
+            // Round the operands to the common type first (float uses float precision), then compute
             const ConstVal a = cast_const(l, rt);
             const ConstVal b = cast_const(r, rt);
             const double av = a.f;
@@ -472,7 +472,7 @@ namespace muc_detail {
 
         TypePtr rt = usual_arith(l.ty, r.ty);
         if (!rt) return false;
-        // 先把操作数舍入到公共类型，与运行期 convertTo 一致
+        // Round the operands to the common type first, consistent with run-time convertTo
         const ConstVal a = cast_const(l, rt);
         const ConstVal b = cast_const(r, rt);
         const long long li = a.i;

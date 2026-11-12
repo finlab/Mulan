@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 语法分析 —— unit 与声明
+// Parsing — units and declarations
 #include "parser_impl.hpp"
 
 #include <memory>
@@ -39,7 +39,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
     while (!at_eof()) {
         const Token tk = peek();
         bool is_pub = false;
-        // 布局修饰符（packed / align(N)）：与 public/private 同类，任意顺序、可组合
+        // layout modifiers (packed / align(N)): same category as public/private, any order, composable
         bool packed = false;
         ExprPtr align_expr;
         bool has_layout = false;
@@ -58,7 +58,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 advance();
                 continue;
             }
-            // `align` 保持标识符身份，只有 `align(` 形式才是布局修饰符（上下文关键字）
+            // `align` keeps its identifier identity; only the `align(` form is a layout modifier (contextual keyword)
             if (peek().kind == TokKind::Ident && peek().text == "align" && peek(1).is_op("(")) {
                 if (align_expr) throw err_at("duplicate layout modifier `align(...)`", peek());
                 layout_tok = peek();
@@ -100,7 +100,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             continue;
         }
 
-        // 上下文关键字 `type`：`type Ident = <type>;`（透明类型别名，每条只定义一个）
+        // contextual keyword `type`: `type Ident = <type>;` (transparent type alias, exactly one definition per declaration)
         if (peek().kind == TokKind::Ident && peek().text == "type" && peek(1).kind == TokKind::Ident &&
             peek(2).is_op("=")) {
             if (has_layout) {
@@ -187,7 +187,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
 
         if (at_kw("auto")) throw err("`auto` cannot be used for unit-level variables; an explicit type is required");
 
-        // 函数定义或 unit 级变量
+        // function definition or unit-level variable
         bool ret_ref = false;
         TypeSpecPtr spec = parse_return_type(ret_ref);
         if (at_kw("operator")) {
@@ -211,7 +211,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 throw err_at("`ref` can only modify a return type (`ref T f(...)`); a variable cannot have a reference type",
                              tk);
             }
-            // unit 级变量：默认 private，public 由前缀控制
+            // unit-level variable: private by default; `public` comes from the prefix
             auto globals = parse_global_list(std::move(spec), false);
             for (auto& g : globals) g->is_public = is_pub;
             for (auto& g : globals) unit->decls.push_back(std::move(g));
@@ -232,7 +232,7 @@ std::unique_ptr<Decl> Parser::parse_extern(const Token& tk) {
         fn->ret = std::move(spec);
         fn->params = parse_params(&fn->is_varargs, /*allow_ref=*/true);
         fn->is_extern = true;
-        fn->is_public = true;  // `extern` 声明隐式公开（parser 已禁止与 public 同写）
+        fn->is_public = true;  // `extern` declarations are implicitly public (the parser already rejects combining them with `public`)
         fn->line = tk.line;
         fn->col = tk.col;
         semicolon();
@@ -272,9 +272,9 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
     decl->col = tk.col;
     decl->is_union = is_union;
 
-    bool cur_pub = true;  // struct 默认 public
+    bool cur_pub = true;  // struct defaults to public
     while (!at_op("}")) {
-        // 分段标签：`public:` / `private:` 切换后续成员的默认可见性
+        // section label: `public:` / `private:` switches the default visibility of following members
         if ((at_kw("public") || at_kw("private")) && peek(1).is_op(":")) {
             if (is_union) {
                 throw err("union members are always public; `public:` / `private:` sections are not allowed in a union");
@@ -311,7 +311,7 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
         if (at_kw("weak")) {
             throw err("`weak` can only be used on class fields");
         }
-        // `type` 在这个位置不是别名声明（别名只能写在 unit 级），给明确诊断
+        // `type` is not an alias declaration in this position (aliases can only be written at unit level); give a clear diagnostic
         if (peek().kind == TokKind::Ident && peek().text == "type" && peek(1).kind == TokKind::Ident &&
             peek(2).is_op("=")) {
             throw err_at("type aliases must be declared at unit scope (outside `" + std::string(kw) + " " + name + "`)",
@@ -343,14 +343,14 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
                          name_tok);
         }
         if (spec->is_const) {
-            // 类型级编译期常量：`const T NAME = <const-expr>;`
+            // type-level compile-time constant: `const T NAME = <const-expr>;`
             if (is_union) {
                 throw err_at("union `" + name + "` does not support const members (union members are always public fields)",
                              name_tok);
             }
             auto cm = std::make_unique<ConstMember>();
             cm->name = name_tok.text;
-            spec->is_const = false;  // `const` 是声明标记，不是类型限定
+            spec->is_const = false;  // `const` is a declaration marker, not a type qualifier
             cm->spec = std::move(spec);
             cm->is_public = member_pub;
             cm->line = name_tok.line;
@@ -440,7 +440,7 @@ std::string Parser::parse_qualified_name() {
     return n;
 }
 
-// 类型语法 → 显示字符串（仅用于泛型基类在 M1 阶段的占位名）
+// type syntax → display string (only for placeholder names of generic base classes in the M1 stage)
 static std::string spec_display(const TypeSpec& s) {
     switch (s.kind) {
         case TypeSpec::K::Named: {
@@ -465,7 +465,7 @@ static std::string spec_display(const TypeSpec& s) {
     return s.name;
 }
 
-// 接口体内的 `Self` 由 `TypeSpec::is_self` 标记，sema 解析为接口类型并在约束检查时替换。
+// `Self` inside an interface body is marked by `TypeSpec::is_self`; sema resolves it to the interface type and substitutes it during constraint checking.
 
 std::vector<std::string> Parser::parse_base_list(std::vector<TypeSpecPtr>* specs) {
     std::vector<std::string> bases;
@@ -480,8 +480,8 @@ std::vector<std::string> Parser::parse_base_list(std::vector<TypeSpecPtr>* specs
         bs->line = nt.line;
         bs->col = nt.col;
         if (at_op("<")) {
-            // 泛型基类（`class Box<T> : Base<T>`）：字符串按显示名拼接保底，
-            // 结构化实参进 base_specs（实例化时替换类型参数）。
+            // generic base class (`class Box<T> : Base<T>`): the string falls back to concatenated display names,
+            // structured arguments go into base_specs (type parameters are substituted at instantiation).
             std::vector<std::unique_ptr<TypeSpec>> args = parse_type_args();
             n += "<";
             for (size_t i = 0; i < args.size(); ++i) {
@@ -561,9 +561,9 @@ std::unique_ptr<Decl> Parser::parse_class() {
     cd->base_specs = std::move(base_specs);
 
     expect_op("{");
-    bool cur_pub = false;  // class 默认 private
+    bool cur_pub = false;  // class defaults to private
     while (!at_op("}")) {
-        // 分段标签：`public:` / `private:` 切换后续成员的默认可见性
+        // section label: `public:` / `private:` switches the default visibility of following members
         if ((at_kw("public") || at_kw("private")) && peek(1).is_op(":")) {
             cur_pub = at_kw("public");
             advance();
@@ -617,11 +617,11 @@ std::unique_ptr<Decl> Parser::parse_class() {
         }
         if (prefix_override) throw err_at("`override` can only be used on methods", name_tok);
         if (spec->is_const) {
-            // 类型级编译期常量：`const T NAME = <const-expr>;`
+            // type-level compile-time constant: `const T NAME = <const-expr>;`
             if (prefix_weak) throw err_at("`weak` can only be used on fields", name_tok);
             auto cm = std::make_unique<ConstMember>();
             cm->name = name_tok.text;
-            spec->is_const = false;  // `const` 是声明标记，不是类型限定
+            spec->is_const = false;  // `const` is a declaration marker, not a type qualifier
             cm->spec = std::move(spec);
             cm->is_public = member_pub;
             cm->line = name_tok.line;

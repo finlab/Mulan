@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// LLVM 后端对外接口：生成文本 IR（--emit-ir）与 COFF 目标文件。
+// Public interface of the LLVM backend: emits textual IR (--emit-ir) and COFF object files.
 //
-// 真正的代码生成在 codegen_impl.hpp 声明的 Emitter 类里，成员函数按功能分散在
-// codegen_support / codegen_runtime / codegen_expr / codegen_expr2 /
-// codegen_stmt / codegen_class / codegen_func 七个编译单元中。
+// The actual code generation lives in the Emitter class declared in codegen_impl.hpp,
+// whose member functions are split by functionality across the seven translation units:
+// codegen_support / codegen_runtime / codegen_expr / codegen_expr2 / codegen_stmt / codegen_class / codegen_func.
 #include "codegen_llvm.hpp"
 
 #include "codegen_impl.hpp"

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含基础工具、布局、函数/全局、引用计数运行时、分配与常量（Emitter 成员函数定义）。
+// This file contains the basic utilities, layout, functions/globals, reference counting runtime, allocation and constants (Emitter member function definitions).
 
 #include "codegen_impl.hpp"
 
@@ -25,7 +25,7 @@ bool is_zero_literal(Init* init) {
 
 bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
 
-    // ------------------------------------------------------------ 基础工具
+    // ------------------------------------------------------------ basic utilities
     LType* Emitter::ptrTy() { return PointerType::get(ctx, 0); }
     LType* Emitter::i1() { return LType::getInt1Ty(ctx); }
     LType* Emitter::i8() { return LType::getInt8Ty(ctx); }
@@ -55,19 +55,19 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         named[key] = st;
         const auto& dl = mod->getDataLayout();
         std::vector<LType*> fs;
-        std::vector<unsigned> map;  // 模型字段索引 -> LLVM 字段索引
-        uint64_t llvmCur = 0;       // LLVM 视角的当前偏移
-        uint64_t modelCur = 0;      // 语义层（types.cpp）的当前偏移
+        std::vector<unsigned> map;  // model field index -> LLVM field index
+        uint64_t llvmCur = 0;       // current offset from LLVM's point of view
+        uint64_t modelCur = 0;      // current offset in the semantic layer (types.cpp)
 
         if (t->is_union) {
-            // LLVM 没有 union 类型：用一个「对齐载体 + 尾部 i8 填充」的 struct 表示，
-            // 使 ABI 的 size / align 与语义层一致；所有成员都从偏移 0 读取（fieldAddr 特判）。
+            // LLVM has no union type: represent it with an "aligned carrier + trailing i8 padding" struct,
+            // so that the ABI size / align match the semantic layer; all members are read from offset 0 (fieldAddr special-cases this).
             uint64_t sz = sizeOf(t);
             uint64_t al = alignOf(t);
             if (sz == 0) fail("LLVM backend: union `" + t->str() + "` has no members");
             if (t->is_packed) {
                 fs.push_back(LArray::get(i8(), sz));
-                st->setBody(fs, true);  // packed：对齐 1
+                st->setBody(fs, true);  // packed: alignment 1
             } else {
                 LType* carrier = i8();
                 uint64_t csz = 1;
@@ -101,7 +101,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
             uint64_t modelOff = t->is_packed ? modelCur : (modelCur + fa - 1) / fa * fa;
             uint64_t llvmOff = t->is_packed ? llvmCur : (llvmCur + la - 1) / la * la;
             if (llvmOff < modelOff) {
-                // 显式填充：让 LLVM 偏移与语义层一致（align(N) 字段在嵌套结构里靠它对齐）
+                // Explicit padding: make the LLVM offsets match the semantic layer (align(N) fields rely on it for alignment in nested structs)
                 fs.push_back(LArray::get(i8(), modelOff - llvmOff));
                 llvmCur = modelOff;
                 llvmOff = modelOff;
@@ -114,7 +114,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
             llvmCur = llvmOff + fsz;
             modelCur = modelOff + sizeOf(f.type);
         }
-        // 尾部填充：LLVM 结构体大小必须等于语义层 sizeof（数组元素跨度依赖该不变量）
+        // Tail padding: the LLVM struct size must equal the semantic layer's sizeof (array element strides depend on this invariant)
         uint64_t structAlign = 1;
         if (!t->is_packed) {
             for (auto* f : fs) {
@@ -134,7 +134,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return st;
     }
 
-    // 模型字段索引 -> LLVM 字段索引（align(N) 会在字段间插入显式 [k x i8] 填充）
+    // model field index -> LLVM field index (align(N) inserts explicit [k x i8] padding between fields)
     unsigned Emitter::llvmFieldIndex(const TypePtr& t, int model_idx) {
         const char* prefix = t->kind == TypeKind::Class ? "o:" : "s:";
         auto it = fieldMap.find(prefix + t->unit + ":" + t->name);
@@ -161,7 +161,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
 
 
     uint64_t Emitter::classObjAlign(const TypePtr& cls) {
-        uint64_t a = kObjHeader;  // 堆分配至少保证 16 字节
+        uint64_t a = kObjHeader;  // heap allocation guarantees at least 16 bytes
         for (auto& f : cls->fields) a = std::max(a, alignOf(f.type));
         return a;
     }
@@ -184,8 +184,8 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return alignUp(off, classObjAlign(cls));
     }
 
-    // 对象布局：{ i64 rc, ptr desc, [填充], fields... }（fields 已在 sema 扁平化，基类字段在前）
-    // 与 structOf 同样插入显式 [k x i8] 填充，保证 LLVM 偏移与语义层 type_align/type_size 一致。
+    // object layout: { i64 rc, ptr desc, [padding], fields... } (fields are already flattened in sema, base class fields first)
+    // Like structOf, explicit [k x i8] padding is inserted so LLVM offsets match the semantic layer's type_align/type_size.
     LStruct* Emitter::objStruct(const TypePtr& cls) {
         std::string key = "o:" + cls->unit + ":" + cls->name;
         auto it = named.find(key);
@@ -194,7 +194,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         named[key] = st;
         const auto& dl = mod->getDataLayout();
         std::vector<LType*> fs{i64(), ptrTy()};
-        std::vector<unsigned> map;  // 模型字段索引 -> LLVM 字段索引
+        std::vector<unsigned> map;  // model field index -> LLVM field index
         uint64_t llvmCur = kObjHeader;
         uint64_t modelCur = kObjHeader;
         for (auto& f : cls->fields) {
@@ -208,7 +208,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
             uint64_t modelOff = alignUp(modelCur, fa);
             uint64_t llvmOff = alignUp(llvmCur, la);
             if (llvmOff < modelOff) {
-                // 显式填充：让字段偏移满足 align(N)（LLVM 自身只按类型的自然对齐排布）
+                // Explicit padding: make the field offsets satisfy align(N) (LLVM itself only lays out by the natural alignment of the type)
                 fs.push_back(LArray::get(i8(), modelOff - llvmOff));
                 llvmCur = modelOff;
                 llvmOff = modelOff;
@@ -221,7 +221,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
             llvmCur = llvmOff + fsz;
             modelCur = modelOff + sizeOf(f.type);
         }
-        // 尾部补齐到对象对齐（不要依赖 LLVM 结构的自然对齐：字段全是 8 字节类型时它只有 8）
+        // Pad the tail up to the object alignment (do not rely on the LLVM struct's natural alignment: it is only 8 when all fields are 8-byte types)
         uint64_t modelSize = alignUp(modelCur, classObjAlign(cls));
         if (llvmCur < modelSize) {
             fs.push_back(LArray::get(i8(), modelSize - llvmCur));
@@ -244,10 +244,10 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
 
     uint64_t Emitter::objectAlign(const TypePtr& cls) { return classObjAlign(cls); }
 
-    // align(N) > 16 的 class 对象要显式对齐分配（malloc 只保证 16 字节）；释放时必须配对
+    // class objects with align(N) > 16 need an explicitly aligned allocation (malloc only guarantees 16 bytes); the release must be paired
     bool Emitter::classNeedsAlignedAlloc(const TypePtr& cls) { return classObjAlign(cls) > 16; }
 
-    // 字段地址：union 的所有成员落在偏移 0（LLVM 类型是「载体 + 填充」，字段 0 即基址）
+    // field address: all members of a union land at offset 0 (the LLVM type is "carrier + padding", field 0 is the base address)
     Value* Emitter::fieldSlot(LStruct* st, const TypePtr& ty, Value* base, int idx) {
         if (ty->kind == TypeKind::Struct && ty->is_union) {
             (void)idx;
@@ -258,11 +258,11 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
 
     Value* Emitter::fieldAddr(Value* objPtr, const TypePtr& cls, int field_index) {
         if (cls->kind == TypeKind::Struct) {
-            // 先取 LLVM 类型（可能触发 structOf 填充字段映射表），再查映射
+            // First obtain the LLVM type (this may trigger structOf to fill the field mapping table), then look up the mapping
             LStruct* st = cast<LStruct>(lt(cls));
             return fieldSlot(st, cls, objPtr, field_index);
         }
-        // 先建对象类型（填充 fieldMap），再按映射索引（align(N) 字段前有显式填充）
+        // First build the object type (filling fieldMap), then index by the mapping (there is explicit padding before align(N) fields)
         LStruct* st = objStruct(cls);
         unsigned idx = llvmFieldIndex(cls, field_index);
         return b.CreateStructGEP(st, objPtr, idx);
@@ -272,7 +272,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return mod->getOrInsertGlobal(class_desc_name(cls->unit, cls->name), descTy);
     }
 
-    // std.string.string：编译器识别的规范字符串结构体（字段 p/n/owner）
+    // std.string.string: the canonical string struct recognized by the compiler (fields p/n/owner)
     TypePtr Emitter::strType() {
         if (strMeta) return strMeta;
         for (auto& u : prog.units) {
@@ -308,8 +308,8 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         }
     }
 
-    // ------------------------------------------------------------ 布局
-    // 唯一实现在 types.cpp（type_align/type_size），这里只做转接，避免两份布局漂移。
+    // ------------------------------------------------------------ layout
+    // The only implementation is in types.cpp (type_align/type_size); this only forwards to avoid two layouts drifting apart.
     uint64_t Emitter::alignOf(const TypePtr& t) { return type_align(t); }
     uint64_t Emitter::sizeOf(const TypePtr& t) { return type_size(t); }
 
@@ -318,7 +318,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
                      t->kind == TypeKind::Slice);
     }
 
-    // ------------------------------------------------------------ 函数/全局
+    // ------------------------------------------------------------ functions/globals
     FunctionCallee Emitter::libFn(const char* name, LType* ret, std::vector<LType*> params) {
         return mod->getOrInsertFunction(name, FunctionType::get(ret, params, false));
     }
@@ -343,7 +343,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return c;
     }
 
-    // ------------------------------------------------------------ 引用计数运行时
+    // ------------------------------------------------------------ reference counting runtime
     Function* Emitter::ensureRetain() {
         if (rcRetainFn) return rcRetainFn;
         auto* ft = FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false);
@@ -390,7 +390,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         auto* desc = hb.CreateLoad(ptrTy(), descp);
         auto* dfnp = hb.CreateGEP(i8(), desc, ConstantInt::get(i64(), 8));
         auto* dfn = hb.CreateLoad(ptrTy(), dfnp);
-        // destroy 函数负责调用析构链并 free，这里不再 free（否则双重释放）
+        // the destroy function calls the destructor chain and frees, so do not free here (that would double free)
         hb.CreateCall(FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false), dfn, {p});
         hb.CreateBr(done);
         hb.SetInsertPoint(done);
@@ -409,8 +409,8 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         b.CreateCall(ensureRelease(), {p});
     }
 
-    // ------------------------------------------------------------ 分配
-    // model_align：语义层对齐（align(N) 可能大于 LLVM 类型的自然对齐）
+    // ------------------------------------------------------------ allocation
+    // model_align: semantic layer alignment (align(N) may exceed the natural alignment of the LLVM type)
     AllocaInst* Emitter::entryAlloca(LType* ty, const std::string& name, uint64_t model_align) {
         IRBuilder<>::InsertPointGuard g(ab);
         if (allocaBB) ab.SetInsertPoint(allocaBB);
@@ -419,7 +419,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return a;
     }
 
-    // 结构体成员的字节偏移（与 types.cpp 的布局规则一致；union 全部 0）
+    // byte offset of a struct member (consistent with the layout rules in types.cpp; 0 for all union members)
     uint64_t Emitter::memberOffset(const TypePtr& t, size_t idx) {
         if (t->is_union) return 0;
         uint64_t off = 0;
@@ -433,8 +433,8 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return 0;
     }
 
-    // Mulan 类型 -> DWARF 类型。结构体展开成员（一层层往下，深度上限 2）；
-    // 指针只对「标量 / 枚举」递归元素类型，其余显示为 void*（避免自引用无界递归）。
+    // Mulan type -> DWARF type. Structs expand their members (going down layer by layer, depth limit 2);
+    // pointers only recurse into the element type for "scalar / enum", everything else is shown as void* (to avoid unbounded recursion for self-references).
     DIType* Emitter::diType(const TypePtr& t, int depth) {
         if (!dib || !t) return nullptr;
         const uint64_t bits = static_cast<uint64_t>(sizeOf(t) * 8);
@@ -505,8 +505,8 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return a;
     }
 
-    // ------------------------------------------------------------ 常量
-    // 类型级 / unit 级编译期常量：按缓存的求值结果发字面常量（位宽与符号按声明类型）
+    // ------------------------------------------------------------ constants
+    // type-level / unit-level compile-time constants: emit literal constants from the cached evaluation result (bit width and signedness follow the declared type)
     Constant* Emitter::constOfValue(const TypePtr& ty, bool is_float, long long iv, double fv) {
         LType* ct = lt(ty);
         if (is_float) return ConstantFP::get(ct, fv);
@@ -541,7 +541,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
                 for (size_t i = 0; i < vals.size(); ++i) {
                     if (!vals[i]) vals[i] = zeroConst(lt(ty->fields[i].type), ty->fields[i].type);
                 }
-                // LLVM 结构体可能有显式填充字段（packed / align(N)），按映射表展开
+                // the LLVM struct may have explicit padding fields (packed / align(N)), expand according to the mapping table
                 auto* st = cast<LStruct>(ct);
                 std::vector<Constant*> out(st->getNumElements(), nullptr);
                 for (size_t i = 0; i < vals.size(); ++i) {
@@ -589,7 +589,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
             if (ty->kind == TypeKind::Slice && il->value == 0) {
                 return Constant::getNullValue(ct);
             }
-            // 整数字面量按上下文适配到浮点类型（SPEC §3.6）
+            // integer literals adapt to the float type according to context (SPEC §3.6)
             if (ty->kind == TypeKind::Prim && ty->is_float())
                 return ConstantFP::get(ct, static_cast<double>(il->value));
             auto* it = IntegerType::get(ctx, static_cast<unsigned>(sizeOf(ty) * 8));
@@ -602,7 +602,7 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         if (auto cl = dynamic_cast<CharLit*>(e)) return ConstantInt::get(i8(), cl->value);
         if (dynamic_cast<NullLit*>(e)) return Constant::getNullValue(ct);
         if (auto u = dynamic_cast<Unary*>(e)) {
-            // 常量初值支持一元 +/-：`const int EOF = -1;` 这类很常见
+            // constant initializers support unary +/-: forms like `const int EOF = -1;` are common
             if (u->op == "-" || u->op == "+") {
                 const double sign = (u->op == "-") ? -1.0 : 1.0;
                 if (auto il = dynamic_cast<IntLit*>(u->operand.get())) {

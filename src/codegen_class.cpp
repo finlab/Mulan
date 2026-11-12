@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含接口表、虚表与 class/struct/interface 代码生成（Emitter 成员函数定义）。
+// This file contains the interface table, the virtual table and class/struct/interface code generation (Emitter member function definitions).
 
 #include "codegen_impl.hpp"
 
 namespace muc_detail {
 
-    // ------------------------------------------------------------ 接口表
+    // ------------------------------------------------------------ interface table
 
     std::string Emitter::sigKey(const MethodSig& m) {
         std::string k = m.name + "(";
@@ -42,7 +42,7 @@ namespace muc_detail {
         return nullptr;
     }
 
-    // 类/基类接口链上的默认实现
+    // default implementation on the class/base class interface chain
     const MethodSig* Emitter::findInterfaceImpl(const TypePtr& cls, const MethodSig& slot) {
         if (const MethodSig* m = findImpl(cls, slot)) return m;
         for (TypePtr cur = cls; cur && cur->kind == TypeKind::Class; cur = cur->base) {
@@ -54,7 +54,7 @@ namespace muc_detail {
     }
 
 
-    // 接口方法调用约定：ret(ptr obj, ptr desc, params...)
+    // Interface method calling convention: ret(ptr obj, ptr desc, params...)
     Function* Emitter::ifaceThunk(const TypePtr& cls, const MethodSig& slot, const MethodSig& impl,
                                   int idx) {
         std::string key = sigKey(slot) + "#" + impl.owner->str() + "#" + std::to_string(idx);
@@ -113,7 +113,7 @@ namespace muc_detail {
                                   "mu_" + cls->unit + "_itab_" + cls->name);
     }
 
-    // ------------------------------------------------------------ 虚表
+    // ------------------------------------------------------------ virtual table
     bool Emitter::same_sig(const MethodSig& a, const MethodSig& b) {
         if (a.name != b.name || a.params.size() != b.params.size()) return false;
         for (size_t i = 0; i < a.params.size(); ++i) {
@@ -188,7 +188,7 @@ namespace muc_detail {
                                   carr, class_vtable_name(cls->unit, cls->name));
     }
 
-    // ------------------------------------------------------------ class 代码生成
+    // ------------------------------------------------------------ class code generation
     void Emitter::beginBody(Function* fn, const TypePtr& ret) {
         curFn = fn;
         curRetTy = ret;
@@ -245,9 +245,9 @@ namespace muc_detail {
         }
     }
 
-    // 参数是拥有型局部变量（SPEC §4）：进入时 retain 一份，函数退出时随作用域 release。
-    // 调用方仍按值传参并在需要时释放自己的临时值，因此净引用计数不变。
-    // （后续可在不改变语义的前提下做借用/逃逸分析，把 retain/release 优化掉。）
+    // Parameters are owning local variables (SPEC §4): one reference is retained on entry and released with the scope when the function exits.
+    // The caller still passes parameters by value and releases its own temporaries when needed, so the net reference count does not change.
+    // (Borrow/escape analysis can later be done without changing the semantics to optimize away the retain/release pairs.)
     void Emitter::ownParams(const std::vector<std::unique_ptr<LocalVar>>& pls) {
         pushRefScope();
         for (auto& pl : pls) {
@@ -300,12 +300,12 @@ namespace muc_detail {
         curThis = fn->getArg(0);
         thisSlot = entryAlloca(ptrTy(), "this");
         b.CreateStore(curThis, thisSlot);
-        // 入口先设置本类的 desc；调用 super(...) 之后会恢复
+        // set this class's desc on entry; it is restored after the super(...) call
         Value* dp = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
         b.CreateStore(descOf(c->ty), dp);
         bindParams(fn, 1, ctor->param_locals);
 
-        // 省略 super(...) 且基类有无参构造器：按 C++ 语义隐式调用
+        // super(...) omitted and the base class has a parameterless constructor: call it implicitly following C++ semantics
         if (!ctor->has_explicit_super && c->ty->base && c->ty->base->kind == TypeKind::Class) {
             bool baseDefault = false;
             for (auto& cs : c->ty->base->ctors) {
@@ -409,7 +409,7 @@ namespace muc_detail {
         b.CreateStore(curThis, thisSlot);
         if (c->dtor && c->dtor->body) block(c->dtor->body.get());
 
-        // 释放本类声明的引用字段（逆序）；weak 字段只注销登记
+        // release the reference fields declared by this class (in reverse order); weak fields only unregister
         size_t total = c->ty->fields.size();
         size_t own = c->fields.size();
         size_t baseCount = total >= own ? total - own : 0;
@@ -440,7 +440,7 @@ namespace muc_detail {
         fn->setLinkage(GlobalValue::InternalLinkage);
         beginBody(fn);
         Value* p = fn->getArg(0);
-        // 先把指向本对象的所有 weak 引用置 null
+        // first set all weak references pointing at this object to null
         b.CreateCall(ensureWeakNotify(), {p});
         FunctionCallee dtor = mod->getOrInsertFunction(
             dtor_cname(c->ty->unit, c->name),
@@ -538,7 +538,7 @@ namespace muc_detail {
         thisSlot = entryAlloca(ptrTy(), "this");
         b.CreateStore(fn->getArg(0), thisSlot);
         block(sd->dtor->body.get());
-        // 用户析构体之后，逐字段释放引用（逆序）
+        // after the user destructor body, release the references field by field (in reverse order)
         for (size_t k = sd->ty->fields.size(); k > 0; --k) {
             size_t idx = k - 1;
             if (sd->ty->fields[idx].weak) continue;

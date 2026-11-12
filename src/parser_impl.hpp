@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 语法分析器内部实现：Parser 类声明与跨文件辅助函数声明（仅供 parser_*.cpp 使用）
+// Parser internals: Parser class declaration and cross-file helper declarations (used only by parser_*.cpp)
 //
-// 递归下降；优先级层次与 Python 版完全一致（高 → 低）：
-//   postfix → unary → * / % → + - → << >> → & → ^ → | → 比较 → == != → not → and → or
-// 位运算高于比较；`not` 低于比较、只高于 and/or。赋值是语句，不是表达式。
+// Recursive descent; precedence levels match the Python version exactly (high → low):
+//   postfix → unary → * / % → + - → << >> → & → ^ → | → comparison → == != → not → and → or
+// Bitwise operators bind tighter than comparison; `not` is looser than comparison and tighter than and/or. Assignment is a statement, not an expression.
 #pragma once
 
 #include <cstddef>
@@ -21,11 +21,11 @@
 
 namespace muc_detail {
 
-// 一条声明中的多个声明符共享同一个类型语法；深度复制以各持一份所有权的 TypeSpec。
-// （定义在 parser_expr.cpp；parser_unit.cpp / parser_stmt.cpp 也会调用）
+// Multiple declarators in one declaration share a single type syntax; deep-copy so each owns its own TypeSpec.
+// (defined in parser_expr.cpp; parser_unit.cpp / parser_stmt.cpp also call it)
 TypeSpecPtr clone_spec(const TypeSpec& s);
 
-// ---------------------------------------------------------------- 语法分析器
+// ---------------------------------------------------------------- parser
 
 class Parser {
 public:
@@ -44,7 +44,7 @@ public:
     std::unique_ptr<Unit> parse_unit();
 
 private:
-    // ------------------------------------------------------ 基础
+    // ------------------------------------------------------ basics
 
     const Token& peek(std::size_t k = 0) const {
         std::size_t j = pos_ + k;
@@ -98,7 +98,7 @@ private:
 
     void semicolon() { expect_op(";"); }
 
-    // `++`/`--` 没有返回值：出现在任何表达式上下文都是错误
+    // `++`/`--` have no value: appearing in any expression context is an error
     void forbid_inc_expr() const {
         if (at_op("++", "--")) {
             throw err("`++`/`--` has no value and cannot appear in an expression; it must be a standalone statement");
@@ -114,9 +114,9 @@ private:
     std::unique_ptr<Decl> parse_interface();
     std::unique_ptr<FuncDecl> parse_operator_func(TypeSpecPtr ret, bool ret_ref, const Token& tk);
     std::unique_ptr<MethodDecl> parse_method(TypeSpecPtr ret, bool ret_ref, const Token& name_tok);
-    // 接口里的运算符签名：`T operator+(T a, T b);`（无 this）
+    // operator signature in an interface: `T operator+(T a, T b);` (no this)
     std::unique_ptr<MethodDecl> parse_interface_operator(TypeSpecPtr ret, bool ret_ref);
-    // 返回类型：`ref T` / `ref const T` / `T`。`ref` 只在返回位置被消费，不进入通用类型语法。
+    // Return type: `ref T` / `ref const T` / `T`. `ref` is consumed only in return position and never enters the general type syntax.
     TypeSpecPtr parse_return_type(bool& ret_ref);
     std::unique_ptr<CtorDecl> parse_ctor(const Token& name_tok);
     std::unique_ptr<DtorDecl> parse_dtor();
@@ -127,20 +127,20 @@ private:
     std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, bool ret_ref, const Token& tk);
     std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr, bool allow_ref = false);
 
-    // ------------------------------------------------------ 类型
+    // ------------------------------------------------------ types
 
     bool is_type_start(const Token& t) const;
     bool is_module_prefix(const std::string& s) const;
     TypeSpecPtr parse_type();
-    TypeSpecPtr parse_type_base();  // 不含数组后缀（供 `new T[n]` 使用）
+    TypeSpecPtr parse_type_base();  // without array suffixes (used by `new T[n]`)
     TypeSpecPtr type_suffixes(TypeSpecPtr spec, const Token& t);
-    // 泛型：`<T, U: IList<int> & IComparable>`（声明处）与 `<int, long>`（使用处）
+    // generics: `<T, U: IList<int> & IComparable>` (declaration site) and `<int, long>` (use site)
     std::vector<TypeParam> parse_type_params();
     std::vector<std::unique_ptr<TypeSpec>> parse_type_args();
-    // 类型实参嵌套时把词法上的 `>>` 当作两个 `>`（`Vec<Vec<int>>`）
+    // treat a lexical `>>` as two `>` when type arguments nest (`Vec<Vec<int>>`)
     Token expect_gt();
 
-    // ------------------------------------------------------ 语句
+    // ------------------------------------------------------ statements
 
     std::unique_ptr<Block> parse_block();
     std::vector<StmtPtr> parse_stmt();
@@ -152,7 +152,7 @@ private:
     std::unique_ptr<Stmt> parse_for();
     std::unique_ptr<Stmt> parse_switch();
 
-    // ------------------------------------------------------ 表达式
+    // ------------------------------------------------------ expressions
 
     ExprPtr parse_expr() { return parse_ternary(); }
     ExprPtr parse_ternary();
@@ -178,10 +178,10 @@ private:
     std::string filename_;
     std::vector<Token> toks_;
     std::size_t pos_ = 0;
-    int group_counter_ = 0;  // 声明语句分组计数（auto 多声明符一致性检查用）
-    // 已声明的本地类型名（struct / enum），用于消解 `T x` 与表达式的歧义
+    int group_counter_ = 0;  // declaration statement group counter (for the auto multi-declarator consistency check)
+    // known local type names (struct / enum), used to disambiguate `T x` from an expression
     std::unordered_set<std::string> type_names_;
-    // `use` 引入的 unit 名，支持 `math.Point` 这种限定类型
+    // unit names introduced by `use`, enabling qualified types such as `math.Point`
     std::unordered_set<std::string> module_names_;
 };
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 语法分析 —— 语句与函数声明
+// Parsing — statements and function declarations
 #include "parser_impl.hpp"
 
 #include <memory>
@@ -25,7 +25,7 @@ static const std::unordered_set<std::string>& assign_ops() {
 
 }  // namespace muc_detail
 
-// ---------------------------------------------------------------- 函数
+// ---------------------------------------------------------------- functions
 
 std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool allow_ref) {
     expect_op("(");
@@ -46,14 +46,14 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
                 break;
             }
             const Token ptok = peek();
-            // 每个参数必须独立写 `T name`；C 式共享类型（`int a, b`）不合法。
-            // `b` 会被 parse_type 当成类型名、再在 `)` 处报「期望参数名」，因此提前给出明确诊断。
+            // each parameter must be written as `T name` on its own; C-style shared types (`int a, b`) are invalid.
+            // Otherwise `b` is taken as a type name by parse_type and only errors at `)` with "expected parameter name", so diagnose up front.
             if (ptok.kind == TokKind::Ident && (peek(1).is_op(",") || peek(1).is_op(")"))) {
                 throw err_at(
                     "parameter must be written as `type name`; each parameter declares its own type, shared types like `int a, b` are not supported",
                     ptok);
             }
-            // `ref` 参数（借用）：`ref T p` / `ref const T p`。`ref` 是绑定模式，不是类型。
+            // `ref` parameter (borrow): `ref T p` / `ref const T p`. `ref` is a binding mode, not a type.
             bool by_ref = false;
             if (at_kw("ref")) {
                 if (!allow_ref) {
@@ -64,8 +64,8 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
                 by_ref = true;
             }
             TypeSpecPtr spec = parse_type();
-            // `const` 是绑定的只读标记，不进入参数类型（与局部声明一致）：
-            // `const Cat c` / `const int x` 让参数绑定只读；`const int* p` 的 const 在 pointee 上，绑定仍可重绑。
+            // `const` is the read-only marker of the binding and does not enter the parameter type (same as local declarations):
+            // `const Cat c` / `const int x` make the parameter binding read-only; in `const int* p` the const sits on the pointee, so the binding can still be rebound.
             const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
             if (is_const) spec->is_const = false;
             std::string pname = expect_ident("parameter name").text;
@@ -129,12 +129,12 @@ std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global() {
         throw err("`static` has been removed: unit-level variables are private by default; use `public` to share across units");
     }
     TypeSpecPtr spec = parse_type();
-    // C 模型：无后缀的 `const T` 是变量绑定 const；`const T*` 的 const 属于 pointee
+    // C model: a bare `const T` makes the variable binding const; in `const T*` the const belongs to the pointee
     const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
     return parse_global_list(std::move(spec), is_const);
 }
 
-// ---------------------------------------------------------------- 语句
+// ---------------------------------------------------------------- statements
 
 std::unique_ptr<Block> Parser::parse_block() {
     const Token tk = expect_op("{");
@@ -223,7 +223,7 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     if (at_kw("static")) {
         throw err("`static` local variables are not supported in phase 1");
     }
-    // 前缀 ++/--：只能作为独立语句（不产生值）
+    // prefix ++/--: only as a standalone statement (produces no value)
     if (at_op("++", "--")) {
         const Token op = advance();
         ExprPtr target = parse_unary();
@@ -248,12 +248,12 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     if (at_kw("auto")) {
         return parse_local(false, true);
     }
-    // `static` 已从语言移除，但保留明确提示（尤其是函数内旧写法）
+    // `static` has been removed from the language, but keep an explicit hint (especially for the old form inside functions)
     if (t.kind == TokKind::Ident && t.text == "static" &&
         (peek(1).kind == TokKind::Ident || peek(1).kind == TokKind::Kw)) {
         throw err_at("`static` has been removed: local variables do not need it; unit-level variables are private by default, use `public` to share across units", t);
     }
-    // 以类型关键字开头的语句一定是声明：直接按声明解析，让类型错误原样暴露
+    // a statement starting with a type keyword is definitely a declaration: parse it as one so type errors surface as-is
     if (t.kind == TokKind::Kw && is_type_start(t)) {
         return parse_local(false, false);
     }
@@ -261,13 +261,13 @@ std::vector<StmtPtr> Parser::parse_stmt() {
         return parse_local(false, false);
     }
 
-    // `Foo bar;` 但 Foo 不是已知类型：给出更明确的诊断（表达式语句不可能以两个标识符开头）
+    // `Foo bar;` where Foo is not a known type: give a clearer diagnostic (an expression statement cannot start with two identifiers)
     if (t.kind == TokKind::Ident && peek(1).kind == TokKind::Ident) {
         throw err_at("`" + t.text + "` is not a known type (types must be declared before use)", t);
     }
 
     ExprPtr expr = parse_expr();
-    // 后缀 ++/--：只能作为独立语句（不产生值）
+    // postfix ++/--: only as a standalone statement (produces no value)
     if (at_op("++", "--")) {
         const Token op = advance();
         semicolon();
@@ -312,9 +312,9 @@ std::vector<StmtPtr> Parser::parse_stmt() {
 
 bool Parser::looks_like_local_decl() {
     const Token t = peek();
-    // 类型名可能来自其他 unit（`use` 后直接可见），parser 不预先知道，
-    // 因此对任意 Ident 都做一次声明形状试探：`Type name ...`。
-    // 表达式语句不可能以「Ident(.Ident)* Ident」开头，误判方向是安全的。
+    // A type name may come from another unit (directly visible after `use`), which the parser does not know in advance,
+    // so probe the declaration shape `Type name ...` for any Ident.
+    // An expression statement cannot start with `Ident(.Ident)* Ident`, so erring in this direction is safe.
     if (t.kind != TokKind::Ident && !(t.kind == TokKind::Kw && is_type_start(t))) {
         return false;
     }
@@ -345,7 +345,7 @@ std::vector<StmtPtr> Parser::parse_local(bool is_const, bool is_auto) {
         throw err_at("`ref` is a binding mode, not a type: a variable cannot be declared as `ref T`", peek());
     }
     if (!is_auto) spec = parse_type();
-    // C 模型：无后缀的 `const T` 是变量绑定 const；`const T*` 的 const 属于 pointee
+    // C model: a bare `const T` makes the variable binding const; in `const T*` the const belongs to the pointee
     if (spec && spec->kind == TypeSpec::K::Named && spec->is_const) is_const = true;
     const int gid = ++group_counter_;
 
@@ -431,7 +431,7 @@ std::unique_ptr<Stmt> Parser::parse_if() {
     StmtPtr els;
     if (at_kw("elif")) {
         advance();
-        // 复用 if 的解析：把刚消费的 `elif` 改写成 `if`
+        // reuse the if parser: rewrite the just-consumed `elif` as `if`
         --pos_;
         Token if_tok;
         if_tok.kind = TokKind::Kw;

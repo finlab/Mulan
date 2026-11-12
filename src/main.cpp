@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// muc 命令行入口
+// muc command-line entry point
 #if defined(_WIN32)
 #  ifndef NOMINMAX
 #    define NOMINMAX
@@ -55,12 +55,12 @@ Environment:
   MUC_BACKEND      default backend (llvm only)
 )";
 
-// ---------------------------------------------------------------- 控制台编码
+// ---------------------------------------------------------------- console encoding
 //
-// Windows 控制台默认使用本地代码页（简体中文是 936/GBK），而源码里的中文
-// 消息以 UTF-8 存放。直接写 stdout 时控制台按 GBK 解释这些字节，中文会变成
-// 乱码。这里在启动时把控制台输出代码页切到 UTF-8，退出时恢复原值，以免影响
-// 同一窗口里的其它命令；输出被重定向到文件时字节不变，仍是 UTF-8。
+// The Windows console defaults to the local code page (936/GBK for Simplified Chinese), while Chinese
+// messages in the source are stored as UTF-8. When written straight to stdout, the console interprets those bytes as
+// GBK and Chinese turns into mojibake. So switch the console output code page to UTF-8 at startup and restore the
+// original value on exit, to avoid affecting other commands in the same window; when output is redirected to a file the bytes are unchanged and still UTF-8.
 #if defined(_WIN32)
 static UINT g_saved_console_cp = 0;
 
@@ -81,8 +81,8 @@ static void enableUtf8Console() {}
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
 
-// Windows 上 std::system 经 cmd.exe 解析：正斜杠路径会被当成参数分隔而无法执行，
-// 因此传给 shell 前统一转成反斜杠（gcc 两种写法都接受）。
+// On Windows std::system is parsed by cmd.exe: forward-slash paths are treated as argument separators and cannot execute,
+// so convert them to backslashes before passing to the shell (gcc accepts both forms).
 static std::string native_path(std::string p) {
 #ifdef _WIN32
     for (char& c : p)
@@ -121,7 +121,7 @@ static void dump_expr(const Expr* e, int ind) {
     if (!e) return;
     std::string pad(ind * 2, ' ');
     std::string name = typeid(*e).name();
-    // gcc 的 typeid 名字带前缀，截取可读部分
+    // gcc's typeid names carry a prefix; keep only the readable part
     auto pos = name.find_last_of("0123456789");
     if (pos != std::string::npos && pos + 1 < name.size()) name = name.substr(pos + 1);
 
@@ -271,7 +271,7 @@ static void dump(const Node* n, int ind) {
     std::cout << pad << "(node)\n";
 }
 
-// ---------------------------------------------------------------- 命令
+// ---------------------------------------------------------------- commands
 
 struct BuildArgs {
     std::string entry;

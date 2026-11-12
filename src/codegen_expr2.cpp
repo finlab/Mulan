@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含表达式代码生成（调用、new、向下转换、eval 与 sizeof 类型解析）（Emitter 成员函数定义）。
+// This file contains expression code generation (calls, new, downcasts, eval and sizeof type resolution) (Emitter member function definitions).
 
 #include "codegen_impl.hpp"
 
@@ -9,7 +9,7 @@ namespace muc_detail {
 
 using ArgPack = Emitter::ArgPack;
 
-    // 方法调用（recv 约定：class = 句柄值；struct = 对象地址）
+    // Method call (recv convention: class = handle value; struct = object address)
     Value* Emitter::emitMethodCallVals(const MethodSig* sig, Value* recv, const TypePtr& recvTy,
                                        const std::vector<Value*>& args, Node* at) {
         std::vector<LType*> ptys{ptrTy()};
@@ -30,7 +30,7 @@ using ArgPack = Emitter::ArgPack;
                 obj = b.CreateExtractValue(recv, {0});
                 dsc = b.CreateExtractValue(recv, {1});
             } else {
-                // 类变量上调用接口默认方法：现场构造接口值
+                // calling an interface default method on a class value: construct the interface value on the spot
                 obj = recv;
                 Value* dpp = b.CreateGEP(i8(), recv, ConstantInt::get(i64(), 8));
                 dsc = b.CreateLoad(ptrTy(), dpp);
@@ -59,14 +59,14 @@ using ArgPack = Emitter::ArgPack;
             vals.insert(vals.end(), args.begin(), args.end());
             return b.CreateCall(fnTy, fn, vals);
         }
-        // 未进虚表：静态调用声明处实现
+        // not in the vtable: statically call the implementation at the declaration site
         FunctionCallee callee = methodFn(sig);
         std::vector<Value*> vals{recv};
         vals.insert(vals.end(), args.begin(), args.end());
         return b.CreateCall(callee, vals);
     }
 
-    // 用户 operator[]（自由函数）：容器按 class 句柄 / struct 地址 / struct 值传参
+    // User-defined operator[] (free function): the container is passed as a class handle / struct address / struct value
     Value* Emitter::emitOperatorIndexCall(FuncDecl* f, Value* seqAddr, const TypePtr& sty, Value* idxVal,
                                           bool unaligned) {
         std::vector<LType*> ptys;
@@ -77,7 +77,7 @@ using ArgPack = Emitter::ArgPack;
         Value* cArg = nullptr;
         const bool recv_ref = !f->pty_ref.empty() && f->pty_ref[0];
         if (recv_ref) {
-            cArg = seqAddr;  // 借用接收者：直接把容器地址传进去
+            cArg = seqAddr;  // borrowed receiver: pass the container address in directly
         } else if (sty->kind == TypeKind::Class) {
             cArg = b.CreateLoad(lt(sty), seqAddr);
         } else if (!f->pty.empty() && f->pty[0] && f->pty[0]->kind == TypeKind::Ptr) {
@@ -88,7 +88,7 @@ using ArgPack = Emitter::ArgPack;
         return b.CreateCall(callee, {cArg, idxVal});
     }
 
-    // 调用自由函数/运算符/方法（静态派发）
+    // Call a free function / operator / method (static dispatch)
     Value* Emitter::emitUserCall(FuncDecl* f, const std::vector<Expr*>& args) {
         std::vector<LType*> ptys;
         for (size_t i = 0; i < f->pty.size(); ++i)
@@ -98,7 +98,7 @@ using ArgPack = Emitter::ArgPack;
         ArgPack pack;
         for (size_t i = 0; i < args.size() && i < f->pty.size(); ++i) {
             if (i < f->pty_ref.size() && f->pty_ref[i]) {
-                pack.vals.push_back(addrOf(args[i]));  // 借用：callee 不拥有，调用后不清理
+                pack.vals.push_back(addrOf(args[i]));  // borrow: the callee does not own it, no cleanup after the call
                 continue;
             }
             Value* v = coerce(args[i], f->pty[i]);
@@ -129,14 +129,14 @@ using ArgPack = Emitter::ArgPack;
         uint64_t sz = objectSize(cls);
         Value* p = nullptr;
         if (classNeedsAlignedAlloc(cls)) {
-            // _aligned_malloc(size, alignment)：对象对齐超过 malloc 的 16 字节保证（对应 _aligned_free）
+            // _aligned_malloc(size, alignment): the object alignment exceeds malloc's 16-byte guarantee (paired with _aligned_free)
             p = b.CreateCall(libFn("_aligned_malloc", ptrTy(), {i64(), i64()}),
                              {ConstantInt::get(i64(), sz),
                               ConstantInt::get(i64(), objectAlign(cls))});
         } else {
             p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {ConstantInt::get(i64(), sz)});
         }
-        // 分配失败直接 abort（语言无异常）
+        // abort directly on allocation failure (the language has no exceptions)
         BasicBlock* okBB = BasicBlock::Create(ctx, "new.ok", curFn);
         BasicBlock* failBB = BasicBlock::Create(ctx, "new.fail", curFn);
         b.CreateCondBr(b.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), failBB, okBB);
@@ -169,7 +169,7 @@ using ArgPack = Emitter::ArgPack;
             b.CreateCall(callee, vals);
             releaseTemps(pack);
         } else {
-            // 隐式默认构造：调用最近祖先声明的无参构造器（它会继续链式调用自己的基类）
+            // implicit default construction: call the parameterless constructor declared by the nearest ancestor (it keeps chaining to its own base class)
             TypePtr b0 = cls->base;
             while (b0 && b0->kind == TypeKind::Class) {
                 if (!b0->ctors.empty()) {
@@ -187,7 +187,7 @@ using ArgPack = Emitter::ArgPack;
                 }
                 b0 = b0->base;
             }
-            storeDesc();  // 祖先构造器可能改写了 desc，恢复为最终类型
+            storeDesc();  // the ancestor constructor may have overwritten desc, restore it to the final type
         }
         return p;
     }
@@ -301,7 +301,7 @@ using ArgPack = Emitter::ArgPack;
                 releaseTemps(pack);
                 return r;
             }
-            // super(...)：调用基类构造器，然后恢复派生类的 desc
+            // super(...): call the base class constructor, then restore the derived class's desc
             TypePtr base = curClassTy ? curClassTy->base : nullptr;
             if (!base || base->kind != TypeKind::Class)
                 fail("LLVM backend: super(...) has no base class", c->line, c->col);
@@ -329,7 +329,7 @@ using ArgPack = Emitter::ArgPack;
             }
             return nullptr;
         }
-        // 普通函数调用
+        // ordinary function call
         FuncDecl* f = c->func;
         if (!f) fail("LLVM backend: call is missing its target function", c->line, c->col);
         std::vector<Expr*> rawArgs;
@@ -337,12 +337,12 @@ using ArgPack = Emitter::ArgPack;
         return emitUserCall(f, rawArgs);
     }
 
-    // 块是否已有终结指令（getTerminator 在空块上会断言）
+    // whether the block already has a terminator instruction (getTerminator asserts on an empty block)
     bool Emitter::hasTerm(BasicBlock* bb) {
         return bb && !bb->empty() && bb->back().isTerminator();
     }
 
-    // 引用类型向下/向上转换（运行期检查 desc 链；失败得 null）
+    // Downcast/upcast of reference types (checks the desc chain at runtime; yields null on failure)
     Value* Emitter::emitDowncast(Value* src, const TypePtr& from, const TypePtr& to) {
         Value* obj = (from->kind == TypeKind::Interface) ? b.CreateExtractValue(src, {0}) : src;
         AllocaInst* res = entryAlloca(ptrTy(), "cast.res");
@@ -388,7 +388,7 @@ using ArgPack = Emitter::ArgPack;
             if (isRefKind(e->ty)) return Constant::getNullValue(lt(e->ty));
             if (e->ty && e->ty->kind == TypeKind::Null) return Constant::getNullValue(ptrTy());
             LType* ty = lt(e->ty);
-            // 整数字面量按上下文适配到浮点类型（SPEC §3.6）
+            // integer literals adapt to the float type according to context (SPEC §3.6)
             if (e->ty && e->ty->kind == TypeKind::Prim && e->ty->is_float())
                 return ConstantFP::get(ty, static_cast<double>(v->value));
             return ConstantInt::get(cast<IntegerType>(ty), static_cast<uint64_t>(v->value),
@@ -481,7 +481,7 @@ using ArgPack = Emitter::ArgPack;
         }
         if (auto v = dynamic_cast<NewExpr*>(e)) return evalNew(v);
         if (auto v = dynamic_cast<SizeofExpr*>(e)) {
-            // resolve spec via sema 已写入 e->ty=usize；尺寸需要类型本身：由 spec 推断
+            // resolve spec via sema has already written e->ty=usize; the size needs the type itself: inferred from the spec
             TypePtr t = specType(v->spec.get());
             uint64_t n = v->which == "alignof" ? alignOf(t) : sizeOf(t);
             return ConstantInt::get(i64(), n);
@@ -527,7 +527,7 @@ using ArgPack = Emitter::ArgPack;
         fail("LLVM backend: unknown expression", e->line, e->col);
     }
 
-    // sizeof/alignof 的 TypeSpec 解析（只依赖已解析的类型模型）
+    // TypeSpec resolution for sizeof/alignof (depends only on the resolved type model)
     TypePtr Emitter::specType(TypeSpec* spec) {
         if (!spec) return nullptr;
         curSpecUnitFix();

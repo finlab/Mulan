@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含动态数组、weak 注册表与局部引用清理（Emitter 成员函数定义）。
+// This file contains dynamic arrays, the weak registry and local reference cleanup (Emitter member function definitions).
 
 #include "codegen_impl.hpp"
 
 namespace muc_detail {
 
-    // ------------------------------------------------------------ 动态数组（T[] / T[,]）
-    // rank 1：{ i64 rc; i64 len; i64 cap; data... }
-    // rank r≥2：{ i64 rc; i64 d0; ... d(r-1); data... }
+    // ------------------------------------------------------------ dynamic arrays (T[] / T[,])
+    // rank 1: { i64 rc; i64 len; i64 cap; data... }
+    // rank r>=2: { i64 rc; i64 d0; ... d(r-1); data... }
 
     uint64_t Emitter::sliceDataOffset(int rank) {
         return rank <= 1 ? 24 : 8ULL * (1 + rank);
@@ -23,7 +23,7 @@ namespace muc_detail {
         return b.CreateLoad(i64(), b.CreateGEP(i8(), h, ConstantInt::get(i64(), 8ULL * (1 + axis))));
     }
 
-    // 元素总数（rank1 用 len，rank≥2 用各维乘积）
+    // total element count (rank 1 uses len, rank >= 2 uses the product of the dimensions)
     Value* Emitter::sliceTotalCount(Value* h, int rank) {
         if (rank <= 1) return sliceDimField(h, 0);
         Value* total = sliceDimField(h, 0);
@@ -31,7 +31,7 @@ namespace muc_detail {
         return total;
     }
 
-    // len(a, k)：null 句柄为 0；k 为编译期常量
+    // len(a, k): a null handle yields 0; k is a compile-time constant
     Value* Emitter::emitSliceDim(Value* h, int axis) {
         BasicBlock* nullBB = BasicBlock::Create(ctx, "alen.null", curFn);
         BasicBlock* okBB = BasicBlock::Create(ctx, "alen.ok", curFn);
@@ -49,7 +49,7 @@ namespace muc_detail {
         return phi;
     }
 
-    // len(a, k)：k 为运行期表达式（带越界检查）
+    // len(a, k): k is a runtime expression (with an out-of-bounds check)
     Value* Emitter::emitSliceDimDynamic(Value* h, Value* axis, int rank) {
         BasicBlock* checkBB = BasicBlock::Create(ctx, "adyn.check", curFn);
         BasicBlock* nullBB = BasicBlock::Create(ctx, "adyn.null", curFn);
@@ -76,7 +76,7 @@ namespace muc_detail {
         return phi;
     }
 
-    // 元素总数（null 句柄为 0）
+    // total element count (a null handle yields 0)
     Value* Emitter::emitSliceTotal(Value* h, int rank) {
         if (rank <= 1) return emitSliceDim(h, 0);
         BasicBlock* nullBB = BasicBlock::Create(ctx, "atot.null", curFn);
@@ -96,7 +96,7 @@ namespace muc_detail {
         return phi;
     }
 
-    // 分配动态数组并清零；dims 为各维尺寸
+    // Allocate a dynamic array and zero it; dims holds the size of each dimension
     Value* Emitter::emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem) {
         int rank = static_cast<int>(dims.size());
         uint64_t es = sizeOf(elem);
@@ -121,7 +121,7 @@ namespace muc_detail {
                           b.CreateGEP(i8(), h, ConstantInt::get(i64(), 8ULL * (1 + i))));
         }
         if (rank == 1) {
-            // 预留 cap，便于将来 append 扩容
+            // reserve cap, to make a future append growth easier
             b.CreateStore(dims[0],
                           b.CreateGEP(i8(), h, ConstantInt::get(i64(), 16)));
         }
@@ -134,7 +134,7 @@ namespace muc_detail {
 
     void Emitter::emitSliceRetain(Value* h) { emitRetain(h); }
 
-    // 元素释放函数：逐一 release 元素（如有引用），然后 free 头部
+    // element release function: release the elements one by one (when they hold references), then free the header
     Function* Emitter::ensureSliceFree(const TypePtr& elem, int rank) {
         std::string key = type_code(elem) + "#" + std::to_string(rank);
         for (auto& ch : key)
@@ -197,7 +197,7 @@ namespace muc_detail {
         b.SetInsertPoint(doneBB);
     }
 
-    // 定长数组 -> 动态数组（按嵌套维度复制；元素含引用时逐元素 retain）
+    // fixed-size array -> dynamic array (copied by nested dimension; when elements hold references, retain each element)
     Value* Emitter::emitDynArrayFromArray(Value* arrAddr, const TypePtr& arrTy,
                                           const TypePtr& dstTy) {
         std::vector<uint64_t> dims;
@@ -214,7 +214,7 @@ namespace muc_detail {
         }
         Value* h = emitSliceAlloc(dv, base);
         Value* dst = sliceDataPtr(h, static_cast<int>(dims.size()));
-        Value* src = arrAddr;  // 数组包装 struct 的唯一字段在偏移 0
+        Value* src = arrAddr;  // the only field of the array wrapper struct is at offset 0
         if (base->needs_cleanup()) {
             for (uint64_t i = 0; i < total; ++i) {
                 Value* d = b.CreateGEP(lt(base), dst, ConstantInt::get(i64(), i));
@@ -228,7 +228,7 @@ namespace muc_detail {
         return h;
     }
 
-    // ------------------------------------------------------------ weak 注册表
+    // ------------------------------------------------------------ weak registry
     GlobalVariable* Emitter::weakHeadGlobal() { return mod->getNamedGlobal("mu_weak_head"); }
     GlobalVariable* Emitter::weakLockGlobal() { return mod->getNamedGlobal("mu_weak_lock"); }
 
@@ -405,7 +405,7 @@ namespace muc_detail {
         return fn;
     }
 
-    // 写 weak 字段：先注销旧登记，存储新值，非空则登记到目标对象
+    // Write a weak field: unregister the old registration first, store the new value, and register it with the target object if it is non-null
     void Emitter::emitWeakStore(Value* addr, Value* val) {
         b.CreateCall(ensureWeakUnreg(), {addr});
         b.CreateStore(val, addr);
@@ -422,7 +422,7 @@ namespace muc_detail {
         return t && (t->kind == TypeKind::Class || t->kind == TypeKind::Interface);
     }
 
-    // 引用值（class 句柄或 interface 值）里的对象指针
+    // the object pointer inside a reference value (a class handle or an interface value)
     Value* Emitter::refObj(Value* v, const TypePtr& ty) {
         if (ty && ty->kind == TypeKind::Interface) return b.CreateExtractValue(v, {0});
         return v;
@@ -446,8 +446,8 @@ namespace muc_detail {
         }
     }
 
-    // ------------------------------------------------------------ 局部引用清理
-    // 值的生命周期里是否需要 RC 清理（含递归的 struct/array 字段）
+    // ------------------------------------------------------------ local reference cleanup
+    // whether the value's lifetime needs RC cleanup (including recursive struct/array fields)
     bool Emitter::needsCleanup(const TypePtr& t) {
         return t && t->needs_cleanup();
     }
@@ -480,7 +480,7 @@ namespace muc_detail {
         refScopes.pop_back();
     }
 
-    // 跳出当前块/循环前释放内层作用域的引用
+    // release the references of inner scopes before leaving the current block/loop
     void Emitter::releaseScopesDeeperThan(size_t depth) {
         if (depth >= refScopes.size()) return;
         for (size_t i = refScopes.size(); i > depth; --i) {
@@ -489,7 +489,7 @@ namespace muc_detail {
         }
     }
 
-    // 语句内物化的 owned 动态数组临时值：语句结束时释放
+    // owned dynamic array temporaries materialized inside a statement: released at the end of the statement
     void Emitter::trackOwnedSliceTemp(Expr* e, Value* v, const TypePtr& ty) {
         if (!ty || ty->kind != TypeKind::Slice || !valueOwned(e)) return;
         auto* tmp = entryAlloca(lt(ty), "owned.tmp", alignOf(ty));
@@ -497,7 +497,7 @@ namespace muc_detail {
         stmtTemps.emplace_back(tmp, ty);
     }
 
-    // owned 的 Str 右值：物化到语句临时并在语句结束释放 owner
+    // owned Str rvalue: materialized into a statement temporary, with the owner released at the end of the statement
     Value* Emitter::evalStrValue(Expr* e) {
         Value* v = eval(e);
         if (valueOwned(e)) {
@@ -515,7 +515,7 @@ namespace muc_detail {
         }
     }
 
-    // 释放语句执行期间物化的 owned 右值（从 mark 之后注册的），保持逆序
+    // Release the owned rvalues materialized during statement execution (those registered after mark), keeping reverse order
     void Emitter::destroyTempsFrom(size_t mark) {
         if (stmtTemps.size() <= mark) return;
         for (size_t i = stmtTemps.size(); i > mark; --i) {
@@ -524,27 +524,27 @@ namespace muc_detail {
         stmtTemps.resize(mark);
     }
 
-    // 表达式是否已经持有一份可转移的强引用（new / 返回 class 引用的调用）
+    // whether the expression already holds a transferable strong reference (new / a call returning a class reference)
     bool Emitter::ownsReference(Expr* e) {
         if (!e || !isRefKind(e->ty)) return false;
         return valueOwned(e);
     }
 
-    // 表达式结果是否已持有一份可转移的强引用（不限于 class 句柄，也用于引用数组）
+    // whether the expression result already holds a transferable strong reference (not limited to class handles; also used for reference arrays)
     bool Emitter::valueOwned(Expr* e) {
         if (!e) return false;
         if (dynamic_cast<NewExpr*>(e)) return true;
         if (dynamic_cast<Call*>(e)) return true;
         if (auto b = dynamic_cast<Binary*>(e); b && b->op_func) return true;
-        if (dynamic_cast<Ternary*>(e)) return true;  // 结果槽已按 owned 语义物化
+        if (dynamic_cast<Ternary*>(e)) return true;  // the result slot is already materialized with owned semantics
         if (auto u = dynamic_cast<Unary*>(e); u && u->op_func) return true;
         if (auto ix = dynamic_cast<Index*>(e); ix && ix->get_func) return true;
         if (auto c = dynamic_cast<Cast*>(e)) return valueOwned(c->expr.get());
         return false;
     }
 
-    // 表达式结果在目标类型下是否已持有一份可转移的所有权。
-    // 定长数组 -> 动态数组的转换会在 coerce 里新建数组，因此也算 owned。
+    // whether the expression result already holds a transferable ownership under the target type.
+    // A fixed-size array -> dynamic array conversion allocates a new array in coerce, so it counts as owned too.
     bool Emitter::convOwns(Expr* e, const TypePtr& dst) {
         if (dst && dst->kind == TypeKind::Slice && e && e->ty &&
             e->ty->kind == TypeKind::Array) {
@@ -553,9 +553,9 @@ namespace muc_detail {
         return valueOwned(e);
     }
 
-    // 返回 class 引用时把借用变成一份新的强引用
+    // Turn a borrow into a new strong reference when returning a class reference
     Value* Emitter::prepareReturn(Expr* e) {
-        // `ref T f()`：返回的是元素地址（借用），不拷贝也不 retain
+        // `ref T f()`: the element address (a borrow) is returned, neither copied nor retained
         if (is_borrow_type(curRetTy)) return addrOf(e);
         Value* v = coerce(e, curRetTy);
         if (isRefKind(curRetTy)) {
@@ -570,7 +570,7 @@ namespace muc_detail {
             return b.CreateLoad(lt(curRetTy), tmp);
         }
         if (curRetTy && curRetTy->kind == TypeKind::Struct && needsCleanup(curRetTy)) {
-            // 返回值按 owned 转移：借用值先逐字段 retain，局部随后在 releaseAllScopes 释放
+            // the return value transfers as owned: a borrowed value is retained field by field first, and the local is released later in releaseAllScopes
             if (valueOwned(e)) return v;
             auto* tmp = entryAlloca(lt(curRetTy), "ret.struct", alignOf(curRetTy));
             b.CreateStore(v, tmp);

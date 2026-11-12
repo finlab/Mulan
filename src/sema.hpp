@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 语义分析
+// Semantic analysis
 #pragma once
 
 #include <memory>
@@ -28,7 +28,7 @@ struct UnitInfo {
     std::unordered_map<std::string, EnumDecl*> enums;
     std::unordered_map<std::string, ClassDecl*> classes;
     std::unordered_map<std::string, InterfaceDecl*> interfaces;
-    std::unordered_map<std::string, TypeAliasDecl*> aliases;  // 类型别名（type A = B;）
+    std::unordered_map<std::string, TypeAliasDecl*> aliases;  // type alias (type A = B;)
 };
 
 struct Program {
@@ -39,8 +39,8 @@ struct Program {
 
 std::string mangle(const std::string& unit, const std::string& name);
 
-// 失败时抛 SemaError
+// Throws SemaError on failure
 Program analyze(std::vector<std::unique_ptr<Unit>> units, const std::string& entry);
 
-// 供 codegen 使用：把 Type 转成 Mulan 源码写法
+// For codegen: convert a Type into Mulan source syntax
 std::string type_str(const TypePtr& t);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含 表达式类型检查（Sema 成员函数定义）。
+// This file holds expression type checking (definitions of Sema members).
 #include "sema_impl.hpp"
 
 namespace muc_detail {
@@ -20,7 +20,7 @@ namespace muc_detail {
                 return expected;
             }
             if (il->value >= -(1LL << 31) && il->value < (1LL << 31)) return t_int();
-            // long long 本身已在 int64 范围内；超出 64 位由 lexer/parser 报错
+            // long long is already within the int64 range; anything beyond 64 bits is reported by the lexer/parser
             return Type::make_prim("long");
         }
 
@@ -37,7 +37,7 @@ namespace muc_detail {
                 expected->bits() == 8) {
                 return expected;
             }
-            return Type::make_prim("byte");  // 字符字面量默认是字节
+            return Type::make_prim("byte");  // a character literal is a byte by default
         }
         if (dynamic_cast<StringLit*>(e)) return str_type();
         if (dynamic_cast<BoolLit*>(e)) return t_bool();
@@ -216,7 +216,7 @@ namespace muc_detail {
                 e->field_index = cur_class_->field_index(e->ident);
                 return ft;
             }
-            // 类型级常量：在声明它的类型（及其派生类）的方法体内可裸写
+            // Type-level constant: may be written bare inside methods of the declaring type (and its derived classes)
             if (ConstMember* cm = find_const_member_in(cur_class_, e->ident)) {
                 if (!const_member_visible(cm)) {
                     err("const member `" + cm->name + "` is not declared public (type `" +
@@ -245,7 +245,7 @@ namespace muc_detail {
             return ec->ty;
         }
 
-        // 从直接 use 的 unit 导入（符号直接可见；多个来源同名时报歧义要求限定名）
+        // Imported from directly `use`d units (symbols are directly visible; a name from several sources is an ambiguity error requiring a qualified name)
         GlobalVar* imp_g = nullptr;
         std::string imp_g_unit;
         EnumConst* imp_ec = nullptr;
@@ -329,7 +329,7 @@ namespace muc_detail {
             }
         }
 
-        // 枚举限定引用：`Color.Red` / `unit.Color.Red`
+        // Enum-qualified reference: `Color.Red` / `unit.Color.Red`
         {
             Expr* base = e->obj.get();
             TypePtr et;
@@ -377,7 +377,7 @@ namespace muc_detail {
                 if (et->kind == TypeKind::Struct || et->kind == TypeKind::Class) {
                     ConstMember* cm = find_const_member_in(et, e->name);
                     if (!cm) {
-                        // 类型完全没有类型级常量时保持旧的「不是枚举」诊断
+                        // Keep the old "not an enum" diagnostic when the type has no type-level constants at all
                         if (!has_any_const_member(et)) {
                             err("`" + et->str() +
                                     "` is not an enum and cannot be referenced as `Type.Member`",
@@ -402,7 +402,7 @@ namespace muc_detail {
         if (ot && (ot->kind == TypeKind::Struct || ot->kind == TypeKind::Class)) {
             TypePtr ft = ot->field_type(e->name);
             if (!ft) {
-                // 类型级常量不占实例内存：obj.Name / this.Name 一律拒绝，提示改用 Type.Name
+                // Type-level constants do not occupy instance memory: obj.Name / this.Name is always rejected, suggesting Type.Name instead
                 if (find_const_member_in(ot, e->name)) {
                     err("const member `" + e->name + "` must be accessed as `" + ot->name + "." +
                             e->name + "` (const members do not occupy instance memory)",
@@ -444,8 +444,8 @@ namespace muc_detail {
             if (auto n = dynamic_cast<Name*>(e->operand.get()); n && n->kind == "const_member") {
                 err("const members are not addressable", e);
             }
-            // U21：RC 生命周期无法用裸指针表达——禁止对 class/interface 句柄、
-            // 以及经引用访问的成员/数组元素取地址（`&c`、`&c.x`、`&h.items[0]`、`&catArray[i]`）。
+            // U21: the RC lifetime cannot be expressed with a raw pointer — taking the address of class/interface handles,
+            // or of members/array elements reached through a reference, is forbidden (`&c`, `&c.x`, `&h.items[0]`, `&catArray[i]`).
             if (is_reference_type(t)) {
                 err("cannot take the address of a class or interface reference (`" + t->str() +
                         "`): its RC lifetime cannot be expressed with a raw pointer",
@@ -456,8 +456,8 @@ namespace muc_detail {
                     "use it, then assign it back (backlog U21)",
                     e);
             }
-            // U24：含引用字段的 struct 由编译器逐字段 RC；裸指针可绕过 retain/release
-            // （也能把弱引用/字段地址带到生命周期之外），第一阶段禁止取址。
+            // U24: a struct with reference fields is RC-managed field by field by the compiler; a raw pointer could bypass retain/release
+            // (and could also carry a weak reference or field address beyond the lifetime), so taking its address is forbidden in the first stage.
             if (t && t->kind == TypeKind::Struct && has_ref_fields(t) && !t->has_dtor) {
                 err("cannot take the address of struct `" + t->str() +
                         "` which has reference fields: a raw pointer could bypass RC (backlog U24); pass or return it by value, or use a class"
@@ -469,7 +469,7 @@ namespace muc_detail {
 
         TypePtr t = check_expr(e->operand.get());
 
-        // 枚举不是算术类型：一元运算（`~`/`-`/`+`）需要显式 `as int`
+        // An enum is not an arithmetic type: unary operations (`~`/`-`/`+`) require an explicit `as int`
         if (is_enum_t(t) && (e->op == "~" || e->op == "-" || e->op == "+")) {
             err("enum `" + t->str() + "` does not support unary `" + e->op + "` (write `x as int`)", e);
         }
@@ -524,7 +524,7 @@ namespace muc_detail {
             err("the condition of `?:` must be `bool`, found " + (ct ? ct->str() : "void"),
                 e->cond.get());
         }
-        // 期望类型透传给两个分支：字面量按上下文适配（`char c = pick ? 'a' : 'b';`）
+        // The expected type is passed through to both arms: literals adapt to the context (`char c = pick ? 'a' : 'b';`)
         TypePtr a = check_expr(e->then_e.get(), expected);
         TypePtr b = check_expr(e->else_e.get(), expected);
         if (!a || !b) err("`?:` is missing a branch expression", e);
@@ -533,7 +533,7 @@ namespace muc_detail {
         a = e->then_e->ty;
         b = e->else_e->ty;
 
-        // null 字面量适配到另一侧（指针 / class / interface / 动态数组）
+        // A null literal adapts to the other side (pointer / class / interface / dynamic array)
         auto null_target = [](const TypePtr& t) {
             return t && (t->kind == TypeKind::Ptr || t->kind == TypeKind::Class ||
                          t->kind == TypeKind::Interface || t->kind == TypeKind::Slice);
@@ -586,7 +586,7 @@ namespace muc_detail {
             }
         }
 
-        // 枚举是名义类型：只与同一枚举类型比较；与整数之间没有隐式转换（双向都要 `as`）
+        // An enum is a nominal type: only comparable with the same enum type; there is no implicit conversion to or from integers (`as` is required in both directions)
         if (is_enum_t(lt) || is_enum_t(rt)) {
             if (!(is_enum_t(lt) && is_enum_t(rt)) || !same_type(lt, rt)) {
                 const TypePtr& en = is_enum_t(lt) ? lt : rt;
@@ -669,7 +669,7 @@ namespace muc_detail {
                 (is_prim(lt) && lt->name == "bool" && same_type(rt, lt))) {
                 return t_bool();
             }
-            // 引用类型之间：可相互转换（基类/接口）即可做身份比较
+            // Between reference types: identity comparison is allowed when they are convertible to each other (base class/interface)
             if (is_reference_type(lt) && is_reference_type(rt) &&
                 (implicitly_convertible(lt, rt) || implicitly_convertible(rt, lt))) {
                 return t_bool();
@@ -710,7 +710,7 @@ namespace muc_detail {
     void Sema::adapt_lit(Expr* e, const TypePtr& self_ty, const TypePtr& other) {
         (void)self_ty;
         if (auto cl = dynamic_cast<CharLit*>(e)) {
-            // 字符字面量是字节：按对端的 8 位整数类型适配（char/byte）
+            // A character literal is a byte: it adapts to the 8-bit integer type on the other side (char/byte)
             if (is_prim(other) && other->is_integer() && other->bits() == 8) {
                 cl->ty = other;
             }
@@ -726,18 +726,18 @@ namespace muc_detail {
     bool Sema::can_cast(const TypePtr& src, const TypePtr& dst) {
         if (!src || !dst) return false;
         if (same_type(src, dst)) return true;
-        // 枚举是名义类型：只与整数（非枚举）显式互转，且不与浮点互换
+        // An enum is a nominal type: explicit conversion only with integers (non-enum), and never with floating point
         if (src->kind == TypeKind::Enum || dst->kind == TypeKind::Enum) {
             if (src->kind == TypeKind::Enum && dst->kind == TypeKind::Enum) return false;
             return src->kind == TypeKind::Enum ? is_plain_int(dst) : is_plain_int(src);
         }
         if (is_numeric(src) && is_numeric(dst)) return true;
-        // 引用类型：向上/向下转换（向下在运行期检查，失败得 null）
+        // Reference types: upcast/downcast (downcasts are checked at run time and yield null on failure)
         if (is_class_type(src) && is_class_type(dst)) {
             return is_subclass_of(src, dst) || is_subclass_of(dst, src);
         }
         if (is_interface_type(src) && is_interface_type(dst)) {
-            return implements_interface(src, dst);  // 仅向上；向下暂缓
+            return implements_interface(src, dst);  // upcast only; downcast is deferred
         }
         if (is_interface_type(src) && is_class_type(dst)) return true;
         if (src->kind == TypeKind::Ptr && dst->kind == TypeKind::Ptr) return true;
@@ -749,7 +749,7 @@ namespace muc_detail {
         if (is_str(src) && dst->kind == TypeKind::Ptr && dst->elem &&
             dst->elem->is_const &&
             dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
-            return true;  // Str -> readonly char*/byte*（要求 NUL 结尾）
+            return true;  // Str -> readonly char*/byte* (requires NUL termination)
         }
         return false;
     }

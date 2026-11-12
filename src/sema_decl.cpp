@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含 字段/工具/可见性/收集/签名检查/布局修饰符（Sema 成员函数定义）。
+// This file holds fields/utilities/visibility/collection/signature checks/layout modifiers (definitions of Sema members).
 #include "sema_impl.hpp"
 
 namespace muc_detail {
@@ -49,7 +49,7 @@ namespace muc_detail {
         if (is_str(src) && dst && dst->kind == TypeKind::Ptr && dst->elem &&
             dst->elem->is_const &&
             dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
-            return true;  // Str -> readonly char*/byte*（NUL 结尾）
+            return true;  // Str -> readonly char*/byte* (NUL terminated)
         }
         return implicitly_convertible(src, dst);
     }
@@ -87,7 +87,7 @@ namespace muc_detail {
     bool Sema::type_is_public(const TypePtr& t) const {
         if (!t) return true;
         auto it = infos_.find(t->unit);
-        if (it == infos_.end()) return true;  // 内建类型
+        if (it == infos_.end()) return true;  // built-in type
         const UnitInfo& ui = it->second;
         switch (t->kind) {
             case TypeKind::Struct: {
@@ -122,8 +122,8 @@ namespace muc_detail {
     }
 
     void Sema::collect() {
-        // 第一阶段：泛型模板只保留、不参与常规检查（移到 Unit::templates）。
-        // 这让「声明可以写、使用报未实现」成为稳定状态，且不影响非泛型代码。
+        // First stage: generic templates are only kept and do not take part in regular checks (moved to Unit::templates).
+        // This makes "declarations accepted, use reports not implemented" a stable state and does not affect non-generic code.
         for (auto& u : units_) {
             std::vector<std::unique_ptr<Decl>> keep;
             std::vector<std::unique_ptr<Decl>> tmpl;
@@ -178,7 +178,7 @@ namespace muc_detail {
                 }
             }
 
-            // 同域名字不能跨类别冲突
+            // Names in the same scope must not clash across categories
             std::unordered_map<std::string, Node*> names;
             for (auto& d : u->decls) {
                 Node* node = d.get();
@@ -310,8 +310,8 @@ namespace muc_detail {
                 if (auto s = dynamic_cast<StructDecl*>(d.get())) {
                     s->ty = Type::make_struct(u->name, s->name);
                 } else if (auto e = dynamic_cast<EnumDecl*>(d.get())) {
-                    // 与 Python 版不同（见回报）：枚举类型在这里就建好，保证跨 unit
-                    // 引用到“尚未 resolve 的 unit 的枚举”时不会拿到空类型。
+                    // Unlike the Python version (see the report): the enum type is created here, so that a cross-unit
+                    // reference to "an enum of a unit not yet resolved" never yields a null type.
                     e->ty = Type::make_enum(u->name, e->name);
                 } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
                     c->ty = Type::make_class(u->name, c->name);
@@ -341,7 +341,7 @@ namespace muc_detail {
                         "` has a destructor and cannot be used as a field (field destruction is not implemented)",
                     c);
             }
-            bool field_pub = false;  // class 默认 private
+            bool field_pub = false;  // class defaults to private
             if (auto vit = c->field_visibility.find(fname); vit != c->field_visibility.end()) {
                 field_pub = vit->second;
             }
@@ -407,7 +407,7 @@ namespace muc_detail {
     bool Sema::is_pow2(long long n) { return n > 0 && (n & (n - 1)) == 0; }
 
     void Sema::check_layouts() {
-        // 第一遍：求值 align(N)，校验正整数 + 2 的幂
+        // First pass: evaluate align(N) and check for a positive power of two
         for (auto& u : units_) {
             cur_ = u.get();
             for (auto& d : u->decls) {
@@ -425,7 +425,7 @@ namespace muc_detail {
                 sd->ty->align_req = static_cast<int>(n);
             }
         }
-        // 第二遍：N 与自然对齐比较 + packed 字段类型限制（此时所有 unit 的字段都已解析）
+        // Second pass: compare N with the natural alignment + packed field type restrictions (fields of all units are resolved by now)
         for (auto& u : units_) {
             cur_ = u.get();
             for (auto& d : u->decls) {
@@ -445,7 +445,7 @@ namespace muc_detail {
                 }
                 if (!ty->is_packed) continue;
                 for (auto& f : ty->fields) {
-                    // 数组按元素类型检查
+                    // arrays are checked by their element type
                     TypePtr base = f.type;
                     while (base && base->kind == TypeKind::Array) base = base->elem;
                     if (!base) continue;
@@ -492,12 +492,12 @@ namespace muc_detail {
     void Sema::resolve_unit_types(Unit* u) {
         cur_ = u;
 
-        // 结构体：占位类型已就绪，这里填字段（字段可引用别的结构体/枚举）
+        // Structs: the placeholder type is ready, fields are filled in here (fields may reference other structs/enums)
         for (auto& d : u->decls) {
             auto sd = dynamic_cast<StructDecl*>(d.get());
             if (!sd) continue;
             if (!sd->ty) sd->ty = Type::make_struct(u->name, sd->name);
-            sd->ty->is_packed = sd->is_packed;  // align_req 在 check_layouts 里求值
+            sd->ty->is_packed = sd->is_packed;  // align_req is evaluated in check_layouts
             sd->ty->is_union = sd->is_union;
             const std::string kw = sd->is_union ? "union" : "struct";
             std::vector<Field> fields;
@@ -522,7 +522,7 @@ namespace muc_detail {
                             "` has a destructor and cannot be used as a field (field destruction is not implemented)",
                         sd);
                 }
-                bool field_pub = true;  // struct 默认 public
+                bool field_pub = true;  // struct defaults to public
                 if (auto vit = sd->field_visibility.find(fname);
                     vit != sd->field_visibility.end()) {
                     field_pub = vit->second;
@@ -581,7 +581,7 @@ namespace muc_detail {
             if (sd->dtor) sd->dtor->cname = dtor_cname(u->name, sd->name);
         }
 
-        // class：基类、接口、扁平字段、方法/构造器签名
+        // class: base class, interfaces, flattened fields, method/constructor signatures
         for (auto& d : u->decls) {
             auto c = dynamic_cast<ClassDecl*>(d.get());
             if (!c) continue;
@@ -609,7 +609,7 @@ namespace muc_detail {
                 }
             }
 
-            // 字段在后面的拓扑 pass 处理（基类字段需先就绪）
+            // fields are handled by the topological pass below (base class fields must be ready first)
 
             resolve_const_members(c->const_members, c->ty, u, "class", c->name);
 
@@ -659,7 +659,7 @@ namespace muc_detail {
             if (c->dtor) c->dtor->cname = dtor_cname(u->name, c->name);
         }
 
-        // class 字段：按基类依赖顺序解析（同一 unit 内基类可能后声明）
+        // class fields: resolved in base-class dependency order (a base class may be declared later in the same unit)
         {
             std::unordered_map<std::string, ClassDecl*> by_name;
             for (auto& d : u->decls) {
@@ -682,7 +682,7 @@ namespace muc_detail {
             }
         }
 
-        // interface：基接口与方法签名
+        // interface: base interfaces and method signatures
         for (auto& d : u->decls) {
             auto itf = dynamic_cast<InterfaceDecl*>(d.get());
             if (!itf) continue;
@@ -704,7 +704,7 @@ namespace muc_detail {
             }
             itf->ty->methods.clear();
             TypePtr saved_class = cur_class_;
-            cur_class_ = itf->ty;  // 让签名里的 `Self` 解析为接口类型
+            cur_class_ = itf->ty;  // make `Self` in signatures resolve to the interface type
             for (auto& m : itf->methods) {
                 resolve_method_ret(m.get(), u);
                 m->pty.clear();
@@ -734,7 +734,7 @@ namespace muc_detail {
             cur_class_ = saved_class;
         }
 
-        // 枚举：检查成员重复（类型已在 place_structs 建好）
+        // enums: check for duplicate members (the type is already created in place_structs)
         for (auto& d : u->decls) {
             auto ed = dynamic_cast<EnumDecl*>(d.get());
             if (!ed) continue;
@@ -833,7 +833,7 @@ Program Sema::run() {
     if (!errors_.empty()) throw MuErrorList(std::move(errors_));
     check_entry();
 
-    // 泛型实例化产物的所有权交给 unit（Program 只持有 units；Sema 销毁后不能悬空）
+    // Ownership of the generic instantiation products goes to the unit (Program only holds units; they must not dangle after Sema is destroyed)
     if (!generic_decls_.empty()) {
         if (!units_.empty()) {
             for (auto& d : generic_decls_) units_.front()->decls.push_back(std::move(d));

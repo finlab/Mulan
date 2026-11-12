@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// unit 加载
+// unit loading
 #pragma once
 
 #include <memory>
@@ -10,8 +10,8 @@
 
 #include "ast.hpp"
 
-// 从入口文件出发，按 use 递归解析同名 .mu；返回依赖在前、入口在后的 unit 列表。
-// entry_name 被写入入口 unit 名。失败抛 MuError。
+// Starting from the entry file, recursively resolve same-named .mu through use; returns the unit list with dependencies first and the entry last.
+// entry_name receives the entry unit name. Throws MuError on failure.
 std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
                                               const std::vector<std::string>& search_dirs,
                                               std::string& entry_name);

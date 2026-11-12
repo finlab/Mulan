@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// AST 深拷贝实现（泛型实例化用）。
+// AST deep copy implementation (used for generic instantiation).
 #include "ast_clone.hpp"
 
 #include <string>
@@ -12,7 +12,7 @@ namespace muc_detail {
 
 namespace {
 
-// 复制位置信息（Node 基类字段）
+// Copies the position information (fields of the Node base class)
 template <class T>
 std::unique_ptr<T> mk(const Node& n) {
     auto r = std::make_unique<T>();
@@ -139,7 +139,7 @@ ExprPtr clone_expr(const Expr& e) {
     }
     if (auto p = dynamic_cast<const Name*>(&e)) {
         auto r = mk<Name>(e);
-        r->ident = p->ident;  // kind / sym / field_index 由 sema 重填
+        r->ident = p->ident;  // kind / sym / field_index are refilled by sema
         return r;
     }
     if (auto p = dynamic_cast<const Member*>(&e)) {
@@ -242,7 +242,7 @@ InitPtr clone_init(const Init& i) {
     }
     if (auto p = dynamic_cast<const InitRange*>(&i)) {
         auto r = mk<InitRange>(i);
-        r->kind = Init::K::Aggregate;  // 与 parser 一致：花括号内的区间填充
+        r->kind = Init::K::Aggregate;  // consistent with the parser: range fill inside braces
         r->lo = clone_expr(*p->lo);
         r->hi = clone_expr(*p->hi);
         return r;

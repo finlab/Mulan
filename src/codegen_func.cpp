@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含函数代码生成与模块收尾（run）（Emitter 成员函数定义）。
+// This file contains function code generation and the module wrap-up (run) (Emitter member function definitions).
 
 #include "codegen_impl.hpp"
 
 namespace muc_detail {
 
-    // ------------------------------------------------------------ 函数
-    // IRBuilder 跨函数复用：每次进入新函数前清掉上一个函数残留的 !dbg 位置，
-    // 否则新函数的指令会指向旧函数的 DISubprogram（LLVM verifier 会拒绝）。
+    // ------------------------------------------------------------ functions
+    // The IRBuilder is reused across functions: before entering a new function, clear the stale !dbg location left over from the previous function,
+    // otherwise the new function's instructions would point at the previous function's DISubprogram (which the LLVM verifier rejects).
     void Emitter::resetDebugScope() {
         diSub = nullptr;
         b.SetCurrentDebugLocation(DebugLoc());
@@ -52,7 +52,7 @@ namespace muc_detail {
         bodyBB = BasicBlock::Create(ctx, "entry", fn);
         ab.SetInsertPoint(allocaBB);
 
-        // 参数
+        // parameters
         size_t i = 0;
         for (auto& a : fn->args()) {
             LocalVar* pl = i < f->param_locals.size() ? f->param_locals[i].get() : nullptr;
@@ -120,7 +120,7 @@ namespace muc_detail {
 
     void Emitter::initDebug() {
         if (!wantDebug) return;
-        // 用入口 unit 的源文件作为编译单元（units 里第一个通常是隐式导入的 std.string）
+        // use the source file of the entry unit as the compile unit (the first one in units is usually the implicitly imported std.string)
         std::string file;
         for (auto& u : prog.units) {
             if (u->name == prog.entry) {
@@ -144,7 +144,7 @@ namespace muc_detail {
     }
 
     void Emitter::run() {
-        // 目标
+        // target
         std::string tripleStr = "x86_64-w64-windows-gnu";
         std::string err;
         llvm::Triple triple(tripleStr);
@@ -161,7 +161,7 @@ namespace muc_detail {
                            llvm::MDString::get(ctx, MUC_VERSION));
         initDebug();
 
-        sliceTy = ptrTy();  // 动态数组句柄（头指针）
+        sliceTy = ptrTy();  // dynamic array handle (header pointer)
         descTy = LStruct::create(ctx, "mu_desc");
         descTy->setBody({i64(), ptrTy(), ptrTy(), ptrTy(), ptrTy()}, false);
         ifaceTy = LStruct::create(ctx, "mu_iface");
@@ -173,7 +173,7 @@ namespace muc_detail {
         new GlobalVariable(*mod, i32(), /*isConstant=*/false, GlobalValue::InternalLinkage,
                            ConstantInt::get(i32(), 0), "mu_weak_lock");
 
-        // 先建结构体类型（字段可能引用彼此；指针是 opaque ptr，不会递归）
+        // build the struct types first (fields may reference each other; pointers are opaque ptr, so they do not recurse)
         for (auto& u : prog.units) {
             for (auto& d : u->decls) {
                 if (auto sd = dynamic_cast<StructDecl*>(d.get())) {
@@ -181,9 +181,9 @@ namespace muc_detail {
                 }
             }
         }
-        // 对象布局与描述符
+        // object layout and class descriptors
         buildIfaceSlots();
-        // 先占位所有 desc（派生类可能引用基类 desc），再填初始化器
+        // reserve all descs first (a derived class may reference a base class desc), then fill in the initializers
         for (auto& u : prog.units) {
             curUnit = u->name;
             for (auto& d : u->decls) {
@@ -226,7 +226,7 @@ namespace muc_detail {
                 if (auto f = dynamic_cast<FuncDecl*>(d.get())) emitFunction(f);
             }
         }
-        // class 成员函数、构造器、析构器、销毁函数；接口默认方法
+        // class member functions, constructors, destructors, destroy functions; interface default methods
         for (auto& u : prog.units) {
             curUnit = u->name;
             for (auto& d : u->decls) {
@@ -258,7 +258,7 @@ namespace muc_detail {
             throw MuError("LLVM backend: generated module is invalid: " + os.str());
         }
 
-        // 标准 -O2 流水线：让 Str 的短方法/运算符与 RC 辅助函数内联。
+        // standard -O2 pipeline: lets Str's short methods/operators and the RC helper functions be inlined.
         {
             LoopAnalysisManager LAM;
             FunctionAnalysisManager FAM;

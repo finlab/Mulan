@@ -3,7 +3,7 @@
 
 // Mulan AST
 //
-// 设计：与 Python 版一一对应，语义分析把结果直接写回节点字段。
+// Design: one-to-one with the Python version; semantic analysis writes the results back into the node fields.
 #pragma once
 
 #include <memory>
@@ -23,26 +23,26 @@ struct Node {
     virtual ~Node() = default;
 };
 
-// ---------------------------------------------------------------- 类型语法
+// ---------------------------------------------------------------- Type syntax
 
 struct TypeSpec {
     enum class K { Named, Ptr, Array, Slice } kind = K::Named;
     std::string name;          // Named: "int" / "Point" / "math.Point" / "Vec"
-    // Named 且为泛型实例化时非空：`Vec<int>` 的实参（`Vec` 本身是模板）。
+    // Non-empty when Named is a generic instantiation: the type arguments of `Vec<int>` (`Vec` itself is a template).
     std::vector<std::unique_ptr<TypeSpec>> args;
     std::unique_ptr<TypeSpec> elem;
     size_t size = 0;           // Array
-    int rank = 1;              // Slice：维数
-    bool is_const = false;  // C 模型：该类型节点是否 const（前缀 const 修饰基类型，`* const` 修饰指针层）
-    bool is_self = false;   // 接口体内的 `Self`（指实现者类型）；仅 interface 成员签名允许
-    bool weak = false;         // class 字段的 weak 修饰
+    int rank = 1;              // Slice: rank
+    bool is_const = false;  // C model: whether this type node is const (a prefix const qualifies the base type, `* const` qualifies the pointer level)
+    bool is_self = false;   // `Self` inside an interface body (the implementor type); only allowed in interface member signatures
+    bool weak = false;         // the weak modifier on a class field
     int line = 0;
     int col = 0;
     std::string str() const;
 };
 using TypeSpecPtr = std::unique_ptr<TypeSpec>;
 
-// ---------------------------------------------------------------- 前向声明
+// ---------------------------------------------------------------- Forward declarations
 
 struct LocalVar;
 struct GlobalVar;
@@ -52,11 +52,11 @@ struct DtorDecl;
 struct MethodDecl;
 struct ConstMember;
 
-// 名字解析结果（sema 写入，codegen 读取）
+// The name resolution result (written by sema, read by codegen)
 using Sym = std::variant<std::monostate, LocalVar*, GlobalVar*, FuncDecl*, EnumConst*,
                          ConstMember*, Type*>;
 
-// ---------------------------------------------------------------- 表达式
+// ---------------------------------------------------------------- Expressions
 
 struct Expr : Node {
     TypePtr ty;
@@ -75,7 +75,7 @@ struct CharLit : Expr {
     int value = 0;
 };
 struct StringLit : Expr {
-    std::string value;  // 原始 UTF-8 字节
+    std::string value;  // the raw UTF-8 bytes
 };
 struct BoolLit : Expr {
     bool value = false;
@@ -87,7 +87,7 @@ struct Name : Expr {
     std::string kind;  // "local" | "global" | "func" | "enum_const" | "field"
     Sym sym;
     int field_index = -1;
-    bool implicit_this = false;  // 方法内直接访问字段
+    bool implicit_this = false;  // direct field access inside a method
 };
 
 struct Member : Expr {
@@ -101,19 +101,19 @@ struct Member : Expr {
 struct Index : Expr {
     ExprPtr base;
     std::vector<ExprPtr> indices;  // a[i] / a[i,j] / a[i,j,k]
-    // sema: 用户类型下标走运算符重载时记录选中的函数
+    // sema: the selected function is recorded when subscripting a user type goes through an operator overload
     FuncDecl* get_func = nullptr;
-    bool by_ref = false;      // `operator[]` 返回借用：表达式类型是 referent，值是元素地址
-    bool ref_const = false;   // 该借用是否只读（`ref const T`）
+    bool by_ref = false;      // `operator[]` returns a borrow: the expression type is the referent and the value is the element address
+    bool ref_const = false;   // whether the borrow is read-only (`ref const T`)
 };
 
 struct Unary : Expr {
     std::string op;  // - + & * !
     ExprPtr operand;
-    FuncDecl* op_func = nullptr;  // sema: 用户运算符重载
+    FuncDecl* op_func = nullptr;  // sema: user operator overload
 };
 
-struct NotExpr : Expr {  // 关键字 not
+struct NotExpr : Expr {  // the not keyword
     ExprPtr operand;
 };
 
@@ -121,7 +121,7 @@ struct Binary : Expr {
     std::string op;  // + - * / % << >> & | ^ < <= > >= == != and or
     ExprPtr left;
     ExprPtr right;
-    FuncDecl* op_func = nullptr;  // sema: 用户运算符重载
+    FuncDecl* op_func = nullptr;  // sema: user operator overload
 };
 
 struct Cast : Expr {
@@ -129,7 +129,7 @@ struct Cast : Expr {
     TypeSpecPtr spec;
 };
 
-// 条件表达式：cond ? then_e : else_e（右结合，只求值被选中的分支）
+// Conditional expression: cond ? then_e : else_e (right-associative, only the selected branch is evaluated)
 struct Ternary : Expr {
     ExprPtr cond;
     ExprPtr then_e;
@@ -140,33 +140,33 @@ struct Call : Expr {
     ExprPtr callee;
     std::vector<ExprPtr> args;
     std::vector<std::pair<std::string, ExprPtr>> named;
-    // 泛型调用的显式类型实参：`f<int>(x)`（空 = 普通调用）
+    // the explicit type arguments of a generic call: `f<int>(x)` (empty = a normal call)
     std::vector<TypeSpecPtr> type_args;
     // sema
     std::string callee_kind;  // "func" | "ctor" | "builtin" | "method" | "super"
     FuncDecl* func = nullptr;
-    TypePtr ctor;             // 结构体构造目标类型
+    TypePtr ctor;             // the target type of the struct construction
     std::string builtin;      // alloc / realloc / free
     std::vector<int> field_order;
-    const MethodSig* method = nullptr;      // 选中的方法/接口默认方法
-    const std::vector<TypePtr>* ctor_pty = nullptr;  // 选中的构造器（super 用）
-    bool by_ref = false;      // 被调用函数/方法返回借用（表达式类型是 referent，值是地址）
-    bool ref_const = false;   // 该借用是否只读（`ref const T`）
+    const MethodSig* method = nullptr;      // the selected method / interface default method
+    const std::vector<TypePtr>* ctor_pty = nullptr;  // the selected constructor (used by super)
+    bool by_ref = false;      // the called function/method returns a borrow (the expression type is the referent and the value is the address)
+    bool ref_const = false;   // whether the borrow is read-only (`ref const T`)
 };
 
 struct NewExpr : Expr {
-    TypeSpecPtr type;   // 目标 class 类型 / 动态数组元素类型
+    TypeSpecPtr type;   // the target class type / dynamic array element type
     std::vector<ExprPtr> args;
     std::vector<std::pair<std::string, ExprPtr>> named;
     bool is_array = false;  // new T[..]
-    std::vector<ExprPtr> dims;  // 矩形各维尺寸（运行期表达式）
-    int jagged_rank = 0;        // new T[m][]：外层再包几层 T[]
+    std::vector<ExprPtr> dims;  // the size of each dimension of the rectangle (runtime expressions)
+    int jagged_rank = 0;        // new T[m][]: how many more T[] levels the outer part wraps
     // sema
     TypePtr class_ty;
-    TypePtr elem_ty;                // 动态数组元素类型（最内层）
+    TypePtr elem_ty;                // the dynamic array element type (innermost)
     CtorDecl* ctor = nullptr;
-    bool has_ctor = false;          // class 声明了构造器（选中 ne->ctor_pty）
-    std::vector<TypePtr> ctor_pty;  // 选中的构造器参数表（空 = 默认零初始化构造）
+    bool has_ctor = false;          // the class declares a constructor (ne->ctor_pty is selected)
+    std::vector<TypePtr> ctor_pty;  // the parameter list of the selected constructor (empty = the default zero-initialized construction)
 };
 
 struct SizeofExpr : Expr {
@@ -176,16 +176,16 @@ struct SizeofExpr : Expr {
 
 struct Len : Expr {
     ExprPtr seq;
-    ExprPtr dim;  // len(a, k)：可选维度
+    ExprPtr dim;  // len(a, k): optional dimension
 };
 
 struct RangeExpr : Expr {
     ExprPtr lo;
     ExprPtr hi;
-    bool inclusive = false;  // `..=`：包含上界
+    bool inclusive = false;  // `..=`: the upper bound is inclusive
 };
 
-// ---------------------------------------------------------------- 初始化器
+// ---------------------------------------------------------------- Initializers
 
 struct Init : Node {
     enum class K { Expr, Aggregate } kind = K::Expr;
@@ -198,37 +198,37 @@ struct InitExpr : Init {
 };
 
 struct InitAggregate : Init {
-    // name 为空表示位置初始化；子项本身可以是嵌套的花括号初始化
+    // an empty name means positional initialization; an item itself can be a nested brace initialization
     std::vector<std::pair<std::string, InitPtr>> items;
 };
 
-// 花括号里的区间填充：`{1, 2, 5..9, 10}`（仅定长数组，端点须编译期常量）
+// range fill inside braces: `{1, 2, 5..9, 10}` (fixed-size arrays only, the endpoints must be compile-time constants)
 struct InitRange : Init {
     ExprPtr lo;
     ExprPtr hi;
     // sema
     long long lo_val = 0;
-    long long count = 0;  // 展开后的元素个数（a >= b 时为 0）
+    long long count = 0;  // the number of elements after expansion (0 when a >= b)
 };
 
-// ---------------------------------------------------------------- 声明
+// ---------------------------------------------------------------- Declarations
 
-// 泛型类型参数：`<T, U: I>` / `<T: int | long>`。
-// 约束先支持扁平列表 + 单一运算符（全 `&` 或全 `|`）；混用报错（见 parse_type_params）。
+// Generic type parameters: `<T, U: I>` / `<T: int | long>`.
+// Constraints initially support a flat list plus a single operator (all `&` or all `|`); mixing them is an error (see parse_type_params).
 struct TypeParam {
     enum class Op { None, And, Or } op = Op::None;
     std::string name;
-    std::vector<TypeSpecPtr> bounds;  // 空 = 无约束
+    std::vector<TypeSpecPtr> bounds;  // empty = no constraint
     int line = 0;
     int col = 0;
 };
 
 struct Decl : Node {
-    // 可见性：默认仅在所属 unit 内可见；public 表示跨 unit 可见。
-    // unit 的可见性见 Unit::is_public（`public unit foo;`）。
+    // Visibility: visible only inside the owning unit by default; public means visible across units.
+    // The visibility of a unit is Unit::is_public (`public unit foo;`).
     bool is_public = false;
-    std::vector<TypeParam> type_params;  // 空 = 非泛型
-    bool is_template = false;            // sema：泛型模板，不直接检查/发射，仅供实例化
+    std::vector<TypeParam> type_params;  // empty = not generic
+    bool is_template = false;            // sema: a generic template, not checked/emitted directly, only used for instantiation
     virtual ~Decl() = default;
 };
 
@@ -236,23 +236,23 @@ struct UseDecl : Decl {
     std::string unit_name;
 };
 
-// 类型别名：`type A = B;`——透明别名（不产生新类型），每条声明只能定义一个。
-// `type` 是**上下文关键字**：只有声明起始位置 `type Ident =` 才按别名解析。
+// Type alias: `type A = B;` — a transparent alias (produces no new type), and each declaration can define only one.
+// `type` is a **contextual keyword**: it is parsed as an alias only at the start of a declaration, in the form `type Ident =`.
 struct TypeAliasDecl : Decl {
     std::string name;
     TypeSpecPtr spec;
     // sema
-    TypePtr rty;             // 解析结果（memo；等价于底层类型）
+    TypePtr rty;             // the resolution result (memo; equivalent to the underlying type)
     bool resolved = false;
-    bool resolving = false;  // 循环依赖检测
+    bool resolving = false;  // circular dependency detection
 };
 
 struct Param : Node {
     std::string name;
     TypeSpecPtr spec;
-    // `const` 是参数绑定的只读标记（不是类型限定）：进入函数体后不可重绑定、不可经它写字段。
+    // `const` is a read-only marker on the parameter binding (not a type qualifier): once inside the function body it cannot be rebound and fields cannot be written through it.
     bool is_const = false;
-    // `ref` 参数：借用调用方的变量（C 侧传指针），不可存储/返回。
+    // A `ref` parameter borrows the caller's variable (a pointer is passed on the C side) and cannot be stored/returned.
     bool by_ref = false;
 };
 
@@ -265,7 +265,7 @@ struct GlobalVar : Decl {    std::string name;
     TypePtr rty;
     bool zero = false;
     std::string cname;
-    // 编译期求值结果（仅 unit 级 const；求值失败时保持 false，回退到 codegen 的常量生成）
+    // the compile-time evaluation result (unit-level const only; it stays false when the evaluation fails and falls back to the constant generation in codegen)
     bool const_evaluated = false;
     bool const_evaluating = false;
     bool const_is_float = false;
@@ -273,18 +273,18 @@ struct GlobalVar : Decl {    std::string name;
     double const_fval = 0;
 };
 
-// 类型级编译期常量：`const int MaxAge = 20;`（只允许出现在 struct / class 体内）
-// 不占实例存储：不进 fields、不影响 sizeof / alignof / 布局 / ABI，也不参与构造/析构/RC。
+// Type-level compile-time constant: `const int MaxAge = 20;` (only allowed inside a struct / class body)
+// It occupies no instance storage: it does not go into fields, does not affect sizeof / alignof / layout / ABI, and takes no part in construction/destruction/RC.
 struct ConstMember : Node {
     std::string name;
     TypeSpecPtr spec;
     ExprPtr init;
     bool is_public = true;
     // sema
-    TypePtr rty;   // 声明的类型（标量或枚举）
-    TypePtr owner;  // 声明它的 struct / class 类型
+    TypePtr rty;   // the declared type (scalar or enum)
+    TypePtr owner;  // the struct / class type that declares it
     bool evaluated = false;
-    bool evaluating = false;  // 惰性求值中（循环依赖检测）
+    bool evaluating = false;  // under lazy evaluation (circular dependency detection)
     bool is_float = false;
     long long ival = 0;
     double fval = 0;
@@ -292,29 +292,29 @@ struct ConstMember : Node {
 
 struct StructDecl : Decl {
     std::string name;
-    std::vector<std::string> bases;  // 只能列接口（`struct S : I1, I2`），见 backlog U33
-    std::vector<TypeSpecPtr> base_specs;  // 与 bases 平行；泛型基类需要结构化实参
+    std::vector<std::string> bases;  // only interfaces can be listed (`struct S : I1, I2`), see backlog U33
+    std::vector<TypeSpecPtr> base_specs;  // parallel to bases; a generic base class needs structured type arguments
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
-    // 字段的最终可见性（parser 在解析时按默认值/分段标签/成员前缀算好）
+    // the final visibility of the fields (computed by the parser while parsing, from the default values/section labels/member prefixes)
     std::unordered_map<std::string, bool> field_visibility;
-    std::vector<std::unique_ptr<ConstMember>> const_members;  // 类型级编译期常量
-    std::vector<std::unique_ptr<MethodDecl>> methods;  // 值类型方法（静态派发）
+    std::vector<std::unique_ptr<ConstMember>> const_members;  // type-level compile-time constants
+    std::vector<std::unique_ptr<MethodDecl>> methods;  // value type methods (static dispatch)
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
-    // 布局修饰符
+    // Layout modifiers
     bool is_packed = false;
-    bool is_union = false;  // union 声明（布局：所有成员偏移 0）
-    ExprPtr align_expr;  // align(N) 的 N（parser 保留原始表达式，sema 求值）
-    TypePtr ty;  // sema: 结构体类型（占位后填充 fields）
+    bool is_union = false;  // a union declaration (layout: all members at offset 0)
+    ExprPtr align_expr;  // the N of align(N) (the parser keeps the original expression and sema evaluates it)
+    TypePtr ty;  // sema: the struct type (the fields are filled in after the placeholder is created)
 };
 
 struct EnumDecl : Decl {
     std::string name;
     std::vector<std::pair<std::string, std::optional<long long>>> members;
-    TypePtr ty;  // sema: 枚举类型
+    TypePtr ty;  // sema: the enum type
 };
 
-// ---------------------------------------------------------------- 语句
+// ---------------------------------------------------------------- Statements
 
 struct Stmt : Node {
     virtual ~Stmt() = default;
@@ -335,9 +335,9 @@ struct LocalVar : Stmt {
     TypePtr rty;
     bool zero = false;
     std::string cname;
-    bool by_ref = false;  // for-in ref 绑定 / ref 参数：C 侧是 T*，使用点解引用
-    bool is_ref_param = false;  // `ref` 参数：不可重绑定（for-in 的 ref 变量可以写元素）
-    int group = 0;        // 同一声明语句的多个声明符共享（用于 auto 一致性检查）
+    bool by_ref = false;  // a for-in ref binding / ref parameter: it is T* on the C side and is dereferenced at the use site
+    bool is_ref_param = false;  // a `ref` parameter: it cannot be rebound (a for-in ref variable can write elements)
+    int group = 0;        // shared by multiple declarators in the same declaration statement (used for the auto consistency check)
 };
 
 struct ExprStmt : Stmt {
@@ -348,13 +348,13 @@ struct AssignStmt : Stmt {
     ExprPtr target;
     std::string op;  // = += -= *= /= %= &= |= ^= <<= >>=
     ExprPtr value;
-    FuncDecl* set_func = nullptr;  // sema: operator[]= 重载
+    FuncDecl* set_func = nullptr;  // sema: operator[]= overload
 };
 
 struct IfStmt : Stmt {
     ExprPtr cond;
     std::unique_ptr<Block> then;
-    StmtPtr els;  // Block 或 IfStmt
+    StmtPtr els;  // Block or IfStmt
 };
 
 struct WhileStmt : Stmt {
@@ -368,28 +368,28 @@ struct ForInStmt : Stmt {
     bool has_idx = false;      // `for i, x in seq`
     std::string idx_name;
     ExprPtr seq;
-    ExprPtr step;              // `for i in a..b step n`（仅区间；n 须非零编译期常量）
-    long long step_val = 1;    // sema：步长（含符号）
+    ExprPtr step;              // `for i in a..b step n` (ranges only; n must be a nonzero compile-time constant)
+    long long step_val = 1;    // sema: the step (signed)
     std::unique_ptr<Block> body;
     // sema
     std::string loop_kind;  // "range" | "array" | "slice" | "string" | "index"
     TypePtr elem_ty;
     TypePtr seq_ty;
     TypePtr var_ty;
-    TypePtr idx_ty;                      // `for i, x` 的 i：usize
-    std::unique_ptr<LocalVar> idx_lvar;  // 索引变量符号（codegen 用其 cname）
-    const MethodSig* len_sig = nullptr;  // 索引形态：length() -> usize
-    FuncDecl* idx_fn = nullptr;          // 索引形态：operator[](C, usize) -> T
+    TypePtr idx_ty;                      // the i of `for i, x`: usize
+    std::unique_ptr<LocalVar> idx_lvar;  // the index variable symbol (codegen uses its cname)
+    const MethodSig* len_sig = nullptr;  // the index form: length() -> usize
+    FuncDecl* idx_fn = nullptr;          // the index form: operator[](C, usize) -> T
     std::string cname;
-    std::unique_ptr<LocalVar> lvar;  // 循环变量的符号（codegen 用其 cname/by_ref）
+    std::unique_ptr<LocalVar> lvar;  // the loop variable symbol (codegen uses its cname/by_ref)
 };
 
-// switch 分支模式：单值或半开区间 [vlo, vhi)
+// switch branch pattern: a single value or a half-open range [vlo, vhi)
 struct SwitchPat {
     ExprPtr lo;
-    ExprPtr hi;  // 区间上界（is_range 时非空）
+    ExprPtr hi;  // the upper bound of the range (non-null when is_range)
     bool is_range = false;
-    bool inclusive = false;  // `..=`：含上界（sema 归一化为半开区间的 vhi）
+    bool inclusive = false;  // `..=`: the upper bound is included (sema normalizes it into the vhi of a half-open range)
     // sema
     long long vlo = 0;
     long long vhi = 0;
@@ -409,7 +409,7 @@ struct SwitchStmt : Stmt {
     // sema
     TypePtr sty;
     bool has_else = false;
-    bool enum_exhaustive = false;  // 枚举已覆盖全部成员（没有 else 也算穷尽）
+    bool enum_exhaustive = false;  // the enum covers all members (it is exhaustive even without an else)
 };
 
 struct BreakStmt : Stmt {};
@@ -419,58 +419,58 @@ struct ReturnStmt : Stmt {
     ExprPtr value;
 };
 
-// ---------------------------------------------------------------- 对象模型声明
+// ---------------------------------------------------------------- Object model declarations
 
 struct MethodDecl : Node {
     std::string name;
     TypeSpecPtr ret;
-    bool ret_ref = false;  // `ref T m()`：返回借用
-    // 接口里的运算符签名：`T operator+(T a, T b);`（无 this，参数表含全部操作数）
+    bool ret_ref = false;  // `ref T m()`: returns a borrow
+    // an operator signature in an interface: `T operator+(T a, T b);` (no this, the parameter list holds all operands)
     bool is_operator = false;
     std::vector<std::unique_ptr<Param>> params;
-    std::unique_ptr<Block> body;  // nullptr = 抽象方法
+    std::unique_ptr<Block> body;  // nullptr = an abstract method
     bool is_override = false;
-    bool is_public = false;  // 默认仅 unit 内可见
+    bool is_public = false;  // visible only inside the unit by default
     // sema
     TypePtr rty;
     std::vector<TypePtr> pty;
     std::vector<std::unique_ptr<LocalVar>> param_locals;
-    std::string cname;  // 方法符号名
+    std::string cname;  // the method symbol name
 };
 
 struct CtorDecl : Node {
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;
-    bool is_public = false;  // 默认仅 unit 内可见
+    bool is_public = false;  // visible only inside the unit by default
     // sema
     std::vector<TypePtr> pty;
     std::vector<std::unique_ptr<LocalVar>> param_locals;
-    std::string cname;  // 构造器符号名
+    std::string cname;  // the constructor symbol name
     bool has_explicit_super = false;
 };
 
 struct DtorDecl : Node {
     std::unique_ptr<Block> body;
-    std::string cname;  // 析构器符号名
+    std::string cname;  // the destructor symbol name
 };
 
 struct ClassDecl : Decl {
     std::string name;
-    std::vector<std::string> bases;  // 第一个是基类，其余是接口
-    std::vector<TypeSpecPtr> base_specs;  // 与 bases 平行；泛型基类需要结构化实参
+    std::vector<std::string> bases;  // the first is the base class, the rest are interfaces
+    std::vector<TypeSpecPtr> base_specs;  // parallel to bases; a generic base class needs structured type arguments
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
-    std::unordered_map<std::string, bool> field_visibility;  // 字段的最终可见性
-    std::vector<std::unique_ptr<ConstMember>> const_members;  // 类型级编译期常量
+    std::unordered_map<std::string, bool> field_visibility;  // the final visibility of the fields
+    std::vector<std::unique_ptr<ConstMember>> const_members;  // type-level compile-time constants
     std::vector<std::unique_ptr<MethodDecl>> methods;
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
-    TypePtr ty;  // sema 预留
+    TypePtr ty;  // sema reserved
 };
 
 struct InterfaceDecl : Decl {
     std::string name;
     std::vector<std::string> bases;
-    std::vector<TypeSpecPtr> base_specs;  // 与 bases 平行
+    std::vector<TypeSpecPtr> base_specs;  // parallel to bases
     std::vector<std::unique_ptr<MethodDecl>> methods;
     TypePtr ty;
 };
@@ -478,17 +478,17 @@ struct InterfaceDecl : Decl {
 struct FuncDecl : Decl {
     std::string name;
     TypeSpecPtr ret;
-    bool ret_ref = false;  // `ref T f()`：返回借用
+    bool ret_ref = false;  // `ref T f()`: returns a borrow
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;
     bool is_extern = false;
-    bool is_varargs = false;  // extern 函数的 `...`（C varargs）
+    bool is_varargs = false;  // the `...` of an extern function (C varargs)
     bool is_operator = false;
     // sema
     TypePtr rty;
     std::vector<TypePtr> pty;
-    std::vector<bool> pty_ref;   // 每个参数是否为 `ref` 借用（C 侧一个指针）
-    std::vector<bool> pty_cref;  // `ref const T`：只读借用
+    std::vector<bool> pty_ref;   // whether each parameter is a `ref` borrow (one pointer on the C side)
+    std::vector<bool> pty_cref;  // `ref const T`: a read-only borrow
     std::vector<std::unique_ptr<LocalVar>> param_locals;
     std::string cname;
     FuncDecl* sym = nullptr;  // self
@@ -497,10 +497,10 @@ struct FuncDecl : Decl {
 struct Unit : Node {
     std::string name;
     std::string filename;
-    bool is_public = false;  // `public unit foo;`：跨库可见
+    bool is_public = false;  // `public unit foo;`: visible across libraries
     std::vector<std::unique_ptr<UseDecl>> uses;
     std::vector<std::unique_ptr<Decl>> decls;
-    // 泛型模板（`type_params` 非空）在 sema 收集阶段移到这里：第一阶段不参与常规检查，
-    // 只供实例化器按 `(unit, name, args)` 查找。
+    // Generic templates (`type_params` non-empty) are moved here during the sema collection phase: they do not
+    // take part in the regular checks of the first phase and are only looked up by the instantiator via `(unit, name, args)`.
     std::vector<std::unique_ptr<Decl>> templates;
 };

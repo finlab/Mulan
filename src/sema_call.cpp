@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含 调用检查与杂项（Sema 成员函数定义）。
+// This file holds call checking and miscellany (definitions of Sema members).
 #include "sema_impl.hpp"
 
 namespace muc_detail {
@@ -15,7 +15,7 @@ namespace muc_detail {
                 return check_builtin(c, nm->ident);
             }
             if (nm->ident == "super") return check_super_call(c);
-            // 类内部对自身方法的非限定调用
+            // Unqualified call to one of the enclosing class's own methods
             if (lookup_local(nm->ident) == nullptr && cur_class_) {
                 std::vector<const MethodSig*> ms;
                 collect_methods(cur_class_, nm->ident, ms);
@@ -39,9 +39,9 @@ namespace muc_detail {
             if (lookup_local(nm->ident) != nullptr) {
                 err("`" + nm->ident + "` is a variable, not a function", c);
             }
-            // 候选：当前 unit + 直接 use 的 unit（只收 public）+ std.string（隐式）
+            // Candidates: current unit + directly `use`d units (public only) + std.string (implicit)
             if (!c->type_args.empty()) {
-                // 泛型函数优先；否则视为泛型 struct 的值构造
+                // Generic function takes precedence; otherwise it is treated as value construction of a generic struct
                 Decl* tdecl = find_generic_template(nm->ident, cur_);
                 if (dynamic_cast<FuncDecl*>(tdecl)) {
                     target = instantiate_func(c, nm->ident, cur_);
@@ -66,10 +66,10 @@ namespace muc_detail {
             };
             UnitInfo& ui = info();
             add_funcs(ui, false);
-            // 本地有同名函数时完全遮蔽导入（与本地类型/变量一致）
+            // A local function with the same name fully shadows imports (consistent with local types/variables)
             if (cands.empty()) {
                 for (auto& use : cur_->uses) {
-                    if (use->unit_name == "std.string") continue;  // 下面统一按隐式导入加入
+                    if (use->unit_name == "std.string") continue;  // added below uniformly as an implicit import
                     if (!unit_visible(use->unit_name)) continue;
                     auto it = infos_.find(use->unit_name);
                     if (it != infos_.end()) add_funcs(it->second, true);
@@ -86,7 +86,7 @@ namespace muc_detail {
                 nm->sym = chosen;
                 target = chosen;
             } else {
-                // struct 构造：当前 unit 优先，再找 use 的 unit 的 public 类型
+                // struct construction: current unit first, then public types of `use`d units
                 TypePtr st = find_type_named(cur_->name, nm->ident, false);
                 if (!st) {
                     std::string src;
@@ -296,8 +296,8 @@ namespace muc_detail {
             check_assign(c->args[i].get(), params[i], "argument of call to `" + target->name + "`");
         }
         if (target->is_varargs) {
-            // `...` 的实参没有静态类型：只要求 ABI 可传递（标量 / 指针 / POD）。
-            // `string` 按 C 语义传底层 `const char*`（对应 printf 的 %s）。
+            // Arguments of `...` have no static type: only ABI passability is required (scalar / pointer / POD).
+            // `string` is passed as the underlying `const char*` by C semantics (corresponding to printf's %s).
             for (size_t i = params.size(); i < c->args.size(); ++i) {
                 TypePtr at = c->args[i]->ty;
                 if (!at) continue;
@@ -363,7 +363,7 @@ namespace muc_detail {
         }
     }
 
-    // `ref T` / `ref const T` / `T` 的返回类型解析（方法与自由函数共用）。
+    // Return type resolution for `ref T` / `ref const T` / `T` (shared by methods and free functions).
     TypePtr Sema::make_borrow_ret(TypeSpec* spec, bool ret_ref, Node* at, Unit* u, const std::string& what) {
         const bool ret_const = ret_ref && spec && spec->is_const;
         if (ret_ref && spec) spec->is_const = false;
@@ -396,7 +396,7 @@ namespace muc_detail {
             case TypeKind::Array: return has_ref_fields(t->elem);
             case TypeKind::Struct:
                 for (const auto& f : t->fields) {
-                    if (f.weak) continue;  // weak 不持有引用
+                    if (f.weak) continue;  // a weak field does not hold a reference
                     if (has_ref_fields(f.type)) return true;
                 }
                 return false;
@@ -509,7 +509,7 @@ namespace muc_detail {
             for (auto* e : out) {
                 if (same_sig(*e, m)) { dup = true; break; }
             }
-            if (!dup) out.push_back(&m);  // 派生类/先访问者优先，覆盖基类同签名条目
+            if (!dup) out.push_back(&m);  // derived class / first visitor wins, overriding same-signature entries from the base class
         }
         if (t->kind == TypeKind::Class && t->base) {
             collect_methods(t->base, name, out, depth + 1);
@@ -666,7 +666,7 @@ namespace muc_detail {
                 }
                 TypePtr row = t;
                 for (int i = 0; i < ne->jagged_rank; ++i) row = Type::make_slice(row);
-                ne->elem_ty = row;  // 外层数组的元素：T[]/T[][]/...
+                ne->elem_ty = row;  // element of the outer array: T[]/T[][]/...
                 return Type::make_slice(row);
             }
             if (type_align(t) > 8) err_slice_elem_align(t, ne);
@@ -700,7 +700,7 @@ namespace muc_detail {
     void Sema::check_ctor_args(Call* c, const TypePtr& ty) {
         const auto& fields = ty->fields;
 
-        // 跨 unit 的 `S(...)` 构造要求字段全部 public
+        // A cross-unit `S(...)` construction requires all fields to be public
         if (cur_ && cur_->name != ty->unit) {
             for (auto& f : fields) {
                 if (!f.is_public) {
@@ -794,7 +794,7 @@ namespace muc_detail {
         if (auto m = dynamic_cast<Member*>(e)) {
             auto nm = dynamic_cast<Name*>(m->obj.get());
             if (!nm) return true;
-            // 局部变量 / 本 unit 全局变量优先于同名 unit（`t.c = x` 中 t 是变量而不是 unit）
+            // Local variables / this unit's globals take precedence over a unit of the same name (in `t.c = x`, t is a variable, not a unit)
             if (lookup_local(nm->ident)) return true;
             if (info().globals.count(nm->ident)) return true;
             return !infos_.count(nm->ident);
@@ -832,8 +832,8 @@ namespace muc_detail {
         auto it = infos_.find(entry_);
         if (it == infos_.end()) throw SemaError("cannot find entry unit `" + entry_ + "`");
         UnitInfo& ui = it->second;
-        // Python 版这里用 self.cur（此时是最后一个被检查的 unit）取 filename，
-        // 可能指错文件；这里显式指向入口 unit。
+        // The Python version took the filename from self.cur (the unit checked last at this point),
+        // which could point at the wrong file; here it points explicitly at the entry unit.
         cur_ = ui.unit;
 
         auto f = ui.funcs.find("main");
@@ -863,7 +863,7 @@ namespace muc_detail {
         if (main->params.size() != 2) {
             err("`main` must have either no parameters or exactly 2: `(int argc, char** argv)`", main);
         }
-        // 第二个参数必须是 `char**`（argv 由 CRT 提供，最后一个元素是 null）
+        // The second parameter must be `char**` (argv is provided by the CRT, the last element is null)
         static auto is_char = [](const TypePtr& t) {
             return t && t->kind == TypeKind::Prim && t->name == "char";
         };

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含语句代码生成（存取、初始化、块/语句分派、for/switch）（Emitter 成员函数定义）。
+// This file contains statement code generation (load/store, initialization, block/statement dispatch, for/switch) (Emitter member function definitions).
 
 #include "codegen_impl.hpp"
 
@@ -9,9 +9,9 @@ namespace muc_detail {
 
 using ArgPack = Emitter::ArgPack;
 
-    // ------------------------------------------------------------ 语句
-    // 访问对齐：packed 结构链上的字段/元素只保证 1 字节对齐，必须把 load/store
-    // 的 align 显式降到 1，否则 LLVM 会按脚点类型对齐生成错误的非对齐访问。
+    // ------------------------------------------------------------ statements
+    // Access alignment: fields/elements on a packed struct chain only guarantee 1-byte alignment, so the align of load/store
+    // must be explicitly lowered to 1, otherwise LLVM generates incorrect unaligned accesses according to the pointer type's alignment.
     void Emitter::storeAt(Value* v, Value* addr, bool unaligned) {
         if (!v) return;
         auto* si = b.CreateStore(v, addr);
@@ -39,7 +39,7 @@ using ArgPack = Emitter::ArgPack;
 
     void Emitter::copyMem(Value* dst, Value* src, uint64_t n) {
         if (n == 0) return;
-        // 只承诺 1 字节对齐：源/目的可能是 packed 结构里的字段
+        // only 1-byte alignment is promised: the source/destination may be a field inside a packed struct
         b.CreateMemCpy(dst, MaybeAlign(1), src, MaybeAlign(1), ConstantInt::get(i64(), n));
     }
 
@@ -62,7 +62,7 @@ using ArgPack = Emitter::ArgPack;
                 call && call->callee_kind == "struct_ctor") {
                 TypePtr st = call->ctor;
                 const auto* cpty = call->ctor_pty;
-                // 构造器可能不写全部引用字段：先清零，保证析构时不会释放垃圾指针
+                // the constructor may not write every reference field: zero first, to make sure the destructor never releases a garbage pointer
                 if (st->needs_cleanup()) zeroMem(addr, st, unaligned);
                 std::vector<LType*> ptys{ptrTy()};
                 for (auto& t : *cpty) ptys.push_back(lt(t));
@@ -104,13 +104,13 @@ using ArgPack = Emitter::ArgPack;
                 return;
             }
             if (ty->kind == TypeKind::Struct && needsCleanup(ty)) {
-                // 借用源：逐字段 retain；owned 源（调用返回/构造结果）：所有权转移
+                // borrowed source: retain field by field; owned source (a call result / a construction result): ownership transfer
                 storeValue(v, addr, ty, unaligned);
                 if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
                 return;
             }
             if (ty->kind == TypeKind::Slice) {
-                // 借用源（另一个动态数组）：retain；new/数组转换/调用返回：所有权转移
+                // borrowed source (another dynamic array): retain; new / array conversion / call result: ownership transfer
                 storeValue(v, addr, ty, unaligned);
                 if (!convOwns(e, ty)) emitRetainValue(addr, ty, unaligned);
                 return;
@@ -119,12 +119,12 @@ using ArgPack = Emitter::ArgPack;
             return;
         }
         if (auto ia = dynamic_cast<InitAggregate*>(init)) {
-            // 空花括号 `{}`：聚合零初始化（等价于旧的 `= 0`）
+            // empty braces `{}`: aggregate zero initialization (equivalent to the old `= 0`)
             if (ia->items.empty()) {
                 zeroMem(addr, ty, unaligned);
                 return;
             }
-            // 与 C 一致：聚合初始化未覆盖的部分清零
+            // consistent with C: the parts not covered by the aggregate initialization are zeroed
             zeroMem(addr, ty, unaligned);
             if (ty->kind == TypeKind::Struct) {
                 std::vector<std::pair<int, Init*>> slot;
@@ -358,7 +358,7 @@ using ArgPack = Emitter::ArgPack;
             b.SetInsertPoint(condBB);
             size_t cmark = stmtTemps.size();
             Value* cond = eval(ws->cond.get());
-            destroyTempsFrom(cmark);  // 条件里的 struct 右值每轮释放
+            destroyTempsFrom(cmark);  // struct rvalues in the condition are released each iteration
             b.CreateCondBr(cond, bodyBB2, endBB);
             b.SetInsertPoint(bodyBB2);
             loops.push_back({condBB, endBB});
@@ -468,7 +468,7 @@ using ArgPack = Emitter::ArgPack;
         if (auto n = dynamic_cast<Name*>(s->seq.get())) {
             (void)n;
         }
-        // 简单左值直接取地址；否则先物化（只求值一次）
+        // a simple lvalue has its address taken directly; otherwise materialize it first (evaluated only once)
         bool simple = false;
         {
             Expr* e = s->seq.get();
@@ -483,12 +483,12 @@ using ArgPack = Emitter::ArgPack;
             Value* v = eval(s->seq.get());
             seqAddr = entryAlloca(lt(sty), "seq.tmp", alignOf(sty));
             b.CreateStore(v, seqAddr);
-            // owned 的动态数组/数组临时值：循环结束后释放
+            // owned dynamic array / array temporaries: released after the loop ends
             if (needsCleanup(sty) && valueOwned(s->seq.get()))
                 stmtTemps.emplace_back(seqAddr, sty);
         }
 
-        // 索引形态（SPEC 6.4.1）：length() 一次 + operator[](C, usize) 每轮
+        // index form (SPEC 6.4.1): length() once + operator[](C, usize) each iteration
         if (s->loop_kind == "index") {
             TypePtr us = Type::make_prim("usize");
             Value* recv =
@@ -507,13 +507,13 @@ using ArgPack = Emitter::ArgPack;
             if (idxSlot) b.CreateStore(ci2, idxSlot);
             Value* ev = emitOperatorIndexCall(s->idx_fn, seqAddr, sty, ci2, seqUnaligned);
             if (s->idx_fn && is_borrow_type(s->idx_fn->rty)) {
-                // 借用元素：ref 绑定存指针；值绑定当场读出来
+                // borrowed element: a ref binding stores the pointer; a value binding reads it out on the spot
                 if (s->by_ref) b.CreateStore(ev, varSlot);
                 else b.CreateStore(loadAt(lt(s->elem_ty), ev, false), varSlot);
             } else {
                 b.CreateStore(ev, varSlot);
             }
-            // 调用结果是 owned 值：本轮结束（正常/break/continue）时释放
+            // the call result is an owned value: released when the iteration ends (normally / break / continue)
             const bool ownVar = !s->by_ref && needsCleanup(s->elem_ty);
             const size_t outerDepth = refScopes.size();
             loops.push_back({incBB, endBB});
@@ -533,7 +533,7 @@ using ArgPack = Emitter::ArgPack;
             return;
         }
 
-        // 长度与元素地址
+        // length and element address
         Value* len = nullptr;
         Value* elemPtr = nullptr;
         if (sty->kind == TypeKind::Array) {
@@ -549,7 +549,7 @@ using ArgPack = Emitter::ArgPack;
             Value* sv = b.CreateLoad(lt(sty), seqAddr);
             Value* data = b.CreateExtractValue(sv, {0});
             len = b.CreateExtractValue(sv, {1});
-            elemPtr = data;  // string：byte 视图
+            elemPtr = data;  // string: byte view
         }
 
         auto* idx = entryAlloca(i64(), "for.idx");
@@ -568,7 +568,7 @@ using ArgPack = Emitter::ArgPack;
         } else {
             b.CreateStore(loadAt(lt(et), ep, seqUnaligned), varSlot);
         }
-        // 值绑定是拥有型局部变量（SPEC §4）：每轮 retain，离开本轮（正常/break/continue）时 release
+        // the value binding is an owning local variable (SPEC §4): retained each iteration, released when leaving the iteration (normally / break / continue)
         const bool ownVar = !s->by_ref && needsCleanup(et);
         if (ownVar) {
             if (isRefKind(et)) {
@@ -594,7 +594,7 @@ using ArgPack = Emitter::ArgPack;
         b.SetInsertPoint(endBB);
     }
 
-    // switch：值分支走 LLVM switch（跳表），区间分支走比较链，else 兜底。
+    // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
     void Emitter::emitSwitch(SwitchStmt* s) {
         Value* sv = eval(s->scrut.get());
         LType* sty = sv->getType();
@@ -631,7 +631,7 @@ using ArgPack = Emitter::ArgPack;
             for (auto& entry : cases) sw->addCase(entry.first, entry.second);
         }
 
-        // 默认路径：按源码顺序测试区间分支，最后落到 else 或 switch.end
+        // default path: test the range branches in source order, finally falling to else or switch.end
         b.SetInsertPoint(defBB);
         const bool unsig = s->sty && !s->sty->is_signed();
         for (size_t k = 0; k < ranges.size(); ++k) {

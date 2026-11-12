@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 语法分析 —— 对外接口（parse_source / parse_file）与 Parser 构造
+// Parsing — public interface (parse_source / parse_file) and Parser construction
 #include "parser.hpp"
 
 #include <fstream>
@@ -12,17 +12,17 @@
 
 using namespace muc_detail;
 
-// ---------------------------------------------------------------- 语法分析器
+// ---------------------------------------------------------------- parser
 
 Parser::Parser(const std::string& src, const std::string& filename)
     : filename_(filename), toks_(tokenize(src, filename)) {
-    // std.string 提供的字符串类型（库在 sema 前不可见）
+    // string type provided by std.string (the library is not visible before sema)
     type_names_.insert("string");
-    // std.string 总是隐式依赖（字符串字面量需要它的类型）
+    // std.string is always an implicit dependency (string literals need its type)
     module_names_.insert("std.string");
 }
 
-// ---------------------------------------------------------------- 对外接口
+// ---------------------------------------------------------------- public interface
 
 std::unique_ptr<Unit> parse_source(const std::string& src, const std::string& filename) {
     Parser parser(src, filename);

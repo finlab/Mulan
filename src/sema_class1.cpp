@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含 class / interface 检查（上）（Sema 成员函数定义）。
+// This file holds class / interface checking (part 1) (definitions of Sema members).
 #include "sema_impl.hpp"
 
 namespace muc_detail {
@@ -115,7 +115,7 @@ namespace muc_detail {
     }
 
     void Sema::check_method(ClassDecl* c, MethodDecl* m) {
-        if (!m->body) return;  // 抽象方法
+        if (!m->body) return;  // abstract method
         begin_member(c->ty, m->rty, c->name + "." + m->name, m->line, m->col);
         declare_params(m->param_locals, m->params, m->pty);
         check_block(m->body.get());
@@ -247,7 +247,7 @@ namespace muc_detail {
     }
 
     void Sema::check_struct(StructDecl* sd) {
-        // U33 S1：`struct S : I1, I2` —— 只能列接口；静态满足，不产生值类型。
+        // U33 S1: `struct S : I1, I2` — only interfaces may be listed; satisfaction is static and no value type is produced.
         for (size_t i = 0; i < sd->base_specs.size(); ++i) {
             if (!sd->base_specs[i]) continue;
             TypePtr bt = resolve_type(sd->base_specs[i].get(), cur_);
@@ -255,7 +255,7 @@ namespace muc_detail {
             if (bt->kind != TypeKind::Interface) {
                 err("`" + sd->bases[i] + "`: only interfaces are allowed after `:` on a struct", sd);
             }
-            // 接口方法（含接口继承链；默认方法也要求显式实现，见 backlog U33）
+            // Interface methods (including the interface inheritance chain; default methods also require an explicit implementation, see backlog U33)
             std::vector<const MethodSig*> reqs;
             std::function<void(const TypePtr&, int)> collect = [&](const TypePtr& itf, int depth) {
                 if (!itf || depth > 64) return;
@@ -264,7 +264,7 @@ namespace muc_detail {
             };
             collect(bt, 0);
             for (const MethodSig* req : reqs) {
-                if (req->is_operator) continue;  // 运算符不进 vtable，也不要求成员实现
+                if (req->is_operator) continue;  // operators do not go into the vtable and require no member implementation
                 const MethodSig* impl = nullptr;
                 for (const auto& m : sd->ty->methods) {
                     if (same_sig(m, *req)) {
@@ -369,7 +369,7 @@ namespace muc_detail {
             }
             check_ctor(c, ctor.get());
         }
-        // 派生类隐式默认构造器要求基类有无参构造器
+        // An implicit default constructor of a derived class requires a parameterless constructor in the base class
         if (c->ctors.empty() && c->ty->base && !c->ty->base->ctors.empty()) {
             bool base_default = false;
             for (auto& cs : c->ty->base->ctors) {
@@ -379,7 +379,7 @@ namespace muc_detail {
                 err("base class of class `" + c->name + "` has no parameterless constructor; declare a constructor explicitly", c);
             }
         }
-        // 派生类字段不能遮蔽基类方法名（用字段名访问会与方法调用混淆）
+        // A derived class field must not shadow a base class method name (accessing by field name would be confused with a method call)
         if (c->ty->base) {
             for (auto& [fname, spec] : c->fields) {
                 if (has_method_named(c->ty->base, fname)) {
@@ -392,7 +392,7 @@ namespace muc_detail {
 
     void Sema::check_interface(InterfaceDecl* itf) {
         for (auto& m : itf->methods) {
-            if (!m->body) continue;  // 默认方法之外的抽象声明
+            if (!m->body) continue;  // abstract declaration other than a default method
             begin_member(itf->ty, m->rty, itf->name + "." + m->name, m->line, m->col);
             declare_params(m->param_locals, m->params, m->pty);
             check_block(m->body.get());
@@ -576,7 +576,7 @@ namespace muc_detail {
             if (is_void(t)) err("cannot infer a type from a `void` expression", lv);
             if (t->kind == TypeKind::Range) err("cannot infer a type from a range", lv);
             lv->rty = t;
-            // 同一声明语句的多个 auto 声明符必须推断出同一类型
+            // Several auto declarators in one declaration statement must infer the same type
             auto it = auto_groups_.find(lv->group);
             if (it == auto_groups_.end()) {
                 auto_groups_[lv->group] = t;
@@ -666,13 +666,13 @@ namespace muc_detail {
                 direct_init_expr_ = e;
                 check_expr(e, ty);
                 direct_init_expr_ = nullptr;
-                if (call->callee_kind == "struct_ctor") return;  // 就地构造
+                if (call->callee_kind == "struct_ctor") return;  // in-place construction
                 if (!same_type(call->ty, ty)) {
                     err("struct `" + ty->str() +
                             "` has a constructor and must be built with `T(...)` or copy-initialized from an expression of the same type",
                         node);
                 }
-                return;  // 同类型返回值：拷贝初始化
+                return;  // same-type returned value: copy initialization
             }
             if (ty->kind == TypeKind::Array && is_char(ty->elem) &&
                 dynamic_cast<StringLit*>(e)) {

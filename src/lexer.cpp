@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 词法分析
+// Lexing
 //
-// 与 Python 版的行为保持一致：关键字表、数字字面量（十进制 / 0x / 0b / 浮点 + f 后缀）、
-// 字符与字符串字面量（含转义）、`//` 行注释与可嵌套的 `/* */` 块注释。
-// 源码按 UTF-8 字节流处理（行 / 列按字节计），注释与字符串里的多字节字符原样透传。
+// Matches the Python version's behavior: keyword table, numeric literals (decimal / 0x / 0b / float + f suffix),
+// character and string literals (with escapes), `//` line comments, and nestable `/* */` block comments.
+// Source is processed as a UTF-8 byte stream (lines / columns counted in bytes); multibyte characters in comments and strings pass through unchanged.
 #include "lexer.hpp"
 
 #include <cstdio>
@@ -20,23 +20,23 @@
 
 namespace {
 
-// ---------------------------------------------------------------- 字符类
+// ---------------------------------------------------------------- character classes
 
 bool in_set(int ch, const char* set) {
-    if (ch <= 0) return false;  // -1 = 文件结尾
+    if (ch <= 0) return false;  // -1 = end of file
     return std::strchr(set, ch) != nullptr;
 }
 
 bool is_digit(int ch) { return ch >= '0' && ch <= '9'; }
 
-// SPEC 2.2：标识符为 [A-Za-z_][A-Za-z0-9_]*，第一阶段不允许非 ASCII 标识符。
+// SPEC 2.2: identifiers are [A-Za-z_][A-Za-z0-9_]*; non-ASCII identifiers are not allowed in stage one.
 bool ident_start(int ch) {
     return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_';
 }
 
 bool ident_cont(int ch) { return ident_start(ch) || is_digit(ch); }
 
-// 关键字表（lexer.py 的 KEYWORDS）
+// keyword table (KEYWORDS in lexer.py)
 const std::unordered_set<std::string>& keywords() {
     static const std::unordered_set<std::string> kws = {
         "unit",     "use",      "public",  "private", "const",   "auto",    "struct",   "enum",
@@ -53,13 +53,13 @@ const std::unordered_set<std::string>& keywords() {
     return kws;
 }
 
-// 长的放前面，保证最长匹配（lexer.py 的 OPS3 / OPS2 / OPS1）
+// longer operators first to guarantee longest match (OPS3 / OPS2 / OPS1 in lexer.py)
 const char* const OPS3[] = {"<<=", ">>=", "...", "..="};
 const char* const OPS2[] = {"==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=",
                             "|=", "^=", "<<", ">>", "..", "++", "--"};
 const char* const OPS1 = "+-*/%&|^!~<>=(){}[];,.?:";
 
-// 用于「非法字符」提示；与其它诊断一致，代码片段用反引号包裹
+// used for the "invalid character" message; as in other diagnostics, source snippets are wrapped in backticks
 std::string quote_char(int ch) {
     if (ch == '`') return "`\\``";
     if (ch == '\\') return "`\\\\`";
@@ -78,10 +78,10 @@ std::string strip_underscores(const std::string& s) {
     return out;
 }
 
-// 与 Python 的 int(digits, base) 等价（溢出按 64 位回绕，正常源码用不到）
+// equivalent to Python's int(digits, base) (overflow wraps at 64 bits; normal source never reaches it)
 long long parse_digits(const std::string& digits, int base) {
     unsigned long long v = 0;
-    const unsigned long long maxv = 9223372036854775807ULL;  // 与 Python 版一致：上限 2^63-1
+    const unsigned long long maxv = 9223372036854775807ULL;  // same as the Python version: limit 2^63-1
     for (char c : digits) {
         int d = -1;
         if (c >= '0' && c <= '9') d = c - '0';
@@ -100,7 +100,7 @@ double parse_double(const std::string& text) {
     return std::strtod(text.c_str(), nullptr);
 }
 
-// 把码点按 UTF-8 追加到字节串（`\u{...}` 写进字符串字面量时使用）
+// append a code point to the byte string as UTF-8 (used when `\u{...}` is written into a string literal)
 void append_utf8(std::string& out, int cp) {
     unsigned v = static_cast<unsigned>(cp);
     if (v < 0x80) {
@@ -120,7 +120,7 @@ void append_utf8(std::string& out, int cp) {
     }
 }
 
-// ---------------------------------------------------------------- 词法器
+// ---------------------------------------------------------------- lexer
 
 class Lexer {
 public:
@@ -136,13 +136,13 @@ public:
     }
 
 private:
-    // ------------------------------------------------------ 基础
+    // ------------------------------------------------------ basics
 
     MuError err(const std::string& msg, int line = 0, int col = 0) const {
         return MuError(msg, line != 0 ? line : line_, col != 0 ? col : col_, filename_);
     }
 
-    // 返回第 k 个字节（0..255），文件结尾返回 -1
+    // return the k-th byte (0..255), or -1 at end of file
     int peek(std::size_t k = 0) const {
         std::size_t j = i_ + k;
         return j < n_ ? static_cast<int>(static_cast<unsigned char>(src_[j])) : -1;
@@ -158,7 +158,7 @@ private:
                 ++line_;
                 col_ = 1;
             } else if ((b & 0xC0u) != 0x80u) {
-                // UTF-8 续字节不计数，列号按「字符」而非字节推进（与 Python 版一致）
+                // UTF-8 continuation bytes are not counted; columns advance by character rather than byte (same as the Python version)
                 ++col_;
             }
         }
@@ -166,7 +166,7 @@ private:
         return out;
     }
 
-    // ------------------------------------------------------ 主循环
+    // ------------------------------------------------------ main loop
 
     void skip_space_and_comments() {
         while (i_ < n_) {
@@ -227,12 +227,12 @@ private:
 
         if (ch == '"') return string_lit(tok.line, tok.col);
 
-        // 不支持的运算符：给出友好提示（Python 版里这两条判断位于运算符匹配之后，
-        // 实际不可达；这里按规范意图提前判断，使提示真正生效）。
+        // unsupported operators: give a friendly hint (in the Python version these two checks sit after operator matching
+        // and are effectively unreachable; here they run earlier as the spec intends, so the hint actually fires).
         if (ch == '&' && peek(1) == '&') throw err("`&&` is not supported: use `and` for logical and");
         if (ch == '|' && peek(1) == '|') throw err("`||` is not supported: use `or` for logical or");
 
-        // 运算符（最长匹配）
+        // operators (longest match)
         for (const char* op : OPS3) {
             if (src_.compare(i_, std::strlen(op), op) == 0) {
                 adv(3);
@@ -260,7 +260,7 @@ private:
         throw err("invalid character " + quote_char(ch));
     }
 
-    // ------------------------------------------------------ 数字
+    // ------------------------------------------------------ numbers
 
     long long int_digits(const std::string& raw, int base, int line, int col) {
         try {
@@ -301,13 +301,13 @@ private:
         while (i_ < n_ && (is_digit(peek()) || peek() == '_')) adv();
 
         bool is_float = false;
-        // 小数点（注意避开 `..` 区间）
+        // decimal point (careful to avoid the `..` range)
         if (peek() == '.' && peek(1) != '.' && is_digit(peek(1))) {
             is_float = true;
             adv();
             while (i_ < n_ && (is_digit(peek()) || peek() == '_')) adv();
         }
-        // 指数
+        // exponent
         if (in_set(peek(), "eE")) {
             std::size_t save_i = i_;
             int save_line = line_;
@@ -335,7 +335,7 @@ private:
             return tok;
         }
         if (in_set(peek(), "fF")) {
-            // 1f 视为 float
+            // treat 1f as a float
             adv();
             tok.kind = TokKind::Float;
             tok.f32 = true;
@@ -347,15 +347,15 @@ private:
         return tok;
     }
 
-    // ------------------------------------------------------ 字符 / 字符串
+    // ------------------------------------------------------ characters / strings
 
-    // 转义结果：普通转义是单字节值；`\u{...}` 是 Unicode 码点（写进字符串时要 UTF-8 编码）
+    // escape result: a plain escape is a single byte value; `\u{...}` is a Unicode code point (UTF-8 encoded when written into a string)
     struct Escape {
         int value;
         bool is_codepoint;
     };
 
-    // `\u{...}` 的 `{...}` 部分（`u` 已消费）：1–6 位十六进制码点
+    // the `{...}` part of `\u{...}` (`u` already consumed): a 1–6 digit hexadecimal code point
     int unicode_codepoint(int line, int col) {
         if (peek() != '{') throw err("`\\u` must be followed by `{...}`, e.g. `\\u{4E2D}`", line, col);
         adv();
@@ -420,7 +420,7 @@ private:
         Token tok;
         tok.line = line;
         tok.col = col;
-        adv();  // 开头的 '
+        adv();  // opening '
         if (peek() < 0) throw err("unterminated character literal", line, col);
         long long v = 0;
         bool is_codepoint = false;
@@ -454,7 +454,7 @@ private:
         Token tok;
         tok.line = line;
         tok.col = col;
-        adv();  // 开头的 "
+        adv();  // opening "
         std::string buf;
         for (;;) {
             if (i_ >= n_) throw err("unterminated string literal", line, col);
@@ -472,7 +472,7 @@ private:
                 continue;
             }
             adv();
-            buf.push_back(static_cast<char>(ch));  // UTF-8 字节原样保留
+            buf.push_back(static_cast<char>(ch));  // keep UTF-8 bytes as-is
         }
         if (buf.find('\0') != std::string::npos) {
             throw err("string literal cannot contain NUL bytes", line, col);
@@ -492,7 +492,7 @@ private:
 
 }  // namespace
 
-// ---------------------------------------------------------------- 对外接口
+// ---------------------------------------------------------------- public interface
 
 std::string Token::describe() const {
     switch (kind) {

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// unit 加载
+// unit loading
 //
-// 默认库搜索路径：
-//   1. 入口文件所在目录
-//   2. 命令行 -I 指定的目录
-//   3. 环境变量 MUC_LIBS（`;` 或 `:` 分隔）
-//   4. 当前目录及其祖先目录下的 libs / libs/std
+// Default library search paths:
+//   1. the directory containing the entry file
+//   2. directories given on the command line with -I
+//   3. the MUC_LIBS environment variable (separated by `;` or `:`)
+//   4. libs / libs/std under the current directory and its ancestors
 //
-// 标准库 unit 用点号分层：`unit std.string;` 对应 `libs/std/string.mu`。
+// Standard library units use dot-separated layers: `unit std.string;` maps to `libs/std/string.mu`.
 #include "loader.hpp"
 
 #include <cstdlib>
@@ -51,7 +51,7 @@ void add_unique(std::vector<std::string>& dirs, const std::string& d) {
     dirs.push_back(d);
 }
 
-// 点号 unit 名 -> 相对路径（std.string -> std/string）
+// dotted unit name -> relative path (std.string -> std/string)
 std::string dotted_path(const std::string& name) {
     std::string out = name;
     for (char& c : out) {
@@ -78,7 +78,7 @@ fs::path executable_dir() {
     return {};
 }
 
-// 当前目录、可执行文件目录及其祖先目录中的 libs / libs/std
+// libs / libs/std in the current directory, the executable directory, and their ancestors
 void add_default_lib_dirs(std::vector<std::string>& dirs) {
     if (const char* env = std::getenv("MUC_LIBS")) {
         std::string s = env;
@@ -103,7 +103,7 @@ void add_default_lib_dirs(std::vector<std::string>& dirs) {
         p = parent;
     }
 
-    // 可执行文件所在目录及其祖先（覆盖 build/ 下运行、安装目录运行等情况）
+    // the directory of the executable and its ancestors (covers running under build/, running from an install dir, etc.)
     p = executable_dir();
     for (int i = 0; i < 12 && !p.empty(); ++i) {
         add_search_dir(dirs, p);
@@ -166,7 +166,7 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         return raw;
     };
 
-    // 标准库字符串 unit：总是作为隐式依赖加载（字符串字面量需要它的类型）。
+    // standard library string unit: always loaded as an implicit dependency (string literals need its type).
     (void)visit(find_file("std.string"));
 
     Unit* entry_unit = visit(entry_path);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含 class / interface 检查（下）（Sema 成员函数定义）。
+// This file holds class / interface checking (part 2) (definitions of Sema members).
 #include "sema_impl.hpp"
 
 namespace muc_detail {
@@ -10,7 +10,7 @@ namespace muc_detail {
         auto& items = init->items;
 
         if (ty->kind == TypeKind::Struct && ty->is_union) {
-            // union：只允许「恰好一个具名成员」；不提供位置初始化（显式优于隐式）
+            // union: exactly one named member is allowed; positional initialization is not provided (explicit over implicit)
             if (items.size() != 1 || items[0].first.empty()) {
                 err("union `" + ty->str() +
                         "` must be initialized with exactly one named member, e.g. `{ member = value }`",
@@ -33,7 +33,7 @@ namespace muc_detail {
 
         if (ty->kind == TypeKind::Struct) {
             const auto& fields = ty->fields;
-            // 跨 unit 的聚合初始化要求字段全部 public
+            // A cross-unit aggregate initialization requires all fields to be public
             if (cur_ && cur_->name != ty->unit) {
                 for (auto& f : fields) {
                     if (!f.is_public) {
@@ -94,7 +94,7 @@ namespace muc_detail {
             for (auto& item : items) {
                 if (!item.first.empty()) err("array initializers cannot use named fields", init);
             }
-            // 区间填充：`{1, 2, 5..9, 10}`（端点须编译期常量，仅整数元素类型）
+            // Range fill: `{1, 2, 5..9, 10}` (endpoints must be compile-time constants, integer element types only)
             size_t total = 0;
             for (auto& item : items) {
                 if (auto rg = dynamic_cast<InitRange*>(item.second.get())) {
@@ -106,7 +106,7 @@ namespace muc_detail {
                         err("range endpoints in an array initializer must be compile-time integer constants", rg);
                     }
                     rg->lo_val = lo;
-                    rg->count = hi > lo ? hi - lo : 0;  // 空区间（lo >= hi）合法 = 0 个元素
+                    rg->count = hi > lo ? hi - lo : 0;  // an empty range (lo >= hi) is valid = 0 elements
                     total += static_cast<size_t>(rg->count);
                     continue;
                 }
@@ -164,7 +164,7 @@ namespace muc_detail {
         if (auto n = dynamic_cast<Name*>(t)) {
             if (n->ident == "this") err("cannot assign to `this`", t);
             if (auto lv = std::get_if<LocalVar*>(&n->sym); lv && *lv && (*lv)->is_ref_param) {
-                // 标量/枚举/指针借用：赋值即写穿调用方变量（结构体借用仍走字段赋值，见 SPEC「不可重绑定」）
+                // Scalar/enum/pointer borrow: assignment writes through to the caller's variable (struct borrows still use field assignment, see SPEC "no rebinding")
                 TypePtr rt = (*lv)->rty;
                 const bool scalar = rt && (rt->kind == TypeKind::Prim ||
                                            rt->kind == TypeKind::Enum ||
@@ -219,7 +219,7 @@ namespace muc_detail {
 
     void Sema::check_assign_stmt(AssignStmt* s) {
         if (!is_lvalue(s->target.get())) {
-            // `ref T f()` 的调用结果也是可写左值（写穿借用）
+            // The result of a `ref T f()` call is also a writable lvalue (write-through borrow)
             if (auto* c = dynamic_cast<Call*>(s->target.get())) {
                 check_expr(c);
                 if (c->ref_const) err("cannot assign through a readonly (`ref const`) return value", s);
@@ -239,13 +239,13 @@ namespace muc_detail {
                     err("user-defined `operator[]=` takes exactly one index", s->target.get());
                 TypePtr it = check_expr(ix->indices[0].get());
                 if (!is_integer(it)) err("index must be an integer", s->target.get());
-                // 先解析 `[]`：若它返回借用（`ref T`），该下标就是可写左值，直接走通用赋值路径
+                // Resolve `[]` first: if it returns a borrow (`ref T`), that subscript is a writable lvalue and the generic assignment path is taken directly
                 if (!collect_operators("[]", {bt, it}).empty()) check_expr(ix);
                 if (ix->by_ref) {
                     if (ix->ref_const)
                         err("cannot assign through a readonly (`ref const`) subscript", s->target.get());
                     check_writable(s->target.get());
-                    // 不 return：落到下面的通用赋值/复合赋值检查
+                    // no return: falls through to the generic assignment/compound-assignment check below
                 } else {
                     if (s->op != "=") err("user-defined subscript assignment only supports `=`", s);
                     auto cands = collect_operators("[]=", {bt, it});
@@ -339,7 +339,7 @@ namespace muc_detail {
         check_assign(s->value.get(), rt, "return value");
     }
 
-    // 返回借用的来源是否稳定：ref 参数 / this / 全局 / 路径上经过指针或切片（堆存储）/ 透传借用。
+    // Whether the origin of a returned borrow is stable: ref parameter / this / global / a path through a pointer or slice (heap storage) / forwarded borrow.
     bool Sema::borrow_root_ok(Expr* e) {
         bool heap = false;
         while (e) {
@@ -352,7 +352,7 @@ namespace muc_detail {
             if (auto* ix = dynamic_cast<Index*>(e)) {
                 TypePtr bt = ix->base->ty;
                 if (bt && (bt->kind == TypeKind::Ptr || bt->kind == TypeKind::Slice)) heap = true;
-                if (ix->by_ref) heap = true;  // 借用元素本身指向稳定存储
+                if (ix->by_ref) heap = true;  // the borrowed element itself points into stable storage
                 e = ix->base.get();
                 continue;
             }
@@ -366,7 +366,7 @@ namespace muc_detail {
         if (!e) return false;
         if (auto* n = dynamic_cast<Name*>(e)) {
             if (n->ident == "this") return true;
-            if (n->kind == "field" && n->implicit_this) return true;  // 隐式 this 字段
+            if (n->kind == "field" && n->implicit_this) return true;  // implicit this field
             if (auto* lv = std::get_if<LocalVar*>(&n->sym); lv && *lv) return (*lv)->by_ref;
             if (std::get_if<GlobalVar*>(&n->sym)) return true;
             return false;
@@ -397,7 +397,7 @@ namespace muc_detail {
 
     long long Sema::pattern_value(Expr* e, const TypePtr& st) {
         if (st->kind == TypeKind::Enum) {
-            // 成员名直接按被匹配的枚举解析（`Red` 不必写前缀）
+            // The member name is resolved directly against the matched enum (`Red` needs no prefix)
             if (auto* n = dynamic_cast<Name*>(e)) {
                 if (EnumConst* ec = find_enum_member(st, n->ident)) {
                     n->kind = "enum_const";
@@ -427,7 +427,7 @@ namespace muc_detail {
             }
         }
         if (auto* n = dynamic_cast<Name*>(e)) {
-            check_expr(e);  // 解析成变量 / 枚举成员，好给出更准的错误
+            check_expr(e);  // resolve as a variable / enum member to give a more precise error
             if (std::get_if<EnumConst*>(&n->sym)) {
                 err("pattern `" + n->ident + "` is an enum member and cannot match " + st->str(), e);
             }
@@ -473,7 +473,7 @@ namespace muc_detail {
         }
         s->sty = st;
 
-        // 重叠检测：按 [lo, hi) 区间合并，top = 覆盖到类型的最大值
+        // Overlap detection: merge [lo, hi) intervals, top = covers up to the maximum value of the type
         struct Iv {
             long long lo = 0;
             long long hi = 0;
@@ -506,7 +506,7 @@ namespace muc_detail {
                         if (p.vhi == LLONG_MAX) {
                             err("switch range upper bound is too large for an inclusive range (`..=`)", p.hi.get());
                         }
-                        ++p.vhi;  // 归一化为半开区间 [vlo, vhi)
+                        ++p.vhi;  // normalize to the half-open interval [vlo, vhi)
                     }
                     if (p.vlo >= p.vhi) {
                         err("switch range `" + std::to_string(p.vlo) + (p.inclusive ? "..=" : "..") +
@@ -518,10 +518,10 @@ namespace muc_detail {
                     if (p.vlo == LLONG_MAX) {
                         iv.hi = p.vlo;
                         iv.top = true;
-                        p.vhi = p.vlo;  // 仅内部使用；+1 会溢出
+                        p.vhi = p.vlo;  // internal use only; +1 would overflow
                     } else {
                         iv.hi = p.vlo + 1;
-                        p.vhi = p.vlo + 1;  // 仅内部使用（p.vlo 是唯一命中值）
+                        p.vhi = p.vlo + 1;  // internal use only (p.vlo is the only matching value)
                     }
                 }
                 ivs.push_back(iv);

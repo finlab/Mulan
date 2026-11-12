@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 本文件包含 类型解析、作用域与 unit 检查（Sema 成员函数定义）。
+// This file holds type resolution, scopes and unit checks (definitions of Sema members).
 #include "sema_impl.hpp"
 
 namespace muc_detail {
@@ -20,7 +20,7 @@ namespace muc_detail {
                     return instantiate_generic(spec, u);
                 }
                 TypePtr t = resolve_named_type(spec->name, u, spec);
-                // C 模型：prim 的 const 需要独立类型节点（prim 工厂有单例缓存，不能就地改）
+                // C model: const on a prim needs its own type node (the prim factory has a singleton cache, so it cannot be mutated in place)
                 if (spec->is_const && t && t->kind == TypeKind::Prim) {
                     auto c = std::make_shared<Type>(*t);
                     c->is_const = true;
@@ -104,7 +104,7 @@ namespace muc_detail {
         if (name == "void") return t_void();
         if (is_prim_name(name)) return Type::make_prim(name);
 
-        // 多段 unit 名：从最长前缀开始匹配（`lib.a.b.T` → unit `lib.a.b` + 类型 `T`）
+        // Multi-segment unit name: match starting from the longest prefix (`lib.a.b.T` → unit `lib.a.b` + type `T`)
         for (std::size_t pos = name.rfind('.'); pos != std::string::npos;) {
             const std::string un = name.substr(0, pos);
             const std::string tn = name.substr(pos + 1);
@@ -148,10 +148,10 @@ namespace muc_detail {
             pos = name.rfind('.', pos - 1);
         }
 
-        // 当前 unit 优先（含私有类型，本地遮蔽导入）
+        // The current unit takes precedence (including private types; local declarations shadow imports)
         if (TypePtr t = find_type_named(u->name, name, false)) return t;
 
-        // 直接 use 的 unit：只收 public 类型；多个来源同名 → 使用点报歧义
+        // Directly `use`d units: public types only; the same name from several sources → ambiguity error at the use site
         TypePtr found;
         std::string found_unit;
         for (auto& use : u->uses) {
@@ -279,7 +279,7 @@ namespace muc_detail {
             for (auto& cm : *list) {
                 if (cm->name == name) return cm.get();
             }
-            if (cur->kind != TypeKind::Class) return nullptr;  // struct 没有基类
+            if (cur->kind != TypeKind::Class) return nullptr;  // a struct has no base class
             cur = cur->base;
         }
         return nullptr;
@@ -350,7 +350,7 @@ namespace muc_detail {
                                     bool require_pub) {
         auto it = infos_.find(unit_name);
         if (it == infos_.end()) return nullptr;
-        // 按声明顺序遍历（Python 的 dict 保留插入顺序）
+        // Iterate in declaration order (Python's dict preserves insertion order)
         for (auto& d : it->second.unit->decls) {
             auto ed = dynamic_cast<EnumDecl*>(d.get());
             if (!ed) continue;
@@ -382,7 +382,7 @@ namespace muc_detail {
         for (auto& d : u->decls) {
             if (auto g = dynamic_cast<GlobalVar*>(d.get())) recover([&] { check_global(g); });
         }
-        // 同名函数的签名不能完全重复（重载必须参数不同）
+        // Signatures of same-name functions must not be fully identical (overloads must differ in parameters)
         for (auto& entry : infos_.at(u->name).funcs) {
             auto& vec = entry.second;
             if (entry.first == "main" && vec.size() > 1) {
@@ -452,8 +452,8 @@ namespace muc_detail {
             g->zero = true;
             return;
         }
-        // 先试新的编译期求值器（const 与非 const 全局变量都适用，结果缓存给后端）；
-        // 算不出来再回退到旧的 is_const_expr（聚合初始化 / string 字面量等）
+        // Try the new compile-time evaluator first (applies to both const and non-const globals; the result is cached for the backend);
+        // fall back to the old is_const_expr when it cannot compute a value (aggregate initialization / string literals, etc.)
         {
             ConstVal v;
             if (eval_global_const(g, cur_->name, v)) return;
@@ -475,7 +475,7 @@ namespace muc_detail {
             if (!i->els) return false;
             return guarantees_return(i->then.get()) && guarantees_return(i->els.get());
         }
-        // 值域覆盖全部时，switch 的所有分支都返回才算保证返回
+        // When the value domain is fully covered, a switch guarantees a return only if all of its arms return
         if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
             if (!sw->has_else && !sw->enum_exhaustive) return false;
             if (sw->arms.empty()) return false;
@@ -571,7 +571,7 @@ namespace muc_detail {
 
         if (f->body) check_block(f->body.get());
 
-        // 非 void 函数必须保证有返回值；main 例外（掉出等价 return 0）
+        // A non-void function must guarantee a return value; main is exempt (falling off the end is equivalent to return 0)
         if (!is_void(f->rty) && f->cname != "main" && !guarantees_return(f->body.get())) {
             err("function `" + f->name + "` may reach the end of its body without returning a value", f);
         }

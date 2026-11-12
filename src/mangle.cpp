@@ -5,7 +5,7 @@
 
 #include "ast.hpp"
 
-// 符号名安全化：泛型实例名（`Box<int>`）里的 `<` `>` `,` 空格等不能进符号
+// Symbol name sanitization: characters like `<`, `>`, `,` and spaces in a generic instance name (like `Box<int>`) cannot appear in symbols
 static std::string ident_safe(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 4);
@@ -66,7 +66,7 @@ std::string op_code(const std::string& sym) {
 std::string func_code_name(const std::string& name) {
     const std::string prefix = "operator";
     if (name.rfind(prefix, 0) == 0) return "op_" + op_code(name.substr(prefix.size()));
-    return ident_safe(name);  // `f<int>` → `f_int_`（泛型实例的符号唯一性）
+    return ident_safe(name);  // `f<int>` → `f_int_` (keeps generic instances unique in symbol names)
 }
 
 std::string mangle_unit(const std::string& unit, const std::string& name) {
@@ -77,7 +77,7 @@ std::string func_cname(const std::string& unit, FuncDecl* f) {
     if (f->is_extern) return f->name;
     std::string out = mangle_unit(unit, func_code_name(f->name));
     for (size_t i = 0; i < f->pty.size(); ++i) {
-        // 借用参数在 C 侧是 T*，符号名里必须区分，否则 f(T) 与 f(ref T) 会撞名
+        // A borrowed parameter is T* on the C side and must be distinguished in the symbol name, otherwise f(T) and f(ref T) would collide
         const bool by_ref = i < f->pty_ref.size() && f->pty_ref[i];
         out += by_ref ? "__r" : "__";
         out += type_code(f->pty[i]);

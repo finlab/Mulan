@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 语义分析对外接口（analyze / type_str）；实现按功能分散在 sema_*.cpp。
+// Semantic analysis public interface (analyze / type_str); implementations are split by feature across sema_*.cpp.
 #include "sema.hpp"
 
 #include "sema_impl.hpp"
 
 
-// ---------------------------------------------------------------- 出口
+// ---------------------------------------------------------------- exports
 
 std::string mangle(const std::string& unit, const std::string& name) {
     return "mu_" + unit + "_" + name;

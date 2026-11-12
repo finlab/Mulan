@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 语义分析内部实现：Sema 类声明与跨文件辅助函数声明（仅供 sema_*.cpp 使用）。
+// Semantic analysis internals: Sema class declaration and cross-file helper declarations (for use by sema_*.cpp only).
 //
-// 成员函数按功能分散在 sema_decl / sema_types / sema_class1 / sema_class2 /
-// sema_const / sema_expr / sema_call 中；对外接口见 sema.hpp。
+// Member functions are split by feature across sema_decl / sema_types / sema_class1 / sema_class2 /
+// sema_const / sema_expr / sema_call; the public interface is in sema.hpp.
 #pragma once
 
 #include "sema.hpp"
@@ -26,18 +26,18 @@
 namespace muc_detail {
 
 
-// ---------------------------------------------------------------- 小工具
+// ---------------------------------------------------------------- small helpers
 
 inline bool is_integer(const TypePtr& t) { return t && t->is_integer(); }
 inline bool is_numeric(const TypePtr& t) { return t && t->is_numeric(); }
 inline bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
 inline bool is_prim(const TypePtr& t) { return t && t->kind == TypeKind::Prim; }
 inline bool is_enum_t(const TypePtr& t) { return t && t->kind == TypeKind::Enum; }
-// 枚举只允许与「真正的整数类型」显式互转（bool 与枚举都不算）
+// Enums may only be explicitly converted to and from "real integer types" (neither bool nor enums count)
 inline bool is_plain_int(const TypePtr& t) { return is_prim(t) && t->is_integer(); }
 
-// 类型语法文本化。ast.hpp 里声明了 TypeSpec::str()，但它的定义属于 parser.cpp；
-// 这里自带一份，避免 sema 对 parser 的链接期依赖（只在错误信息里用）。
+// Textual form of a type syntax. ast.hpp declares TypeSpec::str(), but its definition lives in parser.cpp;
+// a local copy is kept here to avoid a link-time dependency of sema on parser (used only in error messages).
 inline std::string spec_text(const TypeSpec* s) {
     if (!s) return "?";
     switch (s->kind) {
@@ -54,8 +54,8 @@ inline std::string spec_text(const TypeSpec* s) {
     return "?";
 }
 
-// 枚举常量要被 AST 长期持有（Name::sym 是裸指针），而 Program 里没有存放它们的位置。
-// 用进程级 deque 存储：push_back 不会让已有元素失效，Program 销毁后指针仍然有效。
+// Enum constants must be held by the AST long-term (Name::sym is a raw pointer), and Program has no place to store them.
+// Store them in a process-level deque: push_back never invalidates existing elements, so pointers stay valid after Program is destroyed.
 inline EnumConst* intern_enum_const(const std::string& unit, const std::string& enum_name,
                              const std::string& member, long long value, const TypePtr& ty) {
     static std::deque<EnumConst> pool;
@@ -72,14 +72,14 @@ public:
 private:
     using Scope = std::unordered_map<std::string, LocalVar*>;
 
-    // for 循环体异常时也要退出作用域（对应 Python 的 try/finally）
+    // Leaving the scope must also happen when the for-loop body throws (the Python try/finally equivalent)
     struct ScopeGuard {
         Sema& sema;
         explicit ScopeGuard(Sema& s) : sema(s) { sema.push(); }
         ~ScopeGuard() { sema.pop(); }
     };
 
-    // ------------------------------------------------------------ 字段
+    // ------------------------------------------------------------ fields
 
     std::vector<std::unique_ptr<Unit>> units_;
     std::string entry_;
@@ -94,35 +94,35 @@ private:
     bool super_ok_ = false;
     std::vector<std::unique_ptr<LocalVar>> this_local_;
     std::vector<Scope> scopes_;
-    std::vector<std::string> errors_;  // 收集到的错误（多错误报告）
+    std::vector<std::string> errors_;  // collected errors (multiple-error reporting)
     static constexpr size_t kMaxErrors = 20;
     int loop_depth_ = 0;
-    int const_depth_ = 0;  // 常量求值递归深度（见 DepthGuard）
-    std::unordered_map<int, TypePtr> auto_groups_;  // auto 同一声明的推断结果
-    Expr* direct_init_expr_ = nullptr;  // 当前正在检查的直接初始化表达式（构造器就地构造）
+    int const_depth_ = 0;  // constant evaluation recursion depth (see DepthGuard)
+    std::unordered_map<int, TypePtr> auto_groups_;  // inference result shared by auto in one declaration
+    Expr* direct_init_expr_ = nullptr;  // direct-initialization expression currently under check (in-place constructor construction)
 
-    // ------------------------------------------------------------ 泛型（U34）
-    std::unordered_map<std::string, Decl*> generic_templates_;  // "unit.Name" → 模板声明
-    std::unordered_map<std::string, TypePtr> generic_insts_;    // "unit.Vec<int>" → 实例类型
-    std::unordered_map<std::string, FuncDecl*> generic_func_insts_;  // "unit.f<int>" → 实例函数
-    std::unordered_set<std::string> generic_busy_;              // 实例化中（防递归）
-    std::vector<std::unique_ptr<Decl>> generic_decls_;          // 实例化产物（生命周期）
+    // ------------------------------------------------------------ generics (U34)
+    std::unordered_map<std::string, Decl*> generic_templates_;  // "unit.Name" → template declaration
+    std::unordered_map<std::string, TypePtr> generic_insts_;    // "unit.Vec<int>" → instantiated type
+    std::unordered_map<std::string, FuncDecl*> generic_func_insts_;  // "unit.f<int>" → instantiated function
+    std::unordered_set<std::string> generic_busy_;              // being instantiated (recursion guard)
+    std::vector<std::unique_ptr<Decl>> generic_decls_;          // instantiation products (lifetime)
 
-    // ------------------------------------------------------------ 工具
+    // ------------------------------------------------------------ utilities
 
     [[noreturn]] void err(const std::string& msg, const Node* node = nullptr) const;
 
-    // 警告不中止编译，只打到 stderr（格式与错误一致，前缀 warning）。
+    // Warnings do not abort compilation; they only go to stderr (same format as errors, prefixed with warning).
     void warn(const std::string& msg, const Node* node) const;
 
-    // TypeSpec 不是 Node（自带 line/col），单独一个报错入口。
+    // TypeSpec is not a Node (it carries its own line/col), so it gets a separate error entry point.
     [[noreturn]] void err_ts(const std::string& msg, const TypeSpec* spec) const;
 
     UnitInfo& info();
 
     UnitInfo* std_info();
 
-    // std.string 中的规范字符串结构体（名字就是 `string`）
+    // The canonical string struct in std.string (its name is just `string`)
     TypePtr str_type();
 
     bool is_str(const TypePtr& t);
@@ -131,35 +131,35 @@ private:
 
     bool uses_unit(const std::string& uname) const;
 
-    // std.string 始终作为隐式依赖加载，等价于已 `use`。
+    // std.string is always loaded as an implicit dependency, equivalent to having been `use`d.
     bool unit_imported(const std::string& uname) const;
 
-    // ------------------------------------------------------------ 可见性
+    // ------------------------------------------------------------ visibility
     //
-    // 库边界 = unit 名的第一段（`std.string` → `std`；无点号的 unit 属于根库）。
-    // 两档：默认仅本 unit 可见；`public` 跨 unit 可见。跨库还需要目标 unit 本身 `public unit`。
+    // Library boundary = first segment of the unit name (`std.string` → `std`; a unit without dots belongs to the root library).
+    // Two levels: by default visible only within this unit; `public` is visible across units. Cross-library also requires the target unit itself to be `public unit`.
 
     static std::string lib_of(const std::string& unit_name);
 
-    // 目标 unit 是否可被当前 unit 引用：同库总是可以；跨库要求 `public unit`。
+    // Whether the target unit can be referenced by the current unit: same library always allows it; cross-library requires `public unit`.
     bool unit_visible(const std::string& target) const;
 
-    // 声明级可见性：本 unit 内全可见；其他 unit 要求声明为 public。
+    // Declaration-level visibility: fully visible within this unit; other units require the declaration to be public.
     bool decl_visible(const std::string& owner_unit, bool is_public) const;
 
     bool type_is_public(const TypePtr& t) const;
 
-    // 类型声明可见性（带类型名，用于报错）。
+    // Type declaration visibility (carries the type name, used for errors).
     void require_type_visible(const TypePtr& t, const TypeSpec* spec) const;
 
-    // ------------------------------------------------------------ 主流程
+    // ------------------------------------------------------------ main flow
 
-    // ------------------------------------------------------------ 收集
+    // ------------------------------------------------------------ collection
     void collect();
 
-    // ------------------------------------------------------------ public 签名连锁检查
+    // ------------------------------------------------------------ public signature chain check
     //
-    // public 声明对外暴露的类型也必须 public，且其 unit 必须可见；否则外部拿到签名却无法命名类型。
+    // Types exposed by public declarations must also be public, and their units must be visible; otherwise outsiders get a signature they cannot name types with.
 
     void check_exposed_type(const TypePtr& t, const std::string& what, const Node* at);
 
@@ -169,10 +169,10 @@ private:
 
     void resolve_class_fields(ClassDecl* c, Unit* u);
 
-    // ------------------------------------------------------------ 布局修饰符
+    // ------------------------------------------------------------ layout modifiers
     //
-    // packed / align(N) 的最终布局由 types.cpp 的 type_align/type_size 计算；
-    // 这里只负责求值 N、校验 N 与自然对齐的关系，以及 packed 的字段类型限制。
+    // The final layout of packed / align(N) is computed by type_align/type_size in types.cpp;
+    // here we only evaluate N, check N against the natural alignment, and enforce the packed field type restrictions.
 
     bool eval_const_int(Expr* e, long long& out);
 
@@ -180,58 +180,58 @@ private:
 
     void check_layouts();
 
-    // 类型级编译期常量：解析类型并校验「只允许标量 / 枚举」
+    // Type-level compile-time constants: resolve the type and check that "only scalars / enums are allowed"
     void resolve_const_members(std::vector<std::unique_ptr<ConstMember>>& list,
                                const TypePtr& owner, Unit* u, const std::string& kw,
                                const std::string& type_name);
 
     void resolve_unit_types(Unit* u);
-    // ------------------------------------------------------------ 类型解析
+    // ------------------------------------------------------------ type resolution
     TypePtr resolve_type(const TypeSpec* spec, Unit* u);
 
-    // ------------------------------------------------------------ 泛型实例化（U34）
-    // 收集 `Unit::templates` 到 `generic_templates_`（collect 阶段末尾调用一次）
+    // ------------------------------------------------------------ generic instantiation (U34)
+    // Collect `Unit::templates` into `generic_templates_` (called once at the end of the collect stage)
     void index_templates();
-    // `spec` 是带实参的类型语法（`Vec<int>`）；返回实例类型，必要时克隆模板并注册
+    // `spec` is a type syntax with arguments (`Vec<int>`); returns the instance type, cloning and registering the template when needed
     TypePtr instantiate_generic(const TypeSpec* spec, Unit* u);
-    // `Name<args>`（来自调用点，如泛型 struct 的值构造 `Pair<int,long>(...)`）
+    // `Name<args>` (from a call site, e.g. value construction of a generic struct `Pair<int,long>(...)`)
     TypePtr instantiate_generic_named(const std::string& name,
                                       const std::vector<TypeSpecPtr>& args, Unit* u);
-    // 按名字找泛型模板（本 unit 优先，其次唯一后缀匹配）；没有则返回 nullptr
+    // Find a generic template by name (this unit first, then a unique suffix match); returns nullptr when none
     Decl* find_generic_template(const std::string& full, Unit* u);
-    // 自由函数单态化：`c->type_args` 是显式类型实参；返回实例函数（已跑 check_func）
+    // Free function monomorphization: `c->type_args` holds the explicit type arguments; returns the instance function (check_func already run)
     FuncDecl* instantiate_func(Call* c, const std::string& base, Unit* u);
-    // 结构化约束检查（U34 M3b）：`t` 是否满足 `p` 的每个 bound（`&` 全满足 / `|` 任一）
+    // Structural constraint check (U34 M3b): whether `t` satisfies every bound of `p` (`&` requires all / `|` requires any)
     void check_bound(const TypePtr& t, const TypeParam& p, Unit* u, const Node* at);
     bool satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::string* why);
 
-    // 在指定 unit 中按名字找类型；require_pub 时只返回 public 声明。
+    // Find a type by name in the given unit; with require_pub only public declarations are returned.
     TypePtr find_type_named(const std::string& unit, const std::string& name,
                             bool require_pub);
-    // 类型别名：惰性解析 + 循环检测（`type A = B; type B = A;` 报错）
+    // Type alias: lazy resolution + cycle detection (`type A = B; type B = A;` is an error)
     TypePtr resolve_alias(TypeAliasDecl* a, Unit* owner);
 
     TypePtr resolve_named_type(const std::string& name, Unit* u, const TypeSpec* spec);
 
-    // 表达式里的类型名解析（当前 unit → use 的 public 类型 → std.string），
-    // 用于 `Color.Red` 这类枚举限定引用。找不到返回 nullptr。
+    // Type name resolution inside expressions (current unit → public types from use → std.string),
+    // used for enum-qualified references such as `Color.Red`. Returns nullptr when not found.
     TypePtr find_type_in_expr(const std::string& name, const Node* at);
 
-    // 在指定枚举里按名字找成员（顺序与声明一致，显式赋值后继续递增）。
+    // Find a member by name in the given enum (order follows the declaration; incrementing continues after an explicit value).
     EnumConst* find_enum_member(const TypePtr& et, const std::string& member);
 
-    // 在 struct / class（含基类链）里按名字找类型级编译期常量。
+    // Find a type-level compile-time constant by name in a struct / class (including the base class chain).
     ConstMember* find_const_member_in(const TypePtr& t, const std::string& name);
 
-    // 类型级常量的可见性：public，或与声明它的类型处于同一 unit（与字段规则一致）
+    // Visibility of a type-level constant: public, or in the same unit as the type declaring it (same rule as fields)
     bool const_member_visible(const ConstMember* cm) const;
 
-    // 该类型（含基类链）是否声明了任意类型级常量
+    // Whether the type (including the base class chain) declares any type-level constant
     bool has_any_const_member(const TypePtr& t);
 
-    // ------------------------------------------------------------ 作用域
-    // 收集错误并继续：单个声明/函数出错不应该阻止报告同一 unit 里其它的错误。
-    // 出错后重置作用域等临时状态，避免下一条声明受污染。
+    // ------------------------------------------------------------ scopes
+    // Collect the error and continue: a failure in one declaration/function must not stop the other errors in the same unit from being reported.
+    // Temporary state such as scopes is reset afterwards so the next declaration is not polluted.
     template <class F>
     void recover(F&& fn) {
         try {
@@ -258,7 +258,7 @@ private:
 
     EnumConst* lookup_enum_const(const std::string& name);
 
-    // ------------------------------------------------------------ unit 检查
+    // ------------------------------------------------------------ unit checks
     void check_unit(Unit* u);
 
     void check_global(GlobalVar* g);
@@ -303,7 +303,7 @@ private:
 
     void check_struct_dtor(StructDecl* sd);
 
-    // 类型级常量的重名检查 + 求值（值在 codegen 里作为字面常量发出）
+    // Duplicate-name check + evaluation for type-level constants (the value is emitted as a literal constant in codegen)
     void check_const_members(std::vector<std::unique_ptr<ConstMember>>& list, const TypePtr& ty,
                              const std::string& kw, const std::string& type_name);
 
@@ -335,7 +335,7 @@ private:
     void check_decl_init(bool& zero_flag, const TypePtr& ty, Init* init, const std::string& what,
                          const Node* node);
 
-    // 单个初始化位置：声明初始化、聚合成员、嵌套花括号都走这里
+    // Single initialization site: declaration initializers, aggregate members and nested braces all go through here
     void check_init_into(const TypePtr& ty, Init* init, const std::string& what,
                          const Node* node);
 
@@ -343,7 +343,7 @@ private:
 
     static bool simple_seq(Expr* e);
 
-    // 沿 Index/Member 找到最内层的绑定，判断它是否 const
+    // Walk Index/Member down to the innermost binding and determine whether it is const
     bool root_is_const(Expr* e);
 
     void check_writable(Expr* t);
@@ -356,7 +356,7 @@ private:
 
     void check_cond(Expr* e, const std::string& what);
 
-    // switch 分支模式求值：只接受编译期常量（字面量 / 枚举成员）
+    // switch case pattern evaluation: only compile-time constants are accepted (literals / enum members)
     long long checked_int_pattern(long long v, const TypePtr& st, Expr* e);
 
     long long pattern_value(Expr* e, const TypePtr& st);
@@ -365,11 +365,11 @@ private:
 
     void check_switch(SwitchStmt* s);
 
-    // 索引形态（SPEC 6.4.1）：length() -> usize  +  operator[](C, usize) -> T
+    // Index shape (SPEC 6.4.1): length() -> usize  +  operator[](C, usize) -> T
     void resolve_index_shape(ForInStmt* s, const TypePtr& st);
 
     void check_for(ForInStmt* s);
-    // ------------------------------------------------------------ 赋值兼容
+    // ------------------------------------------------------------ assignment compatibility
     static bool contains_reference_type(const TypePtr& t);
 
     static bool contains_slice_type(const TypePtr& t);
@@ -384,23 +384,23 @@ private:
 
     bool assignable(Expr* e, const TypePtr& src, const TypePtr& dst);
 
-    // ------------------------------------------------------------ 编译期常量求值（U29）
+    // ------------------------------------------------------------ compile-time constant evaluation (U29)
     //
-    // 惰性求值 + 记忆化 + visiting 标记：支持前向引用与任意声明顺序，
-    // 循环依赖给出明确诊断。求值失败返回 false（调用方回退到 is_const_expr）。
-    // 除以零 / 循环依赖属于硬错误，直接抛 SemaError。
+    // Lazy evaluation + memoization + visiting flag: supports forward references and any declaration order,
+    // and reports cyclic dependencies with a clear diagnostic. A failed evaluation returns false (the caller falls back to is_const_expr).
+    // Division by zero / cyclic dependencies are hard errors and throw SemaError directly.
 
     struct ConstVal {
         TypePtr ty;
         bool is_float = false;
         long long i = 0;
         double f = 0;
-        bool lit = false;   // 来自整数字面量：允许按声明类型适配（与 check_assign 一致）
-        bool flit = false;  // 来自浮点字面量：允许适配到 float / double（与 check_expr 一致）
-        bool clit = false;  // 来自字符字面量：允许按位模式适配到 8 位整数（与 check_expr 一致）
+        bool lit = false;   // from an integer literal: may adapt to the declared type (consistent with check_assign)
+        bool flit = false;  // from a floating-point literal: may adapt to float / double (consistent with check_expr)
+        bool clit = false;  // from a character literal: may adapt bit-pattern-wise to an 8-bit integer (consistent with check_expr)
     };
 
-    // 求值某个常量期间把 cur_ 切到它所属的 unit（跨 unit 惰性求值时错误位置才正确）
+    // Switch cur_ to the unit owning the constant while it is evaluated (so error locations are correct for cross-unit lazy evaluation)
     struct CurUnitGuard {
         Sema& sema;
         Unit* prev;
@@ -410,14 +410,14 @@ private:
         ~CurUnitGuard() { sema.cur_ = prev; }
     };
 
-    // 求值中的「正在求值」标志：异常路径也要复位，否则后续会误报循环依赖
+    // "currently evaluating" flag: it must also be reset on the exception path, otherwise a later evaluation would falsely report a cyclic dependency
     struct EvalFlagGuard {
         bool& flag;
         explicit EvalFlagGuard(bool& f) : flag(f) { flag = true; }
         ~EvalFlagGuard() { flag = false; }
     };
 
-    // 常量求值递归深度上限（防止超长依赖链把栈打爆）
+    // Recursion depth limit for constant evaluation (keeps very long dependency chains from blowing the stack)
     static constexpr int kMaxConstDepth = 512;
     struct ConstDepthGuard {
         Sema& sema;
@@ -425,12 +425,12 @@ private:
         ~ConstDepthGuard() { --sema.const_depth_; }
     };
 
-    // 诊断里不要把声明标记 `const` 当成类型名的一部分（`const int` → `int`）
+    // Diagnostics must not treat the declaration marker `const` as part of the type name (`const int` → `int`)
     static std::string type_str_no_const(const TypePtr& t);
 
     static long long normalize_int(long long v, const TypePtr& t);
 
-    // 按给定位置宽把补码位模式符号扩展到 64 位（与 LLVM AShr 的语义一致）
+    // Sign-extend a two's-complement bit pattern of the given width to 64 bits (same semantics as LLVM AShr)
     static long long sext_bits(long long v, int bits);
 
     template <class T>
@@ -445,7 +445,7 @@ private:
 
     ConstVal cast_const(const ConstVal& v, const TypePtr& dst);
 
-    // 把求值结果落到声明类型：同一套赋值规则 + 整数字面量适配（不给 const 加隐式放宽）
+    // Commit the evaluation result to the declared type: the same assignment rules + integer literal adaptation (no extra implicit widening for const)
     void convert_const_to(ConstVal& v, const TypePtr& dst, const Node* at,
                           const std::string& what);
 
@@ -455,7 +455,7 @@ private:
 
     bool eval_const_name(Name* e, const TypePtr& self_ty, ConstVal& out);
 
-    // `Type` / `unit.Type` 形式的表达式基类型（仅常量求值用；找不到返回 nullptr）
+    // Base type of an expression of the form `Type` / `unit.Type` (constant evaluation only; returns nullptr when not found)
     TypePtr const_expr_base_type(Expr* base);
 
     bool eval_const_member_expr(Member* e, ConstVal& out);
@@ -464,11 +464,11 @@ private:
 
     bool eval_const(Expr* e, const TypePtr& self_ty, ConstVal& out);
 
-    // ------------------------------------------------------------ 常量表达式
+    // ------------------------------------------------------------ constant expressions
     bool is_const_expr(Init* init);
 
     bool const_ok(Expr* e);
-    // ------------------------------------------------------------ 表达式
+    // ------------------------------------------------------------ expressions
     TypePtr check_expr(Expr* e, const TypePtr& expected = nullptr);
 
     TypePtr check_expr_impl(Expr* e, const TypePtr& expected);
@@ -479,8 +479,8 @@ private:
 
     TypePtr check_unary(Unary* e);
 
-    // 条件表达式 `cond ? a : b`（SPEC §5.2）：
-    // 条件必须是 bool；两侧类型取「同一类型 → 隐式加宽 → null 适配」，都不成立则要求显式 `as`。
+    // Conditional expression `cond ? a : b` (SPEC §5.2):
+    // the condition must be bool; the two arms resolve as "same type → implicit widening → null adaptation", and an explicit `as` is required otherwise.
     TypePtr check_ternary(Ternary* e, const TypePtr& expected = nullptr);
 
     TypePtr check_binary(Binary* e);
@@ -490,7 +490,7 @@ private:
     void adapt_lit(Expr* e, const TypePtr& self_ty, const TypePtr& other);
 
     bool can_cast(const TypePtr& src, const TypePtr& dst);
-    // ------------------------------------------------------------ 调用
+    // ------------------------------------------------------------ calls
     TypePtr check_call(Call* c);
 
     int rank_arg(Expr* e, const TypePtr& aty, const TypePtr& p);
@@ -499,24 +499,24 @@ private:
 
     static bool is_user_type(const TypePtr& t);
 
-    // 是否含 RC 管理的引用字段（class/interface/切片/string/数组递归）；
-    // 只看字段，不看用户析构器（含析构器的 struct 仍允许取址，通过指针使用）。
+    // Whether it contains RC-managed reference fields (recursive over class/interface/slice/string/array);
+    // only fields are considered, not user destructors (a struct with a destructor may still be addressed and used through a pointer).
     static bool has_ref_fields(const TypePtr& t);
 
-    // 返回借用的来源检查（ref 参数 / this / 全局 / 指针·切片间接 / 透传借用）
+    // Borrow-origin check for returned borrows (ref parameter / this / global / pointer·slice indirection / forwarded borrow)
     bool borrow_root_ok(Expr* e);
-    // 表达式本身是否是一个借用值（`ref T f()` 调用 / 返回借用的下标）
+    // Whether the expression itself is a borrow value (a `ref T f()` call / an index returning a borrow)
     static bool is_borrow_expr(Expr* e);
 
-    // 可否作借用（`ref`）的 referent：非引用计数、非 void、非 class/interface/string/切片。
+    // Whether a type can be the referent of a borrow (`ref`): not reference counted, not void, not class/interface/string/slice.
     static bool borrowable_type(const TypePtr& t);
 
-    // 解析方法与运算符的返回类型（处理 `ref` 前缀 + 借用 referent 校验）。
+    // Resolve the return type of a method or operator (handles the `ref` prefix + borrow referent validation).
     void resolve_method_ret(MethodDecl* m, Unit* u);
     TypePtr make_borrow_ret(TypeSpec* spec, bool ret_ref, Node* at, Unit* u, const std::string& what);
 
-    // 运算符查找范围：当前 unit + use 引入的 unit + 操作数类型所属 unit（ADL 风格）。
-    // 未导入 unit 的运算符不可见，避免无关 unit 之间意外冲突。
+    // Operator lookup scope: current unit + units brought in by use + units owning the operand types (ADL style).
+    // Operators from units that were not imported are invisible, avoiding accidental clashes between unrelated units.
     std::vector<FuncDecl*> collect_operators(const std::string& sym,
                                              const std::vector<TypePtr>& operands = {});
 
@@ -526,7 +526,7 @@ private:
                               const std::vector<Expr*>& args, const std::string& what,
                               Node* at);
 
-    // 只收集 class 链上的方法（接口默认方法不参与 super 调用）
+    // Only collect methods along the class chain (interface default methods do not participate in super calls)
     void collect_class_methods(const TypePtr& t, const std::string& name,
                                std::vector<const MethodSig*>& out, int depth = 0);
 
@@ -553,11 +553,11 @@ private:
 
     TypePtr check_builtin(Call* c, const std::string& name);
 
-    // ------------------------------------------------------------ 杂项
+    // ------------------------------------------------------------ misc
     bool is_lvalue(Expr* e);
 
-    // 该表达式是否“根”在 class/interface 引用上（含其数组/切片元素）：
-    // `c.x`、`h.items[0]`、`catArray[i]` 都算。U21：这类地址无法表达 RC 生命周期。
+    // Whether the expression is "rooted" at a class/interface reference (including its array/slice elements):
+    // `c.x`, `h.items[0]` and `catArray[i]` all count. U21: such addresses cannot express the RC lifetime.
     bool rooted_at_reference(Expr* e);
 
     void check_entry();

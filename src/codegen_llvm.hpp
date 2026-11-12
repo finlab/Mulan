@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// LLVM 后端（阶段 B）：LLVM C++ API 生成 COFF 目标文件
+// LLVM backend (stage B): generate COFF object files via the LLVM C++ API
 #pragma once
 
 #include <string>
 
 #include "sema.hpp"
 
-// 生成文本 IR（调试 / --emit-ir）
+// Emit textual IR (debug / --emit-ir)
 std::string llvm_emit_text(Program& prog);
 
-// 生成 COFF 目标文件；debug_info 为 true 时附带 DWARF（-g）
+// Emit a COFF object file; when debug_info is true, DWARF is attached (-g)
 void llvm_emit_object(Program& prog, const std::string& obj_path, bool debug_info = false);

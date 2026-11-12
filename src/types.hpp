@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// Mulan 类型模型
+// Mulan type model
 #pragma once
 
 #include <cstddef>
@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
-// Ref：借用（`ref T` / `ref const T`）。只出现在函数/方法的返回类型位置，
-// 以及参数模式（参数侧仍用 pty_ref 布尔记录，见 FuncDecl）。不可作变量/字段/元素类型。
+// Ref: a borrow (`ref T` / `ref const T`). It appears only in the return type position of a function/method,
+// and in parameter patterns (the parameter side is still recorded with the pty_ref boolean, see FuncDecl). It cannot be used as a variable/field/element type.
 enum class TypeKind { Void, Prim, String, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref };
 
 struct Type;
@@ -19,22 +19,22 @@ using TypePtr = std::shared_ptr<Type>;
 struct Field {
     std::string name;
     TypePtr type;
-    bool weak = false;  // weak 字段（只用于 class）
-    bool is_public = true;  // struct 字段恒公开；class 字段默认私有
+    bool weak = false;  // weak field (class only)
+    bool is_public = true;  // struct fields are always public; class fields are private by default
 };
 
-// 方法签名（class / interface）
+// Method signature (class / interface)
 struct MethodSig {
     std::string name;
     TypePtr ret;
     std::vector<TypePtr> params;
     bool is_abstract = false;
     bool is_override = false;
-    bool is_public = true;  // 默认私有由 class 方法显式覆盖；struct/接口方法恒公开
-    TypePtr owner;  // 声明该方法的 class/interface（sema 填）
-    // 接口成员的两类形态（U34 M3）：
-    //   is_operator = true  → 静态签名（`T operator+(T,T)`），无 this，只用于约束
-    //   ret_self / params_self → 该位置来自 `Self`，约束检查时替换为实参类型
+    bool is_public = true;  // the private-by-default is explicitly overridden by class methods; struct/interface methods are always public
+    TypePtr owner;  // the class/interface that declares this method (filled by sema)
+    // The two forms of interface members (U34 M3):
+    //   is_operator = true  → static signature (`T operator+(T,T)`), no this, used only for constraints
+    //   ret_self / params_self → the position comes from `Self` and is replaced by the type argument during constraint checking
     bool is_operator = false;
     bool ret_self = false;
     std::vector<bool> params_self;
@@ -42,24 +42,24 @@ struct MethodSig {
 
 struct Type {
     TypeKind kind = TypeKind::Void;
-    // Prim / Struct / Enum / Module 用
+    // Used by Prim / Struct / Enum / Module
     std::string name;
     std::string unit;
     TypePtr elem;
     size_t array_size = 0;
-    int rank = 1;               // Slice：维数（1=T[]，2=T[,]，……）
-    bool is_const = false;      // C 模型：该类型节点是否 const（逐层）
-    std::vector<Field> fields;  // Struct/Class 用（先建占位、后填充；Class 存扁平字段）
-    std::vector<MethodSig> methods;  // Class/Interface 用
-    std::vector<std::vector<TypePtr>> ctors;  // Class 构造器参数表（重载）
-    std::vector<bool> ctor_is_public;        // 与 ctors 平行：构造器是否 public
-    TypePtr base;               // Class 的基类
-    std::vector<TypePtr> interfaces;  // Class/Interface 实现的接口
-    bool is_abstract = false;   // Class 有未实现方法
-    bool has_dtor = false;      // 用户声明了析构器（struct/class）
-    bool is_packed = false;     // Struct：packed（字段紧排，无内部/尾部填充，align 默认 1）
-    bool is_union = false;      // Struct：union（所有成员偏移 0，size = max(成员)）
-    int align_req = 0;          // Struct：align(N) 的 N（0 = 未指定）
+    int rank = 1;               // Slice: rank (1=T[], 2=T[,], ...)
+    bool is_const = false;      // C model: whether this type node is const (per level)
+    std::vector<Field> fields;  // used by Struct/Class (a placeholder is created first and filled in later; Class stores flattened fields)
+    std::vector<MethodSig> methods;  // used by Class/Interface
+    std::vector<std::vector<TypePtr>> ctors;  // class constructor parameter lists (overloads)
+    std::vector<bool> ctor_is_public;        // parallel to ctors: whether the constructor is public
+    TypePtr base;               // the base class of a Class
+    std::vector<TypePtr> interfaces;  // the interfaces implemented by a Class/Interface
+    bool is_abstract = false;   // a Class has unimplemented methods
+    bool has_dtor = false;      // the user declared a destructor (struct/class)
+    bool is_packed = false;     // Struct: packed (the fields are tightly packed, with no internal or tail padding, and the default align is 1)
+    bool is_union = false;      // Struct: union (all members at offset 0, size = max(member))
+    int align_req = 0;          // Struct: the N of align(N) (0 = unspecified)
 
     static TypePtr make_void();
     static TypePtr make_prim(const std::string& name);
@@ -77,18 +77,18 @@ struct Type {
     static TypePtr make_range();
 
     std::string str() const;
-    bool is_integer() const;   // 整数或枚举
+    bool is_integer() const;   // integer or enum
     bool is_float() const;
     bool is_bool() const;
-    bool is_numeric() const;   // 整数 / 浮点 / 枚举
-    int bits() const;          // 整数位宽（usize/isize=64）
+    bool is_numeric() const;   // integer / float / enum
+    int bits() const;          // integer bit width (usize/isize=64)
     bool is_signed() const;
-    bool needs_cleanup() const;  // 值是否含需要 RC 清理的字段（递归）
-    TypePtr field_type(const std::string& fname) const;  // 不存在返回 nullptr
-    int field_index(const std::string& fname) const;     // 不存在返回 -1
+    bool needs_cleanup() const;  // whether the value contains fields that need RC cleanup (recursive)
+    TypePtr field_type(const std::string& fname) const;  // returns nullptr if it does not exist
+    int field_index(const std::string& fname) const;     // returns -1 if it does not exist
 };
 
-// 全局单例
+// Global singletons
 TypePtr t_void();
 TypePtr t_string();
 TypePtr t_int();
@@ -101,17 +101,17 @@ bool is_prim_name(const std::string& n);
 
 bool same_type(const TypePtr& a, const TypePtr& b);
 
-// 布局（Struct 的 packed / align(N) 只在这里实现；codegen 委托调用，避免两份布局漂移）
+// Layout (a Struct's packed / align(N) is implemented only here; codegen delegates to it so that the two layouts cannot drift apart)
 size_t type_align(const TypePtr& t);
 size_t type_size(const TypePtr& t);
 bool is_class_type(const TypePtr& t);
 bool is_interface_type(const TypePtr& t);
 bool is_reference_type(const TypePtr& t);  // class / interface
-bool is_borrow_type(const TypePtr& t);     // ref T（借用）
-TypePtr referent_of(const TypePtr& t);     // ref T -> T，其它原样返回
+bool is_borrow_type(const TypePtr& t);     // ref T (a borrow)
+TypePtr referent_of(const TypePtr& t);     // ref T -> T, everything else is returned unchanged
 bool is_subclass_of(const TypePtr& sub, const TypePtr& base);
 bool implements_interface(const TypePtr& t, const TypePtr& iface);
 bool implicitly_convertible(const TypePtr& src, const TypePtr& dst);
 bool promote_int_literal(long long v, const TypePtr& dst);
 bool widens_int(const TypePtr& src, const TypePtr& dst);
-TypePtr usual_arith(const TypePtr& a, const TypePtr& b);  // 失败返回 nullptr
+TypePtr usual_arith(const TypePtr& a, const TypePtr& b);  // returns nullptr on failure

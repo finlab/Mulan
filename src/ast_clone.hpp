@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// AST 深拷贝（泛型实例化用）。
+// AST deep copy (used for generic instantiation).
 //
-// 只复制**语法字段**；sema 填充的结果（Expr::ty、Decl::rty、*_cname、Sym、
-// MethodSig 指针等）一律重置为默认值 —— 实例化产物会重新跑一遍检查。
+// Only **syntactic fields** are copied; the results filled in by sema (Expr::ty, Decl::rty, *_cname, Sym,
+// MethodSig pointers, etc.) are all reset to their default values — the instantiated result goes through the checks again.
 #pragma once
 
 #include <memory>
@@ -26,7 +26,7 @@ std::unique_ptr<CtorDecl> clone_ctor(const CtorDecl& c);
 std::unique_ptr<DtorDecl> clone_dtor(const DtorDecl& d);
 std::unique_ptr<ConstMember> clone_const_member(const ConstMember& c);
 
-// 按动态类型克隆任意声明；未知类型返回 nullptr。
+// Clones any declaration by dynamic type; returns nullptr for an unknown type.
 std::unique_ptr<Decl> clone_decl(const Decl& d);
 
 }  // namespace muc_detail

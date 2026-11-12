@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// AST 类型参数替换实现。
+// AST type parameter substitution implementation.
 #include "ast_subst.hpp"
 
 #include <utility>
@@ -14,14 +14,14 @@ void subst_type_spec(TypeSpec& s, const TypeBindings& b) {
     if (s.kind == TypeSpec::K::Named && s.args.empty()) {
         auto it = b.find(s.name);
         if (it != b.end()) {
-            // 保留原位置上的 const / weak 修饰（`const T` → `const <实参>`）
+            // Preserves the const / weak modifiers at the original position (`const T` → `const <type argument>`)
             const bool keep_const = s.is_const;
             const bool keep_weak = s.weak;
             TypeSpecPtr rep = clone_type_spec(*it->second);
             s = std::move(*rep);
             s.is_const = s.is_const || keep_const;
             s.weak = s.weak || keep_weak;
-            return;  // 实参内部已完整，不需要继续递归
+            return;  // the type argument is already complete, no need to recurse further
         }
     }
     for (auto& a : s.args) {

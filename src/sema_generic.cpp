@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// 泛型单态化实例化（U34，M2）。
+// Generic monomorphization instantiation (U34, M2).
 //
-// 实例化 = 克隆模板 AST + 替换类型参数 + 规范化命名 + 走常规类型解析。
-// 产物是普通 struct：`same_type` / `mangle` / 布局 / codegen 均无需感知泛型。
+// Instantiation = clone the template AST + substitute type parameters + canonicalize the name + run the regular type resolution.
+// The product is an ordinary struct: `same_type` / `mangle` / layout / codegen all need no knowledge of generics.
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,7 +17,7 @@ namespace muc_detail {
 
 namespace {
 
-// 类型语法 → 规范化显示名（`[const] Box<Vec<int[]>>`），用于 `Type::name` 与实例缓存键。
+// Type syntax → canonical display name (`[const] Box<Vec<int[]>>`), used for `Type::name` and the instance cache key.
 std::string canon_spec(const TypeSpec& s) {
     std::string prefix = s.is_const ? "const " : "";
     switch (s.kind) {
@@ -43,7 +43,7 @@ std::string canon_spec(const TypeSpec& s) {
     return prefix + s.name;
 }
 
-// 把 `a.b.C` 拆成 (a.b, C)；无前缀时 unit 为空
+// Split `a.b.C` into (a.b, C); unit is empty when there is no prefix
 void split_qualified(const std::string& full, std::string& unit, std::string& name) {
     const auto dot = full.rfind('.');
     if (dot == std::string::npos) {
@@ -98,7 +98,7 @@ Decl* Sema::find_generic_template(const std::string& full, Unit* u) {
     for (const auto& kv : generic_templates_) {
         std::string tu, tn;
         split_qualified(kv.first, tu, tn);
-        if (tn == name) return kv.second;  // 同名跨 unit：取第一个（M2d 简化）
+        if (tn == name) return kv.second;  // same name across units: take the first one (M2d simplification)
     }
     return nullptr;
 }
@@ -108,7 +108,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     std::string base;
     split_qualified(spec->name, want_unit, base);
 
-    // 查找模板：显式 unit 前缀优先；否则本 unit → 唯一同名
+    // Template lookup: explicit unit prefix first; otherwise this unit → the unique same-name template
     Decl* tmpl_decl = nullptr;
     std::string tmpl_unit;
     if (!want_unit.empty()) {
@@ -139,7 +139,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         err_ts("`" + base + "` is not a generic type or has no type parameters", spec);
     }
 
-    // 规范化实例名与缓存键
+    // Canonical instance name and cache key
     std::string display = canon_spec(*spec);
     std::string key = tmpl_unit + "." + display;
     auto cached = generic_insts_.find(key);
@@ -181,7 +181,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     if (info_it != infos_.end()) tmpl_unit_ptr = info_it->second.unit;
     if (!tmpl_unit_ptr) tmpl_unit_ptr = u;
 
-    // 约束检查（U34 M3b）
+    // Constraint check (U34 M3b)
     {
         std::vector<TypePtr> arg_types;
         for (const auto& ta : spec->args) arg_types.push_back(resolve_type(ta.get(), u));
@@ -190,7 +190,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         }
     }
 
-    // 克隆 + 替换
+    // Clone + substitute
     std::unique_ptr<Decl> clone = clone_decl(*tmpl_decl);
     TypeBindings bindings;
     for (size_t i = 0; i < tps.size(); ++i) {
@@ -211,13 +211,13 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         id->name = display;
     }
 
-    // ---------------- 泛型接口：只用于约束（M5a），不产生值类型 ----------------
+    // ---------------- generic interfaces: used only for constraints (M5a), no value type is produced ----------------
     if (id) {
         TypePtr ity = Type::make_interface(tmpl_unit, display);
         Unit* saved_cur = cur_;
         TypePtr saved_class = cur_class_;
         cur_ = tmpl_unit_ptr;
-        cur_class_ = ity;  // 让 `Self` 解析为接口类型
+        cur_class_ = ity;  // make `Self` resolve to the interface type
 
         ity->methods.clear();
         for (auto& m : id->methods) {
@@ -248,7 +248,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         infos_[tmpl_unit].interfaces[display] = id;
         generic_busy_.erase(key);
 
-        // 默认方法体检查（与其他类型相同的上下文保存/恢复）
+        // Default method body check (same context save/restore as other types)
         {
             auto saved_scopes = std::move(scopes_);
             auto saved_autos = std::move(auto_groups_);
@@ -297,7 +297,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     Unit* saved_cur = cur_;
     cur_ = tmpl_unit_ptr;
 
-    // 基类（单个，泛型或非泛型）：先实例化，再把基类字段扁平化到前面
+    // Base class (single, generic or not): instantiate it first, then flatten the base fields to the front
     if (!is_struct && !cd->base_specs.empty()) {
         TypePtr bt = resolve_type(cd->base_specs[0].get(), tmpl_unit_ptr);
         if (bt->kind != TypeKind::Class) {
@@ -307,7 +307,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         for (const auto& bf : bt->fields) ty->fields.push_back(bf);
     }
 
-    // 字段（struct 默认 public；class 按 field_visibility，默认 private）
+    // Fields (struct defaults to public; class follows field_visibility, private by default)
     const auto& fields = is_struct ? sd->fields : cd->fields;
     const auto& field_vis = is_struct ? sd->field_visibility : cd->field_visibility;
     for (auto& f : fields) {
@@ -323,7 +323,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         ty->fields.push_back(std::move(fld));
     }
 
-    // 方法 / 构造器 / 析构器签名
+    // Method / constructor / destructor signatures
     const auto& methods = is_struct ? sd->methods : cd->methods;
     ty->methods.clear();
     for (auto& m : methods) {
@@ -373,9 +373,9 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     } else {
         infos_[tmpl_unit].classes[display] = cd;
     }
-    generic_busy_.erase(key);  // 方法体里允许再次出现本实例（递归）
+    generic_busy_.erase(key);  // this instance may appear again inside method bodies (recursion)
 
-    // 检查方法体（与 check_struct / check_class 相同的上下文保存/恢复）
+    // Check method bodies (same context save/restore as check_struct / check_class)
     {
         auto saved_scopes = std::move(scopes_);
         auto saved_autos = std::move(auto_groups_);
@@ -413,7 +413,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         cur_ = saved_unit;
     }
 
-    // 声明本体在 check_struct 之后才 move，避免检查期间指针失效
+    // The declaration itself is moved only after check_struct, so pointers stay valid during the check
     generic_decls_.push_back(std::move(clone));
     return ty;
 }
@@ -458,7 +458,7 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
             c);
     }
 
-    // 约束检查（U34 M3b）：结构化匹配，实参类型先解析
+    // Constraint check (U34 M3b): structural matching, argument types resolved first
     {
         std::vector<TypePtr> arg_types;
         for (const auto& ta : c->type_args) arg_types.push_back(resolve_type(ta.get(), u));
@@ -493,12 +493,12 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     fn->is_template = false;
     fn->name = display;
 
-    // 先登记再检查：函数体里的递归调用（`f<T>`）要命中缓存
+    // Register before checking: recursive calls inside the body (`f<T>`) must hit the cache
     generic_func_insts_[key] = fn;
     generic_decls_.push_back(std::move(clone));
 
-    // 保存当前检查上下文：check_func 会重置 scopes_ / cur_func_ 等，
-    // 而实例化可能发生在另一个函数体内部（嵌套调用）。
+    // Save the current check context: check_func resets scopes_ / cur_func_ and friends,
+    // and instantiation may happen inside another function body (nested call).
     auto saved_scopes = std::move(scopes_);
     auto saved_autos = std::move(auto_groups_);
     auto saved_this = std::move(this_local_);
@@ -518,7 +518,7 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     if (info_it != infos_.end()) tu = info_it->second.unit;
     cur_ = tu;
 
-    // 实例化函数绕过 resolve_unit_types，签名要在这里解析
+    // Instantiated functions bypass resolve_unit_types, so their signatures are resolved here
     fn->rty = resolve_type(fn->ret.get(), tu);
     fn->pty.clear();
     fn->pty_ref.clear();
@@ -532,7 +532,7 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     check_func(fn);
     if (fn->cname.empty()) fn->cname = func_cname(tmpl_unit, fn);
 
-    // 恢复上下文
+    // Restore the context
     scopes_ = std::move(saved_scopes);
     auto_groups_ = std::move(saved_autos);
     this_local_ = std::move(saved_this);
@@ -563,8 +563,8 @@ bool is_arith_op(const std::string& n) {
            n == "operator/" || n == "operator%";
 }
 
-// 在 `t`（含基类链与接口默认方法）上找与 `sig` 同名同签名的方法；
-// `sig` 里来自 `Self` 的位置用 `self_ty` 替换。
+// Find a method on `t` (including the base class chain and interface default methods) with the same name and signature as `sig`;
+// positions in `sig` that come from `Self` are replaced with `self_ty`.
 bool type_has_method(const TypePtr& t, const MethodSig& sig, const TypePtr& self_ty, int depth = 0) {
     if (!t || depth > 64) return false;
     for (const auto& m : t->methods) {
@@ -598,14 +598,14 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
     cur_ = saved;
     if (!bt) return false;
 
-    // 具体类型：精确相等
+    // Concrete type: exact equality
     if (bt->kind != TypeKind::Interface) {
         if (same_type(t, bt)) return true;
         if (why) *why = "expected `" + bt->str() + "`";
         return false;
     }
 
-    // 接口：收集成员（含接口继承链）
+    // Interface: collect members (including the interface inheritance chain)
     std::vector<const MethodSig*> sigs;
     std::function<void(const TypePtr&, int)> collect = [&](const TypePtr& itf, int depth) {
         if (!itf || depth > 64) return;
@@ -622,7 +622,7 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
             }
             continue;
         }
-        // 运算符成员：替换 Self 后，操作数必须全是 `t`
+        // Operator members: after Self substitution all operands must be `t`
         std::vector<TypePtr> want;
         for (size_t i = 0; i < sig->params.size(); ++i) {
             want.push_back((i < sig->params_self.size() && sig->params_self[i]) ? t : sig->params[i]);
@@ -637,7 +637,7 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
             return false;
         }
 
-        // 内置运算符（注：enum 不参与算术）
+        // Built-in operators (note: enum does not participate in arithmetic)
         bool builtin = false;
         if (is_arith_op(sig->name) && t->is_numeric() && t->kind != TypeKind::Enum &&
             same_type(want_ret, t)) {
@@ -650,7 +650,7 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
         }
         if (builtin) continue;
 
-        // 用户定义运算符：在可见 unit 里找同签名自由函数（精确匹配，不做隐式转换）
+        // User-defined operators: find a free function with the same signature in a visible unit (exact match, no implicit conversion)
         bool found = false;
         auto try_unit = [&](UnitInfo& oi, bool need_pub) {
             auto it = oi.funcs.find(sig->name);
