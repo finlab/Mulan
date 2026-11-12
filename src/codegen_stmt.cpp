@@ -280,6 +280,14 @@ using ArgPack = Emitter::ArgPack;
             return;
         }
         if (auto as = dynamic_cast<AssignStmt*>(s)) {
+            if (as->set_method) {
+                auto* ix = dynamic_cast<Index*>(as->target.get());
+                emitMemberIndexSet(as->set_method, addrOf(ix->base.get()),
+                                   convertTo(eval(ix->indices[0].get()), ix->indices[0]->ty,
+                                             Type::make_prim("usize")),
+                                   as->value.get());
+                return;
+            }
             if (as->set_func) {
                 auto* ix = dynamic_cast<Index*>(as->target.get());
                 emitUserCall(as->set_func,
@@ -534,8 +542,10 @@ using ArgPack = Emitter::ArgPack;
             b.SetInsertPoint(bodyBB2);
             Value* ci2 = b.CreateLoad(i64(), idx);
             if (idxSlot) b.CreateStore(ci2, idxSlot);
-            Value* ev = emitOperatorIndexCall(s->idx_fn, seqAddr, sty, ci2, seqUnaligned);
-            if (s->idx_fn && is_borrow_type(s->idx_fn->rty)) {
+            Value* ev = s->idx_method ? emitMemberIndex(s->idx_method, seqAddr, ci2)
+                                      : emitOperatorIndexCall(s->idx_fn, seqAddr, sty, ci2, seqUnaligned);
+            if ((s->idx_method && is_borrow_type(s->idx_method->ret)) ||
+                (s->idx_fn && is_borrow_type(s->idx_fn->rty))) {
                 // borrowed element: a ref binding stores the pointer; a value binding reads it out on the spot
                 if (s->by_ref) b.CreateStore(ev, varSlot);
                 else b.CreateStore(loadAt(lt(s->elem_ty), ev, false), varSlot);

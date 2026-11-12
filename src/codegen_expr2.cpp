@@ -90,6 +90,46 @@ using ArgPack = Emitter::ArgPack;
         return r;
     }
 
+    Value* Emitter::emitStructMethodCall(const MethodSig* sig, Value* recvAddr,
+                                         const std::vector<Expr*>& args) {
+        ArgPack pack = prepareArgs(args, sig->params);
+        FunctionCallee callee = methodFn(sig);
+        std::vector<Value*> vals{recvAddr};
+        for (auto* v : pack.vals) vals.push_back(v);
+        Value* r = b.CreateCall(callee, vals);
+        releaseTemps(pack);
+        if (mayThrow.mayThrowMethod(sig, sig->owner)) emitCheckPending();
+        return r;
+    }
+
+    Value* Emitter::emitMemberOp(const MethodSig* sig, Expr* recv, const std::vector<Expr*>& args) {
+        return emitStructMethodCall(sig, addrOf(recv), args);
+    }
+
+    Value* Emitter::emitMemberIndex(const MethodSig* sig, Value* recvAddr, Value* idxVal) {
+        FunctionCallee callee = mod->getOrInsertFunction(
+            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
+            FunctionType::get(lt(sig->ret), {ptrTy(), lt(sig->params[0])}, false));
+        Value* r = b.CreateCall(callee, {recvAddr, idxVal});
+        if (mayThrow.mayThrowMethod(sig, sig->owner)) emitCheckPending();
+        return r;
+    }
+
+    Value* Emitter::emitMemberIndexSet(const MethodSig* sig, Value* recvAddr, Value* idxVal, Expr* value) {
+        FunctionCallee callee = mod->getOrInsertFunction(
+            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
+            FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), lt(sig->params[0]), lt(sig->params[1])}, false));
+        ArgPack pack;
+        Value* v = coerce(value, sig->params[1]);
+        if (needsCleanup(sig->params[1]) && convOwns(value, sig->params[1])) {
+            pack.owned.emplace_back(v, sig->params[1]);
+        }
+        b.CreateCall(callee, {recvAddr, idxVal, v});
+        releaseTemps(pack);
+        if (mayThrow.mayThrowMethod(sig, sig->owner)) emitCheckPending();
+        return nullptr;
+    }
+
     // Call a free function / operator / method (static dispatch)
     Value* Emitter::emitUserCall(FuncDecl* f, const std::vector<Expr*>& args) {
         std::vector<LType*> ptys;
@@ -499,6 +539,13 @@ using ArgPack = Emitter::ArgPack;
             return loadAt(lt(e->ty), addrOf(e), unalignedExpr(e));
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
+            if (ix->get_method) {
+                Value* r = emitMemberIndex(ix->get_method, addrOf(ix->base.get()),
+                                           convertTo(eval(ix->indices[0].get()), ix->indices[0]->ty,
+                                                     Type::make_prim("usize")));
+                if (ix->by_ref) return loadAt(lt(e->ty), r, unalignedExpr(e));
+                return r;
+            }
             if (ix->get_func) {
                 Value* r = emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
                 if (ix->by_ref) return loadAt(lt(e->ty), r, unalignedExpr(e));
@@ -507,6 +554,7 @@ using ArgPack = Emitter::ArgPack;
             return loadAt(lt(e->ty), addrOf(e), unalignedExpr(e));
         }
         if (auto u = dynamic_cast<Unary*>(e)) {
+            if (u->op_method) return emitMemberOp(u->op_method, u->operand.get(), {});
             if (u->op_func) return emitUserCall(u->op_func, {u->operand.get()});
             if (u->op == "&") return addrOf(u->operand.get());
             if (u->op == "*") return loadAt(lt(e->ty), eval(u->operand.get()), unalignedExpr(e));

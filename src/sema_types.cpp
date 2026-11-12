@@ -597,6 +597,45 @@ namespace muc_detail {
         }
     }
 
+    void Sema::check_member_operator_sig(MethodDecl* m, const TypePtr& owner) {
+        const std::string sym = m->name.substr(8);
+        const size_t n = m->pty.size();
+        auto bad = [&](const std::string& msg) { err("struct `" + owner->name + "`: " + msg, m); };
+        if (sym == "[]") {
+            if (n != 1) bad("`operator[]` takes 1 parameter (the index); the receiver is `this`");
+            if (!is_integer(m->pty[0])) bad("index of `operator[]` must be an integer");
+        } else if (sym == "[]=") {
+            if (n != 2) bad("`operator[]=` takes 2 parameters (index, value); the receiver is `this`");
+            if (!is_void(m->rty)) bad("`operator[]=` must return void");
+            if (!is_integer(m->pty[0])) bad("index of `operator[]=` must be an integer");
+        } else if (sym == "~") {
+            if (n != 0) bad("`operator~` takes no parameter (the receiver is `this`)");
+        } else if (sym == "-" || sym == "+") {
+            if (n != 0 && n != 1) {
+                bad("`operator" + sym + "` takes 0 (unary) or 1 (binary) parameter; the receiver is `this`");
+            }
+        } else {
+            static const char* allowed[] = {"*", "/", "%", "<",  "<=", ">",  ">=",
+                                            "==", "!=", "&", "|", "^",  "<<", ">>"};
+            bool ok = false;
+            for (auto* a : allowed) {
+                if (sym == a) {
+                    ok = true;
+                    break;
+                }
+            }
+            if (!ok) bad("operator `" + sym + "` cannot be overloaded");
+            if (n != 1) bad("`operator" + sym + "` takes 1 parameter; the receiver is `this`");
+        }
+        if ((sym == "==" || sym == "!=" || sym == "<" || sym == "<=" || sym == ">" || sym == ">=") &&
+            !(m->rty && m->rty->kind == TypeKind::Prim && m->rty->name == "bool")) {
+            bad("comparison operators must return `bool`");
+        }
+        for (auto& p : m->pty) {
+            if (is_void(p)) bad("operator parameter cannot be void");
+        }
+    }
+
     void Sema::check_func(FuncDecl* f) {
         if (!f->rty) err("function `" + f->name + "` is missing its return type", f);
         if (f->is_operator) check_operator_decl(f);

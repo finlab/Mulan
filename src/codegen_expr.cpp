@@ -199,6 +199,12 @@ static bool is_numeric(const TypePtr& t) {
         if (auto ix = dynamic_cast<Index*>(e)) {
             if (ix->by_ref) {
                 // `operator[]` returns a borrow: the call result is the element address
+                if (ix->get_method) {
+                    Value* r = emitMemberIndex(ix->get_method, addrOf(ix->base.get()),
+                                               convertTo(eval(ix->indices[0].get()), ix->indices[0]->ty,
+                                                         Type::make_prim("usize")));
+                    return r;
+                }
                 return emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
             }
             TypePtr bt = ix->base->ty;
@@ -298,8 +304,13 @@ static bool is_numeric(const TypePtr& t) {
         TypePtr lt_ = e->left->ty;
         TypePtr rt_ = e->right->ty;
 
+        if (e->op_method) {
+            Value* r = emitMemberOp(e->op_method, e->left.get(), {e->right.get()});
+            return e->negate_result ? b.CreateNot(r) : r;
+        }
         if (e->op_func) {
-            return emitUserCall(e->op_func, {e->left.get(), e->right.get()});
+            Value* r = emitUserCall(e->op_func, {e->left.get(), e->right.get()});
+            return e->negate_result ? b.CreateNot(r) : r;
         }
 
         if (op == "string_eq_helper") return nullptr;

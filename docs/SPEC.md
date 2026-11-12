@@ -640,12 +640,20 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
 - The same signature must use `override`; a different signature is an overload.
 - `extern` C functions do not participate in overload resolution; neither does `main`.
 
-**Operator overloading** (only the free function form is allowed):
+**Operator overloading** (free functions, plus member operators on a `struct`):
 
 ```c
+// free function form
 Point operator+(Point a, Point b) { ... }
 bool  operator==(Point a, Point b) { ... }
-Vec   operator<<(Vec v, int n) { ... }
+
+// member form: only inside a `struct`; the receiver is the implicit `this` (a borrowed pointer)
+struct Vec {
+    int n;
+    Vec operator+(Vec o) { ... }       // binary: 1 parameter
+    int operator[](usize i) { ... }    // read:   1 parameter
+    bool operator==(Vec o) { ... }
+}
 ```
 
 | Operator | Allowed | Description |
@@ -659,6 +667,7 @@ Vec   operator<<(Vec v, int n) { ... }
 | `()` `=` `&& \|\|` `as/new` | No | Conflicts with the built-in semantics |
 
 - An operator must have at least one struct/class operand; built-in types cannot be redefined.
+- **Member operators** (`implemented 0.0.87`) are allowed **inside a `struct` only** and are always static-dispatch (never virtual): a class operator would be virtual by default, which would break `==` identity and add dispatch cost, so classes keep the free-function form (a member operator written in a class body is a compile error). The receiver is the implicit `this`, so `s[i]` / `s == t` cost no copy and no retain/release; the parameter list is the free form minus the receiver (binary 1, unary 0, `[]` 1, `[]=` 2) and a member operator wins over a free function with the same signature.
 - An operator function is an ordinary function and may be placed in any unit; a duplicate definition or a resolution ambiguity → compile error.
 - When `!=` is undefined it is derived as `not (a == b)`; for a class this means identity inequality.
 - Unary `~` (bitwise NOT) may be overloaded (`operator~`, 1 parameter).
@@ -1272,7 +1281,7 @@ int operator[](Vec v, usize i) { return v.data[i]; }   // free-function operator
 
 - Conditions (all must hold):
   - a method `length() -> usize`;
-  - a free-function operator `operator[](C, usize) -> T`.
+  - `operator[](usize) -> T`, either a **member operator** on the container or a free-function operator `operator[](C, usize) -> T` (3.11).
 - Signatures are matched **exactly** on `usize`: `operator[](C, int)` does not qualify (no narrowing conversion); on error the actual signature is reported.
 - Lowering: `usize n = c.length();` (evaluated only once) → `for (usize i = 0; i < n; ++i) { T x = c[i]; ... }`.
 - The element type is the return type of `operator[]` (if it returns `ref T`, the element type is `T`); **proxy/reference wrappers are not recognized**
@@ -1280,8 +1289,8 @@ int operator[](Vec v, usize i) { return v.data[i]; }   // free-function operator
 - `length()` must equal the number of valid indices of `[]`; a mismatch is a user error (debug bounds checks catch it).
 - In `for i, x`, `i` is the real `usize` index.
 - `for ref` requires `operator[]` to return `ref T` (the element is then addressable); when `[]` returns a value, use `for i, x` + `c[i] = ...`.
-- **Copy cost**: `operator[](C, usize)` is an ordinary call; when `C` is a struct, the whole struct is copied on every iteration
-  (reference fields are retained/released field by field). Iterable containers should preferably be `class`, or the receiver should be written as `ref C`.
+- **Copy cost**: with the free-function form, `C` is copied on every iteration (reference fields retained/released field by field); write it as
+  `ref C` or, better, define the operator as a **member** (`T operator[](usize i)`), whose borrowed `this` makes every iteration a plain indexed load.
 - A temporary container (`for x in makeVec()`) is constructed only once and cleaned up at loop exit according to U24.
 
 #### 6.4.2 Cursor form (sequential access; not implemented yet)

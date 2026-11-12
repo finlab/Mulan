@@ -10,6 +10,12 @@
 
 ## Releases
 
+### 0.0.87 — 2026-11-13
+
+**Member operators on `struct` (borrowed receiver)**: a struct may now declare `T operator+(B other)`, `T operator[](usize i)`, `void operator[]=(usize i, V v)`, unary `-`/`+`/`~`, and the comparison/bitwise set as **member** functions (`src/parser_unit.cpp`, `src/sema_types.cpp:check_member_operator_sig`, `src/sema_call.cpp:find_member_operator`). The receiver is the implicit `this`, i.e. a borrowed pointer, so `s[i]` / `s == t` copy nothing and touch no reference count — which is the prerequisite for moving `string`'s operators into the library at built-in cost. Member operators are static-dispatch only and **forbidden in classes** (a class operator would be virtual and would break `==` identity); a member operator wins over a free function with the same signature, and falls back when no overload accepts the arguments (`-s` vs `s - t`). The index-form `for-in` protocol now also accepts a member `operator[]` (and prefers it), `a != b` converts through a member/free `operator==` with the result negated, and the `T: I` constraint check accepts operator members as well. Added 1 run case (`member_op`), 3 must-fail cases and 1 check case.
+
+**Tests**: 437/437 (116 pass + 303 must-fail + 18 check)
+
 ### 0.0.86 — 2026-11-12
 
 **Out-of-range shift counts in constant expressions + stale status text**: a shift by ≥ the bit width (and a negative shift count) inside a constant expression is now reported directly (`shift count 40 is out of range for `int` (0..31)`) instead of returning "not evaluable", which let `check` pass and then failed in the backend with "global initializer must be a constant" pointing at a standard-library line. Valid shifts (`1 << 31`, `(1 as long) << 40`) still evaluate. Documentation: the non-goal list no longer claims dynamic arrays are unimplemented (they are built in; only library container classes are missing), the two duplicated open-question numbers (110/111) were renumbered so the table runs 110–119, the `deinit` row now points at the implemented `~T()` destructor, and backlog U33 is marked implemented (S1 static satisfaction and S4 constraint dispatch, with the S3/S5 dynamic channel closed). Added 2 must-fail cases (`shift_count_overflow`, `shift_count_negative`).

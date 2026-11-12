@@ -570,6 +570,8 @@ namespace muc_detail {
                 sig.is_override = m->is_override;
                 sig.is_public = m->is_public;
                 sig.owner = sd->ty;
+                sig.is_operator = m->is_operator;
+                if (m->is_operator) check_member_operator_sig(m.get(), sd->ty);
                 sd->ty->methods.push_back(std::move(sig));
                 m->cname = method_cname(u->name, sd->name, m->name, m->pty);
             }

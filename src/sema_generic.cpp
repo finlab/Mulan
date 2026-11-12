@@ -349,6 +349,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         sig.is_override = m->is_override;
         sig.is_public = m->is_public;
         sig.owner = ty;
+        sig.is_operator = m->is_operator;
         ty->methods.push_back(sig);
         m->cname = method_cname(tmpl_unit, display, m->name, m->pty);
         if (!m->body) ty->is_abstract = true;
@@ -688,6 +689,23 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
             }
         }
         if (!found && std_info()) try_unit(*std_info(), true);
+        // Member operator on a value type: the receiver is the implicit `this`, so the declared parameter
+        // list is the interface signature minus its first operand.
+        if (!found && (t->kind == TypeKind::Struct || t->kind == TypeKind::Class)) {
+            for (const auto& m : t->methods) {
+                if (!m.is_operator || m.name != sig->name) continue;
+                if (m.params.size() + 1 != want.size()) continue;
+                if (!same_type(m.ret, want_ret)) continue;
+                bool ok = true;
+                for (size_t i = 1; i < want.size(); ++i) {
+                    if (!same_type(m.params[i - 1], want[i])) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) found = true;
+            }
+        }
         if (!found) {
             if (why) {
                 *why = "no `" + sig->name + "` accepting `(" + t->str() + ", " + t->str() + ")`";

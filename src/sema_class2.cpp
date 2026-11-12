@@ -240,7 +240,9 @@ namespace muc_detail {
                 TypePtr it = check_expr(ix->indices[0].get());
                 if (!is_integer(it)) err("index must be an integer", s->target.get());
                 // Resolve `[]` first: if it returns a borrow (`ref T`), that subscript is a writable lvalue and the generic assignment path is taken directly
-                if (!collect_operators("[]", {bt, it}).empty()) check_expr(ix);
+                const bool has_member_read =
+                    find_member_operator(bt, "operator[]", {ix->indices[0].get()}, s->target.get()) != nullptr;
+                if (has_member_read || !collect_operators("[]", {bt, it}).empty()) check_expr(ix);
                 if (ix->by_ref) {
                     if (ix->ref_const)
                         err("cannot assign through a readonly (`ref const`) subscript", s->target.get());
@@ -248,6 +250,14 @@ namespace muc_detail {
                     // no return: falls through to the generic assignment/compound-assignment check below
                 } else {
                     if (s->op != "=") err("user-defined subscript assignment only supports `=`", s);
+                    if (const MethodSig* sm =
+                            find_member_operator(bt, "operator[]=", {ix->indices[0].get(), s->value.get()},
+                                                 s->target.get())) {
+                        check_writable(s->target.get());
+                        s->set_method = sm;
+                        check_expr(s->value.get());
+                        return;
+                    }
                     auto cands = collect_operators("[]=", {bt, it});
                     if (cands.empty()) {
                         err("type `" + bt->str() + "` does not support subscript assignment (no `operator[]=`)", s);
@@ -596,6 +606,29 @@ namespace muc_detail {
 
         FuncDecl* picked = nullptr;
         std::string saw_index;
+        // A member `operator[](usize)` on the struct takes precedence (borrowed receiver, no copy/RC).
+        const MethodSig* picked_m = nullptr;
+        for (const auto& m : st->methods) {
+            if (!m.is_operator || m.name != "operator[]" || m.params.size() != 1) continue;
+            if (!decl_visible(m.owner ? m.owner->unit : std::string(), m.is_public)) continue;
+            if (!same_type(m.params[0], us)) {
+                if (saw_index.empty() && m.params[0]) saw_index = m.params[0]->str();
+                continue;
+            }
+            if (picked_m) {
+                err("`" + st->str() + "` has more than one `operator[](usize)` overload; `for-in` cannot choose one",
+                    s->seq.get());
+            }
+            picked_m = &m;
+        }
+        if (picked_m) {
+            s->loop_kind = "index";
+            s->seq_ty = st;
+            s->elem_ty = referent_of(picked_m->ret);
+            s->len_sig = len;
+            s->idx_method = picked_m;
+            return;
+        }
         for (auto* c : collect_operators("[]", {st, us})) {
             if (c->pty.size() != 2) continue;
             bool recv_ok = same_type(c->pty[0], st) ||

@@ -116,6 +116,8 @@ private:
     std::unique_ptr<MethodDecl> parse_method(TypeSpecPtr ret, bool ret_ref, const Token& name_tok);
     // operator signature in an interface: `T operator+(T a, T b);` (no this)
     std::unique_ptr<MethodDecl> parse_interface_operator(TypeSpecPtr ret, bool ret_ref);
+    // member operator inside a struct body: `T operator+(B other) { ... }` (implicit borrowed `this`)
+    std::unique_ptr<MethodDecl> parse_member_operator(TypeSpecPtr ret, bool ret_ref);
     // Return type: `ref T` / `ref const T` / `T`. `ref` is consumed only in return position and never enters the general type syntax.
     TypeSpecPtr parse_return_type(bool& ret_ref);
     std::unique_ptr<CtorDecl> parse_ctor(const Token& name_tok);

@@ -324,6 +324,12 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
         }
         bool ret_ref = false;
         TypeSpecPtr spec = parse_return_type(ret_ref);
+        if (at_kw("operator")) {
+            if (is_union) throw err("union `" + name + "` cannot have methods");
+            decl->methods.push_back(parse_member_operator(std::move(spec), ret_ref));
+            decl->methods.back()->is_public = member_pub;
+            continue;
+        }
         const Token name_tok = expect_ident("field or method name");
         if (at_op("(")) {
             if (is_union) throw err("union `" + name + "` cannot have methods");
@@ -612,6 +618,10 @@ std::unique_ptr<Decl> Parser::parse_class() {
         bool ret_ref = false;
         TypeSpecPtr spec = parse_return_type(ret_ref);
         if (prefix_weak) spec->weak = true;
+        if (at_kw("operator")) {
+            throw err("member operators are only allowed in a `struct`: operators are static dispatch and a class "
+                      "operator would be virtual (write a free function `T operator+(C a, C b)` instead)");
+        }
         const Token name_tok = expect_ident("member name");
         if (at_op("(")) {
             if (prefix_weak) throw err_at("`weak` can only be used on fields, not on methods", name_tok);
@@ -738,6 +748,40 @@ std::unique_ptr<MethodDecl> Parser::parse_interface_operator(TypeSpecPtr ret, bo
     m->col = tk.col;
     m->params = parse_params();
     semicolon();
+    return m;
+}
+
+// Member operator inside a struct body (3.11): `T operator+(B other) { ... }`.
+// The receiver is the implicit `this` (a borrowed pointer), so `s[i]` / `s == t` cost no copy and no RC.
+std::unique_ptr<MethodDecl> Parser::parse_member_operator(TypeSpecPtr ret, bool ret_ref) {
+    const Token tk = expect_kw("operator");
+    std::string sym;
+    if (at_op("[")) {
+        advance();
+        expect_op("]");
+        sym = "[]";
+        if (at_op("=")) {
+            advance();
+            sym = "[]=";
+        }
+    } else if (peek().kind == TokKind::Op) {
+        sym = advance().text;
+    } else {
+        throw err("expected operator symbol after `operator`");
+    }
+    auto m = std::make_unique<MethodDecl>();
+    m->name = "operator" + sym;
+    m->ret = std::move(ret);
+    m->ret_ref = ret_ref;
+    m->is_operator = true;
+    m->line = tk.line;
+    m->col = tk.col;
+    m->params = parse_params();
+    if (at_op(";")) {
+        advance();
+    } else {
+        m->body = parse_block();
+    }
     return m;
 }
 

@@ -93,7 +93,7 @@ std::string func_cname(const std::string& unit, FuncDecl* f) {
 
 std::string method_cname(const std::string& unit, const std::string& owner,
                          const std::string& name, const std::vector<TypePtr>& params) {
-    std::string out = "mu_" + unit + "_M" + ident_safe(owner) + "_" + name;
+    std::string out = "mu_" + unit + "_M" + ident_safe(owner) + "_" + func_code_name(name);
     for (auto& t : params) out += "__" + type_code(t);
     return out;
 }

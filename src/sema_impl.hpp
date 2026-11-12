@@ -558,6 +558,14 @@ private:
     std::vector<FuncDecl*> collect_operators(const std::string& sym,
                                              const std::vector<TypePtr>& operands = {});
 
+    // Member operator on a struct (`s[i]`, `s + t`): the receiver is `this` (a borrowed pointer), so the
+    // operation costs no copy and no RC. Returns nullptr when the struct declares no such operator.
+    const MethodSig* find_member_operator(const TypePtr& recv, const std::string& name,
+                                          const std::vector<Expr*>& args, Node* at);
+
+    // Arity / return-type validation for an operator declared inside a struct body (3.11).
+    void check_member_operator_sig(MethodDecl* m, const TypePtr& owner);
+
     static std::vector<Expr*> raw_args(const std::vector<ExprPtr>& v);
 
     FuncDecl* choose_overload(const std::vector<FuncDecl*>& cands,

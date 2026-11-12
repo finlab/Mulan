@@ -464,6 +464,13 @@ struct Emitter {
     // Call a free function / operator / method (static dispatch)
     Value* emitUserCall(FuncDecl* f, const std::vector<Expr*>& args);
 
+    // Member operator on a struct (3.11): the receiver is passed as a borrowed pointer (`this`), so
+    // `s[i]` / `s == t` cost no copy and no RC.
+    Value* emitStructMethodCall(const MethodSig* sig, Value* recvAddr, const std::vector<Expr*>& args);
+    Value* emitMemberOp(const MethodSig* sig, Expr* recv, const std::vector<Expr*>& args);
+    Value* emitMemberIndex(const MethodSig* sig, Value* recvAddr, Value* idxVal);
+    Value* emitMemberIndexSet(const MethodSig* sig, Value* recvAddr, Value* idxVal, Expr* value);
+
     Value* evalNew(NewExpr* ne);
 
     Value* evalCall(Call* c);

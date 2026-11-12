@@ -109,6 +109,7 @@ struct Index : Expr {
     std::vector<ExprPtr> indices;  // a[i] / a[i,j] / a[i,j,k]
     // sema: the selected function is recorded when subscripting a user type goes through an operator overload
     FuncDecl* get_func = nullptr;
+    const MethodSig* get_method = nullptr;  // sema: member `operator[]` on a struct (borrowed receiver)
     bool by_ref = false;      // `operator[]` returns a borrow: the expression type is the referent and the value is the element address
     bool ref_const = false;   // whether the borrow is read-only (`ref const T`)
 };
@@ -116,7 +117,8 @@ struct Index : Expr {
 struct Unary : Expr {
     std::string op;  // - + & * !
     ExprPtr operand;
-    FuncDecl* op_func = nullptr;  // sema: user operator overload
+    FuncDecl* op_func = nullptr;              // sema: user operator overload (free function)
+    const MethodSig* op_method = nullptr;     // sema: member operator on a struct (borrowed receiver)
 };
 
 struct NotExpr : Expr {  // the not keyword
@@ -127,7 +129,9 @@ struct Binary : Expr {
     std::string op;  // + - * / % << >> & | ^ < <= > >= == != and or
     ExprPtr left;
     ExprPtr right;
-    FuncDecl* op_func = nullptr;  // sema: user operator overload
+    FuncDecl* op_func = nullptr;              // sema: user operator overload (free function)
+    const MethodSig* op_method = nullptr;     // sema: member operator on a struct (borrowed receiver)
+    bool negate_result = false;               // sema: `a != b` implemented through `operator==` (the result is negated)
 };
 
 struct Cast : Expr {
@@ -367,7 +371,8 @@ struct AssignStmt : Stmt {
     ExprPtr target;
     std::string op;  // = += -= *= /= %= &= |= ^= <<= >>=
     ExprPtr value;
-    FuncDecl* set_func = nullptr;  // sema: operator[]= overload
+    FuncDecl* set_func = nullptr;              // sema: operator[]= overload (free function)
+    const MethodSig* set_method = nullptr;     // sema: member operator[]= on a struct
 };
 
 struct IfStmt : Stmt {
@@ -399,6 +404,7 @@ struct ForInStmt : Stmt {
     std::unique_ptr<LocalVar> idx_lvar;  // the index variable symbol (codegen uses its cname)
     const MethodSig* len_sig = nullptr;  // the index form: length() -> usize
     FuncDecl* idx_fn = nullptr;          // the index form: operator[](C, usize) -> T
+    const MethodSig* idx_method = nullptr;  // the index form: member operator[](usize) -> T
     std::string cname;
     std::unique_ptr<LocalVar> lvar;  // the loop variable symbol (codegen uses its cname/by_ref)
 };

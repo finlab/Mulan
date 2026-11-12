@@ -574,6 +574,42 @@ namespace muc_detail {
         }
     }
 
+    const MethodSig* Sema::find_member_operator(const TypePtr& recv, const std::string& name,
+                                                const std::vector<Expr*>& args, Node* at) {
+        // Member operators live on value types only: a class operator would be virtual (operators are
+        // static-dispatch and `==` on a class is identity), so the parser does not accept them there.
+        if (!recv || recv->kind != TypeKind::Struct) return nullptr;
+        std::vector<const MethodSig*> cands;
+        for (const auto& m : recv->methods) {
+            if (!m.is_operator || m.name != name) continue;
+            cands.push_back(&m);
+        }
+        if (cands.empty()) return nullptr;
+        for (const MethodSig* c : cands) {
+            if (!decl_visible(c->owner ? c->owner->unit : std::string(), c->is_public)) {
+                err("operator `" + name + "` of `" + recv->str() + "` is not declared public", at);
+            }
+        }
+        // Only take over when an overload actually accepts the arguments: `-s` and `s - t` share one symbol,
+        // so a non-matching member must fall back to the free-function lookup instead of erroring here.
+        std::vector<TypePtr> atys;
+        for (auto* a : args) atys.push_back(a->ty ? a->ty : check_expr(a));
+        std::vector<const MethodSig*> ok;
+        for (const MethodSig* c : cands) {
+            if (c->params.size() != args.size()) continue;
+            bool good = true;
+            for (size_t i = 0; i < args.size(); ++i) {
+                if (rank_arg(args[i], atys[i], c->params[i]) < 0) {
+                    good = false;
+                    break;
+                }
+            }
+            if (good) ok.push_back(c);
+        }
+        if (ok.empty()) return nullptr;
+        return choose_method(ok, args, "`" + name + "` of `" + recv->str() + "`", at);
+    }
+
     const MethodSig* Sema::choose_method(const std::vector<const MethodSig*>& cands,
                                    const std::vector<Expr*>& args,
                                    const std::string& what, Node* at) {

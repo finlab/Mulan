@@ -108,6 +108,12 @@ namespace muc_detail {
             }
             if (is_user_type(bt)) {
                 if (n != 1) err("user-defined `operator[]` takes exactly one subscript", e);
+                if (const MethodSig* mm = find_member_operator(bt, "operator[]", {ix->indices[0].get()}, e)) {
+                    ix->get_method = mm;
+                    ix->by_ref = is_borrow_type(mm->ret);
+                    ix->ref_const = ix->by_ref && mm->ret->is_const;
+                    return referent_of(mm->ret);
+                }
                 auto cands = collect_operators("[]", {bt, its[0]});
                 if (cands.empty()) {
                     err("type `" + bt->str() + "` does not support subscripting (no `operator[]`)", e);
@@ -702,6 +708,10 @@ namespace muc_detail {
         if (e->op == "~") {
             if (is_integer(t)) return t;
             if (is_user_type(t)) {
+                if (const MethodSig* mm = find_member_operator(t, "operator~", {}, e)) {
+                    e->op_method = mm;
+                    return mm->ret;
+                }
                 auto cands = collect_operators("~", {t});
                 std::vector<FuncDecl*> unary;
                 for (auto* f : cands) {
@@ -722,6 +732,10 @@ namespace muc_detail {
         if (e->op == "-" || e->op == "+") {
             if (is_numeric(t)) return t;
             if (is_user_type(t)) {
+                if (const MethodSig* mm = find_member_operator(t, "operator" + e->op, {}, e)) {
+                    e->op_method = mm;
+                    return mm->ret;
+                }
                 auto cands = collect_operators(e->op, {t});
                 std::vector<FuncDecl*> unary;
                 for (auto* f : cands) {
@@ -794,6 +808,10 @@ namespace muc_detail {
 
         if (is_user_type(lt) || is_user_type(rt)) {
             if (op != "==" && op != "!=") {
+                if (const MethodSig* mm = find_member_operator(lt, "operator" + op, {e->right.get()}, e)) {
+                    e->op_method = mm;
+                    return mm->ret;
+                }
                 auto cands = collect_operators(op, {lt, rt});
                 if (cands.empty()) {
                     err("type `" + lt->str() + "` and `" + rt->str() + "` has no `" + op +
@@ -904,11 +922,24 @@ namespace muc_detail {
                 return t_bool();
             }
             if (is_user_type(lt) || is_user_type(rt)) {
+                if (const MethodSig* mm = find_member_operator(lt, "operator" + op, {e->right.get()}, e)) {
+                    e->op_method = mm;
+                    return mm->ret;
+                }
+                if (op == "!=") {
+                    // `!=` may be provided by a member `operator==` (negate the result)
+                    if (const MethodSig* me = find_member_operator(lt, "operator==", {e->right.get()}, e)) {
+                        e->op_method = me;
+                        e->negate_result = true;
+                        return t_bool();
+                    }
+                }
                 auto cands = collect_operators(op, {lt, rt});
                 if (cands.empty() && op == "!=") {
                     auto eqs = collect_operators("==", {lt, rt});
                     if (!eqs.empty()) {
-                        choose_overload(eqs, {e->left.get(), e->right.get()}, "operator==", e);
+                        e->op_func = choose_overload(eqs, {e->left.get(), e->right.get()}, "operator==", e);
+                        e->negate_result = true;
                         return t_bool();
                     }
                 }
