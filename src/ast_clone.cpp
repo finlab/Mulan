@@ -97,6 +97,9 @@ TypeSpecPtr clone_type_spec(const TypeSpec& s) {
     out->name = s.name;
     out->args = clone_type_args(s.args);
     out->elem = s.elem ? clone_type_spec(*s.elem) : nullptr;
+    out->params.reserve(s.params.size());
+    for (const auto& p : s.params) out->params.push_back(p ? clone_type_spec(*p) : nullptr);
+    out->ret = s.ret ? clone_type_spec(*s.ret) : nullptr;
     out->size = s.size;
     out->rank = s.rank;
     out->is_const = s.is_const;
@@ -220,6 +223,15 @@ ExprPtr clone_expr(const Expr& e) {
         r->lo = clone_expr(*p->lo);
         r->hi = clone_expr(*p->hi);
         r->inclusive = p->inclusive;
+        return r;
+    }
+    if (auto p = dynamic_cast<const Lambda*>(&e)) {
+        auto r = mk<Lambda>(e);
+        for (const auto& prm : p->params) {
+            if (prm) r->params.push_back(clone_param(*prm));
+        }
+        r->expr_body = p->expr_body ? clone_expr(*p->expr_body) : nullptr;
+        r->block_body = p->block_body ? clone_block(*p->block_body) : nullptr;
         return r;
     }
     return nullptr;

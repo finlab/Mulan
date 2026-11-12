@@ -461,6 +461,15 @@ static std::string spec_display(const TypeSpec& s) {
             return spec_display(*s.elem) + "[]";
         case TypeSpec::K::Array:
             return spec_display(*s.elem) + "[" + std::to_string(s.size) + "]";
+        case TypeSpec::K::Func: {
+            std::string n = "(";
+            for (size_t i = 0; i < s.params.size(); ++i) {
+                if (i) n += ", ";
+                n += spec_display(*s.params[i]);
+            }
+            n += ") => " + spec_display(*s.ret);
+            return n;
+        }
     }
     return s.name;
 }

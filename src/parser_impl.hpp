@@ -173,6 +173,9 @@ private:
     ExprPtr parse_postfix_tail(ExprPtr e);
     ExprPtr parse_call(ExprPtr callee);
     ExprPtr parse_primary();
+// `(T a, T b) => body` (3.16): detection scans for the matching `)` followed by `=>`
+bool looks_like_lambda() const;
+ExprPtr parse_lambda();
 
     ExprPtr make_binary(const std::string& op, ExprPtr left, ExprPtr right, const Token& tok);
 

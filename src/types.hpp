@@ -11,7 +11,7 @@
 
 // Ref: a borrow (`ref T` / `ref const T`). It appears only in the return type position of a function/method,
 // and in parameter patterns (the parameter side is still recorded with the pty_ref boolean, see FuncDecl). It cannot be used as a variable/field/element type.
-enum class TypeKind { Void, Prim, String, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref };
+enum class TypeKind { Void, Prim, String, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref, Func };
 
 struct Type;
 using TypePtr = std::shared_ptr<Type>;
@@ -60,6 +60,9 @@ struct Type {
     bool is_packed = false;     // Struct: packed (the fields are tightly packed, with no internal or tail padding, and the default align is 1)
     bool is_union = false;      // Struct: union (all members at offset 0, size = max(member))
     int align_req = 0;          // Struct: the N of align(N) (0 = unspecified)
+    // Func (`(T1, T2) => R`): a one-word function value (C function pointer compatible)
+    std::vector<TypePtr> fparams;
+    TypePtr fret;
 
     static TypePtr make_void();
     static TypePtr make_prim(const std::string& name);
@@ -75,6 +78,7 @@ struct Type {
     static TypePtr make_module(const std::string& unit);
     static TypePtr make_null();
     static TypePtr make_range();
+    static TypePtr make_func(const std::vector<TypePtr>& params, const TypePtr& ret);
 
     std::string str() const;
     bool is_integer() const;   // integer or enum

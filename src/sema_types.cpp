@@ -57,6 +57,22 @@ namespace muc_detail {
                 }
                 return Type::make_array(elem, spec->size);
             }
+            case TypeSpec::K::Func: {
+                std::vector<TypePtr> ps;
+                for (auto& p : spec->params) {
+                    TypePtr pt = resolve_type(p.get(), u);
+                    if (is_void(pt)) err_ts("a function type parameter cannot be `void`", p.get());
+                    if (is_borrow_type(pt)) {
+                        err_ts("a function type cannot take a `ref` parameter (a borrow is not a value type)", p.get());
+                    }
+                    ps.push_back(pt);
+                }
+                TypePtr rt = resolve_type(spec->ret.get(), u);
+                if (is_borrow_type(rt)) {
+                    err_ts("a function type cannot return a borrow (`ref T`)", spec);
+                }
+                return Type::make_func(ps, rt);
+            }
         }
         err_ts("unknown type " + spec_text(spec), spec);
     }
@@ -467,7 +483,29 @@ namespace muc_detail {
             if (eval_global_const(g, cur_->name, v)) return;
         }
         if (!is_const_expr(g->init.get())) {
-            err("initializer of unit-level variable `" + g->name + "` must be a compile-time constant", g);
+            bool func_init = false;
+            if (auto ie = dynamic_cast<InitExpr*>(g->init.get())) {
+                // A function value is an address constant (3.16): it may initialize a unit-level variable.
+                TypePtr t = check_expr(ie->expr.get(), g->rty);
+                if (t && t->kind == TypeKind::Func) {
+                    FuncDecl* picked = nullptr;
+                    if (auto nm = dynamic_cast<Name*>(ie->expr.get())) {
+                        if (auto* f = std::get_if<FuncDecl*>(&nm->sym)) picked = *f;
+                    } else if (auto mb = dynamic_cast<Member*>(ie->expr.get())) {
+                        if (auto* f = std::get_if<FuncDecl*>(&mb->sym)) picked = *f;
+                    }
+                    if (!picked) {
+                        err("initializer of unit-level variable `" + g->name +
+                                "` must be a named function (a lambda body cannot be used here)",
+                            g);
+                    }
+                    g->const_func = picked;
+                    func_init = true;
+                }
+            }
+            if (!func_init) {
+                err("initializer of unit-level variable `" + g->name + "` must be a compile-time constant", g);
+            }
         }
         check_decl_init(g->zero, g->rty, g->init.get(), "global initialization", g);
     }

@@ -376,7 +376,8 @@ static bool is_numeric(const TypePtr& t) {
             }
         }
         if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
-            if (lt_->kind == TypeKind::Ptr || rt_->kind == TypeKind::Ptr) {
+            if (lt_->kind == TypeKind::Ptr || rt_->kind == TypeKind::Ptr ||
+                lt_->kind == TypeKind::Func || rt_->kind == TypeKind::Func) {
                 Value* lv = l;
                 Value* rv = r;
                 if (lt_->kind == TypeKind::Null) lv = Constant::getNullValue(ptrTy());

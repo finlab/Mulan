@@ -6,6 +6,24 @@
 
 namespace muc_detail {
 
+    TypePtr Sema::check_fnptr_args(Call* c, const TypePtr& ft) {
+        if (!c->type_args.empty()) err("a call through a function value cannot take type arguments", c);
+        if (!c->named.empty()) {
+            err("a call through a function value does not support named arguments", c);
+        }
+        if (c->args.size() != ft->fparams.size()) {
+            err("this function value expects " + std::to_string(ft->fparams.size()) + " arguments, but " +
+                    std::to_string(c->args.size()) + " were given",
+                c);
+        }
+        for (size_t i = 0; i < ft->fparams.size() && i < c->args.size(); ++i) {
+            check_assign(c->args[i].get(), ft->fparams[i], "argument of a call through a function value");
+        }
+        c->callee_kind = "fnptr";
+        c->fn_ty = ft;
+        return ft->fret;
+    }
+
     TypePtr Sema::check_call(Call* c) {
         Expr* callee = c->callee.get();
         if (!callee) err("call is missing a callee", c);
@@ -37,6 +55,8 @@ namespace muc_detail {
 
         if (auto nm = dynamic_cast<Name*>(callee)) {
             if (lookup_local(nm->ident) != nullptr) {
+                TypePtr vt = check_expr(callee);
+                if (vt && vt->kind == TypeKind::Func) return check_fnptr_args(c, vt);
                 err("`" + nm->ident + "` is a variable, not a function", c);
             }
             // Candidates: current unit + directly `use`d units (public only) + std.string (implicit)
@@ -86,6 +106,23 @@ namespace muc_detail {
                 nm->sym = chosen;
                 target = chosen;
             } else {
+                // a unit-level variable of function type: `G(...)`
+                bool is_global = info().globals.count(nm->ident) != 0;
+                if (!is_global) {
+                    for (auto& use : cur_->uses) {
+                        if (!unit_visible(use->unit_name)) continue;
+                        auto it = infos_.find(use->unit_name);
+                        if (it != infos_.end() && it->second.globals.count(nm->ident) != 0) {
+                            is_global = true;
+                            break;
+                        }
+                    }
+                }
+                if (is_global) {
+                    TypePtr vt = check_expr(callee);
+                    if (vt && vt->kind == TypeKind::Func) return check_fnptr_args(c, vt);
+                    err("`" + nm->ident + "` is a variable, not a function", c);
+                }
                 // struct construction: current unit first, then public types of `use`d units
                 TypePtr st = find_type_named(cur_->name, nm->ident, false);
                 if (!st) {
@@ -153,6 +190,11 @@ namespace muc_detail {
                     std::vector<const MethodSig*> ms;
                     collect_methods(ot, m->name, ms);
                     if (ms.empty()) {
+                        TypePtr ft = ot->field_type(m->name);
+                        if (ft && ft->kind == TypeKind::Func) {
+                            TypePtr ct = check_expr(callee);  // resolves the field access and sets the node's type
+                            return check_fnptr_args(c, ct);
+                        }
                         err("type `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
@@ -171,6 +213,11 @@ namespace muc_detail {
                     std::vector<const MethodSig*> ms;
                     collect_methods(ot, m->name, ms);
                     if (ms.empty()) {
+                        TypePtr ft = ot->field_type(m->name);
+                        if (ft && ft->kind == TypeKind::Func) {
+                            TypePtr ct = check_expr(callee);  // resolves the field access and sets the node's type
+                            return check_fnptr_args(c, ct);
+                        }
                         err("struct `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
@@ -184,6 +231,11 @@ namespace muc_detail {
                     c->by_ref = is_borrow_type(sig->ret);
                     c->ref_const = c->by_ref && sig->ret->is_const;
                     return referent_of(sig->ret);
+                }
+                // any other callee expression: `arr[i](...)` / `getfn()(...)`
+                {
+                    TypePtr ft = check_expr(callee);
+                    if (ft && ft->kind == TypeKind::Func) return check_fnptr_args(c, ft);
                 }
                 err("`" + m->name + "` is not a function", c);
             }
@@ -209,6 +261,9 @@ namespace muc_detail {
             m->sym = chosen;
             target = chosen;
         } else {
+            // any callee expression of function type: `fp(...)`, `arr[i](...)`, `getfn()(...)`
+            TypePtr ft = check_expr(callee);
+            if (ft && ft->kind == TypeKind::Func) return check_fnptr_args(c, ft);
             err("only functions and struct constructors can be called", c);
         }
 

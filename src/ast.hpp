@@ -26,11 +26,14 @@ struct Node {
 // ---------------------------------------------------------------- Type syntax
 
 struct TypeSpec {
-    enum class K { Named, Ptr, Array, Slice } kind = K::Named;
+    enum class K { Named, Ptr, Array, Slice, Func } kind = K::Named;
     std::string name;          // Named: "int" / "Point" / "math.Point" / "Vec"
     // Non-empty when Named is a generic instantiation: the type arguments of `Vec<int>` (`Vec` itself is a template).
     std::vector<std::unique_ptr<TypeSpec>> args;
     std::unique_ptr<TypeSpec> elem;
+    // Func: `(T1, T2) => R` — parameter types and the return type
+    std::vector<std::unique_ptr<TypeSpec>> params;
+    std::unique_ptr<TypeSpec> ret;
     size_t size = 0;           // Array
     int rank = 1;              // Slice: rank
     bool is_const = false;  // C model: whether this type node is const (a prefix const qualifies the base type, `* const` qualifies the pointer level)
@@ -47,6 +50,9 @@ using TypeSpecPtr = std::unique_ptr<TypeSpec>;
 struct LocalVar;
 struct GlobalVar;
 struct FuncDecl;
+struct Param;
+struct Block;
+struct Stmt;
 struct EnumConst;struct CtorDecl;
 struct DtorDecl;
 struct MethodDecl;
@@ -143,8 +149,9 @@ struct Call : Expr {
     // the explicit type arguments of a generic call: `f<int>(x)` (empty = a normal call)
     std::vector<TypeSpecPtr> type_args;
     // sema
-    std::string callee_kind;  // "func" | "ctor" | "builtin" | "method" | "super"
+    std::string callee_kind;  // "func" | "ctor" | "builtin" | "method" | "super" | "fnptr"
     FuncDecl* func = nullptr;
+    TypePtr fn_ty;            // callee_kind == "fnptr": the function type being called
     TypePtr ctor;             // the target type of the struct construction
     std::string builtin;      // alloc / realloc / free
     std::vector<int> field_order;
@@ -152,6 +159,16 @@ struct Call : Expr {
     const std::vector<TypePtr>* ctor_pty = nullptr;  // the selected constructor (used by super)
     bool by_ref = false;      // the called function/method returns a borrow (the expression type is the referent and the value is the address)
     bool ref_const = false;   // whether the borrow is read-only (`ref const T`)
+};
+
+// Lambda expression: `(int a) => expr` / `(int a) => { ... }` (no captures).
+// sema lowers it to a hidden `private` function (`synth`) and the expression's value is that function's address.
+struct Lambda : Expr {
+    std::vector<std::unique_ptr<Param>> params;
+    ExprPtr expr_body;            // `=> expr`
+    std::unique_ptr<Block> block_body;  // `=> { ... }`
+    // sema
+    FuncDecl* synth = nullptr;
 };
 
 struct NewExpr : Expr {
@@ -271,6 +288,8 @@ struct GlobalVar : Decl {    std::string name;
     bool const_is_float = false;
     long long const_ival = 0;
     double const_fval = 0;
+    // 3.16: the initializer is a function value (an address constant); codegen emits the function's address
+    FuncDecl* const_func = nullptr;
 };
 
 // Type-level compile-time constant: `const int MaxAge = 20;` (only allowed inside a struct / class body)
@@ -522,4 +541,6 @@ struct Unit : Node {
     // Generic templates (`type_params` non-empty) are moved here during the sema collection phase: they do not
     // take part in the regular checks of the first phase and are only looked up by the instantiator via `(unit, name, args)`.
     std::vector<std::unique_ptr<Decl>> templates;
+    // Functions synthesized for lambda expressions (checked inline with the expression; emitted by codegen).
+    std::vector<std::unique_ptr<FuncDecl>> lambdas;
 };

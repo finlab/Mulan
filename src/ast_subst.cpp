@@ -28,6 +28,10 @@ void subst_type_spec(TypeSpec& s, const TypeBindings& b) {
         if (a) subst_type_spec(*a, b);
     }
     if (s.elem) subst_type_spec(*s.elem, b);
+    for (auto& p : s.params) {
+        if (p) subst_type_spec(*p, b);
+    }
+    if (s.ret) subst_type_spec(*s.ret, b);
 }
 
 void subst_expr(Expr& e, const TypeBindings& b) {
@@ -89,6 +93,14 @@ void subst_expr(Expr& e, const TypeBindings& b) {
     if (auto p = dynamic_cast<RangeExpr*>(&e)) {
         subst_expr(*p->lo, b);
         subst_expr(*p->hi, b);
+        return;
+    }
+    if (auto p = dynamic_cast<Lambda*>(&e)) {
+        for (auto& prm : p->params) {
+            if (prm->spec) subst_type_spec(*prm->spec, b);
+        }
+        if (p->expr_body) subst_expr(*p->expr_body, b);
+        if (p->block_body) subst_block(*p->block_body, b);
         return;
     }
 }

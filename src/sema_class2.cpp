@@ -303,6 +303,17 @@ namespace muc_detail {
 
     void Sema::check_return(ReturnStmt* s) {
         if (in_dtor_) err("`return` is not allowed in a destructor (fields and the base class are destroyed at the end of the function)", s);
+        // Inside a lambda the return type is inferred (3.16): collect the types and unify after the body.
+        if (!lambda_stack_.empty()) {
+            LambdaCtx& ctx = lambda_stack_.back();
+            if (!s->value) {
+                ctx.bare.push_back(s);
+                return;
+            }
+            TypePtr t = check_expr(s->value.get());
+            ctx.rets.emplace_back(s, t);
+            return;
+        }
         if (!cur_ret_) err("`return` can only appear in a function or method", s);
         TypePtr rt = cur_ret_;
         if (!s->value) {

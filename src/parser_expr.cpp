@@ -30,6 +30,9 @@ TypeSpecPtr clone_spec(const TypeSpec& s) {
     out->args.reserve(s.args.size());
     for (const auto& a : s.args) out->args.push_back(a ? clone_spec(*a) : nullptr);
     out->elem = s.elem ? clone_spec(*s.elem) : nullptr;
+    out->params.reserve(s.params.size());
+    for (const auto& p : s.params) out->params.push_back(p ? clone_spec(*p) : nullptr);
+    out->ret = s.ret ? clone_spec(*s.ret) : nullptr;
     out->size = s.size;
     out->rank = s.rank;
     out->is_const = s.is_const;
@@ -187,6 +190,32 @@ TypeSpecPtr Parser::parse_type() {
             name += expect_ident("type name").text;
         }
         spec = make_named_spec(name, t.line, t.col);
+    } else if (t.kind == TokKind::Op && t.text == "(") {
+        // function type `(T1, T2) => R` (3.16). Suffixes bind to the return type, so the recursive call consumes
+        // them and this branch returns without running type_suffixes on the function type itself.
+        if (base_const) throw err_at("`const` cannot qualify a function type (a function has no pointee)", t);
+        advance();
+        auto fn = std::make_unique<TypeSpec>();
+        fn->kind = TypeSpec::K::Func;
+        fn->line = t.line;
+        fn->col = t.col;
+        if (!at_op(")")) {
+            for (;;) {
+                fn->params.push_back(parse_type());
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+        }
+        expect_op(")");
+        if (!at_op("=>")) {
+            throw err_at("expected `=>` after the parameter types of a function type", peek());
+        }
+        advance();
+        fn->ret = parse_type();
+        return fn;
     } else {
         throw err("expected type name but got " + t.describe());
     }
@@ -668,6 +697,64 @@ ExprPtr Parser::parse_call(ExprPtr callee) {
     return node;
 }
 
+bool Parser::looks_like_lambda() const {
+    // pos_ points at `(`; find the matching `)` (skipping nested parentheses) and check for a following `=>`.
+    int depth = 0;
+    for (std::size_t i = pos_; i < toks_.size(); ++i) {
+        const Token& tk = toks_[i];
+        if (tk.kind != TokKind::Op) continue;
+        if (tk.text == "(") {
+            depth++;
+        } else if (tk.text == ")") {
+            depth--;
+            if (depth == 0) {
+                return i + 1 < toks_.size() && toks_[i + 1].kind == TokKind::Op && toks_[i + 1].text == "=>";
+            }
+        } else if (tk.text == "{" || tk.text == "}" || tk.text == ";") {
+            return false;
+        }
+    }
+    return false;
+}
+
+ExprPtr Parser::parse_lambda() {
+    const Token t = expect_op("(");
+    auto node = std::make_unique<Lambda>();
+    node->line = t.line;
+    node->col = t.col;
+    if (!at_op(")")) {
+        for (;;) {
+            if (at_kw("ref")) throw err_at("a lambda cannot take a `ref` parameter (a borrow is not a value)", peek());
+            auto p = std::make_unique<Param>();
+            const Token ptok = peek();
+            p->spec = parse_type();
+            if (at_op(")")) {
+                throw err_at("a lambda parameter must be written as `type name`; an anonymous function type cannot "
+                             "start a declaration (write `auto name = ...` or name the type with `type`)",
+                             ptok);
+            }
+            p->name = expect_ident("parameter name").text;
+            p->line = ptok.line;
+            p->col = ptok.col;
+            node->params.push_back(std::move(p));
+            if (at_op(",")) {
+                advance();
+                continue;
+            }
+            break;
+        }
+    }
+    expect_op(")");
+    expect_op("=>");
+    if (at_op("{")) {
+        node->block_body = parse_block();
+    } else {
+        node->expr_body = parse_expr();
+        forbid_inc_expr();
+    }
+    return node;
+}
+
 ExprPtr Parser::parse_primary() {
     const Token t = peek();
     if (t.kind == TokKind::Kw && (t.text == "this" || t.text == "super")) {
@@ -743,6 +830,7 @@ ExprPtr Parser::parse_primary() {
         return node;
     }
     if (t.kind == TokKind::Op && t.text == "(") {
+        if (looks_like_lambda()) return parse_lambda();
         advance();
         ExprPtr e = parse_expr();
         if (at_op("++", "--")) {

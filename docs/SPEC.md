@@ -27,7 +27,7 @@
 | Conditional expression | `cond ? a : b` (right-associative; the condition must be `bool`; only one branch is evaluated; both sides use the same type / implicit widening / `null` adaptation) |
 | Condition parentheses | Optional; the canonical form omits them (`if cond { }`); C-style `if (cond)` is still legal |
 | Struct construction | `Point(x = 1, y = 2)` with named arguments, or `Point(1, 2)` with positional arguments; the two cannot be mixed |
-| C capabilities | Pointers, structs, unions (`union`), arrays, functions, enums, C ABI interop; `goto/varargs/function pointers` are undecided |
+| C capabilities | Pointers, structs, unions (`union`), arrays, functions, enums, C ABI interop; `goto` is not provided; varargs are `extern`-only; function pointers/lambdas per 3.16 |
 | Backend (non-normative) | The LLVM C++ API generates COFF directly; the C99 backend was removed in 0.0.2; Windows x64 is a first-class target |
 
 ---
@@ -37,7 +37,7 @@
 1. **Keep the hard capabilities of C**: value semantics, pointer arithmetic, manual memory, struct, C ABI.
 2. **Drop C's historical baggage**: no preprocessor, no implicit narrowing, no integer truthiness, no `do-while`, no C-style `for`; `++/--` keep only the statement form (no value).
 3. **Explicit beats implicit**: use `as` for type conversions; use `const` for mutability; use a read-only `interface` for read-only API boundaries.
-4. **Small and predictable**: generics only do monomorphization (no erasure, no runtime generics), no closures, no hidden allocations; overloading is limited to the bounded rules in 3.11; errors that can be caught at compile time are not deferred to runtime.
+4. **Small and predictable**: generics only do monomorphization (no erasure, no runtime generics), no capturing closures, no hidden allocations; overloading is limited to the bounded rules in 3.11; errors that can be caught at compile time are not deferred to runtime.
 5. **Leave room for optimization without sacrificing semantics**: single assignment for `const`, a structured `for-in`, and future alias annotations.
 6. **Separate values from references**: `struct` has value semantics and `class` has reference semantics, and the two are never confused; heap objects are managed with reference counting, and cycles are broken manually with `weak`.
 
@@ -68,7 +68,8 @@ and or not override operator super this
 
 > `del` was removed in 0.0.47 (it is kept as a keyword only to give a migration diagnostic): to release a reference, write `x = null;`.
 
-> `goto/typedef/fn` are not included for now. `len/sizeof/alloc/realloc/free/alignof` and the like are built-in identifiers,
+> `goto/typedef/fn` are not included for now (function types are written `(T1, T2) => R` with no keyword, and no
+> `typedef`-style declarator is introduced; see 3.16). `len/sizeof/alloc/realloc/free/alignof` and the like are built-in identifiers,
 > **and must not be shadowed by user declarations** (implemented: using them as a variable/parameter/field name is a hard error).
 > `dynamic` / `any` are reserved for future dynamic types / top types and are not keywords in phase one.
 > `packed` is a **hard keyword** (a layout modifier, see 3.4, implemented); `align` is a **contextual keyword** — it is parsed as a modifier only when it appears at the start of a type declaration
@@ -148,7 +149,8 @@ move  unsafe  typeof
 - `T*` implicitly converts to `void*`; `void*` to `T*` requires an explicit `as`.
 - `T*` implicitly converts to `const T*`; the reverse requires an explicit `as` (unsafe).
 - Pointer arithmetic is in units of `sizeof(T)`; arithmetic on `void*` is not allowed.
-- Function pointers are not supported in phase one (TBD).
+- Function pointers are written `(T1, T2) => R`: a one-word value, binary compatible with a C function pointer,
+  with no declarator nesting and no `*`; see 3.16 (implemented in 0.0.84).
 
 ### 3.3 Arrays and dynamic arrays
 
@@ -885,6 +887,142 @@ and `weak`. Therefore this language explicitly does not provide:
 `ISeq<int> x;` and `Animal a = cat;` are both compile errors. If borrow checking is introduced in the future, a zero-cost borrowed interface of the `ref I` form can be reconsidered
 (see backlog U33 "Final Decision" and U34 M5b for details).
 
+### 3.16 Function types and lambdas (implemented in 0.0.84)
+
+#### 3.16.1 Function type syntax
+
+```c
+type Cmp   = (const void*, const void*) => int;
+type Thunk = () => void;
+type Unary = (int) => int;
+```
+
+- Parameters carry **types only**, never names; `()` means "no parameters" (the `(void)` form is not used).
+  The return type may be `void`.
+- **A function type is a pointer value**: one word, `sizeof`/`alignof` equal to the pointer size, binary compatible
+  with a C function pointer. There is no "function type vs function pointer" distinction (unlike C), and **no `*` is
+  written**: `(int) => int*` does not mean "pointer to"; it means "returns `int*`".
+  `*`, `[]` and `[N]` bind to the return type.
+- `=>` has the **lowest precedence** and is **right-associative**: `(int) => (int) => int` is a function returning a
+  function. A function-typed parameter is written directly; its parentheses are a parameter list, not grouping:
+  `((int) => int, int) => void`.
+- Function types are **not parenthesized for grouping**: an array of function values is written with an alias
+  (`type F = (int) => int; F[] a;`), not `(F)[]`.
+- `type` aliases are transparent: `Cmp` and `(const void*, const void*) => int` are the same type.
+- Allowed positions: parameter lists, struct/class fields, generic arguments, `as`, `sizeof`, and the right-hand side
+  of `type`.
+- **Block- and unit-level declarations never begin with `(`, and a return type is never an anonymous function type.**
+  Fields and parameters may use the anonymous form — those positions accept only types, so no expression can be
+  confused with one.
+
+  ```c
+  (int) => int f = sq;        // error: use `auto f = ...`
+  (int) => void make() { }    // error: name the type first
+  ```
+
+  Write `auto` for locals and a `type` alias everywhere else:
+
+  ```c
+  auto f = (int a) => a * a;              // f: (int) => int
+  type Handler = (int) => void;
+  Handler h = null;
+  ```
+
+  Rationale: "declaration vs expression statement" stays a single-token decision (a declaration starts with a keyword
+  or an identifier), and `(int) => int f` would read like a cast.
+- `const` before a function type marks the **binding** read-only (like `const int x`). A function has no pointee, so
+  there is no "read-only function" qualifier.
+
+#### 3.16.2 Function values
+
+- A free function name in value position **is** a function value of the matching type:
+
+  ```c
+  Cmp c = byInt;                       // ok
+  qsort(&xs[0], n, sizeof(int), byInt);
+  ```
+
+  No `&` is written: `&byInt` is an error ("a function name is already a function value"). `&` is likewise rejected
+  on a value of function type — pointer-to-function-pointer is not supported (and its spelling would be ambiguous).
+- Supported operations: assignment, argument passing, return, `==`/`!=` between values of the **same** type,
+  `null` as the zero value, and calling `f(args)` — through a local, a parameter, a field, an array element or a
+  unit-level variable.
+  Calling a `null` function value is undefined behavior (as with any null pointer).
+- **No conversions between function types** (not even `(int) => int` → `(long) => long`; `as` between them is an
+  error). A function value → `void*` is implicit; `void*` → function type requires `as`.
+- An **overloaded** function name in value position needs a target type that selects exactly one overload;
+  `Cmp c = over;` is fine, `auto f = over;` is an error (no target type).
+- A **generic** function name cannot be used as a value: `max2<int>` would be ambiguous with comparison parsing.
+  Wrap it: `auto f = (int a, int b) => max2<int>(a, b);`.
+- Functions imported from another unit (`u.f`) and `extern` functions are function values too.
+- A unit-level initializer may be **a function name** (an address constant, 4): `const Cmp C = byInt;` is legal and
+  the variable can be called. A lambda cannot appear there (its body belongs to a function).
+- **Methods are not values.** Using `obj.m` outside a call is an error: a method value would be `{ code, this }`
+  (a closure), and `this` is an RC reference whose lifetime a raw pointer cannot express. Use a single-method
+  `interface` for stateful callbacks and a free function for stateless ones.
+
+#### 3.16.3 Lambdas
+
+A lambda is an **anonymous function with no captures**:
+
+```c
+auto sq    = (int a) => a * a;
+auto clamp = (int x) => {
+    if (x < 0) return 0;
+    if (x > 100) return 100;
+    return x;
+};
+Handler h = (int e) => { print(e); };
+```
+
+- Form: `(T1 a, T2 b) => body`. The parameter list repeats the type syntax and adds names; every parameter spells its
+  own `type name` and **parameter types are always written** (there is no target-type inference).
+- `body` is an expression or a block:
+  - `=> expr` is shorthand for `{ return expr; }`; when the type of `expr` is `void` it is shorthand for `{ expr; }`
+    and the lambda returns `void`.
+- **The return type is inferred and never written**:
+  - no `return expr;` in the body → the lambda returns `void` (`return;` and falling off the end are allowed);
+  - otherwise the return type is the type of the `return` expressions, and all of them must have **exactly the same
+    type** (`null` adapts to the other side). Mixing `return;` with `return expr;` is an error.
+  - a non-`void` lambda must return on every path (the check of 7 applies unchanged).
+- The type of a lambda follows from the lambda alone, so `auto` works: `auto f = (int a) => a * a;` has type
+  `(int) => int`. No expected-type propagation and no target typing are involved.
+- **No captures**: the body may use its own parameters and locals and unit-level symbols. Referring to a local of an
+  enclosing function, to `this`, or to a parameter of an enclosing lambda is a compile error
+  (stateful callbacks: use a `class` implementing a single-method `interface`).
+- A lambda has no name and therefore cannot call itself; use a named function for recursion.
+- Each lambda expression denotes a **distinct** function (no deduplication). It is lowered to a hidden `private`
+  function of the unit, and its address is the value; lambdas therefore allocate nothing and are C-ABI compatible.
+- In phase one lambdas appear inside function bodies only (a unit-level initializer needs a named function).
+- Calling through a function value is an ordinary indirect call. `throw` inside a lambda behaves like `throw` in a
+  named function (the call site checks the pending slot, 3.14); throwing across a C frame is UB.
+- Generics: function types may mention type parameters (`void sort<T>(T[] a, (T, T) => int cmp)`), and a lambda inside
+  a generic function body is instantiated by monomorphization (3.15). Generic type aliases do not exist, which is why
+  the anonymous function type is allowed in parameter position.
+
+#### 3.16.4 Stateless vs stateful callbacks
+
+| Need | Use |
+|---|---|
+| Stateless callback, C interop | function type / lambda |
+| Stateful callback, listener, strategy object | `class` + single-method `interface` |
+| C API taking a callback plus `void*` userdata | function type + explicit `void*` |
+
+Capturing closures are a phase-one non-goal (10). If they are ever added they must be a **separate type**
+(`delegate`, `{ code, env }`, two words), not a fatter `fn`: the one-word C-ABI promise must stay intact.
+
+#### 3.16.5 Implementation status
+
+Implemented in 0.0.84 for the whole path — lexer (`=>`), parser (`(`-started parameter-type list, lambda detection
+by the matching `)` followed by `=>`), the `Func` type kind (canonical spelling `(int, int) => int`, mangling
+`fn_int_int__int`, 8-byte layout), sema (function names as values, overload selection by target type, calls through a
+value, lambda lowering and single-pass result-type inference), and codegen (`ptr` + an indirect call; each lambda is a
+hidden `FuncDecl` emitted with the unit).
+
+Not implemented: capturing closures (a future `delegate`), method values, generic function values
+(`max2<int>` as a value), and anonymous function types in declaration positions (a unit-level variable, a local
+declaration and a return type must name the type with `type` first).
+
 ## 4. Declarations and scopes
 
 - Declaration syntax: `Type name1 [= init1], name2 [= init2];`
@@ -1255,7 +1393,7 @@ int add(int a, int b) {
 - Function calls do not support named arguments for now; `f(x = ...)` is a struct construction only when `f` resolves to a type (see 3.4).
 - Within the same unit, calling before the definition is allowed (two-pass parsing).
 - Recursion is legal.
-- Function overloading is allowed (rules in 3.11); type-level generics are supported (see 3.15); default arguments, closures, and nested functions are not supported; variadic parameters are limited to `extern` (see 7.1).
+- Function overloading is allowed (rules in 3.11); type-level generics are supported (see 3.15); default arguments, capturing closures, and nested functions are not supported (non-capturing lambdas are provided, see 3.16); variadic parameters are limited to `extern` (see 7.1).
 - Class methods, constructors, and `this` are covered in 3.11/3.12; methods are virtual by default, and an override is marked `override`.
 - Parameters are mutable bindings (phase one); whether they become immutable by default is pending.
 - `extern` declaration:
@@ -1272,7 +1410,8 @@ extern int puts(const char* s);
   - The parameter names are arbitrary, but the types must match `(int, char**)` exactly: one parameter, `char*`, or a non-`int` return are all compile errors.
   - `char**` is used rather than `string[]`: `argv` is a C-side bare pointer array without RC; when a `string` is needed, construct it with
     `std.string.string(argv[i])` (which copies it).
-- Function pointers are pending; `extern` variadic parameters are supported (see 7.1); the language **does not provide** user-defined varargs.
+- Function values and lambdas are specified in 3.16 (implemented in 0.0.84); `extern` variadic parameters are supported (see 7.1);
+  the language **does not provide** user-defined varargs.
 
 ### 7.1 Variadic parameters (`extern` only, implemented)
 
@@ -1411,7 +1550,7 @@ unit example;
 - Multiple inheritance (class allows single inheritance only)
 - Dynamic arrays / container classes (to be provided later as reference types)
 - Platform unwinding tables / personality routines (exceptions use the B2 TLS-flag lowering, 3.14)
-- Closures/lambdas
+- Capturing closures (non-capturing lambdas and function values are in scope, see 3.16)
 - GC/ownership/borrow checking
 - Unrestricted operator overloading (only the limited set in 3.11 is allowed)
 - Exponentiation operator (`^` is reserved for bitwise xor; use the `pow` function for exponentiation)
@@ -1454,6 +1593,7 @@ unit example;
 | Arrays | Degenerate to pointers, mixed value semantics | Fixed-size arrays have value semantics; slices are explicit |
 | Strings | `char*` | std.string `string` (UTF-8; NUL guaranteed only for complete strings/literals) |
 | Type casts | `(T)x` | `x as T` |
+| Function pointers | `int (*f)(int)` declarators | `(int) => int`; one word, no `*`, no declarator nesting; lambdas are non-capturing (3.16) |
 | Logic | `&&` / `\|\|` / `!` | `and` / `or` / `not` |
 | Bitwise complement | `~` | `~` (`not` is reserved for logical negation) |
 | Exponentiation | `pow()` library function | Also only `pow()`, **no operator provided** |
@@ -1486,7 +1626,7 @@ unit example;
 | 7 | Bounds checking strategy | Checked in debug; configurable in release |
 | 8 | Signed overflow | Decided (implemented): two's-complement wraparound (the backend emits no `nsw`/`nuw`) |
 | 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
-| 10 | `goto`/`typedef`/function pointers/varargs | `goto`/function pointers are not done (phase one); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
+| 10 | `goto`/`typedef`/function pointers/varargs | `goto` is not done (phase one); function pointers and lambdas are implemented in 3.16 (0.0.84); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
 | 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding + `ref` (built-ins only); `for i, x` provides a `usize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; `for ref` is not available for user types; **multi-dimensional arrays forbid `for-in`** |
 | 12 | `..=` / `step` / reverse order for ranges | Implemented (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`) and must be a non-zero compile-time constant; reverse order relies on an **explicit negative step** (`a..b` does not reverse automatically); switch case ranges support `..=` and **do not support `step`** |
 | 13 | Local type inference | Decided: `auto x = expr;`; locals only, an initializer is required; all declarators must have the same type |
@@ -1592,6 +1732,10 @@ unit example;
 | 111 | Range extensions `..=` / `step` / reverse order | Decided (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`); reverse order relies on an **explicit negative step**, `a..b` does not reverse automatically; `step 0` is a compile error; the step size is limited to compile-time constants (see 6.4) |
 | 112 | Range expansion in array initialization | Decided (0.0.62): in `int[10] a = {1, 2, 5..9, 10};` the `5..9` expands to 5,6,7,8; the endpoints must be compile-time constants; only `..` is supported inside braces (it does not take `..=`/`step`); after expansion it participates in "zero-pad when short / error when too long" (see 4.1) |
 | 113 | `switch` extensions | Decided (0.0.62): **explicitly not done** (the expression form/guards/bindings/or-patterns/type branches/destructuring/`case`/fallthrough); the matched type is limited to integers and enums (see 6.6) |
+| 114 | Function type syntax | Decided and implemented (3.16, 0.0.84): `(T1, T2) => R`; a one-word pointer value with no `*` and no declarator nesting; `sizeof` = pointer size; `=>` has lowest precedence and is right-associative; `*`/`[]` bind to the return type; block-/unit-level declarations never begin with an anonymous function type and a return type is never anonymous (use `auto` or a `type` alias), while fields and parameters may |
+| 115 | Lambdas | Decided and implemented (3.16, 0.0.84): `(int a) => expr` or `(int a) => { ... }`; parameter types are always written; the return type is inferred from the body (all `return` types must be identical; no `return expr` means `void`); **no captures**; each lambda is a hidden `private` function (C ABI, no allocation); stateful callbacks use `class` + single-method `interface` |
+| 116 | Free function / method values | Decided and implemented (3.16, 0.0.84): a free function name is already a function value (no `&`, and `&f` is an error); overloaded names need a target type; generic function names cannot be used as values; `u.f` and `extern` functions are values; **methods are not values** |
+| 117 | Capturing closures | Decided: phase-one non-goal; if added later, a separate two-word `delegate` type (`{code, env}`), never a fatter `fn` |
 
 ---
 

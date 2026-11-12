@@ -161,6 +161,14 @@ TypePtr Type::make_range() {
     return t;
 }
 
+TypePtr Type::make_func(const std::vector<TypePtr>& params, const TypePtr& ret) {
+    auto t = std::make_shared<Type>();
+    t->kind = TypeKind::Func;
+    t->fparams = params;
+    t->fret = ret;
+    return t;
+}
+
 // ---------------------------------------------------------------- Textual form
 
 std::string Type::str() const {
@@ -210,6 +218,16 @@ std::string Type::str() const {
             return "null";
         case TypeKind::Range:
             return "range";
+        case TypeKind::Func: {
+            std::string out = "(";
+            for (size_t i = 0; i < fparams.size(); ++i) {
+                if (i) out += ", ";
+                out += fparams[i] ? fparams[i]->str() : std::string("void");
+            }
+            out += ") => ";
+            out += fret ? fret->str() : std::string("void");
+            return out;
+        }
     }
     return "?";
 }
@@ -452,6 +470,13 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
             return a->unit == b->unit && a->name == b->name;
         case TypeKind::Module:
             return a->unit == b->unit;
+        case TypeKind::Func:
+            if (!same_type(a->fret, b->fret)) return false;
+            if (a->fparams.size() != b->fparams.size()) return false;
+            for (size_t i = 0; i < a->fparams.size(); ++i) {
+                if (!same_type(a->fparams[i], b->fparams[i])) return false;
+            }
+            return true;
     }
     return false;
 }
@@ -529,11 +554,16 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
     if (same_type(src, dst)) return true;
     if (!src || !dst) return false;
 
-    // null -> pointer / slice / string / class / interface
+    // null -> pointer / slice / string / class / interface / function value
     if (src->kind == TypeKind::Null) {
         return dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice ||
                dst->kind == TypeKind::String || dst->kind == TypeKind::Class ||
-               dst->kind == TypeKind::Interface;
+               dst->kind == TypeKind::Interface || dst->kind == TypeKind::Func;
+    }
+
+    // A function value is a pointer: it converts to `void*` implicitly (the reverse needs `as`, 3.16)
+    if (src->kind == TypeKind::Func) {
+        return dst->kind == TypeKind::Ptr && dst->elem && dst->elem->kind == TypeKind::Void;
     }
 
     // class / interface subtypes (single inheritance + interfaces)

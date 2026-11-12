@@ -39,6 +39,15 @@ std::string canon_spec(const TypeSpec& s) {
             return canon_spec(*s.elem) + "[]";
         case TypeSpec::K::Array:
             return canon_spec(*s.elem) + "[" + std::to_string(s.size) + "]";
+        case TypeSpec::K::Func: {
+            std::string n = "(";
+            for (size_t i = 0; i < s.params.size(); ++i) {
+                if (i) n += ", ";
+                n += canon_spec(*s.params[i]);
+            }
+            n += ") => " + canon_spec(*s.ret);
+            return n;
+        }
     }
     return prefix + s.name;
 }

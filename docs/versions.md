@@ -10,11 +10,19 @@
 
 ## Releases
 
+### 0.0.84 — 2026-11-12
+
+**Function types and non-capturing lambdas (SPEC 3.16)**: added `(T1, T2) => R` as a one-word function value — binary compatible with a C function pointer, no declarators and no `*`, `sizeof`/`alignof` = 8, `=>` binds lowest and is right-associative (`*`/`[]` belong to the return type). A free function name is already a value: `&f` is rejected with a hint, overloaded names are resolved by the target type, and generic function names plus methods are not values. Added the `Lambda` expression `(int a) => expr` / `(int a) => { ... }`: parameter types are written, the return type is inferred from the `return` expressions (all must be identical, `null` adapts; no `return <value>` means `void`; a non-void lambda must return on every path), it lowers to a hidden `private` function and allocates nothing; captures (an enclosing local, `this`, an enclosing lambda parameter) are compile errors that point at `class` + single-method `interface`. Calls through a function value work from locals, parameters, struct/class fields, array elements and unit-level variables; a unit-level initializer may name a function (an address constant, emitted as the symbol address); `void*` ↔ function type follows the pointer rules (`as` required back). Replaced the obsolete `func_as_value` must-fail case with `fnptr_assign_to_int`; added 2 run cases (`fnptr`, `lambda`), 7 must-fail cases and 1 check case (`fn_type`).
+
+**Tests**: 428/428 (115 pass + 296 must-fail + 17 check)
+
 ### 0.0.83 — 2026-11-12
 
 **Conservative module-local may-throw optimization**: added `src/may_throw.cpp`, a whole-program fixpoint over visible function, constructor and struct-method bodies. A call whose callee is proven not to return with a pending exception skips the B2 pending-flag check; free functions, operators, constructors, local struct construction, `new`, `super(...)`, `for-in` `length()`/`operator[]`, and struct methods use the summary. Class/interface dispatch, external/precompiled/static-library/dynamic-library and otherwise unknown targets are conservatively may-throw, so the optimization does not constrain the future library ABI. Catch barriers are over-approximated; destructors and `finally` are nothrow (an escaping exception aborts). Added 3 runtime cases (nothrow free/recursive/struct-method code, may-throw struct methods, and a cleanup-free struct constructor that throws).
 
 **Tests**: 418/418 (113 pass + 289 must-fail + 16 check)
+
+**Docs only (no code change, version not bumped)**: added SPEC 3.16 — function types `(T1, T2) => R` (a one-word value, binary compatible with a C function pointer, no declarators and no `*`) and non-capturing lambdas `(int a) => expr` / `(int a) => { ... }` with a return type inferred from the body; block- and unit-level declarations plus return types never use an anonymous function type (`auto` for locals, a `type` alias elsewhere), while fields and parameters may; a free function name is already a function value (`&f` is rejected) while methods are not values. Cross-references updated in 2.3, 3.2, 7, 10, 11 and 12 (#10, #114–#117); backlog U35 records the decisions, the rejected alternatives and the future two-word `delegate`.
 
 ### 0.0.82 — 2026-11-12
 

@@ -349,6 +349,21 @@ using ArgPack = Emitter::ArgPack;
             }
             return nullptr;
         }
+        if (c->callee_kind == "fnptr") {
+            const TypePtr& ft = c->fn_ty;
+            if (!ft || ft->kind != TypeKind::Func) fail("LLVM backend: indirect call without a function type", c->line, c->col);
+            Value* fp = eval(c->callee.get());
+            std::vector<Expr*> rawArgs;
+            for (auto& a : c->args) rawArgs.push_back(a.get());
+            ArgPack pack = prepareArgs(rawArgs, ft->fparams);
+            std::vector<LType*> ptys;
+            for (auto& pt : ft->fparams) ptys.push_back(lt(pt));
+            Value* r = b.CreateCall(FunctionType::get(lt(ft->fret), ptys, false), fp, pack.vals);
+            releaseTemps(pack);
+            // the callee is unknown: conservatively assume it may throw
+            emitCheckPending();
+            return r;
+        }
         // ordinary function call
         FuncDecl* f = c->func;
         if (!f) fail("LLVM backend: call is missing its target function", c->line, c->col);
@@ -404,6 +419,14 @@ using ArgPack = Emitter::ArgPack;
     }
 
     Value* Emitter::eval(Expr* e) {
+        if (auto lm = dynamic_cast<Lambda*>(e)) {
+            FuncDecl* f = lm->synth;
+            if (!f) fail("LLVM backend: lambda without a synthesized function", e->line, e->col);
+            std::vector<LType*> ptys;
+            for (auto& pt : f->pty) ptys.push_back(lt(pt));
+            return mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, false))
+                .getCallee();
+        }
         if (auto v = dynamic_cast<IntLit*>(e)) {
             if (isRefKind(e->ty)) return Constant::getNullValue(lt(e->ty));
             if (e->ty && e->ty->kind == TypeKind::Null) return Constant::getNullValue(ptrTy());
@@ -435,7 +458,15 @@ using ArgPack = Emitter::ArgPack;
                 if (!cm || !*cm) fail("LLVM backend: missing const member", e->line, e->col);
                 return constOfValue(e->ty, (*cm)->is_float, (*cm)->ival, (*cm)->fval);
             }
-            if (n->kind == "func") fail("LLVM backend: functions cannot be used as values", e->line, e->col);
+            if (n->kind == "func") {
+                auto* f = std::get_if<FuncDecl*>(&n->sym);
+                if (!f || !*f) fail("LLVM backend: missing function target", e->line, e->col);
+                std::vector<LType*> ptys;
+                for (auto& pt : (*f)->pty) ptys.push_back(lt(pt));
+                return mod->getOrInsertFunction((*f)->cname,
+                                                FunctionType::get(lt((*f)->rty), ptys, (*f)->is_varargs))
+                    .getCallee();
+            }
             return loadAt(lt(e->ty), addrOf(e), unalignedExpr(e));
         }
         if (auto m = dynamic_cast<Member*>(e)) {
@@ -448,6 +479,15 @@ using ArgPack = Emitter::ArgPack;
                 auto* cm = std::get_if<ConstMember*>(&m->sym);
                 if (!cm || !*cm) fail("LLVM backend: missing const member", e->line, e->col);
                 return constOfValue(e->ty, (*cm)->is_float, (*cm)->ival, (*cm)->fval);
+            }
+            if (m->kind == "func") {
+                auto* f = std::get_if<FuncDecl*>(&m->sym);
+                if (!f || !*f) fail("LLVM backend: missing function target", e->line, e->col);
+                std::vector<LType*> ptys;
+                for (auto& pt : (*f)->pty) ptys.push_back(lt(pt));
+                return mod->getOrInsertFunction((*f)->cname,
+                                                FunctionType::get(lt((*f)->rty), ptys, (*f)->is_varargs))
+                    .getCallee();
             }
             if (m->kind == "field" && m->obj->ty && m->obj->ty->kind == TypeKind::Class) {
                 Value* p = eval(m->obj.get());
@@ -591,6 +631,11 @@ using ArgPack = Emitter::ArgPack;
                 return Type::make_slice(specType(spec->elem.get()), spec->is_const);
             case TypeSpec::K::Array:
                 return Type::make_array(specType(spec->elem.get()), spec->size);
+            case TypeSpec::K::Func: {
+                std::vector<TypePtr> ps;
+                for (auto& p : spec->params) ps.push_back(specType(p.get()));
+                return Type::make_func(ps, specType(spec->ret.get()));
+            }
         }
         fail("LLVM backend: unknown type spec");
     }

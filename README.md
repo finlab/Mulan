@@ -102,7 +102,7 @@ and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 | Generics | `<>` syntax with monomorphization; `interface` + `&`/`\|` constraints; `Self`; structural constraint matching (0.0.64–0.0.72) |
 | Exceptions | Unchecked `try` / `catch` / `throw` / `finally`; `Exception` base class; class matching; RC cleanup; B2 TLS-flag lowering with no platform unwind tables; module-local may-throw optimization (0.0.81–0.0.83) |
 | Control flow | `if` / `while` / `for-in` / `switch` (exhaustive over enums) / `break` / `continue` / `?:` |
-| Functions | Recursion, overloading (bounded rules), variadic `extern` calls (0.0.57) |
+| Functions | Recursion, overloading (bounded rules), variadic `extern` calls (0.0.57); function values `(T1, T2) => R` and non-capturing lambdas `(int a) => ...` (0.0.84) |
 | Modules | `unit` / `use` / `public` / `private`; units are loaded from same-named files |
 | C interop | `extern` declarations, C ABI, controllable `struct` layout (`packed` / `align(N)`) |
 | Toolchain | `check` / `dump` / `build`, `--emit-ir`, DWARF debug info via `-g`, multiple errors reported at once |
@@ -111,7 +111,7 @@ and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 
 - Cross-library may-throw summaries / explicit `nothrow` contracts (module-local may-throw analysis is implemented in 0.0.83)
 - Method-level generics, type-argument deduction, specialization, generic `extern` / generic type aliases (see SPEC 3.15)
-- Closures, function pointers, `goto`
+- Capturing closures, method values and `goto`
 - A standard library (`libs/std/` currently holds only minimal `cstdio`, `string`, and `exception` bindings)
 - Non-Windows targets: the backend is fixed to `x86_64-w64-windows-gnu` and emits COFF
 

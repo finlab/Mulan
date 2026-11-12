@@ -108,7 +108,15 @@ namespace muc_detail {
                 if (!g || g->is_extern) continue;
                 LType* ty = lt(g->rty);
                 Constant* init = nullptr;
-                if (g->const_evaluated) {
+                if (g->const_func) {
+                    FuncDecl* f = g->const_func;
+                    std::vector<LType*> ptys;
+                    for (auto& pt : f->pty) ptys.push_back(lt(pt));
+                    init = llvm::cast<Constant>(
+                        mod->getOrInsertFunction(f->cname,
+                                                 FunctionType::get(lt(f->rty), ptys, f->is_varargs))
+                            .getCallee());
+                } else if (g->const_evaluated) {
                     init = constOfValue(g->rty, g->const_is_float, g->const_ival, g->const_fval);
                 } else {
                     init = g->init ? constValue(g->rty, g->init.get())
@@ -232,6 +240,7 @@ namespace muc_detail {
             for (auto& d : u->decls) {
                 if (auto f = dynamic_cast<FuncDecl*>(d.get())) emitFunction(f);
             }
+            for (auto& l : u->lambdas) emitFunction(l.get());
         }
         // class member functions, constructors, destructors, destroy functions; interface default methods
         for (auto& u : prog.units) {

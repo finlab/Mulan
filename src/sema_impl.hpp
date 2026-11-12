@@ -50,6 +50,16 @@ inline std::string spec_text(const TypeSpec* s) {
                    (s->is_const ? " (const)" : "");
         case TypeSpec::K::Array:
             return spec_text(s->elem.get()) + "[" + std::to_string(s->size) + "]";
+        case TypeSpec::K::Func: {
+            std::string out = "(";
+            for (size_t i = 0; i < s->params.size(); ++i) {
+                if (i) out += ", ";
+                out += spec_text(s->params[i].get());
+            }
+            out += ") => ";
+            out += spec_text(s->ret.get());
+            return out;
+        }
     }
     return "?";
 }
@@ -101,6 +111,17 @@ private:
     int const_depth_ = 0;  // constant evaluation recursion depth (see DepthGuard)
     std::unordered_map<int, TypePtr> auto_groups_;  // inference result shared by auto in one declaration
     Expr* direct_init_expr_ = nullptr;  // direct-initialization expression currently under check (in-place constructor construction)
+
+    // ------------------------------------------------------------ lambdas (3.16)
+    // One entry per lambda body currently being checked: the scope depth at entry (locals below it are captures)
+    // plus the types seen at `return`.
+    struct LambdaCtx {
+        std::size_t scope_base = 0;
+        std::vector<std::pair<ReturnStmt*, TypePtr>> rets;
+        std::vector<ReturnStmt*> bare;
+    };
+    std::vector<LambdaCtx> lambda_stack_;
+    int lambda_seq_ = 0;
 
     // ------------------------------------------------------------ generics (U34)
     std::unordered_map<std::string, Decl*> generic_templates_;  // "unit.Name" → template declaration
@@ -480,9 +501,19 @@ private:
 
     TypePtr check_expr_impl(Expr* e, const TypePtr& expected);
 
-    TypePtr check_name(Name* e);
+    TypePtr check_name(Name* e, const TypePtr& expected = nullptr);
 
-    TypePtr check_member(Member* e);
+    TypePtr check_member(Member* e, const TypePtr& expected = nullptr);
+
+    // Lambda expression (3.16): lowers to a hidden private function and yields its address.
+    TypePtr check_lambda(Lambda* e);
+
+    // The type of a function name used as a value (3.16): picks the overload that matches `expected`.
+    TypePtr func_value_type(const std::vector<FuncDecl*>& cands, const std::string& what,
+                            const TypePtr& expected, FuncDecl** chosen, Node* at);
+
+    // Call through a function value: `fp(args)`
+    TypePtr check_fnptr_args(Call* c, const TypePtr& ft);
 
     TypePtr check_unary(Unary* e);
 

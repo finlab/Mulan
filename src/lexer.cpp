@@ -57,7 +57,7 @@ const std::unordered_set<std::string>& keywords() {
 // longer operators first to guarantee longest match (OPS3 / OPS2 / OPS1 in lexer.py)
 const char* const OPS3[] = {"<<=", ">>=", "...", "..="};
 const char* const OPS2[] = {"==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=",
-                            "|=", "^=", "<<", ">>", "..", "++", "--"};
+                            "|=", "^=", "<<", ">>", "..", "++", "--", "=>"};
 const char* const OPS1 = "+-*/%&|^!~<>=(){}[];,.?:";
 
 // used for the "invalid character" message; as in other diagnostics, source snippets are wrapped in backticks

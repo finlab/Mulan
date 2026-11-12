@@ -37,6 +37,12 @@ std::string type_code(const TypePtr& t) {
         case TypeKind::Module: return "m_" + t->unit;
         case TypeKind::Null: return "null";
         case TypeKind::Range: return "rng";
+        case TypeKind::Func: {
+            std::string s = "fn";
+            for (const auto& p : t->fparams) s += "_" + type_code(p);
+            s += "__" + type_code(t->fret);
+            return s;
+        }
     }
     return "x";
 }

@@ -53,8 +53,9 @@ namespace muc_detail {
             return t_null();
         }
 
-        if (auto nm = dynamic_cast<Name*>(e)) return check_name(nm);
-        if (auto m = dynamic_cast<Member*>(e)) return check_member(m);
+        if (auto nm = dynamic_cast<Name*>(e)) return check_name(nm, expected);
+        if (auto m = dynamic_cast<Member*>(e)) return check_member(m, expected);
+        if (auto lm = dynamic_cast<Lambda*>(e)) return check_lambda(lm);
 
         if (auto ix = dynamic_cast<Index*>(e)) {
             TypePtr bt = check_expr(ix->base.get());
@@ -197,7 +198,202 @@ namespace muc_detail {
         err("unknown expression", e);
     }
 
-    TypePtr Sema::check_name(Name* e) {
+    TypePtr Sema::func_value_type(const std::vector<FuncDecl*>& cands, const std::string& what,
+                                  const TypePtr& expected, FuncDecl** chosen, Node* at) {
+        std::vector<FuncDecl*> ok;
+        bool has_ref = false;
+        for (auto* f : cands) {
+            if (!f || !f->rty) continue;
+            bool refp = false;
+            for (bool b : f->pty_ref) refp = refp || b;
+            if (refp || is_borrow_type(f->rty)) {
+                has_ref = true;
+                continue;
+            }
+            if (f->is_varargs) continue;
+            ok.push_back(f);
+        }
+        if (ok.empty()) {
+            if (has_ref) {
+                err("function `" + what +
+                        "` cannot be used as a value: `ref` parameters and `ref` returns have no function-value form",
+                    at);
+            }
+            err("function `" + what + "` cannot be used as a value", at);
+        }
+        if (ok.size() == 1) {
+            if (chosen) *chosen = ok[0];
+            return Type::make_func(ok[0]->pty, ok[0]->rty);
+        }
+        if (expected && expected->kind == TypeKind::Func) {
+            for (auto* f : ok) {
+                if (same_type(Type::make_func(f->pty, f->rty), expected)) {
+                    if (chosen) *chosen = f;
+                    return expected;
+                }
+            }
+            err("no overload of `" + what + "` matches the target type `" + expected->str() + "`", at);
+        }
+        err("overloaded function `" + what + "` needs a target type to be used as a value", at);
+        return nullptr;
+    }
+
+    TypePtr Sema::check_lambda(Lambda* e) {
+        // The node may be checked twice (`auto` deduces the type and then the initializer is converted again):
+        // the lambda is lowered only once.
+        if (e->synth) return Type::make_func(e->synth->pty, e->synth->rty);
+        auto fn = std::make_unique<FuncDecl>();
+        fn->name = "$lambda$" + std::to_string(++lambda_seq_);
+        fn->line = e->line;
+        fn->col = e->col;
+        for (auto& p : e->params) {
+            TypePtr pt = resolve_type(p->spec.get(), cur_);
+            if (is_void(pt)) err("lambda parameter `" + p->name + "` cannot be `void`", p.get());
+            if (is_borrow_type(pt)) err("a lambda cannot take a `ref` parameter", p.get());
+            fn->pty.push_back(pt);
+        }
+        fn->pty_ref.assign(fn->pty.size(), false);
+        fn->pty_cref.assign(fn->pty.size(), false);
+
+        // A lambda is its own function: no `this`, no outer loop, no enclosing `finally` (and no captures, checked in check_name).
+        FuncDecl* saved_func = cur_func_;
+        TypePtr saved_ret = cur_ret_;
+        std::string saved_name = cur_name_;
+        TypePtr saved_class = cur_class_;
+        bool saved_ctor = in_ctor_, saved_dtor = in_dtor_, saved_finally = in_finally_;
+        int saved_loop = loop_depth_;
+        auto saved_this = std::move(this_local_);
+        this_local_.clear();
+
+        cur_func_ = fn.get();
+        cur_ret_ = nullptr;
+        cur_name_ = "lambda";
+        cur_class_ = nullptr;
+        in_ctor_ = false;
+        in_dtor_ = false;
+        in_finally_ = false;
+        loop_depth_ = 0;
+
+        push();
+        LambdaCtx ctx;
+        ctx.scope_base = scopes_.size() - 1;
+        lambda_stack_.push_back(ctx);
+
+        struct Defer {
+            Sema* s;
+            FuncDecl* func;
+            TypePtr ret;
+            std::string name;
+            TypePtr cls;
+            bool ctor, dtor, fin;
+            int loop;
+            std::vector<std::unique_ptr<LocalVar>> thisv;
+            ~Defer() {
+                s->cur_func_ = func;
+                s->cur_ret_ = ret;
+                s->cur_name_ = name;
+                s->cur_class_ = cls;
+                s->in_ctor_ = ctor;
+                s->in_dtor_ = dtor;
+                s->in_finally_ = fin;
+                s->loop_depth_ = loop;
+                s->this_local_ = std::move(thisv);
+                if (!s->lambda_stack_.empty()) s->lambda_stack_.pop_back();
+                s->pop();
+            }
+        } defer{this,
+                 saved_func,
+                 saved_ret,
+                 saved_name,
+                 saved_class,
+                 saved_ctor,
+                 saved_dtor,
+                 saved_finally,
+                 saved_loop,
+                 std::move(saved_this)};
+
+        for (size_t i = 0; i < e->params.size(); ++i) {
+            Param* p = e->params[i].get();
+            auto lv = std::make_unique<LocalVar>();
+            lv->name = p->name;
+            lv->rty = fn->pty[i];
+            lv->line = p->line;
+            lv->col = p->col;
+            declare_local(lv.get());
+            fn->param_locals.push_back(std::move(lv));
+        }
+
+        TypePtr retty;
+        if (e->expr_body) {
+            TypePtr bt = check_expr(e->expr_body.get());
+            auto blk = std::make_unique<Block>();
+            blk->line = e->line;
+            blk->col = e->col;
+            if (bt && is_void(bt)) {
+                auto st = std::make_unique<ExprStmt>();
+                st->expr = std::move(e->expr_body);
+                st->line = e->line;
+                st->col = e->col;
+                blk->stmts.push_back(std::move(st));
+                retty = t_void();
+            } else {
+                auto st = std::make_unique<ReturnStmt>();
+                st->value = std::move(e->expr_body);
+                st->line = e->line;
+                st->col = e->col;
+                blk->stmts.push_back(std::move(st));
+                retty = bt;
+            }
+            fn->body = std::move(blk);
+        } else {
+            check_block(e->block_body.get());
+            LambdaCtx& lc = lambda_stack_.back();
+            if (lc.rets.empty()) {
+                retty = t_void();
+            } else {
+                if (!lc.bare.empty()) {
+                    err("lambda mixes `return;` with `return <value>;`", lc.bare.front());
+                }
+                retty = lc.rets.front().second;
+                for (auto& [node, t] : lc.rets) {
+                    if (!same_type(t, retty)) {
+                        err("lambda return types differ: `" + retty->str() + "` and `" +
+                                (t ? t->str() : std::string("void")) + "`; cast one with `as`",
+                            node);
+                    }
+                }
+            }
+            if (!is_void(retty) && !guarantees_return(e->block_body.get())) {
+                err("lambda may reach the end of its body without returning a value", e);
+            }
+            fn->body = std::move(e->block_body);
+        }
+
+        fn->rty = retty;
+        fn->cname = func_cname(cur_->name, fn.get());
+        // The synthesized name must not collide with a user function whose identifier sanitizes to the same symbol
+        // (`$lambda$1` and `_lambda_1` both become `_lambda_1`).
+        auto cname_taken = [&](const std::string& cn) {
+            for (auto& d : cur_->decls) {
+                auto* fd = dynamic_cast<FuncDecl*>(d.get());
+                if (fd && fd->cname == cn) return true;
+            }
+            for (auto& l : cur_->lambdas) {
+                if (l->cname == cn) return true;
+            }
+            return false;
+        };
+        while (cname_taken(fn->cname)) {
+            fn->name = "$lambda$" + std::to_string(++lambda_seq_);
+            fn->cname = func_cname(cur_->name, fn.get());
+        }
+        TypePtr ft = Type::make_func(fn->pty, retty);
+        cur_->lambdas.push_back(std::move(fn));
+        e->synth = cur_->lambdas.back().get();
+        return ft;
+    }
+
+    TypePtr Sema::check_name(Name* e, const TypePtr& expected) {
         if (e->ident == "super") {
             err("`super` can only be used as `super(...)` or `super.method(...)`", e);
         }
@@ -205,6 +401,19 @@ namespace muc_detail {
             err("`this` can only appear inside a class or struct method, constructor, or destructor", e);
         }
         if (LocalVar* lv = lookup_local(e->ident)) {
+            // A lambda has no captures (3.16): a local of an enclosing scope is off limits.
+            if (!lambda_stack_.empty()) {
+                const std::size_t base = lambda_stack_.back().scope_base;
+                for (std::size_t i = 0; i < base && i < scopes_.size(); ++i) {
+                    auto it = scopes_[i].find(e->ident);
+                    if (it != scopes_[i].end() && it->second == lv) {
+                        err("lambda cannot capture `" + e->ident +
+                                "` from the enclosing scope; use a class with a single-method interface for a "
+                                "stateful callback",
+                            e);
+                    }
+                }
+            }
             e->kind = "local";
             e->sym = lv;
             return lv->rty;
@@ -236,8 +445,10 @@ namespace muc_detail {
         }
         if (auto f = ui.funcs.find(e->ident); f != ui.funcs.end() && !f->second.empty()) {
             e->kind = "func";
-            e->sym = f->second.front();
-            err("function `" + e->ident + "` cannot be used as a value", e);
+            FuncDecl* chosen = nullptr;
+            TypePtr ft = func_value_type(f->second, e->ident, expected, &chosen, e);
+            e->sym = chosen;
+            return ft;
         }
         if (EnumConst* ec = lookup_enum_const(e->ident)) {
             e->kind = "enum_const";
@@ -286,8 +497,10 @@ namespace muc_detail {
         }
         if (imp_f) {
             e->kind = "func";
-            e->sym = imp_f;
-            err("function `" + e->ident + "` cannot be used as a value", e);
+            FuncDecl* chosen = nullptr;
+            TypePtr ft = func_value_type({imp_f}, e->ident, expected, &chosen, e);
+            e->sym = chosen;
+            return ft;
         }
         if (imp_ec) {
             e->kind = "enum_const";
@@ -297,7 +510,7 @@ namespace muc_detail {
         err("undefined identifier `" + e->ident + "`", e);
     }
 
-    TypePtr Sema::check_member(Member* e) {
+    TypePtr Sema::check_member(Member* e, const TypePtr& expected) {
         Expr* obj = e->obj.get();
         if (!obj) err("missing object for member access", e);
 
@@ -314,8 +527,10 @@ namespace muc_detail {
                 nm->ty = Type::make_module(uname);
                 if (auto f = ui.funcs.find(e->name); f != ui.funcs.end() && !f->second.empty()) {
                     e->kind = "func";
-                    e->sym = f->second.front();
-                    err("function `" + uname + "." + e->name + "` cannot be used as a value", e);
+                    FuncDecl* chosen = nullptr;
+                    TypePtr ft = func_value_type(f->second, uname + "." + e->name, expected, &chosen, e);
+                    e->sym = chosen;
+                    return ft;
                 }
                 if (auto g = ui.globals.find(e->name); g != ui.globals.end()) {
                     if (!g->second->is_public) {
@@ -435,6 +650,12 @@ namespace muc_detail {
             }
             if (!is_lvalue(e->operand.get())) err("`&` requires an addressable object", e);
             TypePtr t = check_expr(e->operand.get());
+            if (t && t->kind == TypeKind::Func) {
+                if (auto n = dynamic_cast<Name*>(e->operand.get()); n && n->kind == "func") {
+                    err("`" + n->ident + "` is already a function value: write `" + n->ident + "` without `&`", e);
+                }
+                err("cannot take the address of a function value: pointer-to-function-pointer is not supported", e);
+            }
             if (auto m = dynamic_cast<Member*>(e->operand.get()); m && m->kind == "enum_const") {
                 err("enum members are not addressable", e);
             }
@@ -657,12 +878,20 @@ namespace muc_detail {
                 }
                 if (other->kind == TypeKind::Ptr || other->kind == TypeKind::Slice ||
                     other->kind == TypeKind::Null || other->kind == TypeKind::Class ||
-                    other->kind == TypeKind::Interface) {
+                    other->kind == TypeKind::Interface || other->kind == TypeKind::Func) {
                     return t_bool();
                 }
             }
             if (is_str(lt) && is_str(rt)) return t_bool();
             if (is_numeric(lt) && is_numeric(rt)) return t_bool();
+            if (lt->kind == TypeKind::Func || rt->kind == TypeKind::Func) {
+                if (!same_type(lt, rt)) {
+                    err("function values of different types cannot be compared (`" + lt->str() + "` vs `" +
+                            rt->str() + "`)",
+                        e);
+                }
+                return t_bool();
+            }
             const bool eq = same_type(lt, rt);
             if ((eq && (lt->kind == TypeKind::Ptr || lt->kind == TypeKind::Enum ||
                         lt->kind == TypeKind::Class || lt->kind == TypeKind::Interface)) ||
@@ -746,6 +975,9 @@ namespace muc_detail {
         }
         if (src->kind == TypeKind::Ptr && is_integer(dst) && dst->bits() >= 64) return true;
         if (dst->kind == TypeKind::Ptr && is_integer(src) && src->bits() >= 64) return true;
+        // 3.16: a function value is a pointer; `void*` → function type requires `as`, and a function value → `void*` too
+        if (dst->kind == TypeKind::Func && src->kind == TypeKind::Ptr) return true;
+        if (src->kind == TypeKind::Func && dst->kind == TypeKind::Ptr) return true;
         if (is_str(src) && dst->kind == TypeKind::Ptr && dst->elem &&
             dst->elem->is_const &&
             dst->elem->kind == TypeKind::Prim && dst->elem->bits() == 8) {
