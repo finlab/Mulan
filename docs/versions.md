@@ -10,6 +10,12 @@
 
 ## Releases
 
+### 0.0.88 — 2026-11-13
+
+**Implicit struct construction (`implicit T(one_param)`)**: a `struct` constructor marked `implicit` is now the conversion path used at the coercion points (initialization, assignment, argument passing, `return`). It is struct-only (a class conversion would allocate implicitly), must be public, exactly one parameter and not the struct itself; at most one step and matched by the built-in conversions, so `string s = cstr;` will resolve to `implicit string(const char*)` while `f(int)` still beats `f(Wrap)` for an `int` argument (rank: exact 0 > widening 1 > implicit construction 2). It does not apply inside expressions, and it costs exactly what the constructor body costs — this is the missing piece for moving `string` out of the compiler (0.0.89). Codegen materializes the value with the constructor call (`src/codegen_expr.cpp:coerce`); `implicit` is a contextual keyword (a modifier only in front of a constructor name), and writing it in a class body is a compile error. Added 1 run case (`implicit_ctor`), 3 must-fail cases.
+
+**Tests**: 441/441 (117 pass + 306 must-fail + 18 check)
+
 ### 0.0.87 — 2026-11-13
 
 **Member operators on `struct` (borrowed receiver)**: a struct may now declare `T operator+(B other)`, `T operator[](usize i)`, `void operator[]=(usize i, V v)`, unary `-`/`+`/`~`, and the comparison/bitwise set as **member** functions (`src/parser_unit.cpp`, `src/sema_types.cpp:check_member_operator_sig`, `src/sema_call.cpp:find_member_operator`). The receiver is the implicit `this`, i.e. a borrowed pointer, so `s[i]` / `s == t` copy nothing and touch no reference count — which is the prerequisite for moving `string`'s operators into the library at built-in cost. Member operators are static-dispatch only and **forbidden in classes** (a class operator would be virtual and would break `==` identity); a member operator wins over a free function with the same signature, and falls back when no overload accepts the arguments (`-s` vs `s - t`). The index-form `for-in` protocol now also accepts a member `operator[]` (and prefers it), `a != b` converts through a member/free `operator==` with the result negated, and the `T: I` constraint check accepts operator members as well. Added 1 run case (`member_op`), 3 must-fail cases and 1 check case.

@@ -369,27 +369,29 @@ namespace muc_detail {
 
     int Sema::rank_arg(Expr* e, const TypePtr& aty, const TypePtr& p) {
         if (!p || !aty) return -1;
+        // Implicit struct construction is the weakest match: exact > widening > implicit conversion.
+        auto implicit_rank = [&]() { return find_implicit_conv(p, aty) ? 2 : -1; };
         if (auto il = dynamic_cast<IntLit*>(e)) {
             if (same_type(aty, p)) return 0;
             if (is_numeric(p) && promote_int_literal(il->value, p)) return 1;
-            return -1;
+            return implicit_rank();
         }
         if (auto fl = dynamic_cast<FloatLit*>(e)) {
             (void)fl;
             if (same_type(aty, p)) return 0;
             if (p->kind == TypeKind::Prim && (p->name == "float" || p->name == "double")) return 1;
-            return -1;
+            return implicit_rank();
         }
         if (dynamic_cast<NullLit*>(e)) {
             if (p->kind == TypeKind::Ptr || p->kind == TypeKind::Slice ||
                 p->kind == TypeKind::Class || p->kind == TypeKind::Interface) {
                 return 0;
             }
-            return -1;
+            return implicit_rank();
         }
         if (same_type(aty, p)) return 0;
         if (implicit_ok(aty, p)) return 1;
-        return -1;
+        return implicit_rank();
     }
 
     bool Sema::dominates(const std::vector<int>& a, const std::vector<int>& b) {

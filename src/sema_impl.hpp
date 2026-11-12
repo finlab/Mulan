@@ -412,6 +412,10 @@ private:
 
     bool assignable(Expr* e, const TypePtr& src, const TypePtr& dst);
 
+    // Implicit struct construction (3.6): `dst` declares an `implicit` single-parameter constructor
+    // that accepts `src`. At most one step (the parameter is matched by the built-in conversions only).
+    const ImplicitConv* find_implicit_conv(const TypePtr& dst, const TypePtr& src);
+
     // ------------------------------------------------------------ compile-time constant evaluation (U29)
     //
     // Lazy evaluation + memoization + visiting flag: supports forward references and any declaration order,

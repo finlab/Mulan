@@ -380,6 +380,17 @@ enum Color { Red, Green, Blue }
 - `bool` does not participate in numeric conversions; conditions must be `bool`.
 - `string` → `const char*` / `const byte*` is implicit (returns `p`, requires NUL termination).
 - `string` is not a numeric type and cannot be converted implicitly to/from pointers/integers.
+- **Implicit struct construction** (`implicit T(one_param)`, implemented 0.0.88): when a `struct` declares an
+  `implicit` single-parameter constructor, a value whose type is implicitly convertible to that parameter can be
+  used where the struct is expected. Rules:
+  - **struct only** (a class conversion would allocate implicitly); exactly one parameter, `public`, and not the
+    struct type itself;
+  - **at most one step**, matched by the built-in conversions above (no chained user conversions);
+  - it applies at the **coercion points only**: initialization, assignment, argument passing, `return`;
+    it does not apply inside expressions (`"a" + s`, `cond ? cstr : s` need an explicit `T(...)`);
+  - in overload resolution its rank is **weaker than every built-in conversion** (exact 0 > widening 1 > implicit
+    construction 2), so an overload taking the source type always wins;
+  - the conversion is a constructor call, i.e. its cost (allocation, copy) is visible in the constructor body.
 - `as` can be used for: numeric truncation/extension, pointer/integer conversion, `const` removal (explicit and unsafe).
 
 ### 3.7 Mutability: `const` (C model)
@@ -693,6 +704,9 @@ class Button : Widget {
 
 - A constructor has no return type and its name equals the class name; it may be overloaded; `new T(args)` is resolved by the rules of 3.11.
   **Named arguments are not supported for constructor/`new` parameters** (`new C(v = 1)` is a compile error); named arguments are only used for struct construction (3.4).
+- **`implicit`** (implemented 0.0.88, struct only): `implicit string(const char* c) { ... }` marks a single-parameter
+  constructor as the implicit conversion path (see 3.6). It must be `public`, and writing it in a class body or
+  union is a compile error. The marker is contextual: `implicit` is a modifier only in front of a constructor name.
 - On allocation: the object's memory is fully zeroed, `rc = 1`, and the vtable points to the topmost base class.
 - `super(args)` must be the first statement; if omitted, the base class's zero-argument constructor is called (an error if it does not exist).
 - Construction order: layer by layer `super` → derived field assignments (in the constructor body); on entering each constructor layer, the vtable is updated to that layer.

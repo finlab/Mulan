@@ -64,8 +64,17 @@ using Sym = std::variant<std::monostate, LocalVar*, GlobalVar*, FuncDecl*, EnumC
 
 // ---------------------------------------------------------------- Expressions
 
+// An implicit struct construction inserted at a coercion point (3.6): `string s = cstr;` uses
+// `implicit string(const char*)`. Allocated from a Sema-owned pool, so a node may hold it long-term.
+struct ImplicitConv {
+    TypePtr to;
+    std::vector<TypePtr> pty;
+    std::string cname;
+};
+
 struct Expr : Node {
     TypePtr ty;
+    const ImplicitConv* conv = nullptr;  // sema: this expression is converted by an implicit constructor
     virtual ~Expr() = default;
 };
 using ExprPtr = std::unique_ptr<Expr>;
@@ -483,6 +492,7 @@ struct MethodDecl : Node {
 };
 
 struct CtorDecl : Node {
+    bool is_implicit = false;  // `implicit T(...)`: usable as an implicit conversion (struct only)
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;
     bool is_public = false;  // visible only inside the unit by default

@@ -301,13 +301,22 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
             decl->dtor = parse_dtor();
             continue;
         }
+        // `implicit T(...)`: the constructor may be used as an implicit conversion (struct only)
+        bool implicit_ctor = false;
+        if (peek().kind == TokKind::Ident && peek().text == "implicit" && peek(1).kind == TokKind::Ident &&
+            peek(2).is_op("(")) {
+            advance();
+            implicit_ctor = true;
+        }
         if (peek().kind == TokKind::Ident && peek().text == name && peek(1).is_op("(")) {
             if (is_union) throw err("union `" + name + "` cannot have a constructor");
             const Token ctor_name = advance();
             decl->ctors.push_back(parse_ctor(ctor_name));
             decl->ctors.back()->is_public = member_pub;
+            decl->ctors.back()->is_implicit = implicit_ctor;
             continue;
         }
+        if (implicit_ctor) throw err("`implicit` can only modify a constructor");
         if (at_kw("weak")) {
             throw err("`weak` can only be used on class fields");
         }
@@ -614,6 +623,11 @@ std::unique_ptr<Decl> Parser::parse_class() {
         if (at_kw("weak")) {
             advance();
             prefix_weak = true;
+        }
+        if (peek().kind == TokKind::Ident && peek().text == "implicit" && peek(1).kind == TokKind::Ident &&
+            peek(2).is_op("(")) {
+            throw err("`implicit` constructors are only allowed in a struct: a class handle conversion would be "
+                      "a hidden allocation");
         }
         bool ret_ref = false;
         TypeSpecPtr spec = parse_return_type(ret_ref);

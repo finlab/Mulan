@@ -291,6 +291,29 @@ static bool is_numeric(const TypePtr& t) {
     }
 
     Value* Emitter::coerce(Expr* e, const TypePtr& to) {
+        if (e && e->conv) {
+            if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm]       implicit conv " << e->conv->cname << "\n";
+            // Implicit struct construction (3.6): materialize the value through its `implicit` constructor.
+            // The constructor takes the source value, so the argument is evaluated as its own type.
+            const ImplicitConv& c = *e->conv;
+            const TypePtr& st = c.to;
+            auto* tmp = entryAlloca(lt(st), "conv.tmp", alignOf(st));
+            if (st->needs_cleanup()) zeroMem(tmp, st);
+            std::vector<LType*> ptys{ptrTy()};
+            for (auto& t : c.pty) ptys.push_back(lt(t));
+            FunctionCallee callee =
+                mod->getOrInsertFunction(c.cname, FunctionType::get(LType::getVoidTy(ctx), ptys, false));
+            const TypePtr& pty0 = c.pty[0];
+            Value* av = convertTo(eval(e), e->ty, pty0);
+            ArgPack pack;
+            if (needsCleanup(pty0) && convOwns(e, pty0)) pack.owned.emplace_back(av, pty0);
+            b.CreateCall(callee, {tmp, av});
+            releaseTemps(pack);
+            if (mayThrow.mayThrowCname(c.cname)) {
+                emitCheckPendingWith([&] { emitReleaseValue(tmp, st); });
+            }
+            return b.CreateLoad(lt(st), tmp);
+        }
         if (e && to && to->kind == TypeKind::Slice && e->ty &&
             e->ty->kind == TypeKind::Array) {
             // fixed-size array -> dynamic array: allocate and copy by nested dimension (no borrowed view is provided anymore)

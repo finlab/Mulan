@@ -57,6 +57,10 @@ namespace muc_detail {
         }
         TypePtr src = check_expr(e, dst);
         if (assignable(e, src, dst)) return src;
+        if (const ImplicitConv* conv = find_implicit_conv(dst, src)) {
+            e->conv = conv;
+            return dst;  // the effective type after the conversion
+        }
         if (is_enum_t(src) || is_enum_t(dst)) {
             err(what + ": cannot assign " + (src ? src->str() : "void") + " to " +
                     (dst ? dst->str() : "void") + " (no implicit conversion between enums and integers; write `as`)",
@@ -118,6 +122,27 @@ namespace muc_detail {
             return true;  // Str -> readonly char*/byte* (requires NUL termination)
         }
         return implicit_ok(src, dst);
+    }
+
+    const ImplicitConv* Sema::find_implicit_conv(const TypePtr& dst, const TypePtr& src) {
+        // Process-level pool: `Expr::conv` must stay valid after Sema is destroyed (codegen runs later).
+        static std::deque<ImplicitConv> pool;
+        if (!dst || !src) return nullptr;
+        if (dst->kind != TypeKind::Struct) return nullptr;  // value types only: a class conversion would be a hidden allocation
+        if (same_type(dst, src)) return nullptr;
+        for (size_t i = 0; i < dst->ctors.size(); ++i) {
+            if (i >= dst->ctor_is_implicit.size() || !dst->ctor_is_implicit[i]) continue;
+            if (i >= dst->ctor_is_public.size() || !dst->ctor_is_public[i]) continue;
+            const std::vector<TypePtr>& p = dst->ctors[i];
+            if (p.size() != 1) continue;
+            if (!implicitly_convertible(src, p[0])) continue;
+            for (auto& c : pool) {
+                if (same_type(c.to, dst) && c.pty.size() == 1 && same_type(c.pty[0], p[0])) return &c;
+            }
+            pool.push_back(ImplicitConv{dst, p, ctor_cname(dst->unit, dst->name, p)});
+            return &pool.back();
+        }
+        return nullptr;
     }
 
     std::string Sema::type_str_no_const(const TypePtr& t) {

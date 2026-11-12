@@ -588,9 +588,24 @@ namespace muc_detail {
                     }
                     ctor->pty.push_back(pt);
                 }
+                if (ctor->is_implicit) {
+                    if (ctor->pty.size() != 1) {
+                        err("`implicit` constructor of struct `" + sd->name +
+                                "` must take exactly one parameter (the source value)",
+                            ctor.get());
+                    }
+                    if (!ctor->is_public) {
+                        err("`implicit` constructor of struct `" + sd->name + "` must be public", ctor.get());
+                    }
+                    if (ctor->pty.size() == 1 && same_type(ctor->pty[0], sd->ty)) {
+                        err("an `implicit` constructor cannot take the struct itself (it would be a copy)",
+                            ctor.get());
+                    }
+                }
                 ctor->cname = ctor_cname(u->name, sd->name, ctor->pty);
                 sd->ty->ctors.push_back(ctor->pty);
                 sd->ty->ctor_is_public.push_back(ctor->is_public);
+                sd->ty->ctor_is_implicit.push_back(ctor->is_implicit);
             }
             sd->ty->has_dtor = sd->dtor != nullptr;
             if (sd->dtor) sd->dtor->cname = dtor_cname(u->name, sd->name);

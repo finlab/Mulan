@@ -53,6 +53,7 @@ struct Type {
     std::vector<MethodSig> methods;  // used by Class/Interface
     std::vector<std::vector<TypePtr>> ctors;  // class constructor parameter lists (overloads)
     std::vector<bool> ctor_is_public;        // parallel to ctors: whether the constructor is public
+    std::vector<bool> ctor_is_implicit;      // parallel to ctors: `implicit` (usable as a conversion, struct only)
     TypePtr base;               // the base class of a Class
     std::vector<TypePtr> interfaces;  // the interfaces implemented by a Class/Interface
     bool is_abstract = false;   // a Class has unimplemented methods
