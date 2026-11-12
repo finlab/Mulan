@@ -2,7 +2,7 @@
 
 > Date: drafted on 2026-11-07; the object model (class / single inheritance / interface / overload / constructor) was added on 2026-11-09;
 > 2026-11-10: added `switch` and the conditional expression `?:`, and aligned the specification with the implementation for behaviors that were implemented but undocumented (version 0.0.46)
-> Status: draft, current through version 0.0.83. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
+> Status: draft, current through version 0.0.84. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
 > Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor, reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
 
@@ -340,7 +340,7 @@ union Value {
 - Can be assigned, passed, returned, used as array elements / global variables / struct or class fields; addressable (POD, not subject to "structs with reference fields are not addressable").
 - C ABI: members share the same address, `sizeof`/`alignof` match C, so it can directly interface with `INPUT`, `VARIANT`, `VkClearColorValue`, etc.
 
-### 3.5 Enums (proposed)
+### 3.5 Enums (implemented)
 
 ```c
 enum Color { Red, Green, Blue }
@@ -457,13 +457,13 @@ int x = Cat.MaxAge;                     // access qualified by the type name
 Usable for unit-level `const`, type-level `const` members, and enum member values:
 
 - Literals: integer, floating point, character, boolean;
-- Unary `-` `+` `not` `!`; binary `+ - * / %`, `& | ^ << >>`, `< <= > >= == !=`, `and` `or`;
+- Unary `-` `+` `not`; binary `+ - * / %`, `& | ^ << >>`, `< <= > >= == !=`, `and` `or`;
 - `as` conversions (the same truncation / sign extension / integer↔float conversion semantics as at runtime);
 - References to other constants: unit-level `const` of this unit, enum members (`Color.Red` or a bare `Red`),
   type-level `const` members (`Type.NAME`); **forward references and arbitrary declaration order are supported** (`const int A = B; const int B = 1;`);
 - Built-in `sizeof(T)` / `alignof(T)`: the result is `usize`; assigning it to `int` and similar types requires an explicit `as`
   (`const int W = sizeof(int) as int;`; `const int W = sizeof(int);` still fails under the strict typing rules);
-- Errors: division by zero / modulo by zero, circular dependency (`circular constant definition involving ...`), nesting depth exceeding 512 levels;
+- Errors: division by zero / modulo by zero, signed division/remainder overflow (`MIN / -1`), circular dependency (`circular constant definition involving ...`), nesting depth exceeding 512 levels;
 - In constant expressions `and` / `or` **evaluate both sides** (at runtime they short-circuit); therefore `false and (1 / 0 == 0)` reports division by zero in a constant context;
 - Despite forward references and arbitrary declaration order, constants of the same name coming from `use` still **report ambiguity** under the normal name-resolution rules (they do not silently take the first);
 - Not supported: function calls (there are no `constexpr` functions), `?:` conditional expressions, pointers/strings/aggregate values participating in evaluation.
@@ -930,8 +930,8 @@ type Unary = (int) => int;
 
   Rationale: "declaration vs expression statement" stays a single-token decision (a declaration starts with a keyword
   or an identifier), and `(int) => int f` would read like a cast.
-- `const` before a function type marks the **binding** read-only (like `const int x`). A function has no pointee, so
-  there is no "read-only function" qualifier.
+- `const` cannot qualify an **anonymous** function type: there is no pointee to protect, and a declaration cannot begin
+  with `(` anyway. Name the type with `type` when a read-only binding is needed (`type F = (int) => int; const F f = ...`).
 
 #### 3.16.2 Function values
 
@@ -1069,7 +1069,7 @@ declaration and a return type must name the type with `type` first).
 - Except for `auto`, parameters, return values, fields, and unit-level variables must all have an explicit type.
 - Unit-level variables are declared directly (`int g = 1;`) and are `private` by default (visible within the unit); use `public` across units; `extern` denotes an external symbol.
 - **Initializers of unit-level variables**: must be a **compile-time constant expression** (rules in 3.7.2; the same requirement applies to both `const` and non-`const` globals) —
-  literals, unary `-`/`+`/`not`/`!`, `as`, arithmetic/bitwise/comparison/`and`/`or`, and **references to other constants**
+  literals, unary `-`/`+`/`not`, `as`, arithmetic/bitwise/comparison/`and`/`or`, and **references to other constants**
   (unit-level `const`, enum members, type-level `const` members) as well as `sizeof(T)` / `alignof(T)`;
   forward references are supported; `const int B = A + 1;`, `int g = 1 + 2;`, `int G = Cat.MaxAge;` are all legal. Cyclic dependencies and division by zero are errors.
   String/aggregate constants are still written as literals or aggregate initialization (`const string S = "hi";`, `const int[] G = {10, 20, 30};`).
@@ -1466,8 +1466,11 @@ extern int printf(const char* fmt, ...);
 - Reading uninitialized memory.
 - Misaligned access: a pointer/field whose dereference location does not satisfy the type's natural alignment (fields of a `packed` struct are such a case; see 3.4).
 - Data races (phase one has no language-level concurrency).
-- Division by zero; a shift count ≥ the bit width (pending: UB or defined).
-- Signed integer overflow: **settled: defined as two's-complement wraparound** (avoids UB and simplifies optimization; the backend does not emit `nsw`/`nuw`).
+- Division by zero; **signed division/remainder overflow** (`MIN / -1`, `MIN % -1`); a shift count ≥ the bit width
+  (pending: UB or defined).
+- Signed integer overflow of `+` `-` `*`: **settled: defined as two's-complement wraparound** (avoids UB and simplifies
+  optimization; the backend does not emit `nsw`/`nuw`). **Division is the one exception**: the CPU traps on `MIN / -1`,
+  so it is UB exactly like division by zero; write `-x` (which wraps) when that value must be produced.
 - Array/slice out of bounds: pending (suggested: checked in debug builds, may be disabled in release; or always checked).
 - Accessing a class reference that is `null`; continuing to use a handle after it has been set to null (equivalent to a null reference).
 - Using `alloc/free` on a class object, or assigning memory obtained from `alloc` as a class handle (the two memory management schemes must not cross).
@@ -1624,7 +1627,7 @@ unit example;
 | 5 | Whether arrays implicitly decay to pointers | No decay |
 | 6 | Whether dynamic arrays are included in phase one | Decided: included (`T[]` / `T[,]`, RC heap arrays) |
 | 7 | Bounds checking strategy | Checked in debug; configurable in release |
-| 8 | Signed overflow | Decided (implemented): two's-complement wraparound (the backend emits no `nsw`/`nuw`) |
+| 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, and a constant expression reports it |
 | 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
 | 10 | `goto`/`typedef`/function pointers/varargs | `goto` is not done (phase one); function pointers and lambdas are implemented in 3.16 (0.0.84); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
 | 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding + `ref` (built-ins only); `for i, x` provides a `usize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; `for ref` is not available for user types; **multi-dimensional arrays forbid `for-in`** |

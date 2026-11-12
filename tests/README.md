@@ -30,12 +30,12 @@ themselves may print non-ASCII text (see `unicode_escape`), and CI sets `PYTHONU
      `struct` cannot be a unit name, which is why the `struct` case uses the unit name
      `struct_case`);
    - keep it self-contained: no `use` of other units; declare any output functions yourself
-     with `extern int puts(readonly char* s);` / `extern int putchar(int c);`
+     with `extern int puts(const char* s);` / `extern int putchar(int c);`
      (`print_int` can be copied from an existing case);
    - `main` returns `0` on the normal path;
-   - conditions must be bool (`if x` is illegal), there is no `++` and no C-style for loop,
-     `!` is bitwise complement rather than logical not (logical not is `not`), and there is no
-     `&&`/`||` (use `and`/`or`).
+   - conditions must be bool (`if x` is illegal), there is no `++` expression and no C-style for
+     loop, `~` is bitwise complement and `not` is logical negation (`!` is not an operator), and
+     there is no `&&`/`||` (use `and`/`or`).
 2. Write `tests/expected/<name>.txt`: the genuinely derived expected output (no placeholders).
 3. Verify: `build\muc.exe check tests/cases/<name>.mu`, then run the runner.
 
@@ -61,7 +61,7 @@ because they are libraries for the multi-unit example.
 |---|---|
 | `arith` | the four arithmetic operators, `%`, shifts, precedence (`+` binds tighter than `<< >>`; `&`/`^`/`\|` are layered; bitwise binds tighter than comparison), while accumulation, compound assignment |
 | `bool_ops` | `not a == b` ≡ `not (a==b)`; `not a and b` ≡ `(not a) and b` (De Morgan contrast); `and` binds tighter than `or`; `==` is left-associative; truth tables |
-| `bitwise` | `& \| ^ !` (`!` is bitwise complement), `<< >>` (including negative values), compound assignment `&= \|= ^= <<= >>=`, setting/clearing/flipping bits |
+| `bitwise` | `& \| ^ ~` (`~` is bitwise complement), `<< >>` (including negative values), compound assignment `&= \|= ^= <<= >>=`, setting/clearing/flipping bits |
 | `control` | `if/elif/else`, `while` + `break/continue` (including `while true`), `for i in 0..n`, range endpoint expressions, nested loops |
 | `struct` | value semantics (copies and parameter passing are independent), `{x = 1, y = 2}`, `{3, 4}`, zero initialization, `Point(...)`, `Point()` |
 | `arrays` | `int[N]` aggregate initialization pads with zeros, value-semantics copy and parameter passing, `len`, `for v in arr`, `for ref v in arr` mutating elements |
@@ -70,7 +70,7 @@ because they are libraries for the multi-unit example.
 | `unicode_escape` | `\u{...}`: strings encoded as UTF-8 (1–4 bytes, byte values and `len`), equivalence with raw UTF-8 in source, char literals limited to a single-byte code point (including `U+FF` → `char` −1), upper/lowercase hex and leading zeros |
 | `const_member` | type-level `const`: every scalar type, constants referring to each other / unary / comparison, `sizeof`/`alignof`, `Type.Name`, bare names inside methods, base-class constants and bare names in derived classes, private same-unit access, unit-level const referring to type-level constants, `sizeof` unchanged by constants, unsigned `>>` constants consistent with runtime, locals shadowing constants |
 | `const_global_init` | constant initialization of non-`const` globals: `int g = 1 + 2;`, `int G = Cfg.K;`, enum/float/`long`, referencing unit-level const, with globals still mutable |
-| `ptr` | `&x`/`*p` (including compound assignment), pointer parameters, `p[i]` and pointer arithmetic, `alloc/free`, `null` checks, `readonly int*`, `(*pp).field` |
+| `ptr` | `&x`/`*p` (including compound assignment), pointer parameters, `p[i]` and pointer arithmetic, `alloc/free`, `null` checks, `const int*`, `(*pp).field` |
 | `exception_*` | unchecked `throw`/`try`/`catch`: class matching in written order, base-class catch, nested propagation, rethrow, RC cleanup on unwinding, constructor-throw cleanup, throw from methods/interface calls, loop-local cleanup |
 | `finally_*` | `finally` on normal/catch/return/break/continue/exception paths, nested finally order, RC cleanup before/after finally, forbidden control flow in finally |
 | `exception_maythrow*` | module-local may-throw analysis: nothrow free functions/recursion/struct methods and nothrow construction still work, may-throw calls still catch |

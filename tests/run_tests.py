@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -73,6 +74,52 @@ class Case:
         self.expected = expected
 
 
+def _strip_comments_and_literals(text: str) -> str:
+    """Blank out comments, string literals and character literals.
+
+    Example discovery is a text scan (the runner must not depend on a parser), so the scan runs on
+    code only: a comment or a string that mentions `int main` must not make a library unit look
+    like an entry point, and comments between `int` and `main` must not hide a real one.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i = min(i + 2, n)
+        elif c in "\"'":
+            quote = c
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            out.append(" ")  # keep the tokens on both sides apart
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+_ENTRY_RE = re.compile(r"\bint\s+main\s*\(")
+
+
+def defines_main(src: Path) -> bool:
+    """Whether the unit defines `main` (formatting- and comment-tolerant text scan)."""
+    return _ENTRY_RE.search(_strip_comments_and_literals(src.read_text(encoding="utf-8"))) is not None
+
+
 def collect_cases() -> list[Case]:
     cases: list[Case] = []
     for src in sorted(CASES_DIR.glob("*.mu")):
@@ -80,7 +127,7 @@ def collect_cases() -> list[Case]:
     # examples/*.mu that define `main` also run as cases; the rest are library units
     # for the multi-unit example (such as examples/math.mu).
     for src in sorted(ROOT.glob("examples/*.mu")):
-        if "int main" not in src.read_text(encoding="utf-8"):
+        if not defines_main(src):
             continue
         cases.append(Case(src.stem, src, EXPECTED_DIR / f"{src.stem}.txt"))
     return cases
@@ -274,9 +321,12 @@ def main(argv: list[str] | None = None) -> int:
 
     passed: list[str] = []
     failed: list[str] = []
-    c_files: list[Path] = []
+    # Only the files this invocation creates may be deleted afterwards (never a glob over `build/`):
+    # the compiler writes `build/<entry>.o` and the runner links `build/tests/<name>.exe`.
+    artifacts: list[Path] = []
     for case in cases:
-        c_files.append(ROOT / "build" / (case.src.stem + ".c"))
+        artifacts.append(ROOT / "build" / (case.src.stem + ".o"))
+        artifacts.append(BUILD_DIR / (case.name + (".exe" if sys.platform == "win32" else "")))
         ok, msg = run_case(case, args.keep_c, args.verbose)
         if ok:
             passed.append(case.name)
@@ -317,22 +367,10 @@ def main(argv: list[str] | None = None) -> int:
         code = 0
 
     if not args.keep_c:
-        for p in c_files:
+        for p in artifacts:
             try:
                 p.unlink()
-            except FileNotFoundError:
-                pass
-        # LLVM backend intermediates (build/<case>.ll / .o)
-        for pattern in ("*.ll", "*.o"):
-            for p in (ROOT / "build").glob(pattern):
-                try:
-                    p.unlink()
-                except (FileNotFoundError, PermissionError):
-                    pass
-        for exe in BUILD_DIR.glob("*"):
-            try:
-                exe.unlink()
-            except FileNotFoundError:
+            except (FileNotFoundError, PermissionError):
                 pass
 
     return code

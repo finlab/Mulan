@@ -483,18 +483,27 @@ namespace muc_detail {
                 e);
         }
         const bool uns = !rt->is_signed();
+        // Signed division/remainder overflow (`MIN / -1`) is undefined behavior (SPEC 8.2), so a constant
+        // expression reports it instead of producing a value the runtime cannot reproduce (the hardware traps).
+        if (!uns && ri == -1) {
+            const int bits = rt->bits() > 0 ? rt->bits() : 64;
+            const long long lo = bits >= 64 ? LLONG_MIN : -(1LL << (bits - 1));
+            if (li == lo) {
+                err(op == "/" ? "signed division overflow in constant expression (the most negative value divided by -1 is undefined behavior)"
+                              : "signed remainder overflow in constant expression (the most negative value % -1 is undefined behavior)",
+                    e);
+            }
+        }
         long long v = 0;
         if (op == "+") v = static_cast<long long>(static_cast<unsigned long long>(li) + static_cast<unsigned long long>(ri));
         else if (op == "-") v = static_cast<long long>(static_cast<unsigned long long>(li) - static_cast<unsigned long long>(ri));
         else if (op == "*") v = static_cast<long long>(static_cast<unsigned long long>(li) * static_cast<unsigned long long>(ri));
         else if (op == "/") {
-            if (!uns && li == LLONG_MIN && ri == -1) return false;
             v = uns ? static_cast<long long>(static_cast<unsigned long long>(li) / static_cast<unsigned long long>(ri))
                     : li / ri;
         } else if (op == "%") {
-            if (!uns && li == LLONG_MIN && ri == -1) v = 0;
-            else v = uns ? static_cast<long long>(static_cast<unsigned long long>(li) % static_cast<unsigned long long>(ri))
-                         : li % ri;
+            v = uns ? static_cast<long long>(static_cast<unsigned long long>(li) % static_cast<unsigned long long>(ri))
+                    : li % ri;
         } else if (op == "&") v = li & ri;
         else if (op == "|") v = li | ri;
         else if (op == "^") v = li ^ ri;

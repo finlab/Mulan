@@ -193,7 +193,11 @@ TypeSpecPtr Parser::parse_type() {
     } else if (t.kind == TokKind::Op && t.text == "(") {
         // function type `(T1, T2) => R` (3.16). Suffixes bind to the return type, so the recursive call consumes
         // them and this branch returns without running type_suffixes on the function type itself.
-        if (base_const) throw err_at("`const` cannot qualify a function type (a function has no pointee)", t);
+        if (base_const) {
+            throw err_at("`const` cannot qualify an anonymous function type; name it with `type F = ...` and write "
+                         "`const F` for a read-only binding",
+                         t);
+        }
         advance();
         auto fn = std::make_unique<TypeSpec>();
         fn->kind = TypeSpec::K::Func;
