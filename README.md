@@ -140,6 +140,7 @@ build\muc.exe build examples\example.mu -g      # 带 DWARF，可被 gdb 断点/
 | 文件 | 内容 |
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | 语言规范，逐条标注已定 / 建议 / 待定 |
+| [`docs/versions.md`](docs/versions.md) | 逐版本变更记录 |
 
 > 设计草案、实现规划与决策记录属于内部工作文档，不随仓库发布。
 

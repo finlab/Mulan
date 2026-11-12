@@ -144,6 +144,7 @@ If a dependency is missing: `python -m pip install cmake ninja`. For LLVM instal
 | File | Contents |
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | Language specification, each rule marked settled / suggested / open (Chinese) |
+| [`docs/versions.md`](docs/versions.md) | Per-version change log (Chinese) |
 
 > Design drafts, implementation plans and decision records are internal working documents and are
 > not published with the repository.
