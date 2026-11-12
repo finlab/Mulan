@@ -17,9 +17,9 @@ int main() {
     if a.get() != 7 { puts("ctor failed"); return 1; }
     if live != 1 { puts("live failed"); return 1; }
 
-    Counter b = a;               // 共享强引用
+    Counter b = a;               // shared strong reference
     if live != 1 { puts("share failed"); return 1; }
-    a = null; // 只减少一份引用
+    a = null; // drops only one reference
     if b.get() != 7 { puts("share get failed"); return 1; }
     if live != 1 { puts("premature dtor"); return 1; }
 
@@ -27,7 +27,7 @@ int main() {
     if b.get() != 9 { puts("set failed"); return 1; }
 
     Counter c = new Counter(1);
-    c = b;                       // 重绑定：旧对象析构，新对象 +1
+    c = b;                       // rebind: old object destructed, new object +1
     if live != 1 { puts("rebind failed"); return 1; }
 
     b = null;

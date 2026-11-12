@@ -1,8 +1,8 @@
-// const_member.mu — 类型级编译期常量（struct / class 体内的 `const`）
+// const_member.mu — type-level compile-time constants (`const` inside struct / class bodies)
 //
-// 覆盖：标量各类型、常量之间互相引用、sizeof/alignof、`Type.Name`、方法体内裸名、
-// 基类常量（`Derived.Name` 与派生类裸名）、private 同 unit 可读、unit 级 const
-// 引用类型级常量、以及常量成员不占实例内存（sizeof 不变）。
+// Covers: every scalar type, references between constants, sizeof/alignof, `Type.Name`, bare names in method
+// bodies, base class constants (`Derived.Name` and the bare name in a derived class), private readable in the
+// same unit, unit-level const referencing a type-level constant, and constants taking no instance memory (sizeof unchanged).
 unit const_member;
 
 extern int puts(const char* s);
@@ -21,25 +21,25 @@ struct Cat {
     const float Weight = 1.5;
     const double Ratio = 2.5;
     const Mood DefaultMood = Mood.Happy;
-    const int Twice = MaxAge * 2;          // 引用同类型常量
+    const int Twice = MaxAge * 2;          // references a constant of the same type
     const int Size = sizeof(int) as int;   // sizeof(...) as int
     const int Align = alignof(int) as int;
-    const int Neg = -MaxAge;               // 一元运算
-    const bool Big = MaxAge > 20;          // 比较
-    const short ShortVal = 300;            // 各整数位宽（负字面量窄化与运行期一样不被接受）
+    const int Neg = -MaxAge;               // unary operator
+    const bool Big = MaxAge > 20;          // comparison
+    const short ShortVal = 300;            // integer widths (narrowing a negative literal is rejected, same as at run time)
     const ushort UShortVal = 60000;
     const long LongVal = 5000000000;
     const isize ISizeVal = -456;
     const usize USizeVal = 123;
-    const char CharVal = '\u{e9}';         // 字符字面量按位模式适配（运行期 char 为有符号 8 位）
-    const ulong ULongShift = ((0x4000000000000000 as ulong) << 1) >> 60;  // 无符号 >> 与运行期一致
+    const char CharVal = '\u{e9}';         // char literal adapts by bit pattern (char is a signed 8-bit type at run time)
+    const ulong ULongShift = ((0x4000000000000000 as ulong) << 1) >> 60;  // unsigned >> matches run time
     const uint UIntShift = (0x80000000 as uint) >> 4;
-    private const int Secret = 7;          // private：本 unit 内可读
+    private const int Secret = 7;          // private: readable inside this unit
     int age;
 
-    int age_plus_max() { return age + MaxAge; }  // 方法体内裸名
+    int age_plus_max() { return age + MaxAge; }  // bare name inside a method body
 
-    int shadow() {                         // 局部变量遮蔽同名常量
+    int shadow() {                         // a local variable shadows the constant of the same name
         int MaxAge = 5;
         return MaxAge;
     }
@@ -52,16 +52,16 @@ class Animal {
 }
 
 class Dog : Animal {
-    const int LegsTimesTwo = Legs * 2;     // 派生类裸名访问基类常量
-    const int BaseEyes = Animal.Eyes;      // 通过基类名访问
+    const int LegsTimesTwo = Legs * 2;     // derived class reaches the base constant by bare name
+    const int BaseEyes = Animal.Eyes;      // accessed through the base class name
     int dog_legs() { return Legs; }
 }
 
-// unit 级 const 引用类型级常量
+// unit-level const referencing a type-level constant
 const int GlobalFromMember = Cat.MaxAge + Cat.Size;
 
 int main() {
-    // ---------- 各标量类型 ----------
+    // ---------- scalar types ----------
     if Cat.MaxAge != 30 { puts("int failed"); return 1; }
     if Cat.Limit != 40 { puts("uint failed"); return 1; }
     if Cat.Small != 200 { puts("byte failed"); return 1; }
@@ -71,7 +71,7 @@ int main() {
     if Cat.DefaultMood != Mood.Happy { puts("enum failed"); return 1; }
     puts("const member basics ok");
 
-    // ---------- 常量表达式 ----------
+    // ---------- constant expressions ----------
     if Cat.Twice != 60 { puts("reference failed"); return 1; }
     if Cat.Size != 4 { puts("sizeof failed"); return 1; }
     if Cat.Align != 4 { puts("alignof failed"); return 1; }
@@ -80,7 +80,7 @@ int main() {
     if Cat.Secret != 7 { puts("private same-unit failed"); return 1; }
     puts("const member expressions ok");
 
-    // ---------- 更多整数位宽 / 字符字面量 ----------
+    // ---------- more integer widths / char literal ----------
     if Cat.ShortVal != 300 { puts("short failed"); return 1; }
     if Cat.UShortVal != 60000 { puts("ushort failed"); return 1; }
     if Cat.LongVal != 5000000000 { puts("long failed"); return 1; }
@@ -89,7 +89,7 @@ int main() {
     if Cat.CharVal != -23 { puts("char literal member failed"); return 1; }
     puts("const member wide types ok");
 
-    // ---------- 无符号 >>：常量结果必须与运行期一致 ----------
+    // ---------- unsigned >>: the constant result must match run time ----------
     ulong x = (0x4000000000000000 as ulong) << 1;
     uint u = 0x80000000 as uint;
     if Cat.ULongShift != x >> 60 { puts("ulong shr mismatch"); return 1; }
@@ -98,18 +98,18 @@ int main() {
     if Cat.UIntShift != 4160749568 { puts("uint shr const wrong"); return 1; }
     puts("const member shr ok");
 
-    // ---------- 方法体内裸名 + 与实例字段混用 ----------
+    // ---------- bare name in a method body + mixed with instance fields ----------
     Cat c;
     c.age = 12;
     if c.age_plus_max() != 42 { puts("bare name in method failed"); return 1; }
     puts("const member methods ok");
 
-    // ---------- 局部变量遮蔽同名常量 ----------
+    // ---------- a local variable shadows the constant of the same name ----------
     if c.shadow() != 5 { puts("local shadow failed"); return 1; }
     if Cat.MaxAge != 30 { puts("const changed by shadow"); return 1; }
     puts("const member shadow ok");
 
-    // ---------- 继承 ----------
+    // ---------- inheritance ----------
     if Animal.Legs != 4 { puts("base const failed"); return 1; }
     if Dog.Legs != 4 { puts("inherited const failed"); return 1; }
     if Dog.LegsTimesTwo != 8 { puts("derived bare name failed"); return 1; }
@@ -122,11 +122,11 @@ int main() {
     d = null;
     puts("const member inheritance ok");
 
-    // ---------- 常量不占实例内存 ----------
+    // ---------- constants take no instance memory ----------
     if sizeof(Cat) != sizeof(Plain) { puts("layout changed"); return 1; }
     puts("const member layout ok");
 
-    // ---------- unit 级 const ----------
+    // ---------- unit-level const ----------
     if GlobalFromMember != 34 { puts("unit const from member failed"); return 1; }
     puts("const member unit-level ok");
 

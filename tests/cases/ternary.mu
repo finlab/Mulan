@@ -28,49 +28,49 @@ int main() {
     bool pick = true;
     int a = 1;
 
-    // 基本形式
+    // basic form
     int x = a > 0 ? 10 : 20;
     if x != 10 { puts("then fail"); return 1; }
     x = a < 0 ? 10 : 20;
     if x != 20 { puts("else fail"); return 2; }
 
-    // 只求值被选中的分支
+    // only the selected branch is evaluated
     int v = a > 0 ? tag(10) : tag(20);
     if v != 10 or calls != 1 { puts("short-circuit fail"); return 3; }
 
-    // 右结合：a ? b : c ? d : e == a ? b : (c ? d : e)
+    // right-associative: a ? b : c ? d : e == a ? b : (c ? d : e)
     int z = 0;
     int r = z == 0 ? 1 : z == 1 ? 2 : 3;
     if r != 1 { puts("nested then fail"); return 4; }
     r = z == 5 ? 1 : z == 1 ? 2 : 3;
     if r != 3 { puts("nested else fail"); return 5; }
 
-    // 字面量按上下文适配 / 隐式加宽
+    // literal adapts to the context / implicit widening
     double d = a > 0 ? 1 : 2.5;
     if d != 1.0 { puts("literal adapt fail"); return 6; }
     float f = 1.5;
     double d2 = a > 0 ? f : 2.0;
     if d2 != 1.5 { puts("widen fail"); return 7; }
 
-    // 结构体：值拷贝
+    // struct: value copy
     P p1 = {1, 2};
     P p2 = {3, 4};
     P p3 = pick ? p1 : p2;
     if p3.x != 1 or p3.y != 2 { puts("struct fail"); return 8; }
 
-    // null 适配到另一侧
+    // null adapts to the other side
     int* np = pick ? null : &a;
     if np != null { puts("null fail"); return 9; }
 
-    // 枚举：只与同一枚举类型混用
+    // enum: only mixes with the same enum type
     Color col = pick ? Red : Blue;
     if col != Red { puts("enum fail"); return 10; }
 
-    // void 分支：只能作表达式语句
+    // void branch: usable only as an expression statement
     pick ? side_a() : side_b();
     if side != 1 { puts("void fail"); return 11; }
 
-    // class 引用：借用分支 retain、owned 分支转移，只构造被选中的对象
+    // class reference: the borrowed branch retains, the owned branch transfers; only the selected object is constructed
     {
         C c1 = new C(1);
         C c2 = new C(2);
@@ -87,7 +87,7 @@ int main() {
     }
     if live != 0 { puts("rc cleanup fail"); return 17; }
 
-    // 字符串（owner RC）：借用与 owned 分支
+    // string (owner RC): borrowed and owned branches
     string s1 = "abc";
     string s2 = "de";
     string s3 = pick ? s1 : s2;

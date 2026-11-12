@@ -1,6 +1,6 @@
 unit forin_badlen;
 
-// length() 必须返回 usize
+// length() must return usize
 struct Vec {
     int[4] data;
     int n;

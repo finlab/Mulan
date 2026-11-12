@@ -1,4 +1,4 @@
-// dbgvars.mu — 调试信息（-g）的验证素材：标量 / long / float / 结构体 / 指针
+// dbgvars.mu — test material for debug info (-g): scalar / long / float / struct / pointer
 unit dbgvars;
 
 extern int printf(const char* fmt, ...);

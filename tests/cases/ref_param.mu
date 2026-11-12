@@ -1,4 +1,4 @@
-// ref_param.mu — `ref` 参数：可变借用与只读借用（`ref const T p`）
+// ref_param.mu — `ref` parameters: mutable borrow and read-only borrow (`ref const T p`)
 unit ref_param;
 
 extern int puts(const char* s);

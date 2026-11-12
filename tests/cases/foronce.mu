@@ -19,7 +19,7 @@ int main() {
     }
     if calls == 1 and t == 9 { puts("seq evaluated once ok"); }
 
-    // 值绑定拷贝：改 v 不影响原数组
+    // value binding copies: changing v does not affect the original array
     for v in rows[0].v {
         v += 100;
     }

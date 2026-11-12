@@ -1,11 +1,11 @@
-// charpad.mu — char[N] 由 string 初始化：拷贝内容、补 NUL、其余字节清零
+// charpad.mu — char[N] initialized from a string: copy contents, append NUL, zero the rest
 unit charpad;
 
 extern int puts(const char* s);
 
 int main() {
     char[8] b = "ab";
-    // 字节 2 是 NUL，后面应当被清零
+    // byte 2 is the NUL, the remaining bytes must be zeroed
     if b[2] == 0 and b[7] == 0 and len(b) == 8 {
         puts("zero-padded ok");
     }

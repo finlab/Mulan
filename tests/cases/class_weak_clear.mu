@@ -37,14 +37,14 @@ int main() {
     Node e = new Node(5);
     Node f = new Node(6);
     d.link(e);
-    d.link(f);                  // 覆盖 weak 目标
+    d.link(f);                  // overwrite the weak target
     e = null;
     if d.next != f { puts("weak overwrite stale null"); return 1; }
     f = null;
     if d.next != null { puts("weak overwrite clear fail"); return 1; }
 
     Node g = new Node(7);
-    g.link(g);                  // 自引用 weak
+    g.link(g);                  // self-referencing weak
     g = null;
 
     a = null; d = null;

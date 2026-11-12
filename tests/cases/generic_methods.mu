@@ -1,4 +1,4 @@
-// generic_methods.mu — 泛型 struct 的方法实例化（U34 M3d）
+// generic_methods.mu — method instantiation for generic structs (U34 M3d)
 unit generic_methods;
 
 extern int puts(const char* s);

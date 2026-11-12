@@ -17,35 +17,35 @@ void show(string s) {
 }
 
 int main() {
-    // 字符串按字节遍历
+    // iterate a string byte by byte
     show("hi");
 
-    // 空切片
+    // empty slice
     int[] e = {};
     int n = 0;
     for v in e { n += 1; }
     if len(e) == 0 and n == 0 { puts("empty slice ok"); }
 
-    // 零值构造
+    // zero-value construction
     P z = P();
     if z.x == 0 and z.y == 0 { puts("ctor zero ok"); }
 
-    // 结构体返回值 + 再次赋值
+    // struct return value + reassignment
     P a = mk(5, 6);
     P b = a;
     b.x = 9;
     if a.x == 5 and b.x == 9 { puts("return value ok"); }
 
-    // 全局 string 常量
+    // global string constant
     const string g = "global";
     const string h = g;
     if len(h) == 6 and h[0] == 'g' { puts("const string ok"); }
 
-    // 32 位边界字面量
+    // 32-bit boundary literal
     uint u = 0xFFFFFFFF;
     if u == 4294967295 { puts("uint literal ok"); }
 
-    // 长整型
+    // long integer
     long big = 1;
     for i in 0..40 { big *= 2; }
     if big == 1099511627776 { puts("long ok"); }

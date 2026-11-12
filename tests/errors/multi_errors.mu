@@ -1,4 +1,4 @@
-// multi_errors.mu — 一次编译报出多个错误（而不是遇到第一个就停）
+// multi_errors.mu — one compilation reports several errors (instead of stopping at the first)
 unit multi_errors;
 
 int f1() { return undefined_one; }

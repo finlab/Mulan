@@ -1,4 +1,4 @@
-// ref_return.mu — `ref T` 返回类型、借用下标、借用接收者、for ref
+// ref_return.mu — `ref T` return type, borrowed indexing, borrowed receiver, for ref
 unit ref_return;
 
 extern int puts(const char* s);
@@ -11,7 +11,7 @@ struct Vec {
     ref int at(usize i) { return data[i]; }
 }
 
-// 借用接收者 + 借用返回：写穿调用方的存储（内联存储容器也能写）
+// borrowed receiver + borrowed return: writes through to the caller's storage (inline storage containers too)
 struct Small {
     int[4] v;
 

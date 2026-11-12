@@ -1,4 +1,4 @@
-// align(16) 结构体切片的聚合初始化也会分配数据区（最多 8 字节对齐）
+// aggregate initialization of a slice of align(16) structs also allocates a data area (at most 8-byte aligned)
 unit align_slice_init;
 
 align(16) struct Wide {

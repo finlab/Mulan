@@ -35,7 +35,7 @@ int main() {
     if q.area() != 16 { puts("direct dispatch failed"); return 1; }
     if q.id != 1 { puts("super ctor failed"); return 1; }
 
-    Shape s = q;                       // 隐式上转 + 强引用
+    Shape s = q;                       // implicit upcast + strong reference
     if s.area() != 16 { puts("virtual dispatch failed"); return 1; }
 
     IShape i = s;                      // class -> interface

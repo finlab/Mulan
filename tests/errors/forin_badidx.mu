@@ -1,6 +1,6 @@
 unit forin_badidx;
 
-// operator[] 的下标必须是 usize（这里写成 int，不能窄化转换）
+// the index of operator[] must be usize (written as int here, no narrowing conversion)
 struct Vec {
     int[4] data;
     usize n;

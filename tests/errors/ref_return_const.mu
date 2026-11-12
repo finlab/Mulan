@@ -4,7 +4,7 @@ struct P {
     int x;
 }
 
-// `ref const` 借用不能以可变 `ref` 返回
+// a `ref const` borrow cannot be returned as a mutable `ref`
 ref int bad(ref const P p) {
     return p.x;
 }

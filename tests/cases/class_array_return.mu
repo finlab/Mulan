@@ -13,7 +13,7 @@ int main() {
     C[2] r = make();
     if r[0].get() != 5 or r[1].get() != 6 { puts("array return fail"); return 1; }
     if live != 2 { puts("array return rc fail"); return 1; }
-    int s = total(make());              // 临时实参，调用后释放
+    int s = total(make());              // temporary argument, released after the call
     if s != 11 { puts("array temp arg fail"); return 1; }
     if live != 2 { puts("array temp cleanup fail"); return 1; }
     puts("array return ok");

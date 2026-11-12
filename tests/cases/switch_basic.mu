@@ -1,4 +1,4 @@
-// switch_basic.mu — switch：多值、半开区间、枚举穷尽、else、嵌套与 break 归属
+// switch_basic.mu — switch: multiple values, half-open ranges, exhaustive enums, else, nesting and break binding
 unit switch_basic;
 
 extern int putchar(int c);
@@ -38,7 +38,7 @@ int classify(int code) {
     }
 }
 
-// 枚举穷尽：不写 else 也必须覆盖全部成员（缺一个就编译错误）
+// Exhaustive enum: without an else every member must be covered (a missing one is a compile error)
 int paint(Color c) {
     switch c {
         Red:   { return 11; }
@@ -55,7 +55,7 @@ int main() {
     pi(paint(Green));
     pi(paint(Blue));
 
-    // 嵌套：switch 里的 break/continue 属于外层循环
+    // nesting: break/continue inside a switch belong to the enclosing loop
     int n = 0;
     for i in 0..5 {
         switch i {
@@ -68,20 +68,20 @@ int main() {
     }
     pi(n);
 
-    // 字符区间（半开：'a'..'{' 含 'z'）
+    // char range (half-open: 'a'..'{' includes 'z')
     byte ch = 'q';
     switch ch {
         'a'..'{': { pi(1); }
         else: { pi(2); }
     }
 
-    // 空 switch 体 / 无 else 的整型 switch：不命中就跳过
+    // empty switch body / integer switch without else: a non-match is skipped
     int k = 7;
     switch k { }
     switch k {
         3: { pi(9); }
     }
 
-    // 被匹配值只求值一次
+    // the matched value is evaluated only once
     return 0;
 }

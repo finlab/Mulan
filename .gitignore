@@ -1,4 +1,4 @@
-# 构建产物
+# Build artifacts
 build/
 build_dbg/
 cmake-build-*/
@@ -14,7 +14,7 @@ out/
 __pycache__/
 *.pyc
 
-# 编辑器 / 系统
+# Editors / OS
 .vs/
 .vscode/
 .idea/
@@ -24,6 +24,6 @@ __pycache__/
 Thumbs.db
 desktop.ini
 
-# 本地 AI 协作产物，不随仓库公开
+# Local AI collaboration artifacts, not published with the repository
 /AGENTS.md
 /agents/

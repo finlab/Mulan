@@ -1,4 +1,4 @@
-// 布局修饰符只能用于 struct：enum 上不允许
+// layout modifiers apply only to structs: not allowed on enums
 unit packed_enum;
 
 packed enum Bad {

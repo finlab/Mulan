@@ -1,4 +1,4 @@
-// main_args.mu — 带参数的 main：argc / argv（C ABI，argv 以 null 结尾）
+// main_args.mu — main with args: argc / argv (C ABI, argv is null-terminated)
 unit main_args;
 
 extern int printf(const char* fmt, ...);
@@ -8,7 +8,7 @@ int main(int argc, char** argv) {
         printf("argv is null\n");
         return 1;
     }
-    // argv 以 null 结尾：元素个数必须与 argc 一致
+    // argv is null-terminated: element count must match argc
     int n = 0;
     while argv[n] != null {
         n += 1;

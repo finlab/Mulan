@@ -1,4 +1,4 @@
-// generic_func.mu — 自由函数单态化：显式类型实参、多个 T、局部变量类型替换
+// generic_func.mu — free function monomorphization: explicit type arguments, multiple T, local variable type substitution
 unit generic_func;
 
 extern int puts(const char* s);

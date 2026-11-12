@@ -1,6 +1,6 @@
-// const_global_init.mu — 非 const unit 级变量也可以用编译期常量初始化
+// const_global_init.mu — non-const unit-level vars can also be initialized with compile-time constants
 //
-// 覆盖：引用类型级常量成员、常量算术表达式、各标量类型，以及非 const 全局可变。
+// Covers: referring to type-level const members, constant arithmetic exprs, each scalar type, and non-const globals staying mutable.
 unit const_global_init;
 
 extern int puts(const char* s);
@@ -12,8 +12,8 @@ struct Cfg {
 
 const int ConstFromMember = Cfg.K;
 
-int FromMember = Cfg.K;               // 非 const 全局引用常量成员
-int FromArith = 1 + 2;                // 非 const 全局的常量表达式
+int FromMember = Cfg.K;               // non-const global referring to a const member
+int FromArith = 1 + 2;                // constant expression in a non-const global
 long FromWide = 5000000000;
 double FromFloat = 1.5;
 int FromConstGlobal = ConstFromMember + 1;
@@ -28,7 +28,7 @@ int main() {
     if FromTwice != 14 { puts("global from member expr failed"); return 1; }
     puts("global init ok");
 
-    // 非 const 全局仍然可变
+    // non-const global stays mutable
     FromMember = 42;
     if FromMember != 42 { puts("global not mutable"); return 1; }
     puts("global mutable ok");

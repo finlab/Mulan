@@ -1,490 +1,495 @@
-# 版本记录
+# Version history
 
-## 规则
+## Rules
 
-- 版本格式：`主版本号.次版本号.build号`，从 **0.0.1** 开始。
-- **每次正式构建 + 全量测试通过后，build 号 +1**；由维护者记录在本文件。
-- **主版本号 / 次版本号只在明确要求时提高**，平时保持不变。
-- 版本号的唯一来源是仓库根的 `VERSION` 文件；CMake、编译器 `--version`、生成的 C 代码都从它读取。
+- Version format: `major.minor.build`, starting from **0.0.1**.
+- **After each official build passes the full test suite, the build number +1**; recorded in this file by the maintainer.
+- **Only changes to the compiler code raise the build number**: documentation-only, comment-only or config/CI-text changes are recorded inside the current entry's follow-up paragraph instead of bumping the version.
+- **Major / minor version numbers are raised only on explicit request**, otherwise they stay unchanged.
+- The single source of truth for the version number is the `VERSION` file at the repository root; CMake, the compiler `--version` and the generated C code all read from it.
 
-## 记录
+## Releases
 
 ### 0.0.80 — 2026-11-12
 
-**代码注释英文化 + 规范英文版**：`src/` 下 42 个文件的 874 行中文注释全部译为英文（术语统一，见 `agents/glossary.md`）；新增 `docs/SPEC.en.md`（1633 行，与中文版逐节对应）与 `docs/versions.en.md`（79 条记录）。字符串字面量（用户可见诊断）保持不变，全量测试验证未破坏行为。
+**English comments + English docs**: translated all 874 Chinese comment lines across the 42 files in `src/` with one consistent terminology; added the English editions of the specification (1633 lines, section-for-section parity with the Chinese text) and of the version history (79 entries). String literals (user-visible diagnostics) are untouched, and the full suite verifies no behavioural change.
 
-**测试**：384/384（87 成功 + 281 报错 + 16 check）
+**English-only public tree (documentation follow-up, no version bump)**: removed the Chinese `README.md`, `docs/SPEC.md` and `docs/versions.md`; the English editions took over the plain names and are the only maintained copies from now on. Translated the remaining Chinese comments and prose in every other published file: 420 comment lines across 86 `.mu` files (`examples/`, `libs/std/` and `tests/`), plus `tests/README.md`, `tests/run_tests.py` (including its console output), `CMakeLists.txt`, `ci.yml`, `.gitignore`, `.vscode/settings.json` and `NOTICE`. `agents/` (internal, gitignored) keeps its Chinese notes, and the multilingual tests (`unicode_escape`, `char_nonascii`, `unicode_*`) deliberately keep their non-ASCII literals and expectations. Every `.mu` change was verified to be comment-only (code, string and char literals byte-identical).
+
+**Stale statements corrected (same documentation follow-up)**: the README no longer lists generics and automatic `weak` nulling as unimplemented (both have shipped and are covered by tests), gains a generics row, narrows the SPDX claim to `src/`, and drops the reference to an internal cross-platform plan; the SPEC header no longer calls destructors a non-goal and states the version it is current through; the public changelog no longer points at an internal glossary; CMake now requires `LLVM ≥ 17`, matching the README.
+
+**Tests**: 384/384 (87 pass + 281 must-fail + 16 check)
 
 ### 0.0.79 — 2026-11-12
 
-**版本记录改为章节格式**：长条目在表格里容易被竖线撑破（转义不彻底就会错列），改为 `### 版本 — 日期` + 摘要 + `**测试**` 的结构；78 条记录按版本号倒序重排（最新在前）。无代码改动
+**Version history switched to section format**: long entries were easily broken by pipes in a table (incomplete escaping shifted the columns), so the structure became `### version — date` + summary + `**Tests**`; the 78 records were re-sorted in descending version order (newest first). No code changes
 
-**测试**：384/384（87 成功 + 281 报错 + 16 check）
+**Tests**: 384/384 (87 pass + 281 must-fail + 16 check)
 
 ### 0.0.78 — 2026-11-12
 
-**文档整理收尾**：`versions.md` 收回 `docs/`（对外发布，读者需要变更记录）；修复 0.0.57 条目中未转义的竖线（诊断片段 `` `  |` `` 曾撑破表格列，导致后续列错位）。AGENTS 与 README/README.en 文档表同步。无代码改动
+**Documentation cleanup wrap-up**: `versions.md` moved back into `docs/` (publicly released, readers need the changelog); fixed the unescaped pipe in the 0.0.57 entry (the diagnostic fragment `` `  |` `` used to break the table column, shifting the following columns). AGENTS and the README/README.en document tables synced. No code changes
 
-**测试**：384/384（87 成功 + 281 报错 + 16 check）
+**Tests**: 384/384 (87 pass + 281 must-fail + 16 check)
 
 ### 0.0.77 — 2026-11-12
 
-**文档边界收紧**：`docs/` 只保留 `SPEC.md`（对外规范）；代码地图、后端说明、对象模型计划、跨平台方案、版本记录、可见性设计、std.string 布局全部移入 `agents/`（gitignore）。README 与 SPEC 不再链接未发布文件。无代码改动
+**Documentation boundary tightened**: `docs/` keeps only `SPEC.md` (the public specification); the code map, backend notes, object model plan, cross-platform plan, version history, visibility design and std.string layout all moved into `agents/` (gitignored). README and SPEC no longer link to unpublished files. No code changes
 
-**测试**：384/384
+**Tests**: 384/384
 
 ### 0.0.76 — 2026-11-12
 
-**文档目录整理（文档）**：`docs/` 定为对外文档目录，`SPEC.md` 移入 `docs/SPEC.md`；新增 `agents/`（**gitignore，不入库**）存放本地 AI 协作产物——`design-backlog.md`、`design-review.md`、`TODO.md`。同步更新 README / README.en / AGENTS / SECURITY 与文档间相对链接（含 SPEC 内的 `examples/`、`visibility-design` 路径），README 版本号刷新至 0.0.75。`docs/design-review.md` 不再对外发布。无代码改动
+**Documentation directory cleanup (docs)**: `docs/` is designated the public documentation directory and `SPEC.md` moved to `docs/SPEC.md`; added `agents/` (**gitignored, not committed**) to hold local AI collaboration artifacts — `design-backlog.md`, `design-review.md`, `TODO.md`. README / README.en / AGENTS / SECURITY and the relative links between documents updated in sync (including the `examples/` and `visibility-design` paths inside SPEC), and the README version number refreshed to 0.0.75. `docs/design-review.md` is no longer publicly released. No code changes
 
-**测试**：384/384（87 成功 + 281 报错 + 16 check）
+**Tests**: 384/384 (87 pass + 281 must-fail + 16 check)
 
 ### 0.0.75 — 2026-11-12
 
-**明确不做「值类型作接口值」（文档决策）**：经评估，无借用检查时值类型→接口值必然装箱，成本≈`new` 一个 class，且丧失显式生命周期；运行时多态由 `class` 覆盖，异构值集合用和类型。关闭 backlog U33 S3/S5 与 U34 M5b；SPEC 新增 3.15.8，3.15.7 与表 110 改为「明确不做」并写明理由与「借用检查落地后可重评」的条件。无代码改动
+**Explicitly dropping "value type as interface value" (documentation decision)**: after evaluation, without borrow checking a value type → interface value is necessarily boxed, costing roughly a `new` of a class and losing the explicit lifetime; runtime polymorphism is covered by `class`, and heterogeneous value collections use sum types. Closed backlog U33 S3/S5 and U34 M5b; SPEC adds 3.15.8, while 3.15.7 and table 110 changed to "explicitly not doing" with the rationale and the condition "can be re-evaluated once borrow checking lands". No code changes
 
-**测试**：384/384（87 成功 + 281 报错 + 16 check）
+**Tests**: 384/384 (87 pass + 281 must-fail + 16 check)
 
 ### 0.0.74 — 2026-11-12
 
-**U33 S1+S2：`struct S : I` 静态满足**：`:` 后只能列接口（class/struct 报错）；接口方法（含继承链与默认方法）必须显式实现并写 `override`，缺失/漏 `override` 各有明确诊断。`struct` 方法支持前置 `override`（此前只有 `class` 支持），`MethodSig::is_override` 如实传递。静态满足不产生值类型、不生成 vtable，codegen 零改动。新增 `struct_iface` 端到端 + 2 个报错用例
+**U33 S1+S2: `struct S : I` static satisfaction**: only interfaces may be listed after `:` (class/struct is an error); interface methods (including the inheritance chain and default methods) must be implemented explicitly with `override`, and a missing implementation or a missing `override` each have a dedicated diagnostic. `struct` methods support a leading `override` (previously only `class` did), and `MethodSig::is_override` is propagated faithfully. Static satisfaction produces no value type and no vtable, with zero codegen changes. Added the `struct_iface` end-to-end case + 2 error cases
 
-**测试**：384/384（87 成功 + 281 报错 + 16 check）
+**Tests**: 384/384 (87 pass + 281 must-fail + 16 check)
 
 ### 0.0.73 — 2026-11-12
 
-**SPEC 泛型章节（文档）**：新增 **3.15 泛型**（单态化策略、声明/使用语法、实例化规则、约束的类型集合 + 成员集模型、`&`/`|` 对偶、结构化满足与精确匹配、`Self`、当前限制）；同步更新 0 速览、2.3（`Self` 上下文关键字）、3.10（泛型接口只作约束）、7（函数支持泛型）、10（移出非目标）、12 表 95/110/111、14 实现路线。文档与 0.0.64–0.0.72 的实现对齐
+**SPEC generics chapter (docs)**: added **3.15 Generics** (monomorphization strategy, declaration/use syntax, instantiation rules, the constraint type set + member set model, `&`/`|` duality, structural satisfaction and exact matching, `Self`, current limitations); updated section 0 at a glance, 2.3 (`Self` contextual keyword), 3.10 (generic interfaces as constraints only), 7 (functions support generics), 10 (moved out of the non-goals), 12 tables 95/110/111, 14 implementation roadmap. Docs aligned with the implementation in 0.0.64–0.0.72
 
-**测试**：381/381（86 成功 + 279 报错 + 16 check）
+**Tests**: 381/381 (86 pass + 279 must-fail + 16 check)
 
 ### 0.0.72 — 2026-11-12
 
-**泛型接口作约束（M5a）**：`instantiate_generic` 支持 `InterfaceDecl`（`make_interface`、成员签名含 `is_operator/ret_self/params_self`、`Self` 解析、默认方法体检查），`T: ISeq<int>` 通过结构化形状匹配生效；接口实例不产生值类型/itable。`interface ISeq<T>` + `sum_all<T: ISeq<int>>(T)` 端到端可用。限制：泛型接口继承与「接口作值类型」仍待 M5b。新增 `generic_iface` 用例
+**Generic interfaces as constraints (M5a)**: `instantiate_generic` supports `InterfaceDecl` (`make_interface`, member signatures including `is_operator/ret_self/params_self`, `Self` resolution, default method body checking), and `T: ISeq<int>` takes effect via structural shape matching; interface instances produce no value type/itable. `interface ISeq<T>` + `sum_all<T: ISeq<int>>(T)` works end to end. Limitation: generic interface inheritance and "interface as value type" still pending M5b. Added the `generic_iface` case
 
-**测试**：381/381（86 成功 + 279 报错 + 16 check）
+**Tests**: 381/381 (86 pass + 279 must-fail + 16 check)
 
 ### 0.0.71 — 2026-11-12
 
-**泛型继承（M3f）**：`class Derived<T> : Base<T>`。`bases` 旁新增 `base_specs`（`vector<TypeSpecPtr>`，与字符串列表平行），parser 同时填充、克隆/替换时一并处理；`instantiate_generic` 的 class 分支支持单个基类（实例化后设 `ty->base` 并扁平化字段），构造器 `super(...)`、方法继承、vtable/desc 全部沿用普通 class 路径。仍不支持泛型接口与 `const` 成员。新增 `generic_inherit` 用例
+**Generic inheritance (M3f)**: `class Derived<T> : Base<T>`. Added `base_specs` (`vector<TypeSpecPtr>`, parallel to the string list) next to `bases`, filled in by the parser at the same time and handled together on clone/replace; the class branch of `instantiate_generic` supports a single base class (after instantiation it sets `ty->base` and flattens fields), and constructor `super(...)`, method inheritance and vtable/desc all follow the ordinary class path. Generic interfaces and `const` members are still unsupported. Added the `generic_inherit` case
 
-**测试**：380/380（85 成功 + 279 报错 + 16 check）
+**Tests**: 380/380 (85 pass + 279 must-fail + 16 check)
 
 ### 0.0.70 — 2026-11-12
 
-**泛型 M3e：泛型 class 实例化**：`instantiate_generic` 统一支持 struct/class（字段按 `field_visibility`、方法/构造器/析构器签名、`is_abstract`、vtable/desc 沿用普通 class 路径）；`check_class` 接入（上下文保存/恢复）。`class Box<T>`、`Counter<T>`（含默认构造器）端到端可用。限制：泛型 class 暂不支持基类、接口与 `const` 成员。新增 `generic_class` 用例
+**Generics M3e: generic class instantiation**: `instantiate_generic` uniformly supports struct/class (fields per `field_visibility`, method/constructor/destructor signatures, `is_abstract`, vtable/desc following the ordinary class path); `check_class` wired in (context save/restore). `class Box<T>` and `Counter<T>` (with a default constructor) work end to end. Limitation: generic classes do not yet support base classes, interfaces or `const` members. Added the `generic_class` case
 
-**测试**：379/379（84 成功 + 279 报错 + 16 check）
+**Tests**: 379/379 (84 pass + 279 must-fail + 16 check)
 
 ### 0.0.69 — 2026-11-12
 
-**泛型构造器调用语法**：`Pair<int,long>(3, 9)` / `Vec2<int>(3, 4)`；`check_call` 的 `type_args` 分支先查泛型函数，否则按泛型 struct 值构造实例化（`instantiate_generic_named`），复用现有 `struct_ty` 构造检查。新增 `find_generic_template` 统一模板查找。`Pair<A,B>`、`Vec2<T>` 端到端可用。新增 `generic_ctor` 用例
+**Generic constructor call syntax**: `Pair<int,long>(3, 9)` / `Vec2<int>(3, 4)`; the `type_args` branch of `check_call` looks up generic functions first, otherwise instantiates a generic struct value construction (`instantiate_generic_named`) and reuses the existing `struct_ty` construction check. Added `find_generic_template` for unified template lookup. `Pair<A,B>` and `Vec2<T>` work end to end. Added the `generic_ctor` case
 
-**测试**：378/378（83 成功 + 279 报错 + 16 check）
+**Tests**: 378/378 (83 pass + 279 must-fail + 16 check)
 
 ### 0.0.68 — 2026-11-12
 
-**泛型 M3d：泛型 struct 的方法/构造器/析构器**：解除「仅字段」限制；实例化时解析方法/构造器签名、注册 `ty->methods`/`ty->ctors`、生成符号（`method_cname`/`ctor_cname`/`dtor_cname` 对 owner 做 `ident_safe`，`Vec<int>` → `Vec_int_`）、跑 `check_struct` 检查方法体（带检查上下文保存/恢复，支持嵌套实例化）。`Vec<T>` 的 `length()/at()/fill()`、`Wrap<T>::twice()` 端到端可用。限制：泛型 struct 仍不支持 `const` 成员与接口基类；构造器调用语法 `Pair<int,long>(...)` 待后续。新增 `generic_methods` 用例
+**Generics M3d: methods/constructors/destructors of generic structs**: lifted the "fields only" restriction; instantiation resolves method/constructor signatures, registers `ty->methods`/`ty->ctors`, generates symbols (`method_cname`/`ctor_cname`/`dtor_cname` run `ident_safe` on the owner, `Vec<int>` → `Vec_int_`), and runs `check_struct` to check method bodies (with checking-context save/restore, supporting nested instantiation). `Vec<T>`'s `length()/at()/fill()` and `Wrap<T>::twice()` work end to end. Limitations: generic structs still do not support `const` members or interface bases; the constructor call syntax `Pair<int,long>(...)` comes later. Added the `generic_methods` case
 
-**测试**：377/377（82 成功 + 279 报错 + 16 check）
+**Tests**: 377/377 (82 pass + 279 must-fail + 16 check)
 
 ### 0.0.67 — 2026-11-12
 
-**泛型 M3a+M3b：接口运算符成员 + 结构化约束**：接口允许 `T operator+(T a, T b);`（`MethodDecl::is_operator`）；`Self` 不再改写为接口名，改为 `TypeSpec::is_self` + `MethodSig::ret_self/params_self` 标记，sema 在接口签名解析时正确替换。**约束检查改为结构化**：`T: I` 按成员形状匹配，方法查方法表（含基类链/接口默认），运算符查内置或可见 unit 的 `operator`（精确签名，不做隐式转换）；`&` 全满足、`|` 任一。内置类型零成本满足（`int: IAddable` 因内置 `+`）。失败诊断给出缺失项。新增 `generic_bounds` 端到端、`generic_bound_missing` 报错用例
+**Generics M3a+M3b: interface operator members + structural constraints**: interfaces allow `T operator+(T a, T b);` (`MethodDecl::is_operator`); `Self` is no longer rewritten to the interface name but marked via `TypeSpec::is_self` + `MethodSig::ret_self/params_self`, which sema substitutes correctly when resolving interface signatures. **Constraint checking became structural**: `T: I` matches by member shape, methods look up the method table (including the base class chain / interface defaults), and operators look up built-in or visible-unit `operator`s (exact signature, no implicit conversion); `&` requires all, `|` requires any. Built-in types satisfy at zero cost (`int: IAddable` thanks to the built-in `+`). Failure diagnostics name the missing items. Added the `generic_bounds` end-to-end and `generic_bound_missing` error cases
 
-**测试**：376/376（81 成功 + 279 报错 + 16 check）
+**Tests**: 376/376 (81 pass + 279 must-fail + 16 check)
 
 ### 0.0.66 — 2026-11-12
 
-**泛型 M2d：自由函数单态化**：调用点 `f<int>(x)`（`parse_postfix_tail` 中 `Name<` 试探解析，失败回退比较表达式）；`Call::type_args`；`instantiate_func`（实例缓存、签名解析、检查上下文保存/恢复以支持嵌套调用、`func_cname` 符号安全化）；`mangle.cpp` 对实例名做 `ident_safe`（`Box<int>` → `Box_int_`）。`T max<T>(T,T)`、`T twice<T>(T)` 端到端可用。新增 `generic_func` 端到端用例、`generic_arity` 报错用例
+**Generics M2d: free function monomorphization**: call site `f<int>(x)` (`Name<` tentative parse in `parse_postfix_tail`, falling back to a comparison expression on failure); `Call::type_args`; `instantiate_func` (instance cache, signature resolution, checking-context save/restore to support nested calls, `func_cname` symbol sanitization); `mangle.cpp` applies `ident_safe` to instance names (`Box<int>` → `Box_int_`). `T max<T>(T,T)` and `T twice<T>(T)` work end to end. Added the `generic_func` end-to-end case and the `generic_arity` error case
 
-**测试**：374/374（80 成功 + 278 报错 + 16 check）
+**Tests**: 374/374 (80 pass + 278 must-fail + 16 check)
 
 ### 0.0.65 — 2026-11-12
 
-**泛型 M2：struct 单态化端到端**：AST 深拷贝（`src/ast_clone.cpp`）+ 类型参数替换（`src/ast_subst.cpp`）+ 实例化器（`src/sema_generic.cpp`，惰性实例化 + 缓存 + 递归防护）。`struct Box<T> { T v; }`、`Pair<K,V>`、`Box<Box<int>>` 均可实例化并生成可执行文件；产物是普通 struct，`same_type` / mangle / 布局 / codegen 零改动。当前限制：泛型 struct 仅支持字段（方法/构造/接口/`align(N)` 待 M3）；自由函数泛型待 M2d。新增端到端用例 `generic_struct`，删除 M1 的「未实现」报错用例
+**Generics M2: struct monomorphization end to end**: AST deep clone (`src/ast_clone.cpp`) + type parameter substitution (`src/ast_subst.cpp`) + instantiator (`src/sema_generic.cpp`, lazy instantiation + cache + recursion guard). `struct Box<T> { T v; }`, `Pair<K,V>` and `Box<Box<int>>` all instantiate and produce an executable; the output is an ordinary struct, so `same_type` / mangle / layout / codegen are unchanged. Current limitations: generic structs support fields only (methods/construction/interfaces/`align(N)` pending M3); free function generics pending M2d. Added the `generic_struct` end-to-end case and removed the M1 "not implemented" error case
 
-**测试**：372/372（79 成功 + 277 报错 + 16 check）
+**Tests**: 372/372 (79 pass + 277 must-fail + 16 check)
 
 ### 0.0.64 — 2026-11-12
 
-**泛型（M1：语法层）**：`<T>` 类型参数声明（自由函数 / struct / class / interface 均可）；`Vec<int>` 类型实参与 `Vec<Vec<int>>` 的 `>>` 拆分；约束 `T: I` / `T: A & B` / `T: int | long`（混用报错，提示拆分参数）；`Self` 在接口体内改写为接口名占位；泛型基类 `: ISeq<T>` 占位；`struct S : I` 语法前置（backlog U33）。模板在 sema 收集阶段移入 `Unit::templates`，不检查/不发射；使用处报「实例化未实现」。实例化架构（克隆 AST + 重命名，codegen 零改动）与全部决策见 backlog U34
+**Generics (M1: syntax layer)**: `<T>` type parameter declarations (on free functions / structs / classes / interfaces); the type argument `Vec<int>` and the `>>` splitting of `Vec<Vec<int>>`; constraints `T: I` / `T: A & B` / `T: int | long` (mixing them errors, suggesting separate parameters); `Self` rewritten to an interface-name placeholder inside interface bodies; generic base classes `: ISeq<T>` as a placeholder; `struct S : I` syntax in place (backlog U33). Templates are moved into `Unit::templates` during the sema collection phase, neither checked nor emitted; use sites report "instantiation not implemented". The instantiation architecture (clone the AST + rename, zero codegen changes) and all decisions are in backlog U34
 
-**测试**：372/372（78 成功 + 278 报错 + 16 check）
+**Tests**: 372/372 (78 pass + 278 must-fail + 16 check)
 
 ### 0.0.63 — 2026-11-11
 
-**借用返回 + 借用接收者（ref 语义补全）**：①**`ref T` 返回类型**：`ref T f()` / `ref const T f()`（自由函数、struct/class 方法、接口方法、运算符）；借用来源必须是 `ref` 参数、`this`、全局/静态，或路径经过指针/切片的堆存储——借局部、借按值参数（含内联字段）、借临时值均编译错误；结果不可存储（`ref T r = f();` 报错），只能当场写穿（`f() = v`、`f() += 1`、`f().field = v`）、作 `ref` 实参或 `for ref` 绑定；`ref const` 位置不能以可变 `ref` 返回。②**`ref` 参数放宽到标量**：基本类型/枚举/指针也可借用（`void inc(ref int x)`），标量借用赋值即写穿；struct 借用仍按「不可重绑定」要求写字段。③**借用接收者**：运算符参数支持 `ref`（`ref int operator[](ref C c, usize i)`），修掉「值接收者写进拷贝、静默丢写」；方法借用返回用隐式 `this`（`ref int at(usize i) { return v[i]; }`）。④**`[]` 返回借用**：`c[i]` 直接是可写左值（`=`/`+=`/取用/传 `ref`/`for ref` 全通），`[]=` 不再必需。⑤**`for ref` 支持用户类型**：索引形态要求 `[]` 返回 `ref T`。⑥符号名编码参数借用位（`f(T)` vs `f(ref T)` 不再撞名）；`ref` 出现在变量/字段/元素位置给出「绑定模式不是类型」诊断。新增用例：ref_return（1 成功）、ref_return_local / ref_return_param_copy / ref_return_const / ref_return_assign_const / ref_return_extern / ref_return_void / ref_var_decl / ref_loop_const / ref_const_to_mutable（9 报错）；ref_param_class / forin_ref 期望文本更新
+**Borrowed returns + borrowed receivers (ref semantics completed)**: ①**`ref T` return type**: `ref T f()` / `ref const T f()` (free functions, struct/class methods, interface methods, operators); the borrow source must be a `ref` parameter, `this`, a global/static, or a path through pointer/slice heap storage — borrowing a local, borrowing a by-value parameter (including inline fields) and borrowing a temporary are all compile errors; the result cannot be stored (`ref T r = f();` is an error) and can only be written through in place (`f() = v`, `f() += 1`, `f().field = v`), passed as a `ref` argument, or bound by `for ref`; a `ref const` location cannot be returned as a mutable `ref`. ②**`ref` parameters relaxed to scalars**: primitive types/enums/pointers can be borrowed too (`void inc(ref int x)`), and assigning to a scalar borrow writes through; struct borrows still require writing fields under "no rebinding". ③**Borrowed receivers**: operator parameters support `ref` (`ref int operator[](ref C c, usize i)`), fixing "the value receiver writes into the copy and silently drops the write"; method borrowed returns use the implicit `this` (`ref int at(usize i) { return v[i]; }`). ④**`[]` returns a borrow**: `c[i]` is directly a writable lvalue (`=`/`+=`/taking a value/passing `ref`/`for ref` all work), so `[]=` is no longer required. ⑤**`for ref` supports user types**: the index form requires `[]` to return `ref T`. ⑥Symbol names encode the parameter borrow bit (`f(T)` vs `f(ref T)` no longer collide); `ref` in variable/field/element position gives a "binding mode is not a type" diagnostic. New cases: ref_return (1 pass), ref_return_local / ref_return_param_copy / ref_return_const / ref_return_assign_const / ref_return_extern / ref_return_void / ref_var_decl / ref_loop_const / ref_const_to_mutable (9 errors); ref_param_class / forin_ref expected text updated
 
-**测试**：370/370（78 成功 + 277 报错 + 15 check）；冷编译零 warning
+**Tests**: 370/370 (78 pass + 277 must-fail + 15 check); cold build with zero warnings
 
 ### 0.0.62 — 2026-11-11
 
-**语言特性批（TODO 全部执行）**：①**类型别名** `type A = B;`（上下文关键字，声明起始位置 `type Ident =` 才解析；每条一个别名；透明别名、支持别名套别名/前向引用/循环检测；unit 级 + `public` 跨 unit；`TypeAliasDecl` + `UnitInfo::aliases` + 惰性解析）。②**`ref` 参数**（仅自由函数）：`ref T p` 可变借用、`ref const T p` 只读借用；只借纯值 struct（无 RC 字段/无析构器/非 union）；实参须可寻址左值、不收临时值、`const` 实参不能绑可变借用；不可重绑定/存储/返回；C 侧传指针（参数槽存指针、调用点传地址）；方法/构造器/`extern` 明确报错。③**range 扩展**：`..=` 含上界、`for i in a..b step n`（非零编译期常量；负 step 倒序；`a..b` 不自动反序）；索引形态的 `i` 改为迭代计数；switch 分支区间支持 `..=`、`step` 报错。④**花括号区间填充**：`int[10] a = {1, 2, 5..9, 10};`（端点须编译期常量、仅定长整数数组、展开后参与补零/超长检查）。⑤**位域明确拒绝**：struct/union/packed 里的 `int x : 3;` 给出明确诊断；U16 关闭。⑥**文档**：`switch` 扩展定案不做（6.6）、`ref` 是绑定模式不引入 `T&`、`string` 归为库内容（新增 `docs/lib-std-string.md`，SPEC 只保留语言可见契约）、class 机制收尾（3.8 标题、表 74/87 与 94 统一、U9/U10/U23 关闭）。新增用例：type_alias（1 成功 + 4 报错 + 1 check）、ref_param（1 成功 + 8 报错）、range_ext / switch_incl（2 成功）、bitfield（3 报错）、init_range（4 报错）
+**Language feature batch (all TODOs executed)**: ①**Type aliases** `type A = B;` (contextual keyword, parsed only when a declaration starts with `type Ident =`; one alias per declaration; transparent aliases, supporting alias-of-alias/forward references/cycle detection; unit-level + `public` across units; `TypeAliasDecl` + `UnitInfo::aliases` + lazy resolution). ②**`ref` parameters** (free functions only): `ref T p` mutable borrow, `ref const T p` read-only borrow; borrows pure value structs only (no RC fields/no destructor/not a union); the argument must be an addressable lvalue, temporaries are not accepted, and a `const` argument cannot bind a mutable borrow; no rebinding/storing/returning; on the C side a pointer is passed (the parameter slot holds a pointer, the call site passes the address); methods/constructors/`extern` explicitly error. ③**range extensions**: `..=` with an inclusive upper bound, `for i in a..b step n` (a non-zero compile-time constant; a negative step counts down; `a..b` does not reverse automatically); `i` in the index form becomes the iteration count; switch branch ranges support `..=` and `step` errors. ④**Brace range fill**: `int[10] a = {1, 2, 5..9, 10};` (endpoints must be compile-time constants, fixed-size integer arrays only, participating in zero-fill/over-length checks after expansion). ⑤**Bitfields explicitly rejected**: `int x : 3;` in struct/union/packed gives a dedicated diagnostic; U16 closed. ⑥**Docs**: `switch` extensions decided against (6.6), `ref` is a binding mode so no `T&` is introduced, `string` classified as library content (new `docs/lib-std-string.md`, SPEC keeps only the language-visible contract), class mechanics wrapped up (3.8 heading, tables 74/87 unified with 94, U9/U10/U23 closed). New cases: type_alias (1 pass + 4 errors + 1 check), ref_param (1 pass + 8 errors), range_ext / switch_incl (2 pass), bitfield (3 errors), init_range (4 errors)
 
-**测试**：360/360（77 成功 + 268 报错 + 15 check）；冷编译零 warning
+**Tests**: 360/360 (77 pass + 268 must-fail + 15 check); cold build with zero warnings
 
 ### 0.0.61 — 2026-11-11
 
-**`const` 语义收敛（U7 关闭）**：明确**不做** `const` class 视图与 `const` 方法；`const` 只保留两种含义——命名类型上的**只读绑定标记**（局部 / 参数：不可重绑、不可经它直写字段；class 句柄复制出去仍可写、经它仍可调用修改方法），以及指针 / 切片的 **pointee 只读**。**修正参数位置的 `const` 被静默丢弃**（此前 `void f(const Cat c)` 内可重绑定、可直接写字段；现与局部 `const` 一致），参数签名不含 `const`、不影响重载。SPEC 3.7 / 3.8 / 3.11 / 表 98 与 backlog U7 同步；新增 4 个报错用例 + 1 个 check 用例
+**`const` semantics tightened (U7 closed)**: explicitly **not doing** `const` class views and `const` methods; `const` keeps only two meanings — a **read-only binding marker** on named types (locals / parameters: cannot rebind, cannot write fields directly through it; a class handle copied out is still writable, and mutating methods can still be called through it), and **pointee read-only** for pointers / slices. **Fixed `const` being silently dropped at parameter positions** (previously inside `void f(const Cat c)` rebinding and direct field writes were allowed; now consistent with a local `const`), and parameter signatures do not contain `const`, so overloading is unaffected. SPEC 3.7 / 3.8 / 3.11 / table 98 and backlog U7 synced; added 4 error cases + 1 check case
 
-**测试**：333/333（73 成功 + 246 报错 + 14 check）
+**Tests**: 333/333 (73 pass + 246 must-fail + 14 check)
 
 ### 0.0.60 — 2026-11-11
 
-**源码拆分（纯物理搬移，不改逻辑）**：单文件全部 ≤1000 行。`parser.cpp`(1896) → `parser_impl.hpp` + `parser_unit/stmt/expr.cpp`；`codegen_llvm.cpp`(3912) → `codegen_impl.hpp` + `codegen_support/runtime/expr/expr2/stmt/class/func.cpp`；`sema.cpp`(4953) → `sema_impl.hpp` + `sema_decl/types/class1/class2/const/expr/call.cpp`。做法：内部类声明进 `*_impl.hpp`（`namespace muc_detail`）、成员函数按功能分段定义到各 TU、对外接口（`analyze` / `llvm_emit_*` / `parse_*`）与 `main.cpp` 完全不变；新增 `docs/code-map.md`（概念→文件:函数索引）与文件头索引；`AGENTS.md` 增加「代码结构」约定（≤1000 行/TU、辅助函数放置、默认参数只写声明）。
+**Source split (purely physical moves, no logic changes)**: every file ≤1000 lines. `parser.cpp`(1896) → `parser_impl.hpp` + `parser_unit/stmt/expr.cpp`; `codegen_llvm.cpp`(3912) → `codegen_impl.hpp` + `codegen_support/runtime/expr/expr2/stmt/class/func.cpp`; `sema.cpp`(4953) → `sema_impl.hpp` + `sema_decl/types/class1/class2/const/expr/call.cpp`. Approach: internal class declarations go into `*_impl.hpp` (`namespace muc_detail`), member functions are defined per TU by feature, and the public interfaces (`analyze` / `llvm_emit_*` / `parse_*`) and `main.cpp` stay completely unchanged; added `docs/code-map.md` (concept→file:function index) and file-header indexes; `AGENTS.md` gains a "code structure" convention (≤1000 lines/TU, helper function placement, default arguments only in declarations).
 
-**测试**：328/328（73 成功 + 242 报错 + 13 check）；冷编译零 warning
+**Tests**: 328/328 (73 pass + 242 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.59 — 2026-11-11
 
-**类型级编译期常量 + 常量表达式求值（U28/U29 关闭）**：`struct`/`class` 体内 `const T NAME = <const-expr>;` 是**类型级编译期常量**——必须当场初始化、必须是常量表达式、**不占实例存储**（不进字段表，不影响 `sizeof`/`alignof`/布局/ABI/构造/析构/RC），用 `Type.NAME` 访问、声明类型的方法体内可裸写、沿基类链查找；`obj.NAME` / `this.NAME` / 赋值 / 取地址 / `ref` 目标一律报错；可见性随 `public:`/`private:`（class 默认 private），重名与字段/方法/构造器冲突报错，union/interface 不允许；类型限标量（bool/整型/浮点/usize/isize）与枚举。新增**编译期常量求值器**（惰性 + 记忆化 + 循环检测，支持前向引用）：字面量、一元 `- + not !`、算术/位/移位/比较/`and`/`or`、`as`、引用 unit 级 `const` / 枚举成员 / 类型级常量、`sizeof(T)`/`alignof(T)`；除零与循环依赖报错；同时接管 unit 级 `const` 初始化（`const int B = A + 1;`、`const int C = sizeof(int) as int;`），字符串/聚合常量保持旧路径。**实例字段不再接受 `const`**（`const int x;` → ``const member `x` must be initialized``），修掉此前「`&s.x` 意外是 `const int*`、`s.x = 2` 却合法」的半生效状态；不提供只读字段与 `readonly` 关键字。新增 const_member 成功用例与 23 个报错用例；**审计后修复**：常量求值的无符号 `>>` 改为与运行期一致（按位宽算术右移，`uint 0x80000000 >> 4` = `0xF8000000`）、`use` 同名常量不再静默取第一个（报歧义）、`char` 字面量 ≥128 在常量上下文按位模式接受、`evaluating` 标志改 RAII（异常路径不再误报 circular）、常量求值深度上限 512、诊断不再输出 `const int` 这类带限定符的类型名、**非 const 全局初始化器也走常量求值器**（`int g = 1 + 2;` 以前后端失败，现正常）、比较与浮点算术按 `usual_arith` 公共类型舍入（与运行期一致）。再补 const_global_init 成功用例与 6 个报错用例
+**Type-level compile-time constants + constant expression evaluation (U28/U29 closed)**: `const T NAME = <const-expr>;` inside a `struct`/`class` body is a **type-level compile-time constant** — it must be initialized on the spot, must be a constant expression, and **occupies no instance storage** (not in the field table, does not affect `sizeof`/`alignof`/layout/ABI/construction/destruction/RC); it is accessed as `Type.NAME`, can be written bare inside methods of the declaring type, and is looked up along the base class chain; `obj.NAME` / `this.NAME` / assignment / taking the address / `ref` targets all error; visibility follows `public:`/`private:` (class defaults to private), duplicate names and conflicts with fields/methods/constructors error, and union/interface do not allow it; types are limited to scalars (bool/integer/float/usize/isize) and enums. Added a **compile-time constant evaluator** (lazy + memoized + cycle detection, supporting forward references): literals, unary `- + not !`, arithmetic/bit/shift/comparison/`and`/`or`, `as`, references to unit-level `const` / enum members / type-level constants, `sizeof(T)`/`alignof(T)`; division by zero and circular dependencies error; it also takes over unit-level `const` initialization (`const int B = A + 1;`, `const int C = sizeof(int) as int;`), while string/aggregate constants keep the old path. **Instance fields no longer accept `const`** (`const int x;` → ``const member `x` must be initialized``), fixing the previous half-working state where "`&s.x` was unexpectedly `const int*`, yet `s.x = 2` was legal"; no read-only fields and no `readonly` keyword are provided. Added the const_member success case and 23 error cases; **post-audit fixes**: unsigned `>>` in constant evaluation now matches runtime (arithmetic shift by bit width, `uint 0x80000000 >> 4` = `0xF8000000`), a `use`d same-named constant no longer silently takes the first (reports ambiguity), `char` literals ≥128 are accepted by bit pattern in constant contexts, the `evaluating` flag became RAII (exception paths no longer falsely report circular), constant evaluation depth is capped at 512, diagnostics no longer print qualified type names such as `const int`, and **non-const global initializers also go through the constant evaluator** (`int g = 1 + 2;` used to fail in the backend, now works); comparisons and floating-point arithmetic round by the `usual_arith` common type (consistent with runtime). Added the const_global_init success case and 6 error cases
 
-**测试**：328/328（73 成功 + 242 报错 + 13 check）；冷编译零 warning
+**Tests**: 328/328 (73 pass + 242 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.58 — 2026-11-11
 
-**`\u{...}` Unicode 转义 + 码点类型定案**：字符/字符串字面量支持 `\u{` + 1–6 位十六进制 + `}`（不支持 `\uXXXX` 四位写法），范围 `U+0000`–`U+10FFFF`，拒绝代理区 `U+D800`–`U+DFFF` 与越界值；写在字符串里按 UTF-8 编码成 1–4 字节（`\u{0}` 与 `\0` 一样报错），写在字符字面量里限 `≤ U+FF`（超出提示改用字符串字面量）；Unicode **码点类型定为 `int`**（i32），不引入 `rune`/`unichar`/`char32` 别名；`s.chars()` 等码点视图留到字符串类实现时再定（backlog U3 暂缓，字符串仍按字节：`s[i]`/`for c in s`/`len(s)` 不变）。新增 unicode_escape 成功用例与 8 个报错用例（代理区/越界/非 hex/缺花括号/空 hex/超 6 位/字符超单字节/NUL）
+**`\u{...}` Unicode escapes + codepoint type decided**: character/string literals support `\u{` + 1–6 hex digits + `}` (the four-digit `\uXXXX` form is not supported), range `U+0000`–`U+10FFFF`, rejecting the surrogate range `U+D800`–`U+DFFF` and out-of-range values; inside a string it is UTF-8 encoded into 1–4 bytes (`\u{0}` errors just like `\0`), inside a character literal it is limited to `≤ U+FF` (beyond that suggests a string literal instead); the Unicode **codepoint type is fixed as `int`** (i32), with no `rune`/`unichar`/`char32` alias introduced; codepoint views such as `s.chars()` are left until the string class is implemented (backlog U3 deferred, strings stay byte-based: `s[i]`/`for c in s`/`len(s)` unchanged). Added the unicode_escape success case and 8 error cases (surrogate/out-of-range/non-hex/missing brace/empty hex/more than 6 digits/character beyond one byte/NUL)
 
-**测试**：298/298（71 成功 + 214 报错 + 13 check）；冷编译零 warning
+**Tests**: 298/298 (71 pass + 214 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.57 — 2026-11-11
 
-**诊断与调试体验**：①诊断附带源码片段与插入符（`  |` + 行号 + `^`；tab 展开 4 列、CJK 按 2 列计算显示宽度）；②**多错误报告**——同一 unit 的全局/函数/class/struct/interface 检查逐项收集错误后统一输出（出错后重置作用域、循环深度与 auto 推断状态），单次上限 20 条；③`-g` / `--debug` 生成 **DWARF**（编译单元、函数 DISubprogram、语句级行号、局部变量与结构体成员），gdb 可断点、单步、`info locals`。新增 multi_errors（3 条错误一次报出）与 dbgvars 用例
+**Diagnostics and debugging experience**: ①diagnostics carry a source snippet and a caret (`  |` + line number + `^`; tabs expanded to 4 columns, CJK counted as 2 columns for display width); ②**multiple error reporting** — global/function/class/struct/interface checks of the same unit collect errors item by item and print them together (resetting scope, loop depth and auto inference state after an error), capped at 20 per run; ③`-g` / `--debug` generates **DWARF** (compile unit, function DISubprogram, statement-level line numbers, locals and struct members), so gdb can break, step and run `info locals`. Added the multi_errors (3 errors reported at once) and dbgvars cases
 
-**测试**：289/289（70 成功 + 206 报错 + 13 check）；冷编译零 warning
+**Tests**: 289/289 (70 pass + 206 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.56 — 2026-11-11
 
-**带参数的 `main`**：支持 `int main(int argc, char** argv)`（C 启动代码传入，`argv` 以 null 结尾、`argv[argc] == null`）；参数类型必须精确为 `(int, char**)`，1 个参数 / `char*` / 非 `int` 返回均编译错误；`char**` 而非 `string[]`（argv 不参与 RC）。新增 main_args 成功用例与 main_bad_argv 报错用例，main_params 期望值更新；SPEC 7、§12 #15 同步
+**`main` with parameters**: supports `int main(int argc, char** argv)` (passed in by the C startup code, `argv` is null-terminated and `argv[argc] == null`); parameter types must be exactly `(int, char**)`, and 1 parameter / `char*` / a non-`int` return are all compile errors; `char**` rather than `string[]` (argv does not participate in RC). Added the main_args success case and the main_bad_argv error case, and updated the main_params expectation; SPEC 7 and §12 #15 synced
 
-**测试**：287/287（69 成功 + 205 报错 + 13 check）；冷编译零 warning
+**Tests**: 287/287 (69 pass + 205 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.55 — 2026-11-11
 
-**C 可变参数调用（`extern` 的 `...`）+ `std.cstdio`**：`extern` 声明可带 `...`（必须最后、至少一个命名参数），实参按 C 默认提升（`float→double`、小于 `int` 的整型→`int`、枚举→底层整型），`string` 自动传底层 `const char*`；含 RC 的实参编译错误；Mulan 内不支持自定义 varargs。codegen 用 `FunctionType::isVarArg` + `promoteVararg()`，ABI 由 LLVM 处理。另：`extern` 声明现在隐式 `public`（此前跨 unit 调用会被判未公开）；常量初值支持一元 `+`/`-`（`const int EOF = -1;`）；新增 `libs/std/cstdio.mu`（stdio 函数与常量绑定）。新增 varargs / cstdio 成功用例与 5 个报错用例；SPEC 新增 7.1，backlog U31
+**C variadic calls (`...` on `extern`) + `std.cstdio`**: `extern` declarations may carry `...` (must be last, with at least one named parameter), arguments follow C default promotions (`float→double`, integer types smaller than `int`→`int`, enum→underlying integer type), and `string` automatically passes the underlying `const char*`; arguments containing RC are compile errors; custom varargs are not supported inside Mulan. Codegen uses `FunctionType::isVarArg` + `promoteVararg()`, with the ABI handled by LLVM. Also: `extern` declarations are now implicitly `public` (previously a cross-unit call was diagnosed as not public); constant initializers support unary `+`/`-` (`const int EOF = -1;`); added `libs/std/cstdio.mu` (stdio function and constant bindings). Added the varargs / cstdio success cases and 5 error cases; SPEC adds 7.1, backlog U31
 
-**测试**：285/285（68 成功 + 204 报错 + 13 check）；冷编译零 warning
+**Tests**: 285/285 (68 pass + 204 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.54 — 2026-11-10
 
-**联合体 `union`**：POD 值类型，所有成员偏移 0，`sizeof = max(成员)` 向上对齐到最大成员对齐；支持 `packed` / `align(N)`（与 struct 同规则）；成员限于 POD——禁止 `string`、动态数组 `T[]`、class/interface 引用、含引用字段或含用户析构器的 struct；无方法/构造器/析构器/继承，成员恒 public；初始化只有 `{}` 零初始化与具名 `{ member = value }`（恰好一个成员），不提供位置初始化与 `T(...)` 构造；读非活跃成员按 C 语义字节重解释。LLVM 侧用「对齐载体 + 尾部填充」表示、成员访问统一走偏移 0。新增 union_basic 成功用例与 11 个报错用例；SPEC 新增 3.4.1，backlog U14 关闭
+**Unions `union`**: a POD value type, all members at offset 0, `sizeof = max(member)` rounded up to the largest member alignment; supports `packed` / `align(N)` (same rules as struct); members are limited to POD — `string`, dynamic arrays `T[]`, class/interface references, and structs with reference fields or a user destructor are forbidden; no methods/constructors/destructors/inheritance, members are always public; initialization supports only `{}` zero initialization and named `{ member = value }` (exactly one member), with no positional initialization and no `T(...)` construction; reading an inactive member reinterprets the bytes per C semantics. On the LLVM side it is represented as "alignment carrier + tail padding", and member access uniformly goes through offset 0. Added the union_basic success case and 11 error cases; SPEC adds 3.4.1, backlog U14 closed
 
-**测试**：278/278（66 成功 + 199 报错 + 13 check）；冷编译零 warning
+**Tests**: 278/278 (66 pass + 199 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.53 — 2026-11-10
 
-**非法字符提示改用反引号**：`quote_char()` 输出由 `'x'` 改为 `` `x` ``，与其它诊断的代码片段风格统一；反斜杠 / 反引号本身 / 控制字符分别输出 `` `\` ``、`` `\`` ``、`` `\x0b` ``。新增 `invalid_char` 报错用例（此前该诊断无覆盖）
+**Invalid character hints switched to backticks**: `quote_char()` output changed from `'x'` to `` `x` ``, matching the code-snippet style of the other diagnostics; backslash / backtick itself / control characters are printed as `` `\` ``, `` `\`` `` and `` `\x0b` `` respectively. Added the `invalid_char` error case (previously this diagnostic had no coverage)
 
-**测试**：266/266（65 成功 + 188 报错 + 13 check）；冷编译零 warning
+**Tests**: 266/266 (65 pass + 188 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.52 — 2026-11-10
 
-**诊断消息与 CLI 输出全部英文化**：`src/` 中 787 处字符串字面量（lexer/parser/sema/codegen/main/loader）改为英文，风格对齐 clang/rustc——小写开头、不加句号、`cannot`/`expected X but got Y`/`unknown`/`invalid` 等惯用表达，代码标识符仍用反引号；`--help` 重写为 `Usage:` / `build options:` / `Environment:` 三段式；代码注释保持中文不变。`tests/errors/*.err` 187 个期望文件同步为对应的英文消息片段（按原「第 N 条诊断」一一映射，`strings` 等成功用例不受影响）
+**All diagnostic messages and CLI output in English**: 787 string literals in `src/` (lexer/parser/sema/codegen/main/loader) changed to English, styled after clang/rustc — lowercase start, no trailing period, idiomatic `cannot`/`expected X but got Y`/`unknown`/`invalid`, with code identifiers still in backticks; `--help` rewritten into the three sections `Usage:` / `build options:` / `Environment:`; code comments stay in Chinese. The 187 expectation files `tests/errors/*.err` were synced to the corresponding English message fragments (mapped one-to-one by the original "Nth diagnostic"; success cases such as `strings` are unaffected)
 
-**测试**：265/265（65 成功 + 187 报错 + 13 check）；冷编译零 warning
+**Tests**: 265/265 (65 pass + 187 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.51 — 2026-11-10
 
-**修复 Windows 控制台中文乱码**：`muc` 启动时若控制台输出代码页不是 UTF-8（简体中文系统默认 936/GBK），临时切到 `CP_UTF8` 并用 `atexit` 在退出时恢复原值。源码中的中文消息一直是 UTF-8 字节，此前被 936 控制台按 GBK 解释而显示为乱码；输出重定向到文件或管道时字节不变（仍是 UTF-8）
+**Fixed garbled Chinese in the Windows console**: at startup, if the console output codepage is not UTF-8 (Simplified Chinese systems default to 936/GBK), `muc` temporarily switches to `CP_UTF8` and restores the original value on exit via `atexit`. The Chinese messages in the source have always been UTF-8 bytes; previously a 936 console interpreted them as GBK and displayed mojibake; when output is redirected to a file or pipe the bytes are unchanged (still UTF-8)
 
-**测试**：265/265（65 成功 + 187 报错 + 13 check）；冷编译零 warning
+**Tests**: 265/265 (65 pass + 187 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.50 — 2026-11-10
 
-**编译器改名 `mulanc` → `muc`**：可执行目标与 CMake `project()` 名改为 `muc`（产物 `build/muc.exe`），`--version` / `--help` 输出同步；环境变量 `MULANC_CMD`/`MULANC_LIBS`/`MULANC_BACKEND`/`MULANC_LLVM_TRACE` 改为 `MUC_CMD`/`MUC_LIBS`/`MUC_BACKEND`/`MUC_LLVM_TRACE`，编译宏 `MULANC_VERSION` → `MUC_VERSION`；测试运行器默认编译器改为 `muc`；README / SPEC / docs / AGENTS 中的命令示例同步（`versions.md` 历史条目保留旧名）。另：新增 `LICENSE`（Apache-2.0）与 `NOTICE`，语言定名 Mulan（木兰），17 个源文件加 SPDX 头；示例与测试中的 `"mu-lan"` 字面量改为 `"Mulan"`（strings 用例派生的长度 / 截断期望值同步改为 5 / `Mu`）
+**Compiler renamed `mulanc` → `muc`**: the executable target and the CMake `project()` name became `muc` (artifact `build/muc.exe`), with `--version` / `--help` output synced; environment variables `MULANC_CMD`/`MULANC_LIBS`/`MULANC_BACKEND`/`MULANC_LLVM_TRACE` became `MUC_CMD`/`MUC_LIBS`/`MUC_BACKEND`/`MUC_LLVM_TRACE`, and the compile macro `MULANC_VERSION` → `MUC_VERSION`; the test runner's default compiler became `muc`; command examples in README / SPEC / docs / AGENTS synced (historical entries in `versions.md` keep the old name). Also: added `LICENSE` (Apache-2.0) and `NOTICE`, named the language Mulan, and added SPDX headers to 17 source files; the `"mu-lan"` literal in examples and tests changed to `"Mulan"` (length/truncation expectations derived by the strings case updated to 5 / `Mu`)
 
-**测试**：265/265（65 成功 + 187 报错 + 13 check）
+**Tests**: 265/265 (65 pass + 187 must-fail + 13 check)
 
 ### 0.0.49 — 2026-11-10
 
-**U24：禁止含引用字段的 struct 取址**：`&s`、`&arr[i]`（元素为含引用 struct）编译报错——裸指针可绕过逐字段 retain/release；标量字段 `&s.x` 仍允许；含用户析构器的 struct 例外（本来就只能通过指针使用）。`dynarray` 用例的 `void keep(S* out, ...)` 改为按值返回；新增 3 个取址报错用例，`addr_rules` 覆盖允许形式（RC struct 的标量字段、析构器 struct 取址）
+**U24: forbid taking the address of structs with reference fields**: `&s` and `&arr[i]` (the element is a struct with references) are compile errors — a raw pointer could bypass per-field retain/release; scalar fields `&s.x` are still allowed; structs with a user destructor are exempt (they can only be used through pointers anyway). `void keep(S* out, ...)` in the `dynarray` case changed to return by value; added 3 address-taking error cases, and `addr_rules` covers the allowed forms (scalar fields of RC structs, address-of on destructor structs)
 
-**测试**：265/265（65 成功 + 187 报错 + 13 check）
+**Tests**: 265/265 (65 pass + 187 must-fail + 13 check)
 
 ### 0.0.48 — 2026-11-10
 
-**for-in 索引形态 + 用户类型迭代 + U21 落地 + 左值判定修复**：①`for i, x in seq` / `for i, ref x`（`i` 为 usize、循环内只读；内置序列的 `i` 是真实下标，区间是相对 `lo` 的偏移）；用户类型（struct/class）提供 `length() -> usize` + `operator[](C, usize) -> T`（按 usize 精确匹配）即走索引形态降级，`length()` 只求值一次，元素按拥有型局部变量逐轮 retain/release；多维数组 `T[m,n]`/`T[,]` 明确禁用 for-in（改用下标循环 + `len(a,k)`）；`for ref` 不支持用户类型；SPEC 新增 6.4.1–6.4.4 与 backlog U30。②**U21**：禁止对 class/interface 引用取地址（`&c`、`&i`）以及经引用访问的成员/元素取地址（`&c.x`、`&h.items[0]`、`&catArray[i]`、`&h.v[0]`），纯值 struct / 定长数组元素 / 指针变量取址不受影响；layout2 改用同源模型 struct 镜像验证 class 布局。③修复 `is_lvalue` 把与 unit 同名的局部/全局变量误判为非左值（`unit t; S t = ...; t.x = 1;` 报「赋值左侧必须是可赋值的对象」）。新增 forin_index / unit_name_var / addr_rules 成功用例与 12 个报错用例
+**for-in index form + user type iteration + U21 landed + lvalue fix**: ①`for i, x in seq` / `for i, ref x` (`i` is a usize, read-only inside the loop; for built-in sequences `i` is the real subscript, for ranges it is the offset relative to `lo`); a user type (struct/class) providing `length() -> usize` + `operator[](C, usize) -> T` (exact usize match) degrades to the index form, `length()` is evaluated only once, and elements are retained/released per round as owning locals; multidimensional arrays `T[m,n]`/`T[,]` explicitly disallow for-in (use an index loop + `len(a,k)` instead); `for ref` does not support user types; SPEC adds 6.4.1–6.4.4 and backlog U30. ②**U21**: forbid taking the address of class/interface references (`&c`, `&i`) and of members/elements accessed through a reference (`&c.x`, `&h.items[0]`, `&catArray[i]`, `&h.v[0]`), while pure value structs / fixed-size array elements / pointer variables are unaffected; layout2 now verifies class layout against a mirror struct model from the same source. ③Fixed `is_lvalue` misjudging local/global variables that share a name with a unit as non-lvalues (`unit t; S t = ...; t.x = 1;` reported "the left side of an assignment must be an assignable object"). Added the forin_index / unit_name_var / addr_rules success cases and 12 error cases
 
-**测试**：262/262（65 成功 + 184 报错 + 13 check）
+**Tests**: 262/262 (65 pass + 184 must-fail + 13 check)
 
 ### 0.0.47 — 2026-11-10
 
-**参数改为拥有型局部变量 + 移除 `del`**：函数/方法/构造器/接口方法参数在进入时 retain、退出时 release（覆盖 return/break/continue 路径），函数体内可自由重绑定参数；`for-in` 值绑定同样按拥有型局部变量处理（每轮 retain/release，覆盖 break/continue）；由此修复「`c = null` / `c = new C()` 赋给参数或循环变量会把调用方对象提前释放（use-after-free）或泄漏」的内存安全缺陷；`del` 语句删除（`del x;` ≡ `x = null;`，无独立语义），保留关键字仅用于迁移诊断；迁移全部测试/示例中的 `del`，删除 6 个 del 专用报错用例与 class_del_null，新增 del_removed 报错用例与 param_ownership 回归用例；SPEC 3.8/4/8.3 与决策表 #69/#70 同步
+**Parameters become owning locals + `del` removed**: function/method/constructor/interface method parameters are retained on entry and released on exit (covering the return/break/continue paths), and parameters can be freely rebound inside the body; `for-in` value bindings are likewise treated as owning locals (retain/release each round, covering break/continue); this fixes the memory-safety defect where "assigning `c = null` / `c = new C()` to a parameter or loop variable released the caller's object early (use-after-free) or leaked"; the `del` statement is removed (`del x;` ≡ `x = null;`, no separate semantics), with the keyword kept only for migration diagnostics; migrated `del` in all tests/examples, removed the 6 del-specific error cases and class_del_null, added the del_removed error case and the param_ownership regression case; SPEC 3.8/4/8.3 and decision table #69/#70 synced
 
-**测试**：247/247（62 成功 + 172 报错 + 13 check）
+**Tests**: 247/247 (62 pass + 172 must-fail + 13 check)
 
 ### 0.0.46 — 2026-11-10
 
-**条件表达式 `?:`**：`cond ? a : b`，右结合、优先级低于 `or`；条件必须 `bool`；只求值被选中的分支；两侧类型按「同一类型 → 隐式加宽 → `null` 适配」收敛，都不成立要求 `as`；结果为 prvalue（struct/string/定长数组逐字段 retain，class/interface 借用分支 +1、`new`/调用结果转移所有权，动态数组按句柄语义），结果槽在 entry 块物化；结果不是左值（`(c ? a : b) = x`、`&(c ? a : b)` 报错），不参与编译期常量；两侧皆 `void` 时只能作表达式语句；顺带修复 `double d = 1;`（整数字面量适配浮点类型）在后端 `cast<IntegerType>` 断言崩溃；新增 ternary 成功用例与 5 个报错用例；SPEC 新增 5.2，#14/#104 定案
+**Conditional expression `?:`**: `cond ? a : b`, right-associative, with lower precedence than `or`; the condition must be `bool`; only the selected branch is evaluated; the two sides converge by "same type → implicit widening → `null` adaptation", requiring `as` when none applies; the result is a prvalue (struct/string/fixed-size array retain per field, class/interface borrows from a branch get +1 while `new`/call results transfer ownership, dynamic arrays follow handle semantics), and the result slot is materialized in the entry block; the result is not an lvalue (`(c ? a : b) = x`, `&(c ? a : b)` are errors) and does not participate in compile-time constants; when both sides are `void` it can only be an expression statement; also fixed the backend `cast<IntegerType>` assertion crash on `double d = 1;` (an integer literal adapting to a floating-point type); added the ternary success case and 5 error cases; SPEC adds 5.2, #14/#104 decided
 
-**测试**：252/252（62 成功 + 177 报错 + 13 check）
+**Tests**: 252/252 (62 pass + 177 must-fail + 13 check)
 
 ### 0.0.45 — 2026-11-10
 
-**`switch`（无 fallthrough）**：`switch expr { 模式列表: { } }`，括号可选；分支体强制花括号、各自独立作用域；`else` 至多一个且必须最后；模式为编译期常量（整数字面量 / 字符字面量 / 带一元 `-` `+` 的字面量 / 枚举成员），`a, b` 多值任一命中；区间 `a..b` 半开且必须非空；枚举必须穷尽（缺成员报错；`else` 与之互斥，全覆盖时 warning）；枚举不支持区间与整数隐式转换；模式重复/重叠（含区间相交）编译错误；被匹配值只求值一次；`break`/`continue` 仍归最近循环；codegen 密集值走 LLVM `switch`（跳表）、区间走比较链；新增 switch_basic 成功用例与 15 个报错用例；SPEC 新增 6.6，`match` 取消保留字
+**`switch` (no fallthrough)**: `switch expr { pattern-list: { } }`, braces optional; branch bodies require braces and get their own scope; at most one `else`, which must come last; patterns are compile-time constants (integer literals / character literals / literals with unary `-` `+` / enum members), and `a, b` matches on any of several values; ranges `a..b` are half-open and must be non-empty; enums must be exhaustive (a missing member errors; `else` is mutually exclusive with it, and full coverage warns); enums do not support ranges or implicit integer conversion; duplicate/overlapping patterns (including overlapping ranges) are compile errors; the matched value is evaluated only once; `break`/`continue` still belong to the innermost loop; in codegen dense values go through LLVM `switch` (jump table) and ranges through comparison chains; added the switch_basic success case and 15 error cases; SPEC adds 6.6, and `match` drops its reserved word
 
-**测试**：246/246（61 成功 + 172 报错 + 13 check）
+**Tests**: 246/246 (61 pass + 172 must-fail + 13 check)
 
 ### 0.0.44 — 2026-11-10
 
-**显式 `this`**：class/struct 方法、构造器、析构器内可显式写 `this`；`this` 是当前对象的引用（struct 为对象本身的左值别名，非指针），支持 `this.field` 读写、`this.method()`、作为实参传递与按值返回；`this` 不可赋值、不可取地址（`&this` 报错）、不能 `del`；新增 explicit_this 成功用例与 this_addr / this_outside 报错用例，删除 struct_this 报错用例
+**Explicit `this`**: `this` can be written explicitly inside class/struct methods, constructors and destructors; `this` is a reference to the current object (for structs an lvalue alias of the object itself, not a pointer), supporting `this.field` reads and writes, `this.method()`, passing as an argument and returning by value; `this` cannot be assigned, cannot have its address taken (`&this` errors) and cannot be passed to `del`; added the explicit_this success case and the this_addr / this_outside error cases, removed the struct_this error case
 
-**测试**：230/230（60 成功 + 157 报错 + 13 check）
+**Tests**: 230/230 (60 pass + 157 must-fail + 13 check)
 
 ### 0.0.43 — 2026-11-10
 
-**参数声明不得共享类型（SPEC 表 26 定案）**：每个参数必须单独写 `类型 名称`，`int f(int a, b)` 为编译错误；解析器在 `parse_params` 中提前识别 C 式共享类型写法（`Ident` 紧跟 `,`/`)`），给出「每个参数单独声明类型」的明确诊断（此前只在 `)` 处报含糊的「期望参数名」）；类型后缀只作用于单个参数；变量/字段声明的多名字共享类型不变（SPEC 4.1 加交叉引用）；新增 param_shared_type 报错用例
+**Parameter declarations may not share a type (SPEC table 26 decided)**: every parameter must write `type name` separately, so `int f(int a, b)` is a compile error; the parser recognizes the C-style shared-type form early in `parse_params` (`Ident` directly followed by `,`/`)`) and gives a clear "declare a type for each parameter" diagnostic (previously it only reported a vague "expected parameter name" at `)`); a type suffix applies to a single parameter only; shared types for multiple names in variable/field declarations are unchanged (SPEC 4.1 gains a cross-reference); added the param_shared_type error case
 
-**测试**：228/228（59 成功 + 156 报错 + 13 check）
+**Tests**: 228/228 (59 pass + 156 must-fail + 13 check)
 
 ### 0.0.42 — 2026-11-10
 
-**布局修饰符 `packed` / `align(N)`**：`packed` 无参数（= `pack(1)`，无内部/尾部填充，`alignof` 1）、`align(N)`（2 的幂常量，覆盖整体对齐、`sizeof` 补齐到 N 的倍数、不改变字段偏移、`N < 自然对齐` 报错），二者正交可组合；布局单一真源 `type_align`/`type_size`（sema 与后端共用）；packed 用 LLVM packed struct（普通 struct 的 ABI 不变），`align(N)` 插显式填充并给 alloca/全局/成员访问设置对齐（packed 链一律 `align 1`）；class 对象改用同源「模型布局 + 填充」（对象对齐 = max(16, 字段最大对齐)，>16 用 `_aligned_malloc`）；切片分配点拒绝元素 `align > 8`（数据区在 24 字节头之后）；新增 layout / layout2 成功用例与 9 个报错用例
+**Layout modifiers `packed` / `align(N)`**: `packed` takes no argument (= `pack(1)`, no internal/tail padding, `alignof` 1), `align(N)` (a power-of-two constant, overriding overall alignment, `sizeof` rounded up to a multiple of N, field offsets unchanged, `N < natural alignment` errors), and the two are orthogonal and composable; layout has a single source of truth `type_align`/`type_size` (shared by sema and the backend); packed uses LLVM packed structs (the ordinary struct ABI is unchanged), `align(N)` inserts explicit padding and sets alignment on alloca/global/member access (packed chains always `align 1`); class objects switched to the same-source "model layout + padding" (object alignment = max(16, max field alignment), using `_aligned_malloc` when >16); slice allocation rejects elements with `align > 8` (the data area sits after the 24-byte header); added the layout / layout2 success cases and 9 error cases
 
-**测试**：227/227（59 成功 + 155 报错 + 13 check）；冷编译零 warning
+**Tests**: 227/227 (59 pass + 155 must-fail + 13 check); cold build with zero warnings
 
 ### 0.0.41 — 2026-11-10
 
-**空花括号 `{}` 零初始化**：声明处聚合类型（struct / 定长数组 / 切片 / `string`）用 `{}` 表示零值，聚合 `= 0` 报错并提示改用 `{}`；标量（数值/bool/char/指针/class 引用）写 `{}` 报错，改用各自常量（`0`/`0.0`/`false`/`null`）；codegen 空聚合走 `zeroinitializer` / 清零，全局空聚合用零常量；新增 empty_brace 成功用例与 brace_scalar / zero_aggregate 报错用例
+**Empty braces `{}` zero initialization**: aggregate types (struct / fixed-size array / slice / `string`) written as `{}` at the declaration mean the zero value, and `= 0` on an aggregate errors suggesting `{}`; scalars (numeric/bool/char/pointer/class reference) written as `{}` error, suggesting their own constants (`0`/`0.0`/`false`/`null`); in codegen empty aggregates use `zeroinitializer` / zeroing, and empty globals use zero constants; added the empty_brace success case and the brace_scalar / zero_aggregate error cases
 
-**测试**：216/216（57 成功 + 146 报错 + 13 check）
+**Tests**: 216/216 (57 pass + 146 must-fail + 13 check)
 
 ### 0.0.40 — 2026-11-10
 
-**枚举成员限定引用**：`Color.Red` 与 `Red` 等价，跨 unit 可写 `unit.Color.Red`；sema 在成员访问处先解析类型名（本 unit → use 的 public → std.string），成员是常量（不可赋值/取地址），非枚举类型写 `T.m` 报错；codegen 把该节点按 `enum_const` 直接折叠为常量；enum_cmp 与 vis_import_ok 覆盖限定引用，新增 4 个报错用例
+**Qualified enum member references**: `Color.Red` is equivalent to `Red`, and cross-unit `unit.Color.Red` can be written; sema resolves the type name at the member access site (current unit → `use`d public → std.string), members are constants (cannot be assigned/taken address), and `T.m` on a non-enum type errors; codegen folds the node directly into a constant as `enum_const`; enum_cmp and vis_import_ok cover qualified references, and 4 error cases were added
 
-**测试**：213/213（56 成功 + 144 报错 + 13 check）
+**Tests**: 213/213 (56 pass + 144 must-fail + 13 check)
 
 ### 0.0.39 — 2026-11-10
 
-**枚举成为名义类型**：与整数双向无隐式转换（都要 `as`）；同枚举支持 `== != < <= > >=`（序 = 底层整数值）；跨枚举比较、枚举算术/位运算/一元 `-+~`/复合赋值、下标/区间端点用枚举一律报错；`usual_arith` 拒绝枚举，codegen 比较按 int 有符号序生成 `icmp`；新增 enum_cmp 端到端与 8 个报错用例，迁移 extras/enumfield/vis_import_ok
+**Enums become nominal types**: no implicit conversion to or from integers in either direction (both need `as`); the same enum supports `== != < <= > >=` (order = underlying integer value); comparing across enums, enum arithmetic/bitwise operations/unary `-+~`/compound assignment, and subscripts/range endpoints using enums all error; `usual_arith` rejects enums, and codegen emits `icmp` using signed int order for comparisons; added the enum_cmp end-to-end case and 8 error cases, migrated extras/enumfield/vis_import_ok
 
-**测试**：209/209（56 成功 + 140 报错 + 13 check）
+**Tests**: 209/209 (56 pass + 140 must-fail + 13 check)
 
 ### 0.0.38 — 2026-11-10
 
-**位取反改为 `~`**：与 C 一致，支持 `operator~` 重载（1 个参数）；`!` 不再使用并给出迁移提示；迁移 bitwise 用例，新增 op_neg 端到端与 bang_removed 报错用例
+**Bitwise NOT changed to `~`**: consistent with C, and `operator~` overloading is supported (1 parameter); `!` is no longer used and gives a migration hint; migrated the bitwise case, added the op_neg end-to-end and bang_removed error cases
 
-**测试**：200/200（55 成功 + 132 报错 + 13 check）
+**Tests**: 200/200 (55 pass + 132 must-fail + 13 check)
 
 ### 0.0.37 — 2026-11-10
 
-**++/-- 表达式上下文统一报错**：函数实参、if/while 条件、return、初始化器、数组下标、new 参数、括号内都给出「没有返回值」的明确提示；新增 inc_call_expr / inc_return_expr 报错用例
+**++/-- uniformly error in expression contexts**: function arguments, if/while conditions, return, initializers, array subscripts, `new` arguments and parentheses all give a clear "no return value" hint; added the inc_call_expr / inc_return_expr error cases
 
-**测试**：198/198（54 成功 + 131 报错 + 13 check）
+**Tests**: 198/198 (54 pass + 131 must-fail + 13 check)
 
 ### 0.0.36 — 2026-11-10
 
-**禁止 `*(p++)`**：`++`/`--` 无返回值，括号内出现也报明确错误；`*p++` 仍解析为 `(*p)++`；新增 inc_paren_expr 报错用例并在 inc 中覆盖 `*p++`
+**Forbid `*(p++)`**: `++`/`--` have no return value, so appearing inside parentheses also reports a clear error; `*p++` still parses as `(*p)++`; added the inc_paren_expr error case and covered `*p++` in inc
 
-**测试**：196/196（54 成功 + 129 报错 + 13 check）
+**Tests**: 196/196 (54 pass + 129 must-fail + 13 check)
 
 ### 0.0.35 — 2026-11-10
 
-**++/-- 语句支持**：前缀/后缀 `++`/`--` 只能作为独立语句（无返回值，不能出现在表达式里）；语义降级为 `x += 1` / `x -= 1`；`i++; j++;` 合法；新增 inc 端到端与 inc_expr 报错用例
+**++/-- statement support**: prefix/postfix `++`/`--` are only allowed as standalone statements (no return value, cannot appear in expressions); semantically lowered to `x += 1` / `x -= 1`; `i++; j++;` is legal; added the inc end-to-end and inc_expr error cases
 
-**测试**：195/195（54 成功 + 128 报错 + 13 check）
+**Tests**: 195/195 (54 pass + 128 must-fail + 13 check)
 
 ### 0.0.34 — 2026-11-10
 
-**明确不提供 `T* const`**：`const` 只作基类型前缀（值/pointee 只读），不引入指针绑定只读与逐层 const；SPEC 3.7、#25 改为「不提供」并说明理由
+**Explicitly no `T* const`**: `const` is only a base-type prefix (value/pointee read-only), and neither pointer-binding read-only nor per-level const is introduced; SPEC 3.7 and #25 changed to "not provided" with the rationale
 
-**测试**：193/193（53 成功 + 127 报错 + 13 check）
+**Tests**: 193/193 (53 pass + 127 must-fail + 13 check)
 
 ### 0.0.33 — 2026-11-10
 
-**const 改为 C 模型**：删除 `readonly`；`const` 成为类型限定符（前缀修饰基类型，`const int**` 表示最内层只读）；`T* → const T*` 隐式、反向需显式 `as`；写检查与隐式转换按 const 层判断；全仓库迁移 `readonly` → `const`；暂不支持 `T* const`
+**const changed to the C model**: removed `readonly`; `const` becomes a type qualifier (a prefix on the base type, `const int**` means the innermost level is read-only); `T* → const T*` is implicit while the reverse needs an explicit `as`; write checks and implicit conversions are decided per const level; migrated `readonly` → `const` across the whole repo; `T* const` is not supported for now
 
-**测试**：193/193（53 成功 + 127 报错 + 13 check）
+**Tests**: 193/193 (53 pass + 127 must-fail + 13 check)
 
 ### 0.0.32 — 2026-11-10
 
-**移除 `static`**：unit 级变量直接声明（默认 private，`public` 跨 unit）；`extern` 保留；全局变量 linkage 由 public/private 决定；顶层/函数内使用 `static` 给出明确迁移错误；迁移全部用例与示例，删除 unit_var_bare
+**Removed `static`**: unit-level variables are declared directly (private by default, `public` across units); `extern` is kept; global variable linkage is decided by public/private; using `static` at top level or inside functions gives a clear migration error; migrated all cases and examples, removed unit_var_bare
 
-**测试**：193/193（53 成功 + 127 报错 + 13 check）
+**Tests**: 193/193 (53 pass + 127 must-fail + 13 check)
 
 ### 0.0.31 — 2026-11-10
 
-**string 对象化重写**：`string` 保留值类型 struct（canonical 布局/字面量/`s[i]`/`len`/`==`/for-in 降级不变），字段 private；新增构造器 `string(readonly char*)` 与成员方法 `length/empty/is_empty/at/cstr/sub/concat/find/starts_with/ends_with/trim`；删除 `str_*` 自由函数，`operator+` 薄封装 `concat`；放宽 `= 0` 允许有构造器的 struct 零值初始化；新增 string_methods 端到端用例，删除 struct_ctor_zero
+**string rewritten as an object**: `string` stays a value-type struct (canonical layout/literals/`s[i]`/`len`/`==`/for-in degradation unchanged) with private fields; added the constructor `string(readonly char*)` and the member methods `length/empty/is_empty/at/cstr/sub/concat/find/starts_with/ends_with/trim`; removed the `str_*` free functions, with `operator+` thinly wrapping `concat`; relaxed `= 0` to allow zero-value initialization of structs that have constructors; added the string_methods end-to-end case, removed struct_ctor_zero
 
-**测试**：194/194（53 成功 + 128 报错 + 13 check）
+**Tests**: 194/194 (53 pass + 128 must-fail + 13 check)
 
 ### 0.0.30 — 2026-11-10
 
-**public/private 取代 pub**：private=unit 内、public=跨 unit；struct 成员默认 public、class 成员默认 private；struct/class 支持 public:/private: 分段标签与逐成员前缀；struct 字段可 private，跨 unit 聚合初始化要求字段全 public；全仓库迁移并新增 4 个用例
+**public/private replace pub**: private = inside the unit, public = across units; struct members default to public and class members to private; struct/class support `public:`/`private:` section labels and per-member prefixes; struct fields can be private, and cross-unit aggregate initialization requires all fields to be public; migrated the whole repo and added 4 cases
 
-**测试**：194/194（52 成功 + 129 报错 + 13 check）
+**Tests**: 194/194 (52 pass + 129 must-fail + 13 check)
 
 ### 0.0.29 — 2026-11-10
 
-**C# 式导入可见性**：`use` 后 `pub` 符号可直接无前缀使用（类型/函数/全局变量/枚举常量/struct 构造）；本地声明遮蔽导入；多来源同名在使用点报歧义并要求限定名；函数重载跨 unit 合并；parser 用声明形状试探支持无前缀类型名；新增 6 个导入用例
+**C#-style import visibility**: after `use`, `pub` symbols can be used without a prefix (types/functions/global variables/enum constants/struct construction); local declarations shadow imports; the same name from multiple sources reports ambiguity at the use site and requires a qualified name; function overloads merge across units; the parser tentatively supports unqualified type names by declaration shape; added 6 import cases
 
-**测试**：191/191（52 成功 + 128 报错 + 11 check）
+**Tests**: 191/191 (52 pass + 128 must-fail + 11 check)
 
 ### 0.0.28 — 2026-11-10
 
-**多段 unit 名限定访问**：表达式 `lib.a.b.f()` 按最长已导入 unit 前缀折叠为单个 Name；类型 `lib.a.b.T` 在 sema 按最长前缀匹配；parser 的类型解析支持任意段点号；`std.string` 视为隐式已 use；新增 2 个 check 用例
+**Multi-segment unit name qualification**: the expression `lib.a.b.f()` is folded into a single Name by the longest imported unit prefix; the type `lib.a.b.T` is matched by the longest prefix in sema; the parser's type parsing supports dots at any segment; `std.string` is treated as implicitly `use`d; added 2 check cases
 
-**测试**：186/186（52 成功 + 125 报错 + 9 check）
+**Tests**: 186/186 (52 pass + 125 must-fail + 9 check)
 
 ### 0.0.27 — 2026-11-10
 
-**可见性机制**：新增关键字 `pub`；顶层声明/class 字段与方法/构造器默认仅 unit 内可见，`pub` 跨 unit；`pub unit` 跨库导出；库边界 = unit 名第一段（跨库 `use` 需 `pub unit`）；`pub` 签名连锁检查；非 `pub` 符号 LLVM `internal` linkage；迁移 std.string/math/lib_* 并新增 11 个可见性用例
+**Visibility mechanism**: added the keyword `pub`; top-level declarations / class fields and methods / constructors are visible only inside the unit by default, and `pub` makes them cross-unit; `pub unit` exports across libraries; the library boundary = the first segment of the unit name (a cross-library `use` needs `pub unit`); `pub` signature propagation checks; non-`pub` symbols get LLVM `internal` linkage; migrated std.string/math/lib_* and added 11 visibility cases
 
-**测试**：184/184（52 成功 + 125 报错 + 7 check）
+**Tests**: 184/184 (52 pass + 125 must-fail + 7 check)
 
 ### 0.0.26 — 2026-11-09
 
-**标准库目录与类型改名**：新增 `libs` 默认库搜索路径（入口目录、`-I`、`MULANC_LIBS`、当前目录及祖先的 `libs`/`libs/std`）；`libs/std/string.mu`（unit `std.string`）替代编译器内嵌 prelude；`unit`/`use` 支持点号名（`std.string` → `libs/std/string.mu`）；字符串结构体由 `Str` 改名为 `string`；测试/示例/文档同步
+**Standard library directory and type rename**: added the `libs` default library search path (entry directory, `-I`, `MULANC_LIBS`, `libs`/`libs/std` in the current directory and its ancestors); `libs/std/string.mu` (unit `std.string`) replaces the compiler-embedded prelude; `unit`/`use` support dotted names (`std.string` → `libs/std/string.mu`); the string struct renamed from `Str` to `string`; tests/examples/docs synced
 
-**测试**：172/172（52 成功 + 115 报错 + 5 check）
+**Tests**: 172/172 (52 pass + 115 must-fail + 5 check)
 
 ### 0.0.25 — 2026-11-09
 
-**字符串改为 std.string.string struct，移除内建 `string`**：`libs/std/string.mu`（unit `std.string`）中的 struct `string { byte* p; usize n; byte[] owner; }` + 字符串库；字面量类型为 string（owner=null，rodata，零分配/零 RC）；`s[i]`/`len`/`==`/for-in 按 canonical 布局内置降级；复制/字段/返回走 U24 逐字段 RC；std.string 提供 `str_from_cstr`/`str_cstr`/`str_sub`/`str_concat`/`operator+` 与方法；移除 lexer/parser/sema 的 `string` 关键字，迁移全部测试与示例；新增 `str_struct` 用例；生成 IR 后运行 LLVM `-O2` 标准流水线
+**String changed to the std.string.string struct, built-in `string` removed**: the struct `string { byte* p; usize n; byte[] owner; }` in `libs/std/string.mu` (unit `std.string`) + the string library; the literal type is string (owner=null, rodata, zero allocation/zero RC); `s[i]`/`len`/`==`/for-in degrade using the built-in canonical layout; copies/fields/returns go through U24 per-field RC; std.string provides `str_from_cstr`/`str_cstr`/`str_sub`/`str_concat`/`operator+` and methods; removed the `string` keyword from lexer/parser/sema and migrated all tests and examples; added the `str_struct` case; runs the standard LLVM `-O2` pipeline after generating IR
 
-**测试**：172/172（52 成功 + 115 报错 + 5 check）
+**Tests**: 172/172 (52 pass + 115 must-fail + 5 check)
 
 ### 0.0.24 — 2026-11-09
 
-**动态数组 `T[]` + 多维数组**：`new T[n]` 创建带 RC 头的堆数组（句柄 8 字节，O(1) 复制共享）；静态矩形 `T[m,n]`（嵌套定长数组、`a[i,j]`/`a[i][j]`）、动态矩形 `T[,]` + `new T[m,n]`、锯齿 `T[][]` + `new T[m][]`（一次一维，循环填行）；`len(a)`/`len(a,k)`（静态 axis 字面量、动态可运行期）；`T[N]→T[]`、`T[m,n]→T[,]` 分配复制；元素支持 class/interface 与含引用 struct，逐元素 release；null 句柄 len=0；extern 递归拒绝 `T[]`；含析构器 struct 仍禁作元素；移除 class/interface 切片禁用与旧借用视图语义
+**Dynamic arrays `T[]` + multidimensional arrays**: `new T[n]` creates a heap array with an RC header (an 8-byte handle, O(1) copy sharing); static rectangles `T[m,n]` (nested fixed-size arrays, `a[i,j]`/`a[i][j]`), dynamic rectangles `T[,]` + `new T[m,n]`, and jagged `T[][]` + `new T[m][]` (one dimension per `new`, rows filled in a loop); `len(a)`/`len(a,k)` (literal axes for static, runtime-capable for dynamic); `T[N]→T[]`, `T[m,n]→T[,]` allocating copies; elements may be class/interface and structs with references, released per element; a null handle has len=0; `extern` recursively rejects `T[]`; structs with destructors are still forbidden as elements; removed the class/interface slice prohibition and the old borrowed-view semantics
 
-**测试**：171/171（51 成功 + 115 报错 + 5 check）
+**Tests**: 171/171 (51 pass + 115 must-fail + 5 check)
 
 ### 0.0.23 — 2026-11-09
 
-**U24：struct 引用字段 + 逐字段 RC**：struct 可含 class/interface 字段（含数组/嵌套）；拷贝/传参 retain、赋值先 retain 新再 release 旧、析构逐字段/逐元素 release；返回值借用转 owned；调用临时 struct 语句结束释放；未初始化本地 struct 自动清零；extern/全局递归拒绝；含用户析构器的 struct 仍禁拷贝；新增 `struct_rc_fields` 成功用例 + 2 个报错用例，移除过时的“struct 不能含 class 字段”用例
+**U24: struct reference fields + per-field RC**: structs may contain class/interface fields (including arrays/nesting); copies/passing retain, assignment retains the new value before releasing the old, and destruction releases per field/per element; a returned value turns a borrow into owned; a temporary struct created by a call is released at the end of the statement; uninitialized local structs are zeroed automatically; extern/globals recursively rejected; structs with a user destructor still cannot be copied; added the `struct_rc_fields` success case + 2 error cases, removed the outdated "structs cannot contain class fields" case
 
-**测试**：163/163（49 成功 + 109 报错 + 5 check）
+**Tests**: 163/163 (49 pass + 109 must-fail + 5 check)
 
 ### 0.0.22 — 2026-11-09
 
-**struct 构造/析构**：构造器重载、`S s;` 默认构造、`S s = S(args)` 就地构造；析构器在作用域/return/break/continue 自动调用；含析构器的 struct 暂禁按值拷贝/传参/返回/数组/字段/全局；新增 1 个成功用例 + 11 个报错用例
+**struct construction/destruction**: constructor overloading, `S s;` default construction, `S s = S(args)` in-place construction; destructors are called automatically on scope exit/return/break/continue; structs with destructors are temporarily forbidden to be copied/passed/returned by value/in arrays/fields/globals; added 1 success case + 11 error cases
 
-**测试**：161/161（48 成功 + 108 报错 + 5 check）
+**Tests**: 161/161 (48 pass + 108 must-fail + 5 check)
 
 ### 0.0.21 — 2026-11-09
 
-**struct 方法**：静态派发、隐式 `this`、方法重载、数组/字段接收者、隐式方法调用；方法不得与字段同名；显式 `this` 暂不支持；新增 1 个成功用例 + 4 个报错用例
+**struct methods**: static dispatch, implicit `this`, method overloading, array/field receivers, implicit method calls; methods may not share a field's name; explicit `this` not supported yet; added 1 success case + 4 error cases
 
-**测试**：149/149（47 成功 + 97 报错 + 5 check）
+**Tests**: 149/149 (47 pass + 97 must-fail + 5 check)
 
 ### 0.0.20 — 2026-11-09
 
-按定稿收敛 8 位类型：`char`=i8（C 风格）、`byte`=u8 且为唯一无符号 8 位名（**删除 `ubyte`/`uchar` 别名**）；`s[i]`/字符串 for-in 返回 `byte`；字符字面量默认 `byte` 并按上下文适配 `char`/`byte`；新增别名移除用例
+Converged 8-bit types per the final decision: `char`=i8 (C style), `byte`=u8 and the only unsigned 8-bit name (**removed the `ubyte`/`uchar` aliases**); `s[i]`/string for-in return `byte`; character literals default to `byte` and adapt to `char`/`byte` by context; added an alias-removal case
 
-**测试**：144/144（46 成功 + 93 报错 + 5 check）
+**Tests**: 144/144 (46 pass + 93 must-fail + 5 check)
 
 ### 0.0.19 — 2026-11-09
 
-**`char` 改为有符号 8 位（C 风格）；`byte` 改为无符号 8 位，`ubyte`/`uchar` 为其别名（同一类型）**；`'\xNN'` 按位模式解释；新增 char/byte 范围报错用例
+**`char` changed to signed 8-bit (C style); `byte` changed to unsigned 8-bit, with `ubyte`/`uchar` as its aliases (the same type)**; `'\xNN'` is interpreted by bit pattern; added char/byte range error cases
 
-**测试**：143/143（46 成功 + 92 报错 + 5 check）
+**Tests**: 143/143 (46 pass + 92 must-fail + 5 check)
 
 ### 0.0.18 — 2026-11-09
 
-明确字符字面量语义：`char` 为无符号 8 位单字节，非 ASCII 字面量编译报错；SPEC 补第 101 条；新增 `char_bytes`（UTF-8 字节视图）与 `char_nonascii` 用例
+Clarified character literal semantics: `char` is an unsigned 8-bit single byte and non-ASCII literals are compile errors; SPEC gains item 101; added the `char_bytes` (UTF-8 byte view) and `char_nonascii` cases
 
-**测试**：141/141（46 成功 + 90 报错 + 5 check）
+**Tests**: 141/141 (46 pass + 90 must-fail + 5 check)
 
 ### 0.0.17 — 2026-11-09
 
-外链 C 禁传 class/interface 检查；新增接口返回接口、综合大用例（接口数组/for-in/向下转换/弱引用）
+Check that foreign C calls cannot pass class/interface; added a case of an interface returning an interface and a comprehensive case (interface arrays/for-in/downcast/weak references)
 
-**测试**：139/139（45 成功 + 89 报错 + 5 check）
+**Tests**: 139/139 (45 pass + 89 must-fail + 5 check)
 
 ### 0.0.16 — 2026-11-09
 
-新增比较/下标单次求值与临时释放回归用例（验证 0.0.14 的双重求值修复）
+Added regression cases for single evaluation of comparisons/subscripts and temporary release (verifying the double-evaluation fix in 0.0.14)
 
-**测试**：136/136（43 成功 + 88 报错 + 5 check）
+**Tests**: 136/136 (43 pass + 88 must-fail + 5 check)
 
 ### 0.0.15 — 2026-11-09
 
-SPEC 正式降级：`readonly` class 视图、`ref` 参数、interface→派生接口向下转换列为第一阶段不支持（表 98–100）；新增 `extern` 不可重载/不可与普通函数同名、`main` 不可重载检查
+SPEC formally downgraded: `readonly` class views, `ref` parameters and interface→derived-interface downcasts are listed as unsupported in phase one (tables 98–100); added checks that `extern` cannot be overloaded/cannot share a name with an ordinary function, and that `main` cannot be overloaded
 
-**测试**：135/135（42 成功 + 88 报错 + 5 check）
+**Tests**: 135/135 (42 pass + 88 must-fail + 5 check)
 
 ### 0.0.14 — 2026-11-09
 
-**weak 目标销毁自动置 null**：全局 weak 注册表（目标, 字段地址）+ 自旋锁，赋值登记、覆盖/持有者析构注销、目标 destroy 时清零；顺带修复二元比较重复求值（函数调用在比较中执行两次、临时引用泄漏）
+**weak targets auto-null on destruction**: a global weak registry (target, field address) + spinlock; assignment registers, overwriting/destruction of the holder unregisters, and the target's destroy zeroes them; also fixed repeated evaluation in binary comparisons (a function call executed twice inside a comparison, leaking temporary references)
 
-**测试**：132/132（42 成功 + 85 报错 + 5 check）
+**Tests**: 132/132 (42 pass + 85 must-fail + 5 check)
 
 ### 0.0.13 — 2026-11-09
 
-清除冷编译最后一个 warning（unused variable）；冷编译零 warning
+Cleared the last warning in a cold build (unused variable); cold build has zero warnings
 
-**测试**：131/131（41 成功 + 85 报错 + 5 check）
+**Tests**: 131/131 (41 pass + 85 must-fail + 5 check)
 
 ### 0.0.12 — 2026-11-09
 
-`super.method` 只解析 class 链（接口默认方法经 super 调用报错）；`del null` 空操作；多 unit 接口/继承 check 用例（lib_ 依赖跳过）；下标复合赋值报错用例
+`super.method` resolves only along the class chain (calling an interface default method through super errors); `del null` is a no-op; multi-unit interface/inheritance check cases (lib_ dependencies skipped); error case for compound assignment to a subscript
 
-**测试**：131/131（41 成功 + 85 报错 + 5 check）
+**Tests**: 131/131 (41 pass + 85 must-fail + 5 check)
 
 ### 0.0.11 — 2026-11-09
 
-class 字段解析改为按基类依赖的拓扑顺序（同一 unit 内基类可后声明且字段布局正确）；新增前向基类、接口数组用例
+Class field resolution changed to a topological order based on base class dependencies (a base class may be declared later in the same unit and field layout is still correct); added forward base class and interface array cases
 
-**测试**：127/127（40 成功 + 83 报错 + 4 check）
+**Tests**: 127/127 (40 pass + 83 must-fail + 4 check)
 
 ### 0.0.10 — 2026-11-09
 
-引用数组的逐元素 RC：拷贝 retain、覆盖/离开作用域 release、按值返回与临时实参逐元素转移（修复共享数组提前释放/泄漏）；新增 2 个端到端用例
+Per-element RC for arrays of references: copies retain, overwrites/scope exit release, and by-value returns and temporary arguments transfer per element (fixing early release/leaks of shared arrays); added 2 end-to-end cases
 
-**测试**：125/125（38 成功 + 83 报错 + 4 check）
+**Tests**: 125/125 (38 pass + 83 must-fail + 4 check)
 
 ### 0.0.9 — 2026-11-09
 
-修复运算符/下标重载返回引用被当作借用导致的泄漏；override 返回类型与所有基类/接口声明比对（冲突报错）；新增 2 个用例
+Fixed a leak where an operator/subscript overload returning a reference was treated as a borrow; override return types are compared against all base class/interface declarations (conflicts error); added 2 cases
 
-**测试**：123/123（36 成功 + 83 报错 + 4 check）
+**Tests**: 123/123 (36 pass + 83 must-fail + 4 check)
 
 ### 0.0.8 — 2026-11-09
 
-收紧 `as`：指针/切片不再互相转换，切片转换要求元素类型相同；新增 2 个报错用例
+Tightened `as`: pointers/slices no longer convert to each other, and slice conversion requires identical element types; added 2 error cases
 
-**测试**：121/121（35 成功 + 82 报错 + 4 check）
+**Tests**: 121/121 (35 pass + 82 must-fail + 4 check)
 
 ### 0.0.7 — 2026-11-09
 
-构造器省略 `super(...)` 时隐式调用基类无参构造器（C++ 语义）；新增链表（strong next + weak prev）与嵌套 `new`/基类数组用例
+When a constructor omits `super(...)`, the base class no-arg constructor is called implicitly (C++ semantics); added a linked list case (strong next + weak prev) and cases for nested `new`/base class arrays
 
-**测试**：119/119（35 成功 + 80 报错 + 4 check）
+**Tests**: 119/119 (35 pass + 80 must-fail + 4 check)
 
 ### 0.0.6 — 2026-11-09
 
-`as` 向下转换：class→派生 class、interface→class 沿 desc 基类链运行期检查，失败得 null；desc 增加 base_desc；新增 downcast 端到端用例
+`as` downcast: class→derived class and interface→class are checked at runtime along the desc base class chain, yielding null on failure; desc gains base_desc; added the downcast end-to-end case
 
-**测试**：116/116（32 成功 + 80 报错 + 4 check）
+**Tests**: 116/116 (32 pass + 80 must-fail + 4 check)
 
 ### 0.0.5 — 2026-11-09
 
-`new`/`len`/`sizeof`/一元表达式后可接后缀（`new C().f()`、`len(s) as int`）；`sizeof` 支持 class/interface/enum；禁止 class 指针、`del` 运算符下标、析构器 `return`；相关引用类型间身份比较；新增 4 个端到端用例与 3 个报错用例
+`new`/`len`/`sizeof`/unary expressions can be followed by postfixes (`new C().f()`, `len(s) as int`); `sizeof` supports class/interface/enum; class pointers, `del` on operator subscripts and `return` inside destructors are forbidden; identity comparison between related reference types; added 4 end-to-end cases and 3 error cases
 
-**测试**：115/115（31 成功 + 80 报错 + 4 check）
+**Tests**: 115/115 (31 pass + 80 must-fail + 4 check)
 
 ### 0.0.4 — 2026-11-09
 
-局部引用清理（块/return/break/continue）、临时引用释放、接口默认方法经类变量派发、接口数组布局修正（16 字节）、`del` 参数/循环变量限制；新增 4 个端到端用例
+Local reference cleanup (block/return/break/continue), temporary reference release, interface default methods dispatched through class variables, interface array layout fixed (16 bytes), `del` restrictions on parameters/loop variables; added 4 end-to-end cases
 
-**测试**：107/107（26 成功 + 77 报错 + 4 check）
+**Tests**: 107/107 (26 pass + 77 must-fail + 4 check)
 
 ### 0.0.3 — 2026-11-09
 
-对象模型端到端：class/接口/继承/构造析构/虚派发/引用计数/`weak` 的语义与 LLVM 代码生成；重载与运算符派发；新增 4 个端到端 class 用例、21 个报错用例、4 个 check 用例
+Object model end to end: semantics and LLVM codegen for class/interfaces/inheritance/construction and destruction/virtual dispatch/reference counting/`weak`; overloads and operator dispatch; added 4 end-to-end class cases, 21 error cases and 4 check cases
 
-**测试**：103/103（24 成功 + 75 报错 + 4 check）
+**Tests**: 103/103 (24 pass + 75 must-fail + 4 check)
 
 ### 0.0.2 — 2026-11-08
 
-移除 C99 后端，LLVM 成为唯一后端；清理 `--emit-c`/`-DMULANC_WITH_LLVM`；版本机制接入 `--version` 与 LLVM 模块标志
+Removed the C99 backend, making LLVM the only backend; cleaned up `--emit-c`/`-DMULANC_WITH_LLVM`; version plumbing wired into `--version` and the LLVM module flags
 
-**测试**：LLVM 后端 58/58；冷编译零 warning
+**Tests**: LLVM backend 58/58; cold build with zero warnings
 
 ### 0.0.1 — 2026-11-08
 
-基线：C++20 编译器（lexer/parser/sema）、C99 后端、LLVM 后端（LLVM C++ API → COFF）、58 个回归用例、引用/对象模型设计讨论
+Baseline: C++20 compiler (lexer/parser/sema), C99 backend, LLVM backend (LLVM C++ API → COFF), 58 regression cases, reference/object model design discussion
 
-**测试**：C 后端 58/58；LLVM 后端 58/58；冷编译零 warning
+**Tests**: C backend 58/58; LLVM backend 58/58; cold build with zero warnings

@@ -22,7 +22,7 @@ Box2 keep(int[] b) { Box2 r = {}; r.b = b; return r; }
 const int[] G = {10, 20, 30};
 
 int main() {
-    // new / len / 下标
+    // new / len / indexing
     byte[] b = new byte[4];
     b[0] = 7;
     b[1] = 9;
@@ -31,25 +31,25 @@ int main() {
     if len(new byte[5]) != 5 { puts("temp len failed"); return 3; }
     if (new byte[2])[0] != 0 { puts("temp index failed"); return 4; }
 
-    // 零值
+    // zero value
     int[] z = {};
     if len(z) != 0 { puts("zero slice failed"); return 5; }
     int n = 0;
     for v in z { n += 1; }
     if n != 0 { puts("empty for failed"); return 6; }
 
-    // 聚合初始化
+    // aggregate initialization
     int[] q = {1, 2, 3};
     if len(q) != 3 or q[2] != 3 { puts("aggregate failed"); return 7; }
 
-    // 定长数组 -> 动态数组：复制，不共享
+    // fixed-size array -> dynamic array: copied, not shared
     int[3] a = {1, 2, 3};
     int[] r = a;
     r[0] = 8;
     if a[0] != 1 { puts("array must not alias"); return 8; }
     if r[0] != 8 { puts("array copy failed"); return 9; }
 
-    // 动态数组：句柄共享
+    // dynamic array: the handle is shared
     int[] t = q;
     t[0] = 9;
     if q[0] != 9 { puts("handle share failed"); return 10; }
@@ -59,7 +59,7 @@ int main() {
     if addlen(b, 1) != 5 { puts("param failed"); return 12; }
     if G[2] != 30 or len(G) != 3 { puts("global failed"); return 13; }
 
-    // 元素为 class 引用：数组负责元素生命周期
+    // elements are class references: the array owns the element lifetime
     {
         C[] cs = new C[2];
         cs[0] = new C(1);
@@ -77,7 +77,7 @@ int main() {
     }
     if live != 0 { puts("elem destroy failed"); return 19; }
 
-    // 赋值替换旧数组 -> 旧数组归零销毁
+    // assignment replaces the old array -> the old array is destroyed when it drops to zero
     {
         C[] old = new C[1];
         old[0] = new C(7);
@@ -86,7 +86,7 @@ int main() {
         if live != 0 { puts("assign release old failed"); return 21; }
     }
 
-    // struct 字段 / 拷贝 / 返回
+    // struct field / copy / return
     {
         S st = mk(3);
         if len(st.b) != 3 { puts("struct field failed"); return 22; }
@@ -95,7 +95,7 @@ int main() {
         if st.b[0] != 4 { puts("struct share failed"); return 23; }
     }
 
-    // 借用参数存进字段 -> retain；实参临时数组在调用后释放
+    // borrowed parameter stored into a field -> retain; the temporary array argument is released after the call
     {
         Box2 box = keep(a);
         if len(box.b) != 3 or box.b[1] != 2 { puts("borrow store failed"); return 24; }
@@ -103,7 +103,7 @@ int main() {
         if a[0] != 1 { puts("stored copy failed"); return 25; }
     }
 
-    // for ref 修改共享数组
+    // for ref modifies the shared array
     int sum = 0;
     for v in q { sum += v; }
     if sum != 14 { puts("for failed"); return 26; }

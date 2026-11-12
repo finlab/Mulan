@@ -1,4 +1,4 @@
-// generic_inherit.mu — 泛型继承（`class Derived<T> : Base<T>`）
+// generic_inherit.mu — generic inheritance (`class Derived<T> : Base<T>`)
 unit generic_inherit;
 
 extern int puts(const char* s);

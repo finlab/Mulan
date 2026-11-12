@@ -29,8 +29,8 @@ int main() {
 
     if cells[0].get() != 1 { puts("array store failed"); return 1; }
 
-    Cell c = cells[0];              // 借用 -> 强引用
-    a = null; // 数组里仍然持有
+    Cell c = cells[0];              // borrow -> strong reference
+    a = null; // still held by the array
     if cells[0].get() != 1 { puts("array rc failed"); return 1; }
     c = null;
 

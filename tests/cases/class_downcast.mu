@@ -27,7 +27,7 @@ int main() {
 
     A other = new D();
     I i2 = e;
-    B b4 = i2 as B;   // 动态类型 E，也不是 B
+    B b4 = i2 as B;   // dynamic type is E, not B
     if b4 != null { puts("iface downcast wrong"); return 1; }
 
     ab = null; ad = null; e = null; other = null;

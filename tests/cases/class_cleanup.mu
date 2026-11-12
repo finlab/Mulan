@@ -11,7 +11,7 @@ class C {
 }
 
 int make_one() {
-    C c = new C();      // 没有置 null，返回时由清理逻辑释放
+    C c = new C();      // not set to null: released by cleanup on return
     return 1;
 }
 
@@ -59,21 +59,21 @@ int main() {
 
     {
         C a = new C();
-        C b = a;        // 共享引用
+        C b = a;        // shared reference
         a = null;
         if live != 1 { puts("share live failed"); return 1; }
         if b.v != 0 { puts("share value failed"); return 1; }
     }
     if live != 0 { puts("share cleanup failed"); return 1; }
 
-    take(new C());              // 临时实参应在调用后释放
+    take(new C());              // temporary arg released after the call
     if live != 0 { puts("temp arg cleanup failed"); return 1; }
 
-    int q = (new C()).v;        // 临时接收者的成员访问
+    int q = (new C()).v;        // member access on a temporary receiver
     if q != 0 { puts("temp member failed"); return 1; }
     if live != 0 { puts("temp member cleanup failed"); return 1; }
 
-    new C();                    // 表达式语句丢弃临时对象
+    new C();                    // expression statement discards the temporary
     if live != 0 { puts("temp stmt cleanup failed"); return 1; }
 
     puts("class cleanup ok");

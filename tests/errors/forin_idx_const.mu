@@ -1,6 +1,6 @@
 unit forin_idx_const;
 
-// 索引变量 i 是只读的
+// the index variable i is read-only
 int main() {
     int[3] a = {1, 2, 3};
     for i, x in a { i = 0; }

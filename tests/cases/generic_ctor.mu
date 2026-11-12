@@ -1,4 +1,4 @@
-// generic_ctor.mu — 泛型 struct 的构造器调用（`Pair<int,long>(...)`）
+// generic_ctor.mu — constructor call for generic structs (`Pair<int,long>(...)`)
 unit generic_ctor;
 
 extern int puts(const char* s);

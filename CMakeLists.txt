@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-# 版本号唯一来源：仓库根的 VERSION 文件（主.次.build）
+# Single source of truth for the version: the VERSION file at the repository root (major.minor.build)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MUC_VERSION_RAW)
 string(STRIP "${MUC_VERSION_RAW}" MUC_VERSION)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -16,11 +16,11 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-# ---- LLVM 是唯一后端（必需） ----
-# 指定方式（任一即可）：
+# ---- LLVM is the only backend (required) ----
+# Ways to point at it (any one is enough):
 #   - -DLLVM_DIR=<path>/lib/cmake/llvm
-#   - 环境变量 LLVM_DIR
-#   - MSYS2 默认安装位置（自动探测，仅作提示）
+#   - the LLVM_DIR environment variable
+#   - the default MSYS2 install location (probed automatically, for convenience only)
 if(NOT LLVM_DIR)
   foreach(_llvm_hint
       "C:/msys64/mingw64/lib/cmake/llvm"
@@ -34,6 +34,11 @@ if(NOT LLVM_DIR)
   unset(_llvm_hint)
 endif()
 find_package(LLVM CONFIG REQUIRED)
+# LLVM's config-version file only accepts the same major version, so the minimum
+# requirement is checked explicitly instead of via find_package(VERSION ...).
+if(LLVM_PACKAGE_VERSION VERSION_LESS 17)
+  message(FATAL_ERROR "muc: LLVM >= 17 is required, found ${LLVM_PACKAGE_VERSION}")
+endif()
 message(STATUS "muc: LLVM ${LLVM_PACKAGE_VERSION} (${LLVM_INSTALL_PREFIX})")
 
 add_executable(muc

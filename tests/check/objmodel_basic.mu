@@ -1,6 +1,6 @@
 unit check_objmodel;
 
-// 对象模型基础：struct 运算符、class 构造/析构、方法、operator[]/[]=、函数重载
+// object model basics: struct operators, class construction/destruction, methods, operator[]/[]=, function overloading
 
 struct Point { int x, y; }
 

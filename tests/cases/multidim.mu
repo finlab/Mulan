@@ -12,7 +12,7 @@ class C {
 struct S { int[] b; }
 
 int main() {
-    // 静态矩形 T[m,n]
+    // static rectangular T[m,n]
     int[2,3] a = {{1, 2, 3}, {4, 5, 6}};
     if len(a) != 2 { puts("static dim0"); return 1; }
     if len(a, 1) != 3 { puts("static dim1"); return 2; }
@@ -25,13 +25,13 @@ int main() {
     if row[2] != 3 { puts("static row"); return 7; }
     if sizeof(int[2,3]) != 24 { puts("static sizeof"); return 8; }
 
-    // 三维静态
+    // 3-D static
     int[2,2,2] c3 = {};
     c3[1,0,1] = 9;
     if c3[1,0,1] != 9 { puts("static 3d"); return 9; }
     if len(c3, 2) != 2 { puts("static 3d dim"); return 10; }
 
-    // 动态矩形 T[,]
+    // dynamic rectangular T[,]
     int m = 2;
     int n = 3;
     int[,] b = new int[m,n];
@@ -59,13 +59,13 @@ int main() {
     }
     if sum != 12 { puts("dyn sum"); return 17; }
 
-    // 动态三维
+    // dynamic 3-D
     int[,,] d3 = new int[2,2,2];
     d3[1,1,1] = 7;
     if d3[1,1,1] != 7 { puts("dyn 3d"); return 18; }
     if len(d3, 2) != 2 { puts("dyn 3d dim"); return 19; }
 
-    // 静态矩形里的 class 引用：逐元素 RC
+    // class references in a static rectangle: per-element RC
     {
         C[2,2] cs = {};
         cs[0,1] = new C(1);
@@ -80,7 +80,7 @@ int main() {
     }
     if live != 0 { puts("static ref cleanup"); return 25; }
 
-    // 动态矩形里的 class 引用
+    // class references in a dynamic rectangle
     {
         C[,] cs = new C[2,2];
         cs[0,1] = new C(4);
@@ -92,7 +92,7 @@ int main() {
     }
     if live != 0 { puts("dyn ref cleanup"); return 29; }
 
-    // 静态矩形里的 struct（含动态数组字段）
+    // struct in a static rectangle (with a dynamic array field)
     {
         S[2,2] ss = {};
         ss[0,0].b = new int[2];
@@ -102,7 +102,7 @@ int main() {
         if st[0,0].b[1] != 5 { puts("rect struct copy"); return 31; }
     }
 
-    // 锯齿数组：外层 new 一次一维，循环填行
+    // jagged array: allocate the outer 1-D once, then fill rows in a loop
     int[][] jg = new int[3][];
     if len(jg) != 3 { puts("jagged outer"); return 32; }
     if len(jg[0]) != 0 { puts("jagged null row"); return 33; }
@@ -114,7 +114,7 @@ int main() {
     if jg[2][0] != 2 { puts("jagged row value"); return 35; }
     if jg[2][2] != 0 { puts("jagged row zero"); return 36; }
 
-    // 定长行槽的锯齿：int[][N]
+    // jagged with fixed-size row slots: int[][N]
     int[][2] js = {};
     js[0] = new int[2];
     js[1] = new int[3];
@@ -122,13 +122,13 @@ int main() {
     if js[1][2] != 8 { puts("fixed jagged"); return 37; }
     if len(js[0]) != 2 { puts("fixed jagged len"); return 38; }
 
-    // 静态矩形 -> 动态矩形：深复制元素
+    // static rectangle -> dynamic rectangle: elements are deep-copied
     int[,] conv = a;
     if conv[1,2] != 9 { puts("rect convert value"); return 39; }
     conv[1,2] = 1;
     if a[1,2] != 9 { puts("rect convert deep"); return 40; }
 
-    // 定长行槽 -> 锯齿：复制外层并 retain 行（行共享）
+    // fixed row slots -> jagged: copy the outer and retain rows (rows are shared)
     int[][] jconv = js;
     if len(jconv[1]) != 3 { puts("jagged convert len"); return 41; }
     jconv[1][2] = 8;

@@ -1,6 +1,6 @@
 unit check_weak_ref;
 
-// weak 字段、接口默认方法、抽象类、继承与 super
+// weak fields, interface default methods, abstract classes, inheritance and super
 
 interface IShape {
     int area();
@@ -9,7 +9,7 @@ interface IShape {
 
 class Node {
     int id;
-    weak Node next;      // weak 引用，不增加引用计数
+    weak Node next;      // weak reference, does not increment the reference count
     Node(int i) { id = i; next = null; }
     ~Node() { }
 

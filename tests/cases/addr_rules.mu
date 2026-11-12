@@ -1,14 +1,14 @@
 unit addr_rules;
 
-// U21/U24：允许的取址形式（纯值 struct / 定长数组元素 / 指针变量 /
-// 含引用字段 struct 的标量字段 / 含用户析构器的 struct）
+// U21/U24: allowed address-of forms (plain value struct / fixed array element / pointer variable /
+// scalar field of a struct with reference fields / struct with a user destructor)
 extern int puts(const char* s);
 
 class C { int v; }
 struct P { int x; int y; }
 struct Outer { P p; int[3] v; }
-struct R { C c; int n; }      // 含引用字段：整体取址禁止，标量字段可以
-struct D { int x; ~D() {} }   // 含用户析构器：仍通过指针使用，取址允许
+struct R { C c; int n; }      // reference fields: whole-object & refused, scalar fields ok
+struct D { int x; ~D() {} }   // user destructor: still used via pointers, & allowed
 
 int main() {
     P a = {1, 2};

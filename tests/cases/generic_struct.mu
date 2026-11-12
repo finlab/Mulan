@@ -1,4 +1,4 @@
-// generic_struct.mu — 泛型 struct 单态化：Box<T>、Pair<K,V>、嵌套 Box<Box<int>>
+// generic_struct.mu — generic struct monomorphization: Box<T>, Pair<K,V>, nested Box<Box<int>>
 unit generic_struct;
 
 extern int puts(const char* s);

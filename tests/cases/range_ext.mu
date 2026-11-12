@@ -1,4 +1,4 @@
-// range_ext.mu — 区间扩展：`..=` 含上界、`step` 步进、负 step 倒序；花括号里的区间填充
+// range_ext.mu — range extensions: `..=` is inclusive, `step` stride, negative step counts down; range fill in braces
 unit range_ext;
 
 extern int puts(const char* s);

@@ -1,4 +1,4 @@
-// switch_incl.mu — switch 分支区间支持 `..=`（含上界）
+// switch_incl.mu — switch branch ranges support `..=` (inclusive)
 unit switch_incl;
 
 extern int puts(const char* s);

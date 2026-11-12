@@ -1,4 +1,4 @@
-// strings.mu — string 的 len/s[i]、char[N] 从 string 拷贝、puts(&buf[0])
+// strings.mu — string len/s[i], char[N] copied from a string, puts(&buf[0])
 unit strings;
 
 extern int puts(const char* s);
@@ -26,7 +26,7 @@ void print_int(int v) {
     }
 }
 
-// string 参数：直接遍历打印
+// string parameter: iterate and print directly
 void show(string s) {
     for i in 0..len(s) {
         putchar(s[i]);
@@ -35,46 +35,46 @@ void show(string s) {
 }
 
 int main() {
-    // ---------- string 是内建 UTF-8 视图，len(s) 是字节数 ----------
+    // ---------- string is a builtin UTF-8 view; len(s) is the byte count ----------
     show("hello");                       // hello
-    const string greeting = "Mulan";    // const 绑定
+    const string greeting = "Mulan";    // const binding
     show(greeting);                      // Mulan
 
-    // ---------- s[i] 取字节（char，无符号）；可直接下标字符串字面量 ----------
+    // ---------- s[i] yields a byte (char, unsigned); string literals may be indexed directly ----------
     int sum = 0;
     for i in 0..len("abc") {
         sum += "abc"[i];
     }
     print_int(sum); putchar('\n');       // 97 + 98 + 99 = 294
 
-    // ---------- for-in 直接遍历 string（值绑定，char） ----------
+    // ---------- for-in iterates a string directly (value binding, char) ----------
     for ch in greeting {
         putchar(ch);
     }
     putchar('\n');                       // Mulan
 
-    // ---------- char[N] 从 string 初始化：字节拷贝 + NUL ----------
+    // ---------- char[N] initialized from a string: byte copy + NUL ----------
     char[20] buf = "Mulan";
     puts(&buf[0]);                       // Mulan
 
-    // len(buf) 是数组容量 N，不是字符串长度
+    // len(buf) is the array capacity N, not the string length
     auto cap = len(buf);
     if cap == 20 {
         puts("capacity is 20");
     }
 
-    // ---------- 手动求字符串长度（找 NUL） ----------
+    // ---------- Compute the string length by hand (find the NUL) ----------
     int n = 0;
     while buf[n] != 0 {
         n += 1;
     }
     print_int(n); putchar('\n');         // 5
 
-    // ---------- 写入 NUL 截断字符串 ----------
+    // ---------- Writing a NUL truncates the string ----------
     buf[2] = 0;
     puts(&buf[0]);                       // Mu
 
-    // ---------- 满容量字符串：7 字节 + NUL = 8 ----------
+    // ---------- Full-capacity string: 7 bytes + NUL = 8 ----------
     char[8] c2 = "abcdefg";
     puts(&c2[0]);                        // abcdefg
     int c2n = 0;
@@ -83,10 +83,10 @@ int main() {
     }
     print_int(c2n); putchar('\n');       // 7
 
-    // ---------- char 就是无符号字节，可当数值用 ----------
+    // ---------- char is just an unsigned byte and can be used as a number ----------
     auto code = 'A';
     print_int(code); putchar('\n');      // 65
-    auto diff = 'a' - 'A';               // char 提升为 int
+    auto diff = 'a' - 'A';               // char promotes to int
     print_int(diff); putchar('\n');      // 32
 
     return 0;

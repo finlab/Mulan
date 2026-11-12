@@ -1,10 +1,10 @@
-// mu 标准库：字符串
+// mu standard library: string
 //
-// 这是纯 mu 实现；编译器只负责字面量、s[i]、len、==/!=、for-in 等
-// canonical 布局的快速降级。
+// This is a pure mu implementation; the compiler only handles fast fallbacks for
+// literals, s[i], len, ==/!=, for-in and other canonical layouts.
 //
-// 字符串是值类型 struct：赋值/传参复制三个字段（p/n/owner），owner 是
-// 带 RC 的字节数组，保证底层缓冲的生命周期。
+// string is a value-type struct: assignment and argument passing copy the three
+// fields (p/n/owner); owner is an RC byte array that keeps the backing buffer alive.
 
 public unit std.string;
 
@@ -15,7 +15,7 @@ private:
     byte[] owner;
 
 public:
-    // 从 NUL 结尾的 C 字符串构造（复制一份，不持有 c）
+    // construct from a NUL-terminated C string (copies it, does not hold c)
     string(const char* c) {
         usize count = 0;
         while c[count] != 0 {
@@ -33,7 +33,7 @@ public:
         owner = buf;
     }
 
-    // ---------------------------------------------------------------- 基本信息
+    // ---------------------------------------------------------------- basic info
 
     usize length() {
         return n;
@@ -47,7 +47,7 @@ public:
         return n == 0;
     }
 
-    // 越界返回 0（调试期可改为 panic）
+    // out of range returns 0 (can be changed to panic in debug builds)
     byte at(usize i) {
         if i >= n {
             return 0;
@@ -55,12 +55,12 @@ public:
         return p[i];
     }
 
-    // NUL 结尾视图；字面量与普通字符串都保证末尾有 0
+    // NUL-terminated view; both literals and normal strings guarantee a trailing 0
     const char* cstr() {
         return p as const char*;
     }
 
-    // ---------------------------------------------------------------- 切片与拼接
+    // ---------------------------------------------------------------- slicing and concatenation
 
     string sub(usize start, usize count) {
         string r = {};
@@ -91,9 +91,9 @@ public:
         return r;
     }
 
-    // ---------------------------------------------------------------- 查找与匹配
+    // ---------------------------------------------------------------- search and match
 
-    // 返回首次出现的字节偏移，找不到返回 -1
+    // returns the byte offset of the first occurrence, or -1 if not found
     int find(string needle) {
         if needle.n == 0 {
             return 0;
@@ -149,7 +149,7 @@ public:
         return true;
     }
 
-    // ---------------------------------------------------------------- 修剪
+    // ---------------------------------------------------------------- trimming
 
     string trim() {
         usize start = 0;
@@ -169,7 +169,7 @@ private:
     }
 }
 
-// 运算符只能是自由函数（语言限制），薄封装到成员方法。
+// operators can only be free functions (language limitation); thin wrappers over the member methods.
 public string operator+(string a, string b) {
     return a.concat(b);
 }

@@ -1,4 +1,4 @@
-// layout2.mu — class 对象内的 align(N) / packed 字段，以及动态数组元素对齐
+// layout2.mu — align(N) / packed fields inside class objects, plus dynamic array element alignment
 unit layout2;
 
 extern int puts(const char* s);
@@ -60,8 +60,8 @@ public byte t;
 public W32 w;
 }
 
-// class 的对象布局是内部实现（不暴露 `&c.field`），这里用同源模型布局的 struct 镜像验证偏移；
-// class 只验证句柄大小与运行时行为。
+// The object layout of a class is an internal implementation (`&c.field` is not exposed), so the offsets are
+// verified through a struct mirror with the same model layout; the class only checks the handle size and behaviour.
 struct CShape {
     byte t;
     Al a;
@@ -74,7 +74,7 @@ struct DShape {
 }
 
 int main() {
-    // ---------- class 字段：对象基址/偏移是内部布局，用 struct 镜像验证同源模型 ----------
+    // ---------- class fields: the object base/offsets are internal layout, verified with a struct mirror of the same model ----------
     C c = new C();
     c.a.x = 11;
     c.p.a = 90;
@@ -86,20 +86,20 @@ int main() {
     print_int((((&cs.p) as usize) - ((&cs.t) as usize)) as int); putchar(' ');
     print_int((((&cs.p.b) as usize) - ((&cs.p) as usize)) as int); nl();  // 0 0 16 32 1
 
-    // ---------- 方法内隐式 this 访问 packed 字段 ----------
+    // ---------- implicit this access to a packed field inside a method ----------
     c.setb(-7);
     print_int(c.ax()); putchar(' ');
     print_int(c.pb()); putchar(' ');
     print_int(c.p.a as int); nl();  // 11 -7 90
 
-    // ---------- 定长数组仍允许 align(16) ----------
+    // ---------- fixed-size arrays still allow align(16) ----------
     Al[2] st;
     st[0].x = 1;
     st[1].x = 2;
     print_int((((&st[0]) as usize) % 16) as int); putchar(' ');
     print_int((((&st[1]) as usize) - ((&st[0]) as usize)) as int); nl();  // 0 16
 
-    // ---------- 动态数组元素最多 8 字节对齐：align(8) 正常 ----------
+    // ---------- dynamic array elements are aligned to at most 8 bytes: align(8) works normally ----------
     A8[] s = new A8[2];
     s[0].a = 5;
     s[1].a = 6;
@@ -107,8 +107,8 @@ int main() {
     print_int((((&s[1]) as usize) - ((&s[0]) as usize)) as int); putchar(' ');
     print_int(s[0].a + s[1].a); nl();  // 0 8 11
 
-    // ---------- align(32) 字段：类型级对齐由镜像验证（class 对象用对齐分配是内部实现） ----------
-    // 镜像里 w 的偏移是 32；class 对象带 16 字节对象头，字段偏移是内部实现，不再暴露。
+    // ---------- align(32) field: type-level alignment is verified by the mirror (aligned allocation for class objects is an internal implementation) ----------
+    // In the mirror the offset of w is 32; a class object has a 16-byte object header, so the field offset is internal and no longer exposed.
     D d = new D();
     d.t = 1;
     d.w.x = 2;

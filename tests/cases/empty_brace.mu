@@ -1,4 +1,4 @@
-// empty_brace.mu — 空花括号 `{}` 零初始化：数组 / 结构体 / 切片 / string
+// empty_brace.mu — empty braces `{}` zero-init: array / struct / slice / string
 unit empty_brace;
 
 extern int puts(const char* s);
@@ -6,7 +6,7 @@ extern int puts(const char* s);
 struct Point { int x, y; }
 struct Box { int[3] v; Point p; string name; }
 
-Point gpoint = {};   // unit 级聚合零值
+Point gpoint = {};   // unit-level aggregate zero value
 int[3] garr = {};
 
 int main() {
@@ -25,7 +25,7 @@ int main() {
     string s = {};
     if len(s) != 0 or not (s == "") { puts("bad string"); return 5; }
 
-    // 嵌套空花括号：字段本身是数组 / 结构体 / string
+    // nested empty braces: fields that are arrays / structs / strings
     Box b = {v = {}, p = {}, name = {}};
     if b.v[2] != 0 or b.p.y != 0 or len(b.name) != 0 { puts("bad nested"); return 6; }
 

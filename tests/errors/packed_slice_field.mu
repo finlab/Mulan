@@ -1,4 +1,4 @@
-// packed 结构不能直接含动态数组（未对齐指针访问）
+// packed structs cannot directly contain a dynamic array (unaligned pointer access)
 unit packed_slice_field;
 
 packed struct Bad {

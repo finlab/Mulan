@@ -1,6 +1,6 @@
 unit forin_ref;
 
-// 用户类型不支持 for ref（operator[] 返回的是值）
+// user types do not support for ref (operator[] returns a value)
 struct Vec {
     int[4] data;
     usize n;

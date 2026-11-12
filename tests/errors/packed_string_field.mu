@@ -1,4 +1,4 @@
-// packed 结构不能直接含 string（未对齐指针访问）
+// packed structs cannot directly contain a string (unaligned pointer access)
 unit packed_string_field;
 
 packed struct Bad {

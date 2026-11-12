@@ -1,6 +1,6 @@
 unit check_unary_op;
 
-// 一元运算符重载（operator- / operator+）+ 比较运算符
+// unary operator overloading (operator- / operator+) and comparison operators
 
 struct Vec2 { int x, y; }
 

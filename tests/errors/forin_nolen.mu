@@ -1,6 +1,6 @@
 unit forin_nolen;
 
-// 缺 length()：不能被 for-in 遍历
+// missing length(): cannot be iterated with for-in
 struct NoLen {
     int x;
 }

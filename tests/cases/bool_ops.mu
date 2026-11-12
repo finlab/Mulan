@@ -1,6 +1,6 @@
-// bool_ops.mu — not/and/or 与比较的优先级
-// 事实（由 parser.py 的文法决定，not 比 == 松、比 and 紧；and 比 or 紧；位运算比比较紧）：
-//   not a == b  即  not (a == b)；not a and b 即 (not a) and b；a or b and c 即 a or (b and c)
+// bool_ops.mu — precedence of not/and/or against comparisons
+// Facts (decided by the parser.py grammar: not binds looser than == but tighter than and; and binds tighter than or; bitwise binds tighter than comparison):
+//   not a == b  means  not (a == b); not a and b means (not a) and b; a or b and c means a or (b and c)
 unit bool_ops;
 
 extern int puts(const char* s);
@@ -29,7 +29,7 @@ void print_int(int v) {
 }
 
 int main() {
-    // ---------- not a == b：not 作用于整个比较（操作数是 int，alternate parse 根本无法编译） ----------
+    // ---------- not a == b: not applies to the whole comparison (operands are int, the alternate parse does not even compile) ----------
     int x = 5, y = 5;
     if not x == y {
         puts("WRONG: not x == y as ((not x) == y)");
@@ -41,10 +41,10 @@ int main() {
         puts("not 3 == 7 is true");
     }
 
-    // ---------- not a and b：等价 (not a) and b，而非 not (a and b) ----------
+    // ---------- not a and b: means (not a) and b, not not (a and b) ----------
     auto a = true;
     auto b = false;
-    // a=true, b=false: (not true) and false = false；not (true and false) = true
+    // a=true, b=false: (not true) and false = false; not (true and false) = true
     if not a and b {
         puts("not a and b is true");
     } else {
@@ -56,7 +56,7 @@ int main() {
         puts("not (a and b) is false");
     }
 
-    // ---------- and 比 or 紧：p or (q and r) ----------
+    // ---------- and binds tighter than or: p or (q and r) ----------
     auto p = true, q = false, r = false;
     if p or q and r {
         puts("p or q and r is true");
@@ -64,20 +64,20 @@ int main() {
         puts("WRONG: (p or q) and r");
     }
 
-    // ---------- == 左结合：(1 < 2) == (2 < 3) ----------
+    // ---------- == is left-associative: (1 < 2) == (2 < 3) ----------
     if 1 < 2 == 2 < 3 {
         puts("1 < 2 == 2 < 3 is true");
     } else {
         puts("1 < 2 == 2 < 3 is false");
     }
 
-    // ---------- not 作用于 != 的整个结果 ----------
+    // ---------- not applies to the whole result of != ----------
     if not 1 == 2 {
         puts("not 1 == 2 is true");
     }
-    // not (1 != 2) = not true = false：不打印
+    // not (1 != 2) = not true = false: nothing is printed
 
-    // ---------- 双重否定回到原值 ----------
+    // ---------- double negation returns the original value ----------
     if not not p {
         puts("not not p is true");
     }
@@ -87,7 +87,7 @@ int main() {
         puts("not not q is false");
     }
 
-    // ---------- bool 组合真值表 ----------
+    // ---------- truth table of bool combinations ----------
     for i in 0..4 {
         auto s = i >= 2;         // false false true true
         auto t = i % 2 == 0;     // true  false true false

@@ -1,4 +1,4 @@
-// generic_class.mu — 泛型 class 实例化（U34 M3e）：构造器、方法、vtable
+// generic_class.mu — generic class instantiation (U34 M3e): constructor, methods, vtable
 unit generic_class;
 
 extern int puts(const char* s);

@@ -1,4 +1,4 @@
-// layout.mu — 布局修饰符 packed / align(N)
+// layout.mu — layout modifiers packed / align(N)
 unit layout_case;
 
 extern int puts(const char* s);
@@ -28,38 +28,38 @@ void print_int(int v) {
 
 void nl() { putchar('\n'); }
 
-// packed：字段连续累加，无内部/尾部填充
+// packed: fields pack back to back, no internal/trailing padding
 packed struct W {
     byte a;
     int b;
     ushort c;
 }
 
-// align(16)：不改字段偏移，只把 alignof 提到 16、sizeof 补齐到 16 的倍数
+// align(16): field offsets unchanged; only alignof is raised to 16 and sizeof padded to a multiple of 16
 align(16) struct V {
     int x, y;
 }
 
-// 顺序无关、可组合
+// order independent, composable
 packed align(8) struct M {
     byte a;
     int b;
     ushort c;
 }
 
-// 反过来写（align 在前）等价
+// written the other way (align first) is equivalent
 align(4) packed struct R {
     byte a;
     int b;
 }
 
-// packed 结构作为普通 struct 的字段：保留自己的紧排布局
+// a packed struct used as a field of a plain struct keeps its own tight layout
 struct Q {
     byte pad;
     W w;
 }
 
-// 普通 struct 里含 align(16) 字段：字段偏移按 16 对齐
+// align(16) field inside a plain struct: the field offset is 16-aligned
 struct Outer {
     byte lead;
     V v;
@@ -67,7 +67,7 @@ struct Outer {
 }
 
 int main() {
-    // ---------- packed 的 sizeof / alignof / 偏移 ----------
+    // ---------- packed sizeof / alignof / offsets ----------
     print_int(sizeof(W) as int); putchar(' ');
     print_int(alignof(W) as int); putchar(' ');
     W w = {a = 0x12, b = 0x12345678, c = 0xABCD};
@@ -75,7 +75,7 @@ int main() {
     print_int((((&w.b) as usize) - ((&w) as usize)) as int); putchar(' ');
     print_int((((&w.c) as usize) - ((&w) as usize)) as int); nl();  // 7 1 0 1 5
 
-    // ---------- 字节级布局（小端）与读写往返 ----------
+    // ---------- Byte-level layout (little-endian) and read/write round trip ----------
     byte* bp = (&w) as byte*;
     print_int(bp[0] as int); putchar(' ');
     print_int(bp[1] as int); putchar(' ');
@@ -104,7 +104,7 @@ int main() {
     print_int((((&m.c) as usize) - ((&m) as usize)) as int); putchar(' ');
     print_int(m.b); nl();  // 8 8 0 1 5 -2
 
-    // ---------- 顺序无关 + packed 结构作普通 struct 字段 ----------
+    // ---------- order independence + packed struct as a plain struct field ----------
     R r = {a = 1, b = -5};
     print_int(sizeof(R) as int); putchar(' ');
     print_int(alignof(R) as int); putchar(' ');
@@ -120,7 +120,7 @@ int main() {
     print_int(((&q.w.b) as usize - ((&q) as usize)) as int); putchar(' ');
     print_int(q.w.b); nl();  // 8 1 2 99
 
-    // ---------- 数组元素跨度 ----------
+    // ---------- Array element stride ----------
     W[3] ws;
     print_int((((&ws[1]) as usize) - ((&ws[0]) as usize)) as int); putchar(' ');
     print_int(sizeof(W[3]) as int); putchar(' ');
@@ -131,7 +131,7 @@ int main() {
     print_int((((&vs[1]) as usize) % 16) as int); putchar(' ');
     print_int(vs[1].x); nl();  // 7 21 16 0 20
 
-    // ---------- 嵌套：普通 struct 含 align(16) 字段 ----------
+    // ---------- Nesting: plain struct with an align(16) field ----------
     Outer o;
     o.lead = 5;
     o.v.x = 6;

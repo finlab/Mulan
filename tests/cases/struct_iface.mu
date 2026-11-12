@@ -1,4 +1,4 @@
-// struct_iface.mu — `struct S : I` 静态满足（U33 S1/S2）：只列接口、显式 override
+// struct_iface.mu — static satisfaction of `struct S : I` (U33 S1/S2): list interfaces only, explicit override
 unit struct_iface;
 
 extern int puts(const char* s);

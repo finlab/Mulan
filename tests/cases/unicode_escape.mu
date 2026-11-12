@@ -1,4 +1,4 @@
-// unicode_escape.mu — `\u{...}` 转义：字符串按 UTF-8 编码，字符字面量限于单字节
+// unicode_escape.mu — `\u{...}` escapes: strings encoded as UTF-8, char literals limited to one byte
 unit unicode_escape;
 
 extern int puts(const char* s);
@@ -42,34 +42,34 @@ void show_bytes(string s) {
 }
 
 int main() {
-    // ---------- ASCII 码点 ----------
+    // ---------- ASCII code points ----------
     show("\u{41}\u{42}\u{43}");          // ABC
     print_int(len("\u{41}") as int); putchar('\n');   // 1
 
-    // ---------- 2 / 3 / 4 字节码点按 UTF-8 编码 ----------
+    // ---------- 2 / 3 / 4 byte code points encoded as UTF-8 ----------
     show("\u{E9}");                      // é
-    show("\u{4E2D}\u{6587}");            // 中文
+    show("\u{4E2D}\u{6587}");            // Chinese text
     show("\u{1F600}");                   // 😀
     print_int(len("\u{E9}") as int); putchar('\n');     // 2
     print_int(len("\u{4E2D}") as int); putchar('\n');   // 3
     print_int(len("\u{1F600}") as int); putchar('\n');  // 4
 
-    // ---------- UTF-8 字节 ----------
+    // ---------- UTF-8 bytes ----------
     show_bytes("\u{4E2D}");              // 228 184 173
     show_bytes("\u{1F600}");             // 240 159 152 128
 
-    // ---------- 与源码里的原始 UTF-8 一致 ----------
+    // ---------- same as raw UTF-8 in the source ----------
     if "\u{4E2D}" == "中" {
         puts("same as raw utf-8");
     }
 
-    // ---------- 字符字面量：单字节码点 ----------
+    // ---------- char literals: single-byte code points ----------
     print_int('\u{41}'); putchar('\n');  // 65
-    print_int('\u{E9}'); putchar('\n');  // 233（byte 按位模式）
-    char c = '\u{FF}';                   // 位模式 0xFF → char 是 i8
+    print_int('\u{E9}'); putchar('\n');  // 233 (byte as bit pattern)
+    char c = '\u{FF}';                   // bit pattern 0xFF → char is i8
     print_int(c); putchar('\n');         // -1
 
-    // ---------- 大小写十六进制、前导零 ----------
+    // ---------- upper/lowercase hex, leading zeros ----------
     show("\u{0061}\u{6a}\u{0041}");      // ajA
 
     return 0;

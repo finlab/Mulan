@@ -1,7 +1,7 @@
 unit unit_name_var;
 
-// 局部/全局变量与 unit 同名时，`v.field = x` 仍必须是合法左值
-// （is_lvalue 不能因为名字碰巧等于 unit 名就把它当成 unit 限定访问）。
+// when a local/global var shares the unit name, `v.field = x` must still be a valid lvalue
+// (is_lvalue must not treat it as unit-qualified access just because the name equals the unit name).
 
 extern int puts(const char* s);
 
@@ -13,7 +13,7 @@ int main() {
     unit_name_var.x = 7;
     if unit_name_var.x != 7 { puts("global field assign failed"); return 1; }
 
-    S unit_name_var = {2};  // 局部遮蔽同名全局
+    S unit_name_var = {2};  // local shadows the same-named global
     unit_name_var.x = 9;
     if unit_name_var.x != 9 { puts("local field assign failed"); return 2; }
 

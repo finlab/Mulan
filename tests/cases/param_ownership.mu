@@ -1,8 +1,8 @@
 unit param_ownership;
 
-// 参数是拥有型局部变量（SPEC §4）：进入 retain、退出 release；
-// 函数体内重绑定参数不得影响调用方，也不能泄漏。
-// for-in 值绑定同此处理（每轮 retain/release，覆盖 break/continue/return）。
+// Parameters are owning locals (SPEC §4): retain on entry, release on exit;
+// rebinding a parameter in the body must not affect the caller and must not leak.
+// for-in value binding works the same way (retain/release per round, covering break/continue/return).
 
 extern int puts(const char* s);
 
@@ -57,7 +57,7 @@ int find(C[] arr, int want) {
 }
 
 int main() {
-    // 1. 参数置 null 不释放调用方对象
+    // 1. Setting a parameter to null does not release the caller's object
     {
         C a = new C(1);
         drop(a);
@@ -66,7 +66,7 @@ int main() {
     }
     if live != 0 { puts("param null leak"); return 3; }
 
-    // 2. 参数赋 owned 值：不释放调用方，也不泄漏
+    // 2. Assigning an owned value to a parameter: caller untouched, no leak
     {
         C a = new C(1);
         rebind(a);
@@ -75,7 +75,7 @@ int main() {
     }
     if live != 0 { puts("param rebind leak 2"); return 6; }
 
-    // 3. 返回参数：调用方拿到一份新引用
+    // 3. Returning a parameter: the caller gets a fresh reference
     {
         C a = new C(2);
         C b = ident(a);
@@ -86,11 +86,11 @@ int main() {
     }
     if live != 0 { puts("return param leak"); return 10; }
 
-    // 4. 临时实参
+    // 4. Temporary argument
     drop(new C(3));
     if live != 0 { puts("temp arg leak"); return 11; }
 
-    // 5. 含引用字段的 struct 参数
+    // 5. struct parameter with a reference field
     {
         S s = { new C(4), 1 };
         takeS(s);
@@ -99,7 +99,7 @@ int main() {
     }
     if live != 0 { puts("struct param leak"); return 14; }
 
-    // 6. 接口参数
+    // 6. Interface parameter
     {
         D d = new D(5);
         takeI(d);
@@ -108,7 +108,7 @@ int main() {
     }
     if live != 0 { puts("iface param leak"); return 17; }
 
-    // 7. 方法参数重绑定
+    // 7. Method parameter rebinding
     {
         C a = new C(6);
         Holder h = new Holder(a);
@@ -120,7 +120,7 @@ int main() {
     }
     if live != 0 { puts("method leak"); return 22; }
 
-    // 8. 构造器 / super(...) 参数
+    // 8. Constructor / super(...) parameters
     {
         C a = new C(7);
         Derived d = new Derived(a);
@@ -131,7 +131,7 @@ int main() {
     }
     if live != 0 { puts("super param leak"); return 26; }
 
-    // 9. for-in 值绑定可重绑定，且每轮释放
+    // 9. for-in value binding may be rebound and is released each round
     {
         C[] arr = new C[3];
         arr[0] = new C(10);
@@ -149,7 +149,7 @@ int main() {
         if live != 0 { puts("arr release"); return 30; }
     }
 
-    // 10. break / continue / return 路径上的循环变量释放
+    // 10. Loop variable release on break / continue / return paths
     {
         C[] arr = new C[3];
         arr[0] = new C(20);

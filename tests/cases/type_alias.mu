@@ -1,7 +1,7 @@
-// type_alias.mu — 类型别名 `type A = B;`（透明别名，不产生新类型）
+// type_alias.mu — type alias `type A = B;` (transparent alias, no new type)
 //
-// 覆盖：标量/指针/切片/定长数组/struct 别名、别名套别名、别名作字段与数组元素、
-// `sizeof`/`len`/`const` 与别名组合。
+// Covers: scalar/pointer/slice/fixed array/struct aliases, alias of alias, aliases as fields and array elements,
+// `sizeof`/`len`/`const` combined with aliases.
 unit type_alias;
 
 extern int puts(const char* s);

@@ -1,61 +1,61 @@
-# Mulan 语言规范（草案 v0.2）
+# Mulan Language Specification (Draft v0.2)
 
-> 日期：2026-11-07 起稿；2026-11-09 增补对象模型（class / 单继承 / 接口 / 重载 / 构造器）；
-> 2026-11-10 增补 `switch`、条件表达式 `?:`，并把已实现但未记录的行为与实现对齐（版本 0.0.46）
-> 状态：草案。文中区分「已定」「建议」「待定」，未冻结的条目可逐项讨论。
-> 定位：精巧、现代的类 C 小语言；保留 C 的核心能力；手动管理内存 + 引用计数管理堆对象。
-> 第一阶段非目标：多继承、用户析构器、异常、闭包、GC、预处理器、反射。（泛型已落地，见 3.15。）
+> Date: drafted on 2026-11-07; the object model (class / single inheritance / interface / overload / constructor) was added on 2026-11-09;
+> 2026-11-10: added `switch` and the conditional expression `?:`, and aligned the specification with the implementation for behaviors that were implemented but undocumented (version 0.0.46)
+> Status: draft, current through version 0.0.80. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
+> Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
+> Non-goals for phase one: multiple inheritance, exceptions, closures, GC, a preprocessor, reflection. (Generics have landed, see 3.15; destructors are specified in 3.13.)
 
 ---
 
-## 0. 讨论结论速览
+## 0. Summary of Discussion Conclusions
 
-| 主题 | 结论 |
+| Topic | Conclusion |
 |---|---|
-| 循环 | 只保留 `while` 和 `for-in`；不保留 C 风格 `for`、`do-while` |
-| 遍历 | `for x in seq { }`（括号可选）；支持区间 `a..b` / `a..=b`（可 `step n`）、定长数组、动态数组；`continue` 进入下一次迭代 |
-| 可变性 | C# 式类型在前声明；默认可变；`const` 是 C 模型前缀限定符：命名类型上是只读绑定标记，指针/切片上是 pointee 只读 |
-| 声明初始化 | 声明只用 `=`：`Point p = {1, 2}`、`Point p = {}`、`Point p = Point(1, 2)`；非声明位置用 `Point(...)` |
-| 类型推断 | 局部变量可用 `auto x = expr;`；仅局部、必须有初始化器；`dynamic`/`any` 仅预留命名 |
-| 动态类型 | 第一阶段不做；异构值优先库级 Variant/和类型；`dynamic`/`any` 仅预留 |
-| 作用域 | 声明不写 `T x(...)`；`Point p` 未初始化，`= {}` 零初始化；unit 级变量直接声明，默认 `private` |
-| 对象模型 | 值与引用分离：`struct` 值类型；`class` 引用类型（单继承 + 接口；默认虚方法；原子 RC + weak；无 GC/环收集器） |
-| 字符串 | `string`（std 库提供的值类型：UTF-8 字节序列、不可变；布局与 API 见 库文档） |
-| 泛型 | **单态化**（每个实参组合一份代码）；`<>` 语法；约束用 `interface` + `&`/`\|`；`Self` 指实现者；约束**结构化匹配**，内置类型零成本满足；详见 3.15 |
-| 内存 | 指针 + `alloc/free/realloc`（裸内存）；`class` 用 `new` + 原子引用计数（提前释放写 `x = null`）；无 GC、无借用检查 |
-| 控制流 | `if/else`、`while`、`for-in`、`break/continue/return`；条件必须是 `bool`；强制花括号 |
-| 条件表达式 | `cond ? a : b`（右结合；条件必须 `bool`；只求值一个分支；两侧取同一类型 / 隐式加宽 / `null` 适配） |
-| 条件括号 | 可选，规范写法省略（`if cond { }`）；C 式 `if (cond)` 仍合法 |
-| 结构体构造 | `Point(x = 1, y = 2)` 命名参数，或 `Point(1, 2)` 位置参数；两者不可混用 |
-| C 能力 | 指针、结构体、联合体（`union`）、数组、函数、枚举、C ABI 互操作；`goto/varargs/函数指针` 待定 |
-| 后端（非规范） | LLVM C++ API 直接生成 COFF；C99 后端已在 0.0.2 移除；Windows x64 为一等目标 |
+| Loops | Only `while` and `for-in` are kept; C-style `for` and `do-while` are not kept |
+| Iteration | `for x in seq { }` (parentheses optional); ranges `a..b` / `a..=b` (optionally `step n`), fixed-size arrays, and dynamic arrays are supported; `continue` proceeds to the next iteration |
+| Mutability | C#-style: the type is declared before use; mutable by default; `const` is a C-model prefix qualifier: on named types it is a read-only binding marker, on pointers/slices it makes the pointee read-only |
+| Declaration initialization | Declarations use only `=`: `Point p = {1, 2}`, `Point p = {}`, `Point p = Point(1, 2)`; in non-declaration positions use `Point(...)` |
+| Type inference | Local variables may use `auto x = expr;`; local only, and an initializer is required; `dynamic`/`any` are reserved names only |
+| Dynamic types | Not done in phase one; heterogeneous values prefer library-level Variant/sum types; `dynamic`/`any` are reserved only |
+| Scope | Declarations do not write `T x(...)`; `Point p` is uninitialized, `= {}` zero-initializes; unit-level variables are declared directly and are `private` by default |
+| Object model | Values and references are separated: `struct` is a value type; `class` is a reference type (single inheritance + interfaces; virtual methods by default; atomic RC + weak; no GC/cycle collector) |
+| Strings | `string` (a value type provided by the std library: an immutable UTF-8 byte sequence; for layout and API see the library documentation) |
+| Generics | **Monomorphization** (one copy of the code per combination of type arguments); `<>` syntax; constraints use `interface` + `&`/`\|`; `Self` refers to the implementor; constraints are matched **structurally**, and built-in types satisfy them at zero cost; see 3.15 for details |
+| Memory | Pointers + `alloc/free/realloc` (raw memory); `class` uses `new` + atomic reference counting (write `x = null` to release early); no GC, no borrow checking |
+| Control flow | `if/else`, `while`, `for-in`, `break/continue/return`; conditions must be `bool`; braces are mandatory |
+| Conditional expression | `cond ? a : b` (right-associative; the condition must be `bool`; only one branch is evaluated; both sides use the same type / implicit widening / `null` adaptation) |
+| Condition parentheses | Optional; the canonical form omits them (`if cond { }`); C-style `if (cond)` is still legal |
+| Struct construction | `Point(x = 1, y = 2)` with named arguments, or `Point(1, 2)` with positional arguments; the two cannot be mixed |
+| C capabilities | Pointers, structs, unions (`union`), arrays, functions, enums, C ABI interop; `goto/varargs/function pointers` are undecided |
+| Backend (non-normative) | The LLVM C++ API generates COFF directly; the C99 backend was removed in 0.0.2; Windows x64 is a first-class target |
 
 ---
 
-## 1. 设计原则
+## 1. Design Principles
 
-1. **保留 C 的硬能力**：值语义、指针运算、手动内存、struct、C ABI。
-2. **去掉 C 的历史包袱**：不做预处理器、隐式收窄、整数真值、`do-while`、C 风格 `for`；`++/--` 只保留语句形式（无返回值）。
-3. **显式优于隐式**：类型转换用 `as`；可变性用 `const` 修饰；只读 API 边界用只读 `interface`。
-4. **小而可预测**：泛型只做单态化（无擦除、无运行时泛型）、无闭包、无隐藏分配；重载限定在 3.11 的有界规则内；编译期能查的错不留到运行期。
-5. **为优化留空间但不牺牲语义**：`const` 单赋值、结构化 `for-in`、后续的别名注解。
-6. **值与引用分离**：`struct` 值语义、`class` 引用语义，互不混淆；堆对象用引用计数管理，环靠 `weak` 手动打破。
+1. **Keep the hard capabilities of C**: value semantics, pointer arithmetic, manual memory, struct, C ABI.
+2. **Drop C's historical baggage**: no preprocessor, no implicit narrowing, no integer truthiness, no `do-while`, no C-style `for`; `++/--` keep only the statement form (no value).
+3. **Explicit beats implicit**: use `as` for type conversions; use `const` for mutability; use a read-only `interface` for read-only API boundaries.
+4. **Small and predictable**: generics only do monomorphization (no erasure, no runtime generics), no closures, no hidden allocations; overloading is limited to the bounded rules in 3.11; errors that can be caught at compile time are not deferred to runtime.
+5. **Leave room for optimization without sacrificing semantics**: single assignment for `const`, a structured `for-in`, and future alias annotations.
+6. **Separate values from references**: `struct` has value semantics and `class` has reference semantics, and the two are never confused; heap objects are managed with reference counting, and cycles are broken manually with `weak`.
 
 ---
 
-## 2. 词法
+## 2. Lexical
 
-### 2.1 源文件
+### 2.1 Source Files
 
-- UTF-8 编码，扩展名 `.mu`。
-- 注释：`//` 行注释；`/* ... */` 块注释，**支持嵌套**（已实现）。
-- 语句以 `;` 结尾；不自动插入分号。
+- UTF-8 encoding, extension `.mu`.
+- Comments: `//` line comments; `/* ... */` block comments, **nesting is supported** (implemented).
+- Statements end with `;`; semicolons are not inserted automatically.
 
-### 2.2 标识符
+### 2.2 Identifiers
 
-- `[A-Za-z_][A-Za-z0-9_]*`，区分大小写；第一阶段不允许非 ASCII 标识符。
+- `[A-Za-z_][A-Za-z0-9_]*`, case-sensitive; non-ASCII identifiers are not allowed in phase one.
 
-### 2.3 关键字
+### 2.3 Keywords
 
 ```
 unit use public private const auto struct enum extern class interface new weak packed union
@@ -66,43 +66,43 @@ float double usize isize
 and or not override operator super this
 ```
 
-> `del` 已在 0.0.47 移除（保留为关键字只为给出迁移诊断）：释放引用写 `x = null;`。
+> `del` was removed in 0.0.47 (it is kept as a keyword only to give a migration diagnostic): to release a reference, write `x = null;`.
 
-> `goto/typedef/fn` 暂不纳入。`len/sizeof/alloc/realloc/free/alignof` 等是内建标识符，
-> **禁止被用户声明遮蔽**（已实现：把它们用作变量/参数/字段名会直接报错）。
-> `dynamic` / `any` 预留给后续动态类型/顶层类型，不作为第一阶段关键字。
-> `packed` 是**硬关键字**（布局修饰符，见 3.4，已实现）；`align` 是**上下文关键字**——仅当它出现在类型声明起始位置
-> 且紧跟 `(` 时按修饰符解析（`align(8) struct S {...}`），其他位置仍可作标识符（`int align = 4;` 合法）。
-> 若实现上不希望维护上下文关键字，也可直接把 `align` 加入硬关键字表（当前全仓库无同名标识符）。
-> **`type` 是上下文关键字**（0.0.62）：仅当声明起始位置出现 `type Ident =` 时按**类型别名**解析；
-> 其它位置仍是普通标识符（C 互操作结构体里的 `type` 字段因此不受影响）。
-> **`step` 是上下文关键字**：仅在 `for` 的区间序列之后（`for i in 0..10 step 2`）按步长解析；其它位置是普通标识符。
-> **`Self` 是上下文关键字**（0.0.67）：仅在 `interface` 体内、类型位置出现时按「实现者类型」解析（见 3.15.6）；其它位置仍是普通标识符。
+> `goto/typedef/fn` are not included for now. `len/sizeof/alloc/realloc/free/alignof` and the like are built-in identifiers,
+> **and must not be shadowed by user declarations** (implemented: using them as a variable/parameter/field name is a hard error).
+> `dynamic` / `any` are reserved for future dynamic types / top types and are not keywords in phase one.
+> `packed` is a **hard keyword** (a layout modifier, see 3.4, implemented); `align` is a **contextual keyword** — it is parsed as a modifier only when it appears at the start of a type declaration
+> and is immediately followed by `(` (`align(8) struct S {...}`); in other positions it may still be used as an identifier (`int align = 4;` is legal).
+> If the implementation would rather not maintain contextual keywords, `align` can simply be added to the hard keyword table (there is currently no identifier with the same name anywhere in the repository).
+> **`type` is a contextual keyword** (0.0.62): it is parsed as a **type alias** only when `type Ident =` appears at the start of a declaration;
+> in other positions it is still an ordinary identifier (so `type` fields in C interop structs are unaffected).
+> **`step` is a contextual keyword**: it is parsed as a step size only after the range sequence of a `for` (`for i in 0..10 step 2`); in other positions it is an ordinary identifier.
+> **`Self` is a contextual keyword** (0.0.67): it is parsed as the "implementor type" only when it appears in type position inside an `interface` body (see 3.15.6); in other positions it is still an ordinary identifier.
 
-### 2.4 字面量
+### 2.4 Literals
 
-- **整数**：十进制、`0x`、`0b`；允许 `_` 分隔；不支持八进制。
-- **浮点**：十进制小数点/指数；默认 `double`，`f` 后缀为 `float`。
-- **字符**：`'a'`；转义 `'\n' '\t' '\\' '\'' '\0' '\xNN' '\u{...}'`；字面量默认类型 `byte`（无符号 8 位），按上下文适配 `char`/`byte`。
-  - `char` 是**有符号** 8 位（C 风格，−128–127）；`byte` 是**无符号** 8 位（0–255）。没有 `ubyte`/`uchar` 别名。
-  - 字面量按**位模式**解释：`'\xE4'` 默认是 `byte` 值 228；赋给 `char` 后值为 −28。需要无符号字节时用 `byte`（或 `x as byte`）。
-  - 字符字面量表示**单个字节**，不是 Unicode 码点：`'a'` 即 `0x61`；`'中'` 这类多字节字符**编译报错**（暂不支持非 ASCII 原始字符）。
-    `'\u{...}'` 只接受 `U+00`–`U+FF`（单字节）；更大的码点用字符串字面量 `"\u{4E2D}"`（见下文）。
-  - Unicode 文本用 `string`（UTF-8 字节序列，见 3.3），`len(s)` 与 `s[i]` 均按字节；`s[i]` 与字符串 for-in 的元素类型都是 `byte`。
-- **`\u{...}` 转义**（字符与字符串字面量通用）：
-  - 形式为 `\u{` + 1–6 位十六进制数字 + `}`（大小写均可、允许前导零，如 `\u{4E2D}`、`\u{1f600}`）；不支持 `\uXXXX` 四位写法。
-  - 取值范围 `U+0000`–`U+10FFFF`；**代理区 `U+D800`–`U+DFFF` 与超出范围的值编译报错**。
-  - 写在字符串字面量里按 **UTF-8 编码**成 1–4 个字节（`"\u{4E2D}"` 与源码中的 `"中"` 字节相同）；`\u{0}` 产生的 NUL 与 `\0` 一样**报错**（字符串字面量不能含 NUL）。
-  - 写在字符字面量里要求码点 ≤ `U+FF`（单字节位模式），否则报错并提示改用字符串。
-- **Unicode 码点类型 = `int`**（i32）：范围 0–`0x10FFFF`，算术/比较自然，`-1` 可作非法哨兵；**不引入** `rune` / `unichar` / `char32` 等类型或别名。
-  需要按码点遍历字符串的 API（`s.chars()` 等）属于字符串库，与字符串类一起设计（见 backlog U3），届时返回 `int`。
-- **字符串**：`"..."`，UTF-8，编译期静态存储，NUL 结尾；类型是 std 库的 `string` 值类型（见 3.3，实现见库文档），可隐式转 `const char*`；支持 `\u{...}`（见上）。
-- **布尔**：`true` / `false`。
-- **空值**：`null`（不是 0）；可赋给指针与 class 引用，不能用于 struct/标量。
+- **Integer**: decimal, `0x`, `0b`; `_` may be used as a separator; octal is not supported.
+- **Float**: decimal point / exponent; `double` by default, the `f` suffix means `float`.
+- **Character**: `'a'`; escapes `'\n' '\t' '\\' '\'' '\0' '\xNN' '\u{...}'`; the default type of a literal is `byte` (unsigned 8-bit), adapted to `char`/`byte` according to context.
+  - `char` is **signed** 8-bit (C style, −128–127); `byte` is **unsigned** 8-bit (0–255). There is no `ubyte`/`uchar` alias.
+  - Literals are interpreted by **bit pattern**: `'\xE4'` is by default the `byte` value 228; assigned to a `char` its value is −28. Use `byte` (or `x as byte`) when an unsigned byte is needed.
+  - A character literal denotes a **single byte**, not a Unicode code point: `'a'` is `0x61`; multi-byte characters such as `'中'` are a **compile error** (non-ASCII raw characters are not supported for now).
+    `'\u{...}'` only accepts `U+00`–`U+FF` (a single byte); larger code points use the string literal `"\u{4E2D}"` (see below).
+  - Unicode text uses `string` (a UTF-8 byte sequence, see 3.3); both `len(s)` and `s[i]` operate on bytes; the element type of `s[i]` and of string for-in is `byte`.
+- **`\u{...}` escape** (shared by character and string literals):
+  - The form is `\u{` + 1–6 hexadecimal digits + `}` (either case is allowed, leading zeros are allowed, e.g. `\u{4E2D}`, `\u{1f600}`); the four-digit `\uXXXX` form is not supported.
+  - The value range is `U+0000`–`U+10FFFF`; **the surrogate range `U+D800`–`U+DFFF` and values outside the range are compile errors**.
+  - Written in a string literal it is encoded as **UTF-8** into 1–4 bytes (`"\u{4E2D}"` has the same bytes as `"中"` in source code); the NUL produced by `\u{0}` is an **error** just like `\0` (a string literal cannot contain NUL).
+  - Written in a character literal it requires a code point ≤ `U+FF` (a single-byte bit pattern); otherwise it is an error and the compiler suggests using a string instead.
+- **Unicode code point type = `int`** (i32): the range is 0–`0x10FFFF`, arithmetic and comparison work naturally, and `-1` can serve as an invalid sentinel; **no** types or aliases such as `rune` / `unichar` / `char32` are **introduced**.
+  APIs that iterate a string by code point (`s.chars()` and the like) belong to the string library and are designed together with the string type (see backlog U3); they will return `int`.
+- **String**: `"..."`, UTF-8, statically stored at compile time, NUL-terminated; the type is the std library's `string` value type (see 3.3, for the implementation see the library documentation), implicitly convertible to `const char*`; supports `\u{...}` (see above).
+- **Boolean**: `true` / `false`.
+- **Null**: `null` (not 0); it can be assigned to pointers and class references, but cannot be used for structs/scalars.
 
-### 2.5 保留字（未来扩展，暂不可作标识符）
+### 2.5 Reserved Words (future extensions, not usable as identifiers for now)
 
-以下标识符预留给后续特性，编译器应拒绝将其用作变量/函数/类型名：
+The following identifiers are reserved for future features; the compiler should reject their use as variable/function/type names:
 
 ```
 where  try  catch  throw  finally
@@ -110,107 +110,107 @@ async  await  spawn  shared  atomic
 move  unsafe  typeof
 ```
 
-- 泛型：`where`；
-- 异常：`try/catch/throw/finally`；
-- 并发：`async/await/spawn/shared/atomic`；
-- 其他：`move/unsafe/typeof`。
-  > `match` 不再是保留字：分发构造只保留 `switch`（见 6.6）。**模式匹配类扩展已定不做**
-  > （表达式形式/守卫/绑定/or 模式/类型分支/解构，见 6.6）；将来若和类型需要分发，另立构造再议。
+- Generics: `where`;
+- Exceptions: `try/catch/throw/finally`;
+- Concurrency: `async/await/spawn/shared/atomic`;
+- Others: `move/unsafe/typeof`.
+  > `match` is no longer a reserved word: the only dispatch construct kept is `switch` (see 6.6). **Pattern-matching style extensions are decided not to be done**
+  > (expression form / guards / bindings / or-patterns / type branches / destructuring, see 6.6); if sum types later need dispatch, a separate construct will be discussed then.
 
 ---
 
-## 3. 类型系统
+## 3. Type system
 
-### 3.1 基本类型
+### 3.1 Basic types
 
-| 类型 | 宽度 | 说明 |
+| Type | Width | Description |
 |---|---|---|
-| `bool` | 1 | `true`/`false`；不能隐式转为整数 |
-| `byte` | 1 | 无符号 8 位（0–255）；字节/UTF-8 处理 |
-| `char` | 1 | **有符号** 8 位（−128–127，C 风格）：C 字符串/字节互操作；`'\xNN'` 为位模式 |
-| `short` / `ushort` | 2 | 有/无符号 16 位 |
-| `int` / `uint` | 4 | 有/无符号 32 位 |
-| `long` / `ulong` | 8 | 有/无符号 64 位 |
+| `bool` | 1 | `true`/`false`; cannot implicitly convert to an integer |
+| `byte` | 1 | unsigned 8-bit (0–255); byte/UTF-8 handling |
+| `char` | 1 | **signed** 8-bit (−128–127, C style): C string/byte interop; `'\xNN'` is a bit pattern |
+| `short` / `ushort` | 2 | signed/unsigned 16-bit |
+| `int` / `uint` | 4 | signed/unsigned 32-bit |
+| `long` / `ulong` | 8 | signed/unsigned 64-bit |
 | `float` / `double` | 4 / 8 | IEEE-754 |
-| `usize` / `isize` | 指针宽 | 平台相关；用于大小、下标 |
-| `string` | 由库定义 | std 库的值类型：UTF-8 字节序列、不可变；布局/`sizeof`/API 见 库文档 |
-| `void` | — | 无值；只能作返回类型或 `void*` 的基类型 |
+| `usize` / `isize` | pointer width | platform-dependent; used for sizes and indices |
+| `string` | defined by the library | value type of the std library: UTF-8 byte sequence, immutable; for layout/`sizeof`/API see the library docs |
+| `void` | — | no value; usable only as a return type or as the base type of `void*` |
 
-- 第一阶段不引入 `wchar`、`decimal`、`i8/u8` 等别名；`decimal` 后续作为库实现。
-- 所有类型宽度固定；`usize/isize` 是唯一平台相关类型；库类型（如 `string`）不承诺固定 `sizeof`（见库文档）。
-- `void` 不能声明变量、字段、参数、数组元素；`void*` 合法；`sizeof(void)` / `alignof(void)` 非法。
+- Phase one introduces no `wchar`, `decimal`, or `i8/u8`-style aliases; `decimal` comes later as a library implementation.
+- All type widths are fixed; `usize/isize` is the only platform-dependent type; library types (such as `string`) do not promise a fixed `sizeof` (see the library docs).
+- `void` cannot declare variables, fields, parameters, or array elements; `void*` is legal; `sizeof(void)` / `alignof(void)` are illegal.
 
-### 3.2 指针
+### 3.2 Pointers
 
-- 类型：`T*`；`void*` 为无类型指针；`T**` 合法。
-- 操作：`&expr`、`*p`、`p[i]`、`p + n`、`p - n`、指针比较、指针相减。
-- `null` 只能赋给指针或 class 引用（见 3.8）；`p == null` 合法。
-- `T*` 可隐式转 `void*`；`void*` 转 `T*` 必须显式 `as`。
-- `T*` 可隐式转 `const T*`；反向必须显式 `as`（不安全）。
-- 指针算术以 `sizeof(T)` 为单位；`void*` 不允许算术。
-- 函数指针第一阶段不支持（待定）。
+- Types: `T*`; `void*` is the untyped pointer; `T**` is legal.
+- Operations: `&expr`, `*p`, `p[i]`, `p + n`, `p - n`, pointer comparison, pointer subtraction.
+- `null` can only be assigned to a pointer or a class reference (see 3.8); `p == null` is legal.
+- `T*` implicitly converts to `void*`; `void*` to `T*` requires an explicit `as`.
+- `T*` implicitly converts to `const T*`; the reverse requires an explicit `as` (unsafe).
+- Pointer arithmetic is in units of `sizeof(T)`; arithmetic on `void*` is not allowed.
+- Function pointers are not supported in phase one (TBD).
 
-### 3.3 数组与动态数组
+### 3.3 Arrays and dynamic arrays
 
-- 定长数组：`T[N]`，`N` 为编译期整数常量；**值类型**，赋值/传参复制。
-- 动态数组：`T[]`，**带引用计数的堆数组**；句柄是一个指针，指向内部头
-  `{ i64 rc; i64 len; i64 cap; data... }`（`cap` 为将来扩容预留）。
-  - `new T[n]` 创建（`n` 为运行期整数，元素清零）；`T[] s = {}` 表示空（null 句柄）。
-  - 赋值/传参复制**句柄**（O(1)），共享同一数组；引用计数归零时销毁；
-    元素类型含 class/interface 引用时逐元素 release。
-  - 元素类型：标量、枚举、指针、struct（含引用字段）、class/interface 引用；
-    含用户析构器的 struct 暂不允许作元素（元素构造/析构规则未定）。
-  - `len(s)`：null 句柄为 0；`s[i]` 下标；`for x in s` 遍历元素。
-  - `for ref x in s` 可写共享数组；**元素是 class/interface 时不允许**（元素是句柄，用值绑定遍历）；
-    `string` 也不能 `for ref`（不可变）。
-  - 空值：`T[] s = null;` 与 `T[] s = {};` 等价（都是 null 句柄）；但**切片不能与 `null` 比较**
-    （用 `len(s) == 0`）。
-  - 动态数组的释放：把句柄置空（`s = {}` / `s = null`）即 release 一次；`del` 已移除（0.0.47）。
-  - `sizeof(T[])` / `sizeof(T[,])` = 8（句柄大小）；库类型的大小由库定义（`string` 见库文档）。
-  - 聚合初始化 `T[] s = {1, 2, 3};` 分配新数组并初始化元素。
-  - `T[N]` → `T[]` 隐式转换：**分配并复制**（动态数组不再提供借用视图）。
-  - 暂不提供子切片/借用视图语法（`s[1..]` 等）。
-- **静态矩形多维数组**：`T[m,n,...]`（`m,n` 编译期常量），内存连续，值类型。
-  - `int[2,3] a = {{1, 2, 3}, {4, 5, 6}};`（嵌套花括号，缺失元素补零）。
-  - 下标 `a[i,j]`，等价于链式 `a[i][j]`；`a[i]` 得到一行 `T[n]` 的值。
-  - `len(a)` = 第 0 维，`len(a,k)` = 第 k 维（k 必须是字面量）。
-  - 可含 class/interface/struct 引用元素（逐元素 RC）；`sizeof` 为总字节数。
-- **动态矩形多维数组**：`T[,]`（只写维数 rank；尺寸由 `new` 决定）。
-  - `int[,] a = new int[m,n];`；任意 `new T[d0,d1,...]`。
-  - 下标 `a[i,j]`（必须给出全部维数；不支持取“行视图”）。
-  - `len(a)` = 第 0 维，`len(a,k)` = 第 k 维（k 可为运行期表达式，动态数组带越界检查）。
-  - **不支持 `for-in`**（多维数组用下标循环；各维长度用 `len(a, k)`，见 6.4）。
-  - 强制转换：`T[m,n,...] → T[,]` 分配并复制。
-- **锯齿数组**：`T[][]`（元素本身是动态数组），各行列数可不同。
-  - `new T[m][]` 创建 `m` 个空行槽（元素为 null 的 `T[]`），再循环
-    `a[i] = new T[n_i];`。
-  - `new T[m][n]` **不是**合法写法：锯齿数组一次只创建一维；矩形数组用
-    `new T[m,n]`。静态锯齿可用定长行槽 `T[][N]` 或聚合初始化。
-- 全零：`int[5] c = {};`；空动态数组/矩形：`int[] d = {};`、`int[,] e = {};`。
-- 数组**不隐式衰减为指针**；取首地址写 `&arr[0]`。
-- 索引 `x[i]` / `x[i,j]`；下标类型为整数，推荐 `usize`。
-- `len(x)`：定长数组返回编译期常量，动态数组返回运行时长度，均为 `usize`。
-- 边界检查：待定（建议 debug 构建检查，release 可配置关闭；动态数组默认检查）。
-- 全零/空值用 `{}`：`int[5] a = {};`、`int[] s = {};`、`string s = {};`（聚合类型不再支持 `= 0`）。
-- **`string` 是 std 库提供的值类型**（不是语言内建类型；布局、缓冲区管理与完整 API 见
-  `lib-std-string.md`）：
-  - **语言可见契约**（SPEC 保证的部分）：
-    - 字面量 `"abc"` 的类型是 `string`；`string s = {}` 是空串（零值）。
-    - **不可变**：不能 `for ref` 遍历，`s[i]` 只读。
-    - `s[i]` 的元素类型是 `byte`；`len(s)` 是**字节长度**；`for c in s` 按字节遍历。
-    - `==` / `!=` 按**字节值**比较（不是身份比较）；零值与 `""` 相等。
-    - 不能与 `null` 比较（用 `len(s) == 0` 或 `s == ""`）。
-    - `string → const char*` / `const byte*` 隐式转换（要求 NUL 结尾；完整串/字面量保证）。
-    - 可作 struct/class 字段、数组元素、参数、返回值；**可复制、可析构**（值语义，复制后互不影响）。
-  - 大小：`sizeof(string)` 由库定义，**不承诺固定值**；跨 ABI 传字符串请用 `const char*`。
-  - 构造与操作（`string(const char*)`、`length()`、`at`、`sub`、`concat`、`find`、`trim` 等）
-    是**库 API**，见库文档，不属于语言规范。
-  - 实现现状：编译器对 `string` 仍有内建特例（字面量零分配、`len`/`for-in`/`[]`/`==` 直连、
-    隐式转 `const char*`），这是**实现优化**而非语言机制；「真库化」的前置是 struct 用户析构器与
-    拷贝/赋值语义（backlog U24 遗留）。
-- 定长 `char[N]` 从 `string` 字面量初始化时执行字节拷贝：复制内容并补 NUL 与零。
+- Fixed-size arrays: `T[N]`, where `N` is a compile-time integer constant; a **value type**, copied on assignment/argument passing.
+- Dynamic arrays: `T[]`, a **reference-counted heap array**; the handle is a pointer to an internal header
+  `{ i64 rc; i64 len; i64 cap; data... }` (`cap` is reserved for future growth).
+  - `new T[n]` creates one (`n` is a runtime integer, elements zeroed); `T[] s = {}` means empty (null handle).
+  - Assignment/argument passing copies the **handle** (O(1)), sharing the same array; destroyed when the reference count reaches zero;
+    if the element type holds class/interface references, release element by element.
+  - Element types: scalars, enums, pointers, structs (including reference fields), class/interface references;
+    structs with user destructors are not yet allowed as elements (element construction/destruction rules are undecided).
+  - `len(s)`: 0 for a null handle; `s[i]` indexing; `for x in s` iterates over the elements.
+  - `for ref x in s` can write to a shared array; **not allowed when the element is a class/interface** (the element is a handle, iterate with value binding);
+    `string` also cannot use `for ref` (immutable).
+  - Null value: `T[] s = null;` and `T[] s = {};` are equivalent (both null handles); but **a slice cannot be compared with `null`**
+    (use `len(s) == 0`).
+  - Releasing a dynamic array: setting the handle to empty (`s = {}` / `s = null`) releases it once; `del` was removed (0.0.47).
+  - `sizeof(T[])` / `sizeof(T[,])` = 8 (handle size); the size of library types is defined by the library (for `string` see the library docs).
+  - Aggregate initialization `T[] s = {1, 2, 3};` allocates a new array and initializes the elements.
+  - `T[N]` → `T[]` implicit conversion: **allocates and copies** (dynamic arrays no longer provide a borrowed view).
+  - Sub-slicing/borrowed-view syntax (`s[1..]` etc.) is not provided yet.
+- **Static rectangular multi-dimensional arrays**: `T[m,n,...]` (`m,n` compile-time constants), contiguous memory, value type.
+  - `int[2,3] a = {{1, 2, 3}, {4, 5, 6}};` (nested braces, missing elements filled with zero).
+  - Indexing `a[i,j]`, equivalent to the chained form `a[i][j]`; `a[i]` yields a row value of type `T[n]`.
+  - `len(a)` = dimension 0, `len(a,k)` = dimension k (k must be a literal).
+  - May contain class/interface/struct reference elements (RC element by element); `sizeof` is the total byte count.
+- **Dynamic rectangular multi-dimensional arrays**: `T[,]` (only the rank is written; the size is determined by `new`).
+  - `int[,] a = new int[m,n];`; any `new T[d0,d1,...]`.
+  - Indexing `a[i,j]` (all dimensions must be given; taking a "row view" is not supported).
+  - `len(a)` = dimension 0, `len(a,k)` = dimension k (k may be a runtime expression; dynamic arrays are bounds-checked).
+  - **`for-in` is not supported** (iterate multi-dimensional arrays with index loops; use `len(a, k)` for each dimension's length, see 6.4).
+  - Conversion: `T[m,n,...] → T[,]` allocates and copies.
+- **Jagged arrays**: `T[][]` (the element is itself a dynamic array); rows may have different lengths.
+  - `new T[m][]` creates `m` empty row slots (elements are null `T[]`), then loop
+    `a[i] = new T[n_i];`.
+  - `new T[m][n]` is **not** legal syntax: a jagged array creates only one dimension at a time; for rectangular arrays use
+    `new T[m,n]`. Static jagged arrays can use fixed-size row slots `T[][N]` or aggregate initialization.
+- All-zero: `int[5] c = {};`; empty dynamic/rectangular arrays: `int[] d = {};`, `int[,] e = {};`.
+- Arrays do **not implicitly decay to pointers**; take the first address with `&arr[0]`.
+- Indexing `x[i]` / `x[i,j]`; the index type is an integer, `usize` recommended.
+- `len(x)`: fixed-size arrays return a compile-time constant, dynamic arrays return the runtime length, both `usize`.
+- Bounds checking: TBD (recommended in debug builds, configurable off in release; dynamic arrays checked by default).
+- All-zero/null values use `{}`: `int[5] a = {};`, `int[] s = {};`, `string s = {};` (aggregate types no longer support `= 0`).
+- **`string` is a value type provided by the std library** (not a language built-in type; for layout, buffer management, and the full API see
+  `lib-std-string.md`):
+  - **Language-visible contract** (the part SPEC guarantees):
+    - The type of the literal `"abc"` is `string`; `string s = {}` is the empty string (zero value).
+    - **Immutable**: cannot be traversed with `for ref`, `s[i]` is read-only.
+    - The element type of `s[i]` is `byte`; `len(s)` is the **byte length**; `for c in s` iterates by byte.
+    - `==` / `!=` compare by **byte value** (not identity); the zero value equals `""`.
+    - Cannot be compared with `null` (use `len(s) == 0` or `s == ""`).
+    - `string → const char*` / `const byte*` implicit conversion (requires NUL termination; guaranteed for whole strings/literals).
+    - Usable as struct/class fields, array elements, parameters, return values; **copyable and destructible** (value semantics, copies are independent).
+  - Size: `sizeof(string)` is defined by the library and **no fixed value is promised**; to pass strings across the ABI use `const char*`.
+  - Construction and operations (`string(const char*)`, `length()`, `at`, `sub`, `concat`, `find`, `trim`, etc.)
+    are **library API**, see the library docs; they are not part of the language specification.
+  - Implementation status: the compiler still has built-in special cases for `string` (zero-allocation literals, direct wiring of `len`/`for-in`/`[]`/`==`,
+    implicit conversion to `const char*`), which is an **implementation optimization**, not a language mechanism; the prerequisite for "true library-ization" is user destructors on structs and
+    copy/assignment semantics (leftover from backlog U24).
+- Initializing a fixed-size `char[N]` from a `string` literal performs a byte copy: copies the content and appends NUL and zeros.
 
-### 3.4 结构体
+### 3.4 Structs
 
 ```c
 struct Point {
@@ -218,103 +218,103 @@ struct Point {
 }
 ```
 
-- 值类型；赋值、传参、返回均复制。
-- 字段按声明顺序、自然对齐布局；与 C ABI 兼容。
-- 声明中的聚合初始化：`Point p = {1, 2};`（位置）或 `Point p = {x = 1, y = 2};`（命名）。
-  - 所有字段必须给出；位置与命名不可混用；未知/重复/缺失字段是编译错误。
-  - 全零：`Point p = {};`。
-- 表达式中的构造：`Point(1, 2)`（位置）或 `Point(x = 1, y = 2)`（命名）；`Point()` 表示零初始化。
-  - 非零参数必须给全所有字段；位置与命名不可混用。
-  - `Point p = Point(1, 2);` 合法；RHS 是 prvalue，直接构造到 p，无额外拷贝；与 `Point p = {1, 2};` 等价。
-- 声明中不写 `Point p(1, 2)`；非声明位置不用 `{...}`，也不用 `{}`/`= 0` 构造。
-- `Point(...)` 是值构造，不是堆分配；不引入 `new`（保留给将来的堆分配）。
-- 语义分析阶段解析：被调名是类型则按结构体构造，是函数则按函数调用；类型名与同作用域的函数/变量名不得冲突。
-- 可声明**方法**（`ret name(params) { ... }`）：静态派发、无 vtable、无继承/虚函数；
-  `this` 是当前对象的引用（非指针），隐式可用，也可显式写 `this` 访问字段/调用方法；
-  方法可重载，不能与字段同名。
-  方法不改变 C 布局（字段顺序/对齐仍与 C 一致）。
-- 可声明**类型级编译期常量**：`const int K = 3;`——不占实例存储、不影响布局，用 `Point.K` 访问，见 3.7.1。
-- 可声明**构造器/析构器**：
-  - `S(...)` 构造器可重载；`S s;` 调用无参构造器；`S s = S(args);` 直接就地构造；
-    有构造器时禁止非空聚合初始化；零值用 `{}`（不调用构造器，直接清零）；
-  - `~S()` 在作用域结束、`return`/`break`/`continue` 时自动调用（局部变量）；
-- 无继承、无虚函数、无匿名 struct/union **成员**（联合体本身见 3.4.1）。
-- 递归只能通过指针：`struct Node { int v; Node* next; }`。
-- 字段可以是标量、指针、枚举、定长数组、动态数组 `T[]`、嵌套 struct、`string` 字段，以及
-  **class/interface 引用字段**（此时 struct 为非 POD 值类型）。
-- 含 class/interface 引用字段（含嵌套 struct/数组中的引用）的 struct 由编译器生成逐字段 RC：
-  - 拷贝初始化 `S b = a;` 与按值传参：复制后对引用字段 retain；
-  - 赋值 `b = a;`：先 retain 新值、再 release 旧值（自赋值安全）；
-  - 析构（作用域结束、`return`/`break`/`continue`、宿主 class 销毁、数组逐元素）：
-    逐字段 release；
-  - 参数是拥有型局部变量（callee 进入时 retain、退出时 release，见 4）；函数返回值是 owned 值
-    （借用返回时先 retain 字段）；调用返回的 struct 临时值在语句结束时释放；
-  - 未显式初始化的本地 struct 会先清零，避免析构时释放未初始化指针。
-- **临时限制**：
-  - **不能对含引用字段的 struct 取地址**（`&s`、`&arr[i]`；标量字段 `&s.x` 仍可）：裸指针可绕过
-    逐字段 retain/release（backlog U24）。需要就地修改时按值传递/返回，或改用 `class`；
-    **含用户析构器的 struct 例外**——它们本来就只能通过指针使用（见下方「用户析构器」条目）。
-  - 含引用字段的 struct 暂不能作全局变量（无退出析构）；
-  - `extern C` 签名递归检查：含 class/interface 的 struct 不能作为 C 参数/返回值；
-  - 含**用户析构器**的 struct 仍不可按值拷贝/赋值/传参/返回，也不能作全局变量、数组元素
-    或其它 struct/class 字段（用户析构器与自动字段 RC 的交互待后续实现）；通过指针传递。
-- `sizeof(S)` 可用；纯值 struct 赋值按字节拷贝语义，含引用字段的拷贝由编译器插入 RC 操作。
-- 字段同样支持多个名字共享类型：`int x, y;`；也可使用类型在前的定长数组，如 `char[20] name;`。
-- **布局修饰符 `packed` / `align(N)`**（**已实现，0.0.42**）：
-  - 两者是**声明修饰符**（与 `public`/`private`/`const` 同类），写在 `struct` 声明前（`union` 落地后同样适用，
-    见 U14），顺序无关，可单独使用也可组合：`packed align(8) struct Msg { ... }` 与
-    `align(8) packed struct Msg { ... }` 等价。
-  - `class` / `interface` / `enum` 不接受布局修饰符（布局不属于其 ABI），写上是编译错误。
+- Value type; assignment, argument passing, and return all copy.
+- Fields are laid out in declaration order with natural alignment; compatible with the C ABI.
+- Aggregate initialization in a declaration: `Point p = {1, 2};` (positional) or `Point p = {x = 1, y = 2};` (named).
+  - All fields must be given; positional and named cannot be mixed; unknown/duplicate/missing fields are compile errors.
+  - All-zero: `Point p = {};`.
+- Construction in an expression: `Point(1, 2)` (positional) or `Point(x = 1, y = 2)` (named); `Point()` means zero initialization.
+  - Non-zero arguments must supply all fields; positional and named cannot be mixed.
+  - `Point p = Point(1, 2);` is legal; the RHS is a prvalue, constructed directly into p, with no extra copy; equivalent to `Point p = {1, 2};`.
+- Do not write `Point p(1, 2)` in a declaration; non-declaration positions use neither `{...}` nor `{}`/`= 0` construction.
+- `Point(...)` is value construction, not heap allocation; `new` is not introduced (reserved for future heap allocation).
+- Resolved during semantic analysis: if the called name is a type it is a struct construction, if it is a function it is a function call; a type name must not conflict with a function/variable name in the same scope.
+- Can declare **methods** (`ret name(params) { ... }`): static dispatch, no vtable, no inheritance/virtual functions;
+  `this` is a reference to the current object (not a pointer), available implicitly, or written explicitly as `this` to access fields/call methods;
+  methods can be overloaded, and cannot share a name with a field.
+  Methods do not change the C layout (field order/alignment still match C).
+- Can declare **type-level compile-time constants**: `const int K = 3;`—occupies no instance storage, does not affect layout, accessed as `Point.K`, see 3.7.1.
+- Can declare **constructors/destructors**:
+  - `S(...)` constructors can be overloaded; `S s;` calls the parameterless constructor; `S s = S(args);` constructs in place;
+    with a constructor present, non-empty aggregate initialization is forbidden; use `{}` for the zero value (no constructor call, just zeroing);
+  - `~S()` is called automatically at scope exit and on `return`/`break`/`continue` (local variables);
+- No inheritance, no virtual functions, no anonymous struct/union **members** (unions themselves see 3.4.1).
+- Recursion only through pointers: `struct Node { int v; Node* next; }`.
+- Fields can be scalars, pointers, enums, fixed-size arrays, dynamic arrays `T[]`, nested structs, `string` fields, and
+  **class/interface reference fields** (in which case the struct is a non-POD value type).
+- A struct containing class/interface reference fields (including references in nested structs/arrays) gets compiler-generated field-by-field RC:
+  - Copy initialization `S b = a;` and pass by value: retain the reference fields after copying;
+  - Assignment `b = a;`: retain the new value first, then release the old value (self-assignment safe);
+  - Destruction (scope exit, `return`/`break`/`continue`, host class destruction, array element by element):
+    release field by field;
+  - Parameters are owning local variables (retain on callee entry, release on exit, see 4); function return values are owned values
+    (retain fields first when returning a borrow); struct temporaries returned from calls are released at the end of the statement;
+  - A local struct that is not explicitly initialized is zeroed first, to avoid releasing uninitialized pointers during destruction.
+- **Temporary restrictions**:
+  - **Cannot take the address of a struct with reference fields** (`&s`, `&arr[i]`; a scalar field `&s.x` still works): a raw pointer could bypass
+    field-by-field retain/release (backlog U24). To modify in place, pass/return by value, or switch to `class`;
+    **structs with user destructors are the exception**—they can only be used through pointers anyway (see the "user destructors" item below).
+  - Structs with reference fields cannot yet be global variables (no exit-time destruction);
+  - `extern C` signature recursive check: structs containing class/interface cannot be C parameters/return values;
+  - Structs with **user destructors** still cannot be copied/assigned/passed/returned by value, nor be global variables, array elements,
+    or fields of other structs/classes (the interaction between user destructors and automatic field RC is to be implemented later); pass them through pointers.
+- `sizeof(S)` is available; pure-value struct assignment has byte-copy semantics, and copies of structs with reference fields get RC operations inserted by the compiler.
+- Fields also support multiple names sharing a type: `int x, y;`; the type-first fixed-size array form is also allowed, e.g. `char[20] name;`.
+- **Layout modifiers `packed` / `align(N)`** (**implemented, 0.0.42**):
+  - Both are **declaration modifiers** (in the same class as `public`/`private`/`const`), written before the `struct` declaration (equally applicable once `union` lands,
+    see U14), order does not matter, usable alone or combined: `packed align(8) struct Msg { ... }` and
+    `align(8) packed struct Msg { ... }` are equivalent.
+  - `class` / `interface` / `enum` do not accept layout modifiers (layout is not part of their ABI); writing one is a compile error.
 
   ```c
-  packed struct WireHeader { byte version; uint seq; ushort kind; }  // 偏移 0/1/5，sizeof 7，alignof 1
-  align(16) struct Vec4 { float x, y, z, w; }                        // sizeof 16，alignof 16
-  packed align(8) struct Msg { byte type; int seq; short len; }      // 偏移 0/1/5，sizeof 8，alignof 8
+  packed struct WireHeader { byte version; uint seq; ushort kind; }  // offsets 0/1/5, sizeof 7, alignof 1
+  align(16) struct Vec4 { float x, y, z, w; }                        // sizeof 16, alignof 16
+  packed align(8) struct Msg { byte type; int seq; short len; }      // offsets 0/1/5, sizeof 8, alignof 8
   ```
 
-  - `packed`：**不带参数**，等价 C 的 `#pragma pack(1)` / `__attribute__((packed))`。
-    字段按连续累加摆放，无内部填充、无尾部填充（尾部只由 `align(N)` 补齐）；`alignof` 默认 1。
-    - 不提供 `packed(N)`。需要 `pack(2)`/`pack(4)` 时用 `packed` + 显式填充字段（`byte _pad[2];`）；
-      「显式偏移优于隐式规则」与 backlog U16 否掉位域同理。将来若确需，另加独立关键字 `pack(N)`，
-      **不重载** `packed`。
-    - 不支持合并式写法 `pack(1, 8)`（位置参数可静默写反、`pack(8)` 有「级别/对齐」两解）。
-  - `align(N)`：`N` 为 **2 的幂的编译期常量**（实现上限 `N ≤ 65536`）。`alignof(S) = N`；`sizeof(S)` 向上取整到 `N` 的倍数，
-    以恒保 `sizeof(S) % alignof(S) == 0`（数组跨度、`alloc(n * sizeof)`、指针算术依赖该不变量）。
-    - **不改变任何字段偏移**，也不改变嵌套 struct 的内部布局；作为字段时只要求「下一字段偏移为 N 的倍数」。
-    - `N` 与**自然对齐**（各字段对齐的最大值）比较，**不是**与 `sizeof` 比较：
-      - `N ≥ 自然对齐`：合法。`N > sizeof` 时只在**尾部**补零（如 12 字节结构体 `align(64)` → `sizeof` 64、
-        `alignof` 64，用于 SIMD / 缓存行 / 反伪共享）；
-      - `N < 自然对齐`：**编译错误**——降对齐只有 `packed` 一条路，不提供第二套「压缩」机制，也不静默忽略。
-        `packed` 后自然对齐按 1 计，任意 2 的幂 `N` 都合法。
-    - 非法 `N`（`0`、非 2 的幂、非常量表达式）编译错误。
-  - `packed` 内的字段类型限制：标量、指针、枚举、定长数组、嵌套 struct（`packed` 或普通；
-    普通内层保留自己的内部填充）。**禁止**含指针且自然对齐 > 1 的类型
-    （`string`、`T[]`、class/interface 引用），避免未对齐指针访问。
-    `packed` 结构不递归压平内层布局（与 GCC/MSVC 一致）。
-  - `&p.field`（该字段偏移未满足其自然对齐）合法，解引用是**未定义行为**（C 语义，不引入非对齐指针类型）。
-  - `class` 的字段按模型对齐插入填充（含 `align(N)` / `packed` 字段的类型也保持承诺的对齐）；
-    class 布局依旧是内部布局，不参与 C ABI。
-  - `sizeof` / `alignof` 反映实际布局；聚合初始化、值语义、逐字段 RC 规则不受影响。
-  - 堆分配（`align(N)` 的类型）：
-    - `class` 对象由编译器分配，字段与对象基址都按模型对齐（对象对齐 = `max(16, 字段最大对齐)`）；
-      `N > 16` 的 class 字段使用对齐分配（Windows `_aligned_malloc`/`_aligned_free`）。
-    - **动态数组**（`T[]` / `new T[n]` / `new T[m,n]`、`T[N]→T[]`、`T[m,n]→T[,]`、切片聚合初始化）
-      的数据区在 24 字节头部之后，最多保证 8 字节对齐：元素类型 `align(N) > 8` 是编译错误
-      （改用定长数组/指针，或降低 N）。静态数组、指针、struct 字段、全局、栈变量不受此限。
-    - 手工 `alloc` + `as` 得到的 struct 堆实例只保证 16 字节：`align(N) > 16` 的类型不要这样放（UB）。
-  - 与 C 侧 `__attribute__((packed))` / `#pragma pack(1)` / `aligned(N)` 的 ABI **尚未做交叉测试**：
-    语言内已用 `sizeof`/`alignof`/字节偏移断言覆盖，跨语言 `sizeof`/`offsetof` 比对待补（backlog U15）。
-- **不提供位域（已定，0.0.62；U16 关闭）**：
-  - C 式位域 `int x : 3;` 在 struct / union / `packed` struct 里一律**编译错误**，并给出明确诊断
-    （`bit-fields are not supported; use explicit shifts/masks or \`byte[N]\` with offset constants`）。
-  - 也**不提供** Zig `packed struct` / Rust bitfield 风格的显式位宽语法（曾作为「以后若必须」的备选，
-    现已否决；将来真需要另立关键字，不重载现有语法）。
-  - 理由：C 位域的分配顺序、跨存储单元边界、与 `packed`/`align` 的交互都是**实现定义**
-    （MSVC 与 GCC 不同），与「布局可预测 + 跨平台 ABI 一致」这一核心卖点直接冲突。
-  - 需要位打包时的替代方案：显式掩码 + 移位（跨平台最稳）、`byte[N]` + offset 常量、
-    `packed` struct + 手写访问器、或 C shim。
+  - `packed`: **takes no argument**, equivalent to C's `#pragma pack(1)` / `__attribute__((packed))`.
+    Fields are placed by contiguous accumulation, with no internal padding and no tail padding (the tail is only padded out by `align(N)`); `alignof` defaults to 1.
+    - `packed(N)` is not provided. When `pack(2)`/`pack(4)` is needed, use `packed` + explicit padding fields (`byte _pad[2];`);
+      "explicit offsets beat implicit rules" follows the same reasoning that rejected bit-fields in backlog U16. If it is truly needed later, add a separate keyword `pack(N)`,
+      **do not overload** `packed`.
+    - The combined form `pack(1, 8)` is not supported (positional arguments can be silently reversed, and `pack(8)` has two readings: "level/alignment").
+  - `align(N)`: `N` is a **compile-time constant that is a power of two** (implementation limit `N ≤ 65536`). `alignof(S) = N`; `sizeof(S)` is rounded up to a multiple of `N`,
+    so that `sizeof(S) % alignof(S) == 0` always holds (array stride, `alloc(n * sizeof)`, and pointer arithmetic rely on this invariant).
+    - **Does not change any field offset**, nor the internal layout of nested structs; as a field it only requires "the next field offset is a multiple of N".
+    - `N` is compared with the **natural alignment** (the maximum of the field alignments), **not** with `sizeof`:
+      - `N ≥ natural alignment`: legal. When `N > sizeof`, zeros are only padded at the **tail** (e.g. a 12-byte struct with `align(64)` → `sizeof` 64,
+        `alignof` 64, for SIMD / cache lines / false-sharing avoidance);
+      - `N < natural alignment`: **compile error**—the only way to reduce alignment is `packed`, no second "compression" mechanism is provided, and it is not silently ignored.
+        After `packed`, the natural alignment counts as 1, so any power-of-two `N` is legal.
+    - An illegal `N` (`0`, not a power of two, not a constant expression) is a compile error.
+  - Field type restrictions inside `packed`: scalars, pointers, enums, fixed-size arrays, nested structs (`packed` or normal;
+    a normal inner struct keeps its own internal padding). Types that **contain pointers and have natural alignment > 1 are forbidden**
+    (`string`, `T[]`, class/interface references), to avoid unaligned pointer access.
+    `packed` structs do not recursively flatten inner layouts (consistent with GCC/MSVC).
+  - `&p.field` (where the field's offset does not satisfy its natural alignment) is legal; dereferencing it is **undefined behavior** (C semantics; no unaligned pointer type is introduced).
+  - `class` fields insert padding according to the model alignment (types with `align(N)` / `packed` fields also keep their promised alignment);
+    class layout remains an internal layout and does not participate in the C ABI.
+  - `sizeof` / `alignof` reflect the actual layout; aggregate initialization, value semantics, and field-by-field RC rules are unaffected.
+  - Heap allocation (for types with `align(N)`):
+    - `class` objects are allocated by the compiler, with fields and the object base address both aligned to the model alignment (object alignment = `max(16, max field alignment)`);
+      class fields with `N > 16` use aligned allocation (Windows `_aligned_malloc`/`_aligned_free`).
+    - For **dynamic arrays** (`T[]` / `new T[n]` / `new T[m,n]`, `T[N]→T[]`, `T[m,n]→T[,]`, slice aggregate initialization)
+      the data area follows a 24-byte header and guarantees at most 8-byte alignment: an element type with `align(N) > 8` is a compile error
+      (switch to fixed-size arrays/pointers, or lower N). Static arrays, pointers, struct fields, globals, and stack variables are not subject to this limit.
+    - A struct heap instance obtained by manual `alloc` + `as` only guarantees 16 bytes: do not place types with `align(N) > 16` that way (UB).
+  - Cross-testing the ABI against C's `__attribute__((packed))` / `#pragma pack(1)` / `aligned(N)` is **not done yet**:
+    within the language it is already covered by `sizeof`/`alignof`/byte-offset assertions; cross-language `sizeof`/`offsetof` comparison is still to be added (backlog U15).
+- **Bit-fields are not provided (decided, 0.0.62; U16 closed)**:
+  - C-style bit-fields `int x : 3;` inside a struct / union / `packed` struct are always a **compile error**, with an explicit diagnostic
+    (`bit-fields are not supported; use explicit shifts/masks or \`byte[N]\` with offset constants`).
+  - Zig `packed struct` / Rust bitfield-style explicit bit-width syntax is also **not provided** (once a fallback for "if it is ever necessary",
+    now rejected; if it is truly needed later, add a separate keyword, do not overload existing syntax).
+  - Rationale: the allocation order of C bit-fields, their crossing of storage-unit boundaries, and their interaction with `packed`/`align` are all **implementation-defined**
+    (MSVC differs from GCC), which directly conflicts with the core selling point of "predictable layout + consistent cross-platform ABI".
+  - Alternatives when bit packing is needed: explicit masks + shifts (most portable), `byte[N]` + offset constants,
+    `packed` struct + hand-written accessors, or a C shim.
 
-### 3.4.1 联合体 `union`（已实现）
+### 3.4.1 Unions `union` (implemented)
 
 ```c
 union Value {
@@ -324,242 +324,242 @@ union Value {
 }
 ```
 
-- 值类型，与 `struct` 同一类型命名空间；**所有成员偏移 0**，`sizeof = max(成员 sizeof)` 向上对齐到最大成员对齐。
-- `packed` / `align(N)` 与 3.4 同规则：`packed union` 对齐 1、`sizeof` 不按自然对齐补齐；`align(N)` 覆盖整体对齐。
-- **成员限于 POD**：标量、指针、枚举、定长数组、POD struct / union。
-  禁止需要**清理**（可析构 / 需逐字段释放）的类型——`string`、动态数组 `T[]`、`class`/`interface` 引用、
-  含引用字段的 struct、含用户析构器的 struct（联合体无法按成员逐一析构）。没有成员的 union 是编译错误。
-- 无方法、无构造器、无析构器、无继承；不支持 `public:` / `private:` 分段（成员恒 public）。
-- 初始化：
-  - `U u = {};` 零初始化；
-  - `U u = { member = value };` 具名初始化，必须**恰好指定一个成员**；
-  - 不提供位置初始化 `= { value }`，也不提供 `U(...)` 构造——选哪个成员不该由位置隐式决定。
-- 访问 `u.member`；读**非最后写入**的成员与 C 一致：按字节重解释（值需可表示），不做运行期检查。
-- 可赋值、传参、返回、作数组元素 / 全局变量 / struct 或 class 字段；可取址（POD，不受「含引用字段 struct 不可取址」的限制）。
-- C ABI：成员同址、`sizeof`/`alignof` 与 C 一致，可直接对接 `INPUT`、`VARIANT`、`VkClearColorValue` 等。
+- Value type, sharing the same type namespace as `struct`; **all members are at offset 0**, `sizeof = max(member sizeof)` aligned up to the largest member alignment.
+- `packed` / `align(N)` follow the same rules as 3.4: a `packed union` has alignment 1 and `sizeof` is not padded to the natural alignment; `align(N)` overrides the overall alignment.
+- **Members are limited to POD**: scalars, pointers, enums, fixed-size arrays, POD structs / unions.
+  Types that need **cleanup** (destructible / require field-by-field release) are forbidden—`string`, dynamic arrays `T[]`, `class`/`interface` references,
+  structs with reference fields, structs with user destructors (a union cannot destroy members one by one). A union with no members is a compile error.
+- No methods, no constructors, no destructors, no inheritance; `public:` / `private:` sections are not supported (members are always public).
+- Initialization:
+  - `U u = {};` zero initialization;
+  - `U u = { member = value };` named initialization, must specify **exactly one member**;
+  - Positional initialization `= { value }` is not provided, nor is `U(...)` construction—which member is selected should not be decided implicitly by position.
+- Access `u.member`; reading a member that was **not the last one written** behaves as in C: reinterpret by bytes (the value must be representable), with no runtime check.
+- Can be assigned, passed, returned, used as array elements / global variables / struct or class fields; addressable (POD, not subject to "structs with reference fields are not addressable").
+- C ABI: members share the same address, `sizeof`/`alignof` match C, so it can directly interface with `INPUT`, `VARIANT`, `VkClearColorValue`, etc.
 
-### 3.5 枚举（建议）
+### 3.5 Enums (proposed)
 
 ```c
 enum Color { Red, Green, Blue }
 ```
 
-- 底层类型 `int`；默认从 0 递增；可显式赋值 `Red = 1`。
-- 仅命名常量，不是和类型；`switch` 对枚举做编译期穷尽检查（见 6.6）。
-- 成员名在同一枚举内必须唯一。
-- **引用方式**：成员可无前缀使用（`Red`，本 unit 与 `use` 导入的 unit 都适用），
-  也可写限定名 `Color.Red`；跨 unit 用 `unit.Color.Red`。`类型.成员` 只对枚举成立；
-  成员是编译期常量，不能赋值、不能取地址。
-- **名义类型**：枚举与整数之间**没有隐式转换**——`Color c = 1;` 与 `int n = Red;`
-  都是编译错误，双向都必须写 `as`（`1 as Color`、`c as int`）。`as` 只做底层位模式
-  转换，不校验值是否属于已声明成员。
-- **比较**：只允许**同一枚举类型**之间，支持 `==` `!=` `<` `<=` `>` `>=`；结果 `bool`。
-  `c == 1`、跨枚举比较（`A` 的成员与 `B` 的成员比较）、算术/位运算（`+ - * / % & | ^ ~ << >>`）、
-  复合赋值（`c += 1`）、一元 `-`/`+`/`~` 一律编译错误，需显式 `as int`。
-- 序比较的语义 = **底层整数值的序**（`Mid = 5` 时 `Mid > Low` 成立），因此只对
-  「数值有意义」的枚举成立；对标志位枚举序比较定义良好但通常无意义。
-- 枚举不能隐式当整数用：数组/指针下标（`a[c]`）、区间端点（`for i in Low..High`）、
-  移位量（`x << c`）、指针偏移（`p + c`）都需要显式 `as int`。
-- 枚举不能与浮点互转（`c as float` 非法），也不能作为指针/整数互转的中间类型。
+- Underlying type `int`; increments from 0 by default; explicit assignment `Red = 1` is allowed.
+- Named constants only, not a sum type; `switch` performs a compile-time exhaustiveness check on enums (see 6.6).
+- Member names must be unique within the same enum.
+- **Reference syntax**: members can be used without a prefix (`Red`, both in this unit and in units imported with `use`),
+  or with the qualified name `Color.Red`; across units write `unit.Color.Red`. `type.member` holds only for enums;
+  members are compile-time constants, cannot be assigned, cannot have their address taken.
+- **Nominal type**: there is **no implicit conversion** between enums and integers—`Color c = 1;` and `int n = Red;`
+  are both compile errors; both directions require `as` (`1 as Color`, `c as int`). `as` only performs an underlying bit-pattern
+  conversion and does not check whether the value belongs to a declared member.
+- **Comparison**: allowed only between **the same enum type**, supporting `==` `!=` `<` `<=` `>` `>=`; the result is `bool`.
+  `c == 1`, cross-enum comparison (a member of `A` compared with a member of `B`), arithmetic/bitwise operations (`+ - * / % & | ^ ~ << >>`),
+  compound assignment (`c += 1`), unary `-`/`+`/`~` are all compile errors and require an explicit `as int`.
+- The semantics of ordering comparison = **the ordering of the underlying integer value** (`Mid > Low` holds when `Mid = 5`), so it only holds for
+  enums where "the numeric value is meaningful"; for flag enums the ordering comparison is well-defined but usually meaningless.
+- Enums cannot be used implicitly as integers: array/pointer indices (`a[c]`), range endpoints (`for i in Low..High`),
+  shift amounts (`x << c`), pointer offsets (`p + c`) all require an explicit `as int`.
+- Enums cannot be converted to/from floating point (`c as float` is illegal), nor serve as an intermediate type for pointer/integer conversions.
 
-### 3.6 转换与提升
+### 3.6 Conversions and promotions
 
-- 隐式转换仅允许**值域不丢失**的加宽：
-  - 无符号小类型 → 更宽的有符号/无符号（如 `byte`→`int`、`uint`→`ulong`）。
-  - 有符号小类型 → 更宽的有符号。
-  - `T*` → `void*`；`T*` → `const T*`。
-  - `T[]` → `const T[]`；反向（去掉 const）必须显式 `as`。
-  - `T[N]` → `T[]`、`T[m,n,...]` → `T[,]`（数组转动态数组：分配并复制）。
-- 其余数值/指针转换必须写 `as`。
-- 枚举与整数（不含浮点）只能双向显式 `as`；枚举不参与隐式加宽，也不能隐式转 `int`。
-- 整数字面量按上下文类型适配（若可表示）；字面量上限为 `2^63-1`，超出报编译错误。
-- 浮点字面量同样按上下文适配：`float f = 1.5;` 合法；但**变量/表达式**之间的 `double` → `float` 仍必须写 `as`。
-- 整数运算：小于 `int` 的类型先提升到 `int`；混合符号/宽度按上述规则，不能隐式转换就报错。
-- `bool` 不参与数值转换；条件必须是 `bool`。
-- `string` → `const char*` / `const byte*` 隐式（返回 `p`，要求 NUL 结尾）。
-- `string` 不是数值类型，不能与指针/整数隐式互转。
-- `as` 可用于：数值截断/扩展、指针与整数互转、`const` 去除（显式且不安全）。
+- Implicit conversions are allowed only for widenings that **do not lose values**:
+  - unsigned small type → wider signed/unsigned (e.g. `byte`→`int`, `uint`→`ulong`).
+  - signed small type → wider signed.
+  - `T*` → `void*`; `T*` → `const T*`.
+  - `T[]` → `const T[]`; the reverse (removing const) requires an explicit `as`.
+  - `T[N]` → `T[]`, `T[m,n,...]` → `T[,]` (array to dynamic array: allocates and copies).
+- All other numeric/pointer conversions must be written with `as`.
+- Enums and integers (excluding floating point) can only be converted explicitly with `as` in both directions; enums do not participate in implicit widening, nor implicitly convert to `int`.
+- Integer literals adapt to the context type (if representable); the literal upper bound is `2^63-1`, and exceeding it is a compile error.
+- Floating-point literals likewise adapt to the context: `float f = 1.5;` is legal; but `double` → `float` between **variables/expressions** still requires an explicit `as`.
+- Integer arithmetic: types smaller than `int` are promoted to `int` first; mixed sign/width follows the rules above, and it is an error when no implicit conversion is possible.
+- `bool` does not participate in numeric conversions; conditions must be `bool`.
+- `string` → `const char*` / `const byte*` is implicit (returns `p`, requires NUL termination).
+- `string` is not a numeric type and cannot be converted implicitly to/from pointers/integers.
+- `as` can be used for: numeric truncation/extension, pointer/integer conversion, `const` removal (explicit and unsafe).
 
-### 3.7 可变性：`const`（C 模型）
+### 3.7 Mutability: `const` (C model)
 
-- `const` 是**前缀限定符**，作用位置决定含义：
-  - 命名类型（标量 / enum / struct / class）上的 `const` 是**只读绑定标记**（约束绑定，不进入类型）：
-    `const Cat c`、`const S s`、`const int n` 都让**这个绑定**只读；
-  - 指针 / 动态数组上的 `const` 修饰 **pointee**：`const T*`、`const T[]` 是只读视图；
-  - 指针绑定本身只读（C 的 `T* const`）**不提供**，见下。
-- 默认可变；`const` 绑定必须初始化。
+- `const` is a **prefix qualifier**; the position where it applies determines its meaning:
+  - `const` on a named type (scalar / enum / struct / class) is a **read-only binding marker** (constrains the binding, does not enter the type):
+    `const Cat c`, `const S s`, `const int n` all make **this binding** read-only;
+  - `const` on pointers / dynamic arrays qualifies the **pointee**: `const T*`, `const T[]` are read-only views;
+  - A read-only pointer binding itself (C's `T* const`) is **not provided**, see below.
+- Mutable by default; `const` bindings must be initialized.
 
 ```c
-int x = 0;              // 可变
-const int y = 1;        // y 不可赋值
-const int* p = &x;      // *p 不可写；p 可重新指向
-const int[] a = ...;    // a[i] 不可写；a 可重新赋值
-const int** s;          // **s 不可写；*s（中间指针）可写
+int x = 0;              // mutable
+const int y = 1;        // y cannot be assigned
+const int* p = &x;      // *p is not writable; p can be retargeted
+const int[] a = ...;    // a[i] is not writable; a can be reassigned
+const int** s;          // **s is not writable; *s (the intermediate pointer) is writable
 ```
 
-- `const` 作用在**基类型（最内层）**：`const int**` 读作 “pointer to pointer to const int”。
-- 只能放宽不能收紧：`int* → const int*` 隐式；`const int* → int*` 必须显式 `as`（不安全）。
-- `string → const char*` / `const byte*` 隐式（返回 `p`；要求 NUL 结尾）。
-- 命名类型绑定上的 `const` 只约束**这个绑定**，不是只读视图、不改变类型：
-  - 局部 / 参数：不可重绑定（`c = null` 报错），不可经它直接写字段或元素（`c.a = 1`、`s.x = 1` 报错）；
-  - `class` 句柄可以照常复制出去并写入；经 `const` 绑定**也可以调用会修改对象的方法**——语言不提供 `const` 方法（见 3.11、12 表 98）；
-  - 需要真正只读的 API 边界时，用只读 `interface` 表达（把只读方法拆进一个接口，让类实现它）。
-- struct 按值传参是拷贝：`const S` 参数保护的是函数体内的副本，不影响调用方。
-- **实例字段不能声明 `const`**：没有「只读字段」，也不提供「只在构造器里赋值的 `readonly` 成员」。
-  类型体内的 `const` 只有一种含义——**类型级编译期常量**（见 3.7.1）；
-  `const int x;` 这类没有初始化器的写法直接报错（``const member `x` must be initialized``）。
-  以前版本会静默接受且半生效（`&s.x` 意外变成 `const int*`、`s.x = 2` 却合法），0.0.59 起一并收敛。
-- 强制检查：给 `const` 绑定（局部 / 参数 / 全局常量）赋值、经 `const` 绑定直接写字段或元素、
-  通过 `const T*` / `const T[]` 写目标、对 `const` 切片使用 `for ref`。
-- **不提供 `T* const`（指针绑定只读）**：它只是防御性约束，使用频率低，按值传递时对调用方也没有防护价值；需要固定指针时用局部只读变量或命名约定。多级指针的中间层只读同样不表达。
-- `const` 不参与布局/ABI，**不是优化承诺**；没有 `const_cast`/`mutable` 这类后门。
-- `const` 不要求编译期求值；需要真正的编译期常量时用**类型级 `const` 成员**（3.7.1）或常量表达式（3.7.2），
-  不引入 `constexpr` 关键字。
+- `const` applies to the **base type (innermost)**: `const int**` reads as "pointer to pointer to const int".
+- Only relaxing, never tightening: `int* → const int*` is implicit; `const int* → int*` requires an explicit `as` (unsafe).
+- `string → const char*` / `const byte*` is implicit (returns `p`; requires NUL termination).
+- `const` on a named-type binding constrains **this binding** only; it is not a read-only view and does not change the type:
+  - Local / parameter: cannot be rebound (`c = null` is an error), and fields or elements cannot be written directly through it (`c.a = 1`, `s.x = 1` are errors);
+  - a `class` handle can still be copied out and written through as usual; through a `const` binding **methods that modify the object can also be called**—the language provides no `const` methods (see 3.11, 12 table 98);
+  - when a truly read-only API boundary is needed, express it with a read-only `interface` (split the read-only methods into an interface and let the class implement it).
+- Passing a struct by value is a copy: a `const S` parameter protects the copy inside the function body and does not affect the caller.
+- **Instance fields cannot be declared `const`**: there are no "read-only fields", and no "`readonly` members assigned only in the constructor" are provided.
+  Inside a type body `const` has only one meaning—**type-level compile-time constant** (see 3.7.1);
+  a form without an initializer such as `const int x;` is an error (``const member `x` must be initialized``).
+  Earlier versions silently accepted it with a half effect (`&s.x` unexpectedly became `const int*`, while `s.x = 2` was still legal); converged together since 0.0.59.
+- Enforced checks: assigning to a `const` binding (local / parameter / global constant), writing fields or elements directly through a `const` binding,
+  writing the target through `const T*` / `const T[]`, using `for ref` on a `const` slice.
+- **`T* const` (read-only pointer binding) is not provided**: it is only a defensive constraint, used rarely, and offers no protection to the caller when passing by value; when a fixed pointer is needed, use a local read-only variable or a naming convention. A read-only intermediate level in a multi-level pointer is likewise not expressible.
+- `const` does not participate in layout/ABI and is **not an optimization promise**; there are no backdoors such as `const_cast`/`mutable`.
+- `const` does not require compile-time evaluation; when a true compile-time constant is needed, use a **type-level `const` member** (3.7.1) or a constant expression (3.7.2),
+  no `constexpr` keyword is introduced.
 
-### 3.7.1 类型级编译期常量（`const` 成员；已实现 0.0.59）
+### 3.7.1 Type-level compile-time constants (`const` members; implemented 0.0.59)
 
 ```c
 class Cat {
 public:
     const int MaxAge = 20;
-    const int Twice  = MaxAge * 2;      // 引用同类型的其它常量
+    const int Twice  = MaxAge * 2;      // references other constants of the same type
     const int W      = sizeof(int) as int;
     int age;
-    int limit() { return MaxAge + W; }  // 方法体内可裸写
+    int limit() { return MaxAge + W; }  // can be written bare inside method bodies
 }
-int x = Cat.MaxAge;                     // 类型名限定访问
+int x = Cat.MaxAge;                     // access qualified by the type name
 ```
 
-- 语法：`struct` / `class` 体内 `const T NAME = <const-expr>;`——必须初始化，一次一个名字
-  （不支持 `const int a = 1, b = 2;`，用两条声明）。
-- 语义：**类型级常量，不占实例存储**——不进字段表，不影响 `sizeof` / `alignof` / 布局 / ABI，
-  不参与构造、析构、RC；不产生运行期初始化代码。
-- 类型：标量（`bool` / `byte` / `char` / `short` / `ushort` / `int` / `uint` / `long` / `ulong` /
-  `float` / `double` / `usize` / `isize`）或枚举。`string` / struct / class / 指针 / 切片 / 定长数组不支持。
-- 初始化器必须是**编译期常量表达式**（3.7.2）；不能调用函数、不能引用局部变量或非 const 全局变量。
-- 访问：
-  - `Type.NAME`（与枚举成员 `Color.Red` 同一套解析）——跨 unit 写 `unit.Type.NAME`；
-  - 声明它的类型的方法 / 构造器 / 析构器体内可裸写 `NAME`；
-  - 沿基类链查找：`Derived.NAME` 与派生类方法体内的裸 `NAME` 都能解析到基类常量；
-  - `obj.NAME` 与 `this.NAME` **是编译错误**（常量不占实例内存），提示改用 `Type.NAME`。
-- 只读：不可赋值、不可取地址、不能作 `ref` / `for ref` 目标。
-- 可见性：跟随 `public:` / `private:` 分段与成员前缀（class 默认 private、struct 默认 public）；
-  private 常量跨 unit 访问报错。
-- 重名：与字段 / 方法 / 构造器 / 其它常量同名都是编译错误。
-- `union` / `interface` 内不允许。
-- 明确**不支持**「只在构造器里赋值的只读成员变量」，也没有 `readonly` 关键字；需要逐实例只读时，
-  用 `const` 绑定（`const S s = ...;`）或封装（private 字段 + 方法）。
+- Syntax: `const T NAME = <const-expr>;` inside a `struct` / `class` body—must be initialized, one name at a time
+  (`const int a = 1, b = 2;` is not supported; use two declarations).
+- Semantics: **type-level constants that occupy no instance storage**—they do not enter the field table and do not affect `sizeof` / `alignof` / layout / ABI,
+  do not participate in construction, destruction, or RC; and generate no runtime initialization code.
+- Types: scalars (`bool` / `byte` / `char` / `short` / `ushort` / `int` / `uint` / `long` / `ulong` /
+  `float` / `double` / `usize` / `isize`) or enums. `string` / struct / class / pointers / slices / fixed-size arrays are not supported.
+- The initializer must be a **compile-time constant expression** (3.7.2); it cannot call functions or reference local variables or non-const global variables.
+- Access:
+  - `Type.NAME` (the same resolution as the enum member `Color.Red`)—across units write `unit.Type.NAME`;
+  - inside the methods / constructors / destructors of the type that declares it, `NAME` can be written bare;
+  - lookup follows the base class chain: both `Derived.NAME` and a bare `NAME` inside a derived-class method body resolve to base class constants;
+  - `obj.NAME` and `this.NAME` **are compile errors** (constants occupy no instance memory), with a hint to use `Type.NAME` instead.
+- Read-only: cannot be assigned, cannot have its address taken, cannot be a `ref` / `for ref` target.
+- Visibility: follows the `public:` / `private:` sections and the member prefix (class defaults to private, struct defaults to public);
+  accessing a private constant across units is an error.
+- Name clashes: sharing a name with a field / method / constructor / another constant is a compile error.
+- Not allowed inside `union` / `interface`.
+- "Read-only member variables assigned only in the constructor" are explicitly **not supported**, and there is no `readonly` keyword; when per-instance read-only is needed,
+  use a `const` binding (`const S s = ...;`) or encapsulation (private fields + methods).
 
-### 3.7.2 编译期常量表达式（已实现 0.0.59）
+### 3.7.2 Compile-time constant expressions (implemented 0.0.59)
 
-可用于 unit 级 `const`、类型级 `const` 成员、枚举成员值：
+Usable for unit-level `const`, type-level `const` members, and enum member values:
 
-- 字面量：整数、浮点、字符、布尔；
-- 一元 `-` `+` `not` `!`；二元 `+ - * / %`、`& | ^ << >>`、`< <= > >= == !=`、`and` `or`；
-- `as` 转换（与运行期同一套截断 / 符号扩展 / 整数↔浮点换算语义）；
-- 引用其它常量：本 unit 的 unit 级 `const`、枚举成员（`Color.Red` 或裸 `Red`）、
-  类型级 `const` 成员（`Type.NAME`）；**支持前向引用与任意声明顺序**（`const int A = B; const int B = 1;`）；
-- 内建 `sizeof(T)` / `alignof(T)`：结果是 `usize`，赋给 `int` 等类型需显式 `as`
-  （`const int W = sizeof(int) as int;`；`const int W = sizeof(int);` 仍按严格类型规则报错）；
-- 错误：除零 / 取模零、循环依赖（`circular constant definition involving ...`）、嵌套深度超过 512 层；
-- `and` / `or` 在常量表达式里**两侧都求值**（运行期是短路）；因此 `false and (1 / 0 == 0)` 在常量上下文会报除零；
-- 支持前向引用与任意声明顺序时，`use` 来源的同名常量仍按普通名字解析规则**报歧义**（不会静默取第一个）；
-- 不支持：函数调用（没有 `constexpr` 函数）、`?:` 条件表达式、指针/字符串/聚合值参与求值。
-  字符串与聚合常量沿用旧规则（`const string S = "hi";`、`const int[] G = {10, 20, 30};` 继续可用）。
-- 枚举是名义类型：枚举成员参与算术/比较仍要显式 `as`（`(Color.Red as int) * 2`）。
-- **unit 级变量的初始化器**（含非 `const` 全局，如 `int g = 1 + 2;`、`int G = Cat.MaxAge;`）同样走这套求值器：
-  能算出常量就按常量发到全局数据区；算不出再回退旧的字面量/聚合规则，仍不行则报「必须是编译期常量」。
+- Literals: integer, floating point, character, boolean;
+- Unary `-` `+` `not` `!`; binary `+ - * / %`, `& | ^ << >>`, `< <= > >= == !=`, `and` `or`;
+- `as` conversions (the same truncation / sign extension / integer↔float conversion semantics as at runtime);
+- References to other constants: unit-level `const` of this unit, enum members (`Color.Red` or a bare `Red`),
+  type-level `const` members (`Type.NAME`); **forward references and arbitrary declaration order are supported** (`const int A = B; const int B = 1;`);
+- Built-in `sizeof(T)` / `alignof(T)`: the result is `usize`; assigning it to `int` and similar types requires an explicit `as`
+  (`const int W = sizeof(int) as int;`; `const int W = sizeof(int);` still fails under the strict typing rules);
+- Errors: division by zero / modulo by zero, circular dependency (`circular constant definition involving ...`), nesting depth exceeding 512 levels;
+- In constant expressions `and` / `or` **evaluate both sides** (at runtime they short-circuit); therefore `false and (1 / 0 == 0)` reports division by zero in a constant context;
+- Despite forward references and arbitrary declaration order, constants of the same name coming from `use` still **report ambiguity** under the normal name-resolution rules (they do not silently take the first);
+- Not supported: function calls (there are no `constexpr` functions), `?:` conditional expressions, pointers/strings/aggregate values participating in evaluation.
+  String and aggregate constants follow the old rules (`const string S = "hi";`, `const int[] G = {10, 20, 30};` continue to work).
+- Enums are nominal types: enum members still require an explicit `as` to participate in arithmetic/comparison (`(Color.Red as int) * 2`).
+- **Initializers of unit-level variables** (including non-`const` globals such as `int g = 1 + 2;`, `int G = Cat.MaxAge;`) also go through this evaluator:
+  if a constant can be computed it is emitted to the global data area as a constant; otherwise it falls back to the old literal/aggregate rules, and if that still fails it reports "must be a compile-time constant".
 
-### 3.8 引用类型 `class`（RC + weak；已实现，含 weak 目标销毁自动置 null）
+### 3.8 Reference type `class` (RC + weak; implemented, including automatically nulling weak targets upon destruction)
 
-值与引用严格分离：`struct` 永远是值语义，`class` 永远是引用语义，二者不互通。
+Values and references are strictly separated: `struct` always has value semantics, `class` always has reference semantics; the two do not interoperate.
 
 ```c
 class Cat {
-    string name;      // 值类型字段
-    Cat parent;       // class 引用字段（可空、强引用）
-    weak Cat owner;   // 非拥有弱引用字段（用于断环）
+    string name;      // value-type field
+    Cat parent;       // class reference field (nullable, strong reference)
+    weak Cat owner;   // non-owning weak reference field (used to break cycles)
 }
 ```
 
-- **类型即句柄**：`Cat` 就是引用类型；没有 `&` 类型后缀，`&` 只作取地址。
-- `class` 与 `struct` 同为 unit 级类型声明；可声明字段、方法、构造器，支持单继承与接口（见 3.9–3.12）。
-- 也可声明**类型级编译期常量** `const int K = 3;`（无实例存储，`Cat.K` 访问，见 3.7.1）；class 成员默认 private。
-- 构造：`new Cat(...)`；参数规则与结构体构造一致（位置或命名，字段给全）。
-  `new Cat` / `new Cat()` 表示所有字段零初始化（数值 0、引用 null、`string` 空）。
-  `new` 失败即 `abort()`（语言无异常；构造出的引用不会为空）。
-- `new` 只用于 `class`，不用于 `struct`（struct 保持值构造 `Point(...)`）。
-- 初始化/赋值：
-  - `Cat b = a;` 复制句柄（强引用 +1）
-  - `Cat c = null;` 空引用（声明中 `= 0` 等价于 `null`）
-  - `b = c;` 重绑定（旧目标 -1，新目标 +1）
-  - `b = null;` 重绑定为空
-- 空值：class 引用允许 `null`；`c == null` / `c != null` 合法。
-- 身份比较：`c == d` 比较是否同一对象；不支持 class 的值比较（需要时逐字段比较）。
-- 成员访问自动解引用：`c.name`、`c.parent.name`；写入受 `const` 约束。
-- **提前释放**（0.0.47 起 `del` 已移除）：把句柄置空即可，`c = null;` 释放一次强引用并把 `c` 置为 null。
-  对象在强引用计数归零时销毁；对共享对象只减少你这一份引用。目标必须是可写的 class/interface
-  引用左值（`const` 绑定不可赋值）；函数参数、`for`/`for-in` 循环变量同样是拥有型绑定，
-  可以置 null（见 4）；`this` 不可赋值。
-- `weak Cat p;`：
-  - 只能作 class 字段（不能作局部变量、参数、返回值）；
-  - 不增加目标计数；目标销毁时自动置 null（零化）；
-  - 读取得到可空的借用句柄，有效期到所在表达式结束；需要保留时赋给强引用（+1）；
-  - 环必须用 weak 打破；语言不提供环收集器，未打破的环会泄漏（见 8.3）。
-- **class 静态数组**：`Cat[3]`、`Cat[0]` 允许（元素是句柄）；拷贝逐元素 +1、销毁逐元素 -1、
-  元素赋值先 -1 旧值再 +1 新值。struct 允许含 class/interface 引用字段（非 POD，编译器生成
-  逐字段 RC，见 3.4）。
-- **class 动态数组**：`Cat[]` 允许（`new Cat[n]`）；数组持有元素句柄，销毁时逐元素 -1。动态数组
-  句柄本身按 3.3 的 RC 规则复制/释放。
-- `const Cat c`（已实现，0.0.61）：**只读绑定标记**——`c` 不可重绑定，且不能经 `c` 直接写字段（`c.a = 1` 报错）。
-  它不是深度只读视图：句柄复制出去仍可写，经 `c` 调用会修改对象的方法也合法（无 `const` 方法，见 3.11）。
-- **`ref` 是绑定模式，不是可存储的类型**（0.0.62 起；0.0.63 扩展）：借用只出现在**参数**与**返回类型**两个位置，
-  写成前缀关键字 `ref T p` / `ref const T p` / `ref T f()`，**不引入 `T&` 类型后缀**。理由：`&` 在本语言已是
-  一元取地址与二元按位与；类型位置的修饰统一走小写前缀（`weak`、`const`、`ref`）。
-  借用不能作变量/字段/数组元素的类型（`ref T x;`、`T&[]` 都是错误，且编译器给出明确诊断）。
-- 借用家族共享一条规则：**不可存储**——`for ref x in s`、`ref T p` 与 `ref T f()` 的结果都不得赋给其它变量或字段、
-  不得取地址，生命周期不超过产生它的表达式。
-- `ref T` 参数（0.0.62；0.0.63 起支持标量）：`void f(ref Point p)` / `void inc(ref int x)` 借用调用方变量；
-  callee 可写；不可重绑定。
-  - 可借类型：基本类型、枚举、指针，以及**不含引用计数字段、无析构器、非 union** 的 struct。
-  - 实参必须是**可寻址左值**；`ref` 参数不做转换（不接收临时值）。
-  - 结构体借用的赋值仍是「重绑定」错误（沿用 0.0.62）；标量/枚举/指针借用的赋值即**写穿**调用方变量。
-  - 方法/构造器参数暂不支持 `ref`；运算符参数支持（见 3.11）；`extern` 不支持。
-- `ref const T p`（只读借用，0.0.62）：与 `for ref` 的 `const` 规则对称；callee 既不能
-  重绑定参数本身，也不能经借用写字段/元素；实参必须是**可寻址左值**（不接受临时值）。
-  与按值 `const T p` 的区别：后者保护的是函数体内的**副本**，前者限制的是**对调用方对象的写**。
-  可变 `ref T` 不接受 `const` 实参（"cannot bind a readonly variable to a mutable `ref` parameter"）。
-- **`ref T` 返回**（0.0.63）：`ref T f()` 返回对调用方已持有存储的借用。
-  - 返回表达式的根必须是：`ref` 参数、`this`、全局/静态变量，或路径上经过**指针/切片**的存储（堆内存）。
-    借局部变量、借按值参数（含其内联字段）、借临时值都是编译错误。
-  - 结果**不可存储**（`ref T r = f();` 是错误）；但可以当场写穿：`f() = v;`、`f() += 1;`、`f().field = v;`，
-    也可以作 `ref` 参数的实参，或在 `for ref` 中绑定。
-  - `ref const T` 位置不能以可变 `ref` 返回；`ref const T f()` 的结果只能读。
-- **参数是拥有型局部变量**（0.0.47 起）：进入函数时对参数值 retain 一份，退出（含 `return`/`break`/
-  `continue`）时 release。因此函数体内可以自由重绑定参数（`c = null;`、`c = other;`）而不会影响调用方。
-  调用方仍按值传参并释放自己的临时值，净引用计数不变；后续可在不改语义的前提下用借用/逃逸分析把
-  retain/release 优化掉。
-- `sizeof` / `alignof` 作用于 class/interface 类型（**已实现**）：class 得到**句柄**大小（8）、
-  interface 得到接口值大小（16）；对象本身大小不暴露；enum 得到底层 `int`（4）。
-- 禁止（第一阶段）：
-  - class 传给 `extern` C 函数（C 侧不参与引用计数）；
-  - 动态数组 `T[]` 传给 `extern` C 函数（内部带 RC 头，不是 C 布局）；
-  - **对 class/interface 引用取地址**（`&c`、`&i`），以及**对经引用访问的成员/数组元素取地址**
-    （`&c.x`、`&h.items[0]`、`&catArray[i]`、`&h.v[0]`）：RC 生命周期无法用裸指针表达，
-    且可绕过 retain/release（backlog U21）。需要就地借用时先拷到局部变量，用完再赋回：
-    `S tmp = c.s; api(&tmp); c.s = tmp;`。纯值 struct / 定长数组元素 / 指针变量取址不受影响。
-  - `weak` 用于局部变量、参数、返回值；
-  - `const` **方法 / 深度只读视图**（已定不做，见 3.11 与 12 表 98）。
-- 内存：原子引用计数（relaxed）；字段按声明逆序释放；弱引用不计数。
-- 线程：对象可跨线程共享；析构器在最后释放引用的线程执行，必须线程安全。
+- **The type is the handle**: `Cat` *is* the reference type; there is no `&` type suffix, and `&` only means address-of.
+- `class` and `struct` are both unit-level type declarations; they may declare fields, methods, and constructors, and support single inheritance and interfaces (see 3.9–3.12).
+- They may also declare **type-level compile-time constants** such as `const int K = 3;` (no instance storage, accessed via `Cat.K`, see 3.7.1); class members are private by default.
+- Construction: `new Cat(...)`; the parameter rules are the same as for struct construction (positional or named, all fields must be given).
+  `new Cat` / `new Cat()` means all fields are zero-initialized (numeric 0, references null, `string` empty).
+  A failed `new` means `abort()` (the language has no exceptions; a constructed reference is never null).
+- `new` is only for `class`, not for `struct` (structs keep value construction `Point(...)`).
+- Initialization / assignment:
+  - `Cat b = a;` copies the handle (strong reference +1)
+  - `Cat c = null;` a null reference (`= 0` in a declaration is equivalent to `null`)
+  - `b = c;` rebinds (old target -1, new target +1)
+  - `b = null;` rebinds to null
+- Null: class references allow `null`; `c == null` / `c != null` are legal.
+- Identity comparison: `c == d` compares whether both denote the same object; value comparison of classes is not supported (compare field by field when needed).
+- Member access auto-dereferences: `c.name`, `c.parent.name`; writes are constrained by `const`.
+- **Early release** (`del` was removed as of 0.0.47): just set the handle to null; `c = null;` releases one strong reference and sets `c` to null.
+  The object is destroyed when the strong reference count reaches zero; for a shared object only your own reference is decremented. The target must be a writable class/interface
+  reference lvalue (a `const` binding cannot be assigned); function parameters and `for`/`for-in` loop variables are likewise owning bindings,
+  and can be set to null (see 4); `this` cannot be assigned.
+- `weak Cat p;`:
+  - can only be a class field (not a local variable, parameter, or return value);
+  - does not increment the target's count; it is automatically set to null when the target is destroyed (zeroed);
+  - reading yields a nullable borrowed handle that is valid until the end of the enclosing expression; assign it to a strong reference to keep it (+1);
+  - cycles must be broken with weak references; the language provides no cycle collector, so unbroken cycles leak (see 8.3).
+- **class static arrays**: `Cat[3]`, `Cat[0]` are allowed (the elements are handles); copying increments each element by +1, destruction decrements each element by -1,
+  and element assignment decrements the old value by -1 and then increments the new value by +1. A struct may contain class/interface reference fields (non-POD; the compiler generates
+  per-field RC, see 3.4).
+- **class dynamic arrays**: `Cat[]` is allowed (`new Cat[n]`); the array holds the element handles and decrements each element by -1 on destruction. The dynamic array
+  handle itself is copied/released according to the RC rules of 3.3.
+- `const Cat c` (implemented, 0.0.61): a **read-only binding marker** — `c` cannot be rebound, and fields cannot be written directly through `c` (`c.a = 1` is an error).
+  It is not a deep read-only view: a copied-out handle is still writable, and calling a method that modifies the object through `c` is also legal (there are no `const` methods, see 3.11).
+- **`ref` is a binding mode, not a storable type** (since 0.0.62; extended in 0.0.63): borrows appear in exactly two places, **parameters** and **return types**,
+  written as the prefix keyword `ref T p` / `ref const T p` / `ref T f()`; **no `T&` type suffix is introduced**. The reason: `&` in this language already is
+  the unary address-of operator and the binary bitwise-and operator; modifiers in type position uniformly use a lowercase prefix (`weak`, `const`, `ref`).
+  A borrow cannot be the type of a variable, field, or array element (`ref T x;` and `T&[]` are both errors, and the compiler emits a clear diagnostic).
+- The borrow family shares one rule: **not storable** — the results of `for ref x in s`, `ref T p`, and `ref T f()` must not be assigned to another variable or field,
+  must not have their address taken, and must not outlive the expression that produced them.
+- `ref T` parameters (0.0.62; scalars supported since 0.0.63): `void f(ref Point p)` / `void inc(ref int x)` borrow the caller's variable;
+  the callee may write to it; it cannot be rebound.
+  - Borrowable types: primitive types, enums, pointers, and structs that contain **no reference-counted fields, have no destructor, and are not a union**.
+  - The argument must be an **addressable lvalue**; `ref` parameters perform no conversion (they do not accept temporaries).
+  - Assignment to a struct borrow is still a "rebinding" error (as in 0.0.62); assignment to a scalar/enum/pointer borrow **writes through** to the caller's variable.
+  - Method/constructor parameters do not support `ref` yet; operator parameters do (see 3.11); `extern` does not.
+- `ref const T p` (read-only borrow, 0.0.62): symmetric with the `const` rules of `for ref`; the callee can neither
+  rebind the parameter itself nor write fields/elements through the borrow; the argument must be an **addressable lvalue** (temporaries are not accepted).
+  Difference from a by-value `const T p`: the latter protects the **copy** inside the function body, whereas the former restricts **writes to the caller's object**.
+  A mutable `ref T` does not accept a `const` argument ("cannot bind a readonly variable to a mutable `ref` parameter").
+- **`ref T` returns** (0.0.63): `ref T f()` returns a borrow of storage that the caller already holds.
+  - The root of the returned expression must be: a `ref` parameter, `this`, a global/static variable, or storage reached through a **pointer/slice** on the path (heap memory).
+    Borrowing a local variable, a by-value parameter (including its inlined fields), or a temporary is a compile error.
+  - The result is **not storable** (`ref T r = f();` is an error); but it can be written through in place: `f() = v;`, `f() += 1;`, `f().field = v;`,
+    and it can also serve as the argument of a `ref` parameter, or be bound in a `for ref`.
+  - A `ref const T` position cannot be returned as a mutable `ref`; the result of `ref const T f()` can only be read.
+- **Parameters are owning local variables** (since 0.0.47): on entry to a function a reference is retained for the parameter value, and on exit (including `return`/`break`/
+  `continue`) it is released. Therefore the body may freely rebind a parameter (`c = null;`, `c = other;`) without affecting the caller.
+  The caller still passes arguments by value and releases its own temporaries, so the net reference count is unchanged; later, borrow/escape analysis may optimize away the
+  retain/release without changing semantics.
+- `sizeof` / `alignof` applied to class/interface types (**implemented**): a class yields the **handle** size (8),
+  an interface yields the interface value size (16); the size of the object itself is not exposed; an enum yields the underlying `int` (4).
+- Forbidden (phase one):
+  - passing a class to an `extern` C function (the C side does not participate in reference counting);
+  - passing a dynamic array `T[]` to an `extern` C function (it carries an RC header internally and is not C layout);
+  - **taking the address of a class/interface reference** (`&c`, `&i`), and **taking the address of a member/array element reached through a reference**
+    (`&c.x`, `&h.items[0]`, `&catArray[i]`, `&h.v[0]`): the RC lifetime cannot be expressed with a raw pointer,
+    and retain/release could be bypassed (backlog U21). When an in-place borrow is needed, copy it to a local variable first and assign it back when done:
+    `S tmp = c.s; api(&tmp); c.s = tmp;`. Taking the address of a pure-value struct / fixed-size array element / pointer variable is unaffected.
+  - `weak` on local variables, parameters, or return values;
+  - `const` **methods / deep read-only views** (decided not to do, see 3.11 and 12 table 98).
+- Memory: atomic reference counting (relaxed); fields are released in reverse declaration order; weak references are not counted.
+- Threads: objects may be shared across threads; the destructor runs on the thread that releases the last reference and must be thread-safe.
 
-### 3.9 继承（单继承）
+### 3.9 Inheritance (single inheritance)
 
 ```c
 class Widget {
     Rect bounds;
     Widget(Rect b) { bounds = b; }
-    virtual void paint(Canvas c);              // 抽象方法（无函数体）
+    virtual void paint(Canvas c);              // abstract method (no body)
     virtual bool event(Event e) { return false; }
 }
 
@@ -573,72 +573,72 @@ class Button : Widget {
 }
 ```
 
-- **只允许单继承**：`class D : B`；`B` 是类（接口另见 3.10）。
-- 字段布局：基类字段在前，派生字段在后；字段名在整条继承链上必须唯一（不允许遮蔽）。
-- 方法**默认虚**；覆盖基类虚方法必须写 `override`，签名必须一致。
-- 同名不同签名 → 重载（见 3.11），不是覆盖。
-- 有未实现方法（只声明、无函数体）的类是**抽象类**，不能 `new`；不引入 `abstract` 关键字。
-- 抽象类可以有构造器，供派生类 `super(...)` 调用。
-- 基类句柄可指向派生对象（隐式向上转换）；基类转派生必须显式 `as`，失败得到 null。
-- 构造期间的虚调用按 C++ 式派发（见 3.12）。
-- `super.m(...)` **只解析 class 继承链**；接口默认方法不能用 `super` 调用（报错）。
-- 不做多继承、不做 `final`；派生类可以继续被继承。
+- **Only single inheritance is allowed**: `class D : B`; `B` is a class (for interfaces see 3.10).
+- Field layout: base class fields come first, derived fields after; field names must be unique along the whole inheritance chain (shadowing is not allowed).
+- Methods are **virtual by default**; overriding a base class virtual method must use `override`, and the signature must match exactly.
+- Same name with a different signature → overload (see 3.11), not an override.
+- A class with unimplemented methods (declared only, without a body) is an **abstract class** and cannot be `new`ed; no `abstract` keyword is introduced.
+- An abstract class may have constructors, for derived classes to call via `super(...)`.
+- A base class handle may point to a derived object (implicit upcast); converting a base class to a derived class requires an explicit `as`, which yields null on failure.
+- Virtual calls during construction are dispatched C++-style (see 3.12).
+- `super.m(...)` **only resolves along the class inheritance chain**; interface default methods cannot be called with `super` (error).
+- No multiple inheritance and no `final`; a derived class may itself be inherited from.
 
-### 3.10 接口 `interface`
+### 3.10 Interfaces `interface`
 
 ```c
 interface IEnumerable {
     IEnumerator get_iterator();
 }
 
-interface IList : IEnumerable, IObject {      // 接口可以多继承接口
+interface IList : IEnumerable, IObject {      // an interface may inherit multiple interfaces
     int count();
     void add(int x);
-    bool is_empty() { return count() == 0; }  // 默认方法
+    bool is_empty() { return count() == 0; }  // default method
 }
 
-class Vector : IList { ... }                  // 只实现接口
-class Button : Widget, IFocusable { ... }     // 第一个是类，其余是接口
+class Vector : IList { ... }                  // implements only interfaces
+class Button : Widget, IFocusable { ... }     // the first is a class, the rest are interfaces
 ```
 
-- `interface` 与 `class`/`struct` 同为 unit 级类型声明；没有字段、没有构造器，只有方法（可带默认实现）。
-- 类可以实现多个接口：`:` 列表中**类最多一个，且必须在最前**；其余都是接口。
-- 接口方法默认抽象、默认虚；实现时写 `override`。
-- 默认方法只能调用接口方法，不能访问字段；两个接口提供同签名默认实现时，类必须显式覆盖，否则编译错误。
-- 接口值布局为两个机器字 `{对象指针, 类描述指针}`；可以为 `null`。
-- 转换：`class → interface` 隐式；`interface A → interface B`（A 继承 B）静态转换；
-  `class → 派生 class`、`interface → class` 用 `as` 做运行期检查（沿 desc 基类链），失败得 `null`；
-  `interface → 派生 interface` 的向下转换第一阶段不支持（报错）。
-- 接口引用是强引用：复制 +1、覆盖 -1；`weak` 只支持 class 字段，**接口不支持 `weak`（第一阶段不做）**。
-- 接口不能作为 `extern` C 函数参数。
-- 泛型接口（`interface ISeq<T>`）已支持（见 3.15），但**当前只作约束**，不能作值类型。
-- `struct` 也可以实现接口（`struct S : I1, I2`）：`:` 后**只能列接口**，必须显式实现全部方法并写
-  `override`；这是**静态满足**，不产生值类型、不生成 vtable（见 3.15.7 与 backlog U33）。
-- `for-in` 不依赖接口：走 6.4 的**迭代形态**（结构性识别，静态、零分配）。
-  接口驱动的遍历需要「接口作值类型」（M5b），见 backlog U30。
+- `interface`, like `class`/`struct`, is a unit-level type declaration; it has no fields and no constructors, only methods (which may have default implementations).
+- A class may implement multiple interfaces: in the `:` list there is **at most one class, and it must come first**; the rest are interfaces.
+- Interface methods are abstract and virtual by default; write `override` when implementing them.
+- A default method may only call interface methods and cannot access fields; when two interfaces provide default implementations with the same signature, the class must explicitly override them, otherwise it is a compile error.
+- An interface value is laid out as two machine words `{object pointer, class descriptor pointer}`; it may be `null`.
+- Conversions: `class → interface` is implicit; `interface A → interface B` (A inherits B) is a static conversion;
+  `class → derived class` and `interface → class` use `as` for a runtime check (along the desc base class chain), yielding `null` on failure;
+  the downcast `interface → derived interface` is not supported in phase one (error).
+- Interface references are strong references: copying is +1, overwriting is -1; `weak` is only supported for class fields, and **interfaces do not support `weak` (not done in phase one)**.
+- An interface cannot be used as a parameter of an `extern` C function.
+- Generic interfaces (`interface ISeq<T>`) are supported (see 3.15), but are **currently only usable as constraints** and cannot be value types.
+- A `struct` may also implement interfaces (`struct S : I1, I2`): after `:` you may **only list interfaces**, and all methods must be implemented explicitly with
+  `override`; this is **static satisfaction**, which produces no value type and generates no vtable (see 3.15.7 and backlog U33).
+- `for-in` does not depend on interfaces: it follows the **iteration form** of 6.4 (structural recognition, static, zero allocation).
+  Interface-driven traversal requires "interfaces as value types" (M5b), see backlog U30.
 
-### 3.11 方法、重载与运算符
+### 3.11 Methods, Overloading and Operators
 
-- 类方法：`ret name(params) { ... }`；`this` 是当前对象的引用（class 为对象句柄，struct 为对象本身的左值别名），
-  隐式可用，需要消歧时显式写 `this`；`this` 不是指针，不能取地址。
-- 方法内可直接访问字段；`this` 不可重绑定。
-- **不提供 `const` 方法**（已定不做，见 12 表 98）：方法没有只读/可变之分，`this` 永远可写；
-  需要在 API 边界表达只读时用只读 `interface`。
-- 方法默认虚；`override` 必须与基类/接口方法签名一致。
+- Class method: `ret name(params) { ... }`; `this` is a reference to the current object (for a class, the object handle; for a struct, an lvalue alias of the object itself),
+  and is implicitly available; write `this` explicitly when disambiguation is needed; `this` is not a pointer and its address cannot be taken.
+- Fields can be accessed directly inside a method; `this` cannot be rebound.
+- **No `const` methods are provided** (decided not to do, see 12 table 98): methods have no read-only/mutable distinction, `this` is always writable;
+  use a read-only `interface` when read-only must be expressed at an API boundary.
+- Methods are virtual by default; `override` must have a signature identical to the base class/interface method.
 
-**重载**（自由函数、方法、构造器、运算符）：
+**Overloading** (free functions, methods, constructors, operators):
 
-1. 按名字 + 实参个数筛候选；
-2. 实参转换等级：精确匹配（含字面量按参数类型适配）= 0；隐式加宽 = 1；不兼容淘汰；
-3. 取"不劣于所有其他候选、且至少一项更优"的唯一候选；
-4. 无唯一最优 → 歧义错误；
-5. 无用户自定义转换、无默认参数、无变参；返回类型不参与重载。
+1. Filter candidates by name + number of arguments;
+2. Argument conversion rank: exact match (including literals adapted to the parameter type) = 0; implicit widening = 1; incompatible candidates are eliminated;
+3. Pick the unique candidate that is "no worse than every other candidate and better in at least one respect";
+4. No unique best → ambiguity error;
+5. No user-defined conversions, no default parameters, and no variadic parameters; the return type does not participate in overload resolution.
 
-- 方法重载**合并基类同名方法**（派生类重载集包含基类重载）。
-- 同签名必须写 `override`；不同签名是重载。
-- `extern` C 函数不参与重载；`main` 不参与。
+- Method overloads **merge the same-named methods of the base class** (the derived class's overload set includes the base class's overloads).
+- The same signature must use `override`; a different signature is an overload.
+- `extern` C functions do not participate in overload resolution; neither does `main`.
 
-**运算符重载**（只允许自由函数形式）：
+**Operator overloading** (only the free function form is allowed):
 
 ```c
 Point operator+(Point a, Point b) { ... }
@@ -646,23 +646,23 @@ bool  operator==(Point a, Point b) { ... }
 Vec   operator<<(Vec v, int n) { ... }
 ```
 
-| 运算符 | 允许 | 说明 |
+| Operator | Allowed | Description |
 |---|---|---|
-| `+ - * / %` | 是 | 二元；返回任意类型 |
-| 一元 `-` | 是 | |
-| `< <= > >=` | 是 | 必须返回 `bool` |
-| `& \| ^ << >>` | 是 | 位运算 |
-| `[]` / `[]=` | 是 | **显式读写**：`T operator[](C c, I i)` 读取；`void operator[]=(C c, I i, T v)` 写入。`c[i]` 调前者，`c[i] = v` 调后者，`c[i] += v` 先读后写。**推荐**：`ref T operator[](ref C c, I i)` 返回借用，`c[i]` 直接是可写左值（此时 `[]=` 不再需要，`+=`/传 `ref` 参数/`for ref` 一并可用） |
-| `== !=` | 仅 struct | class 的 `==` 固定为身份比较，不可重载；struct 未定义 `==` 时不可比较 |
-| `()` `=` `&& \|\|` `as/new` | 否 | 与内建语义冲突 |
+| `+ - * / %` | Yes | Binary; may return any type |
+| Unary `-` | Yes | |
+| `< <= > >=` | Yes | Must return `bool` |
+| `& \| ^ << >>` | Yes | Bitwise operations |
+| `[]` / `[]=` | Yes | **Explicit read/write**: `T operator[](C c, I i)` reads; `void operator[]=(C c, I i, T v)` writes. `c[i]` calls the former, `c[i] = v` calls the latter, `c[i] += v` reads first and then writes. **Recommended**: `ref T operator[](ref C c, I i)` returns a borrow, so `c[i]` is directly a writable lvalue (in which case `[]=` is no longer needed, and `+=`/passing a `ref` parameter/`for ref` all work as well) |
+| `== !=` | struct only | A class's `==` is fixed as identity comparison and cannot be overloaded; a struct that does not define `==` is not comparable |
+| `()` `=` `&& \|\|` `as/new` | No | Conflicts with the built-in semantics |
 
-- 运算符必须至少有一个 struct/class 操作数；不能重定义内置类型。
-- 运算符函数是普通函数，可放在任意 unit；重复定义或解析歧义 → 编译错误。
-- `!=` 未定义时按 `not (a == b)` 派生；class 为身份不等。
-- 一元 `~`（按位取反）允许重载（`operator~`，1 个参数）。
-- 优先级/结合性不变。
+- An operator must have at least one struct/class operand; built-in types cannot be redefined.
+- An operator function is an ordinary function and may be placed in any unit; a duplicate definition or a resolution ambiguity → compile error.
+- When `!=` is undefined it is derived as `not (a == b)`; for a class this means identity inequality.
+- Unary `~` (bitwise NOT) may be overloaded (`operator~`, 1 parameter).
+- Precedence/associativity are unchanged.
 
-### 3.12 构造器与构造顺序
+### 3.12 Constructors and Construction Order
 
 ```c
 class Widget {
@@ -674,43 +674,43 @@ class Widget {
 class Button : Widget {
     string label;
     Button(Rect b, string s) {
-        super(b);          // 必须是第一条语句
+        super(b);          // must be the first statement
         label = s;
     }
 }
 ```
 
-- 构造器无返回类型、名字等于类名；可以重载；`new T(args)` 按 3.11 的规则解析。
-  **构造器/`new` 的参数不支持命名参数**（`new C(v = 1)` 是编译错误）；命名参数只用于 struct 构造（3.4）。
-- 分配时：对象内存全部清零、`rc = 1`、vtable 指向最顶层基类。
-- `super(args)` 必须是第一条语句；省略则调用基类零参构造器（不存在则报错）。
-- 构造顺序：逐层 `super` → 派生字段赋值（构造器体内）；每进入一层构造器，vtable 更新到该层。
-- 构造期间虚调用按 C++ 式：只派发到当前构造层及更上层，不会进入尚未构造的派生实现。
-- 未声明构造器的类保留 `new T` 零初始化；声明构造器后，`new T` 仅在存在零参构造器时合法。
-- 抽象类可以有构造器，但不能 `new`。
-- 没有用户析构器（第一阶段）；销毁由 vtable 的 destroy 完成（见 8.3）。
+- A constructor has no return type and its name equals the class name; it may be overloaded; `new T(args)` is resolved by the rules of 3.11.
+  **Named arguments are not supported for constructor/`new` parameters** (`new C(v = 1)` is a compile error); named arguments are only used for struct construction (3.4).
+- On allocation: the object's memory is fully zeroed, `rc = 1`, and the vtable points to the topmost base class.
+- `super(args)` must be the first statement; if omitted, the base class's zero-argument constructor is called (an error if it does not exist).
+- Construction order: layer by layer `super` → derived field assignments (in the constructor body); on entering each constructor layer, the vtable is updated to that layer.
+- Virtual calls during construction are C++-style: they dispatch only to the current construction layer and above, and never enter a derived implementation that has not been constructed yet.
+- A class that declares no constructor keeps the zero-initialization of `new T`; once a constructor is declared, `new T` is legal only if a zero-argument constructor exists.
+- An abstract class may have constructors, but cannot be `new`ed.
+- There are no user destructors (phase one); destruction is performed by the destroy entry of the vtable (see 8.3).
 
-### 3.13 析构器 `~T()`
+### 3.13 Destructors `~T()`
 
 ```c
 class File {
     int fd;
     File(string path) { fd = open(path); }
-    ~File() { close(fd); }        // 引用计数归零时调用
+    ~File() { close(fd); }        // called when the reference count reaches zero
 }
 ```
 
-- 每个类最多一个析构器：`~ClassName() { ... }`；无参数、无返回值、不能重载。
-- 调用时机：强引用计数归零时，**先执行用户析构器**，再按字段逆序释放（派生字段 → 基类字段），最后释放内存。
-- 继承：派生析构器先执行，再执行基类析构器（C++ 顺序）；基类析构器通过 vtable 的 destroy 虚派发。
-- 析构器内虚调用按 C++ 式派发到当前析构层。
-- 不能手动调用；把句柄置 null（`c = null;`）只减少引用，计数归零才触发。
-- 环永远不会归零，因此环中的析构器不会执行（weak 断环后才会）。
-- 析构器里不能把 `this` 存到字段/全局（会复活对象）；第一阶段可先靠文档约束。
-- 构造器失败（`abort`）时不执行析构器。
-- 析构器可能在任意线程执行（对象被共享时）；需要线程安全的资源释放。
+- At most one destructor per class: `~ClassName() { ... }`; no parameters, no return value, cannot be overloaded.
+- Invocation timing: when the strong reference count reaches zero, the **user destructor runs first**, then the fields are released in reverse order (derived fields → base class fields), and finally the memory is released.
+- Inheritance: the derived destructor runs first, then the base class destructor (C++ order); the base class destructor is virtually dispatched through the destroy entry of the vtable.
+- Virtual calls inside a destructor are dispatched C++-style to the current destructor layer.
+- It cannot be called manually; setting the handle to null (`c = null;`) only decrements the reference, and it triggers only when the count reaches zero.
+- A cycle never reaches zero, so the destructors in a cycle never run (only after a weak reference breaks the cycle).
+- A destructor must not store `this` into a field/global (that would resurrect the object); in phase one this can be constrained by documentation for now.
+- When a constructor fails (`abort`), the destructor is not run.
+- A destructor may run on any thread (when the object is shared); resource release must be thread-safe.
 
-### 3.14 异常（设计已定，尚未实现）
+### 3.14 Exceptions (design decided, not yet implemented)
 
 ```c
 class MyError : Exception {
@@ -732,31 +732,31 @@ void g() {
 }
 ```
 
-- **非检查型**：函数不声明 `throws`，任何函数都可能抛；调用方自担。
-- 只有 `Exception` 的派生类可以 `throw`/`catch`；`Exception` 是**基类**（单继承，错误类不能再继承其他基类）。
-- `catch` 按 class/interface 与书写顺序匹配；依赖对象描述符里的 `type_id` 与基类/接口链。
-- `finally` 在所有退出路径执行（正常、`return`、`break`、`continue`、异常）。
-- 异常对象是 RC 管理的 class 句柄；`catch` 参数是借用；未捕获 → `abort`。
-- 析构器必须 `nothrow`；构造器抛异常时用 `constructed` 标志做部分清理。
-- 异常不跨 C ABI、不跨线程。
-- Windows 展开 ABI（SEH / Itanium）先做 spike 验证，再定实现。
+- **Unchecked**: functions do not declare `throws` and any function may throw; the caller bears the risk.
+- Only subclasses of `Exception` may `throw`/`catch`; `Exception` is the **base class** (single inheritance; an error class cannot inherit from any other base class).
+- `catch` matches by class/interface and in written order; it relies on the `type_id` in the class descriptor and on the base class/interface chain.
+- `finally` runs on every exit path (normal, `return`, `break`, `continue`, exception).
+- An exception object is an RC-managed class handle; a `catch` parameter is a borrow; uncaught → `abort`.
+- Destructors must be `nothrow`; when a constructor throws, a `constructed` flag is used for partial cleanup.
+- Exceptions do not cross the C ABI and do not cross threads.
+- The Windows unwinding ABI (SEH / Itanium) is validated with a spike first, and only then is the implementation decided.
 
 ---
 
-### 3.15 泛型（已实现 0.0.64–0.0.72）
+### 3.15 Generics (implemented in 0.0.64–0.0.72)
 
-#### 3.15.1 实现策略：单态化
+#### 3.15.1 Implementation strategy: monomorphization
 
-- 采用**单态化（monomorphization）**：对每个类型实参组合生成一份独立的类型/函数实例。
-- 实例化产物是**普通声明**（普通 `Type` + 普通 `StructDecl`/`ClassDecl`/`InterfaceDecl`/`FuncDecl`），
-  因此 `same_type`、符号修饰（`mangle`）、布局计算与后端代码生成**不需要感知泛型**。
-- **泛型定义必须对实例化点可见**（当前为全程序源码加载）。不把泛型 IR/元数据序列化进目标文件；
-  将来若做预编译库，需单独立项。
-- 不做类型擦除、不做运行时分派。空间换时间，后续再优化。
+- Uses **monomorphization**: a separate type/function instance is generated for each combination of type arguments.
+- The instantiation result is an **ordinary declaration** (an ordinary `Type` + an ordinary `StructDecl`/`ClassDecl`/`InterfaceDecl`/`FuncDecl`),
+  so `same_type`, symbol mangling (`mangle`), layout computation, and backend code generation **do not need to be aware of generics**.
+- **A generic definition must be visible at the point of instantiation** (currently the whole program is loaded from source). Generic IR/metadata is not serialized into the object file;
+  if precompiled libraries are done later, that requires a separate project.
+- No type erasure and no runtime dispatch. Space is traded for time, to be optimized later.
 
-#### 3.15.2 声明语法
+#### 3.15.2 Declaration syntax
 
-类型参数写在名字之后、`:` 与 `{` 之前：
+Type parameters are written after the name and before `:` and `{`:
 
 ```c
 struct Vec<T> { T[] data; }
@@ -765,85 +765,85 @@ interface ISeq<T> { usize length(); T at(usize i); }
 T max2<T>(T a, T b) { return a > b ? a : b; }
 ```
 
-- 支持多个参数：`struct Pair<K, V> { K key; V val; }`
-- 支持约束：`<T: I>` / `<T: A & B>` / `<T: int | long>`
-- 类型参数名在**声明体**内充当类型名（字段、参数、返回、局部变量、`cast`、`sizeof`、`new` 均适用）。
-- 泛型参数只作用于**类型级**：`struct` / `class` / `interface` / 自由函数。
-  方法级泛型（`U map<U>(...)`）与泛型类型别名暂不支持。
+- Multiple parameters are supported: `struct Pair<K, V> { K key; V val; }`
+- Constraints are supported: `<T: I>` / `<T: A & B>` / `<T: int | long>`
+- A type parameter name acts as a type name inside the **declaration body** (fields, parameters, return types, local variables, `cast`, `sizeof`, and `new` all apply).
+- Generic parameters apply only at the **type level**: `struct` / `class` / `interface` / free functions.
+  Method-level generics (`U map<U>(...)`) and generic type aliases are not supported yet.
 
-**约束语法**
+**Constraint syntax**
 
-| 写法 | 含义 |
+| Syntax | Meaning |
 |---|---|
-| `<T>` | 无约束 |
-| `<T: I>` | `T` 满足接口 `I`（结构化，见 3.15.5） |
-| `<T: A & B>` | `T` 同时满足 `A` 与 `B` |
-| `<T: int \| long>` | `T` 是列举的具体类型之一 |
+| `<T>` | No constraint |
+| `<T: I>` | `T` satisfies the interface `I` (structural, see 3.15.5) |
+| `<T: A & B>` | `T` satisfies both `A` and `B` |
+| `<T: int \| long>` | `T` is one of the enumerated concrete types |
 
-- `&` 与 `|` **不得在同一约束列表里混用**（编译错误；拆成多个类型参数）。
-- 约束里的接口可以是泛型实例：`<T: ISeq<int>>`。
+- `&` and `|` **must not be mixed in the same constraint list** (compile error; split them into multiple type parameters).
+- An interface in a constraint may be a generic instantiation: `<T: ISeq<int>>`.
 
-#### 3.15.3 使用语法
+#### 3.15.3 Usage syntax
 
 ```c
 Vec<int> v;
-Vec<Vec<int>> nested;            // `>>` 拆分
-int n = max2<int>(1, 2);         // 显式类型实参
-Pair<int, long> p = Pair<int, long>(3, 9);   // 泛型 struct 值构造
-Box<int> b = new Box<int>(7);    // 泛型 class 构造
+Vec<Vec<int>> nested;            // `>>` split apart
+int n = max2<int>(1, 2);         // explicit type arguments
+Pair<int, long> p = Pair<int, long>(3, 9);   // generic struct value construction
+Box<int> b = new Box<int>(7);    // generic class construction
 ```
 
-- **类型实参必须显式给出**，不做推导（`max2(1, 2)` 报错）。可用 `auto` 承接结果。
-- 表达式中 `name<...>(` 解析为泛型调用/泛型构造：先按类型实参列表试探解析，
-  成功且紧跟 `(` 才成立，否则回退为比较表达式（`a < b`）。
-- 嵌套实参的 `>>` 按两个 `>` 处理。
+- **Type arguments must be given explicitly**; no deduction is performed (`max2(1, 2)` is an error). `auto` may be used to receive the result.
+- In an expression, `name<...>(` is resolved as a generic call/generic construction: it first tries to resolve as a type argument list,
+  and it only holds if the resolution succeeds and is immediately followed by `(`; otherwise it falls back to being a comparison expression (`a < b`).
+- The `>>` of nested arguments is treated as two `>`.
 
-#### 3.15.4 实例化规则
+#### 3.15.4 Instantiation rules
 
-- **惰性**：遇到 `Vec<int>` 时按需实例化；同一 `(模板, 实参列表)` 复用同一实例。
-- **规范化名**：`Type::name` 为 `Vec<int>`、`Vec<Vec<int>>`（逗号后一个空格），
-  以此保证 `same_type` 的字符串比较稳定。
-- **符号名**：实例名进入符号时做安全化（`Vec<int>` → `Vec_int_`），见 `mangle`。
-- **递归实例化**（实例展开中再次需要自身且无缓存）报错：`recursive generic instantiation`。
-- 实例化的 class 沿用普通 class 的 vtable/`class_desc`/RC 路径；实例化的 struct 沿用普通 struct 布局。
-- 泛型继承 `class D<T> : Base<T>` 支持单个基类：基类先实例化，字段按「基类在前」扁平化，
-  `super(...)`、方法继承、vtable 槽复用与普通继承一致。
+- **Lazy**: `Vec<int>` is instantiated on demand when it is encountered; the same `(template, argument list)` reuses the same instance.
+- **Canonical name**: `Type::name` is `Vec<int>`, `Vec<Vec<int>>` (one space after the comma),
+  which keeps the string comparison of `same_type` stable.
+- **Symbol name**: the instance name is sanitized when it enters a symbol (`Vec<int>` → `Vec_int_`), see `mangle`.
+- **Recursive instantiation** (needing itself again during instance expansion with no cached instance) is an error: `recursive generic instantiation`.
+- An instantiated class follows the vtable/`class_desc`/RC path of an ordinary class; an instantiated struct follows the ordinary struct layout.
+- Generic inheritance `class D<T> : Base<T>` supports a single base class: the base class is instantiated first, and the fields are flattened with "base class first";
+  `super(...)`, method inheritance, and vtable slot reuse are the same as with ordinary inheritance.
 
-#### 3.15.5 约束语义：类型集合 + 成员集
+#### 3.15.5 Constraint semantics: type set + member set
 
-每个类型名定义两样东西：
+Each type name defines two things:
 
-| 分支 | 类型集合 | 成员集 |
+| Branch | Type set | Member set |
 |---|---|---|
-| `int` 等标量 | 单元素 | 内置运算符 |
-| `enum` | 单元素 | 比较、`as`、switch |
-| `struct S` | 单元素 | 字段 + 方法 |
-| `class C` | `C` 及所有子类（开放） | 公开字段 + 方法 |
-| `interface I` | 所有实现 `I` 的类型（开放） | `I` 的方法（含默认实现） |
+| Scalars such as `int` | Single element | Built-in operators |
+| `enum` | Single element | Comparison, `as`, switch |
+| `struct S` | Single element | Fields + methods |
+| `class C` | `C` and all subclasses (open) | Public fields + methods |
+| `interface I` | All types implementing `I` (open) | The methods of `I` (including default implementations) |
 
-**对偶规则**：
+**Dual rules**:
 
 ```
-T: A & B  →  类型集合取交（更窄）  →  T 可用成员取并（更丰富）
-T: A | B  →  类型集合取并（更宽）  →  T 可用成员取交（更贫乏）
+T: A & B  →  type set is the intersection (narrower)  →  available members of T are the union (richer)
+T: A | B  →  type set is the union (wider)  →  available members of T are the intersection (poorer)
 ```
 
-**结构化满足（重要）**：`T: I` **不要求** `T` 声明 `: I`，只检查形状是否匹配：
+**Structural satisfaction (important)**: `T: I` **does not require** `T` to declare `: I`; it only checks whether the shapes match:
 
-- 方法成员：`T` 有同名、参数类型与返回类型完全一致的方法（沿基类链与接口默认方法查找）。
-- 运算符成员：存在可接受 `(T, T)` 并返回 `T` 的运算符——**内置运算符或可见 unit 的 `operator` 自由函数**。
-- 因此**内置类型零成本满足接口**：`int` 因内置 `+` 满足 `Self operator+(Self, Self)`。
+- Method members: `T` has a method with the same name and exactly the same parameter types and return type (looked up along the base class chain and in interface default methods).
+- Operator members: an operator that accepts `(T, T)` and returns `T` exists — a **built-in operator or an `operator` free function of a visible unit**.
+- Therefore **built-in types satisfy interfaces at zero cost**: `int` satisfies `Self operator+(Self, Self)` thanks to the built-in `+`.
 
-**精确匹配，不做隐式转换**：约束检查不进行隐式加宽、不做重载的「最佳候选」选择。
-`Money operator+(Money, long)` 不满足 `Self operator+(Self, Self)`。
-（与 Rust / C# / Go / Swift 一致；C++ concept 的「表达式合法性」模型不采用。）
+**Exact matching, no implicit conversion**: constraint checking performs no implicit widening and no overload "best candidate" selection.
+`Money operator+(Money, long)` does not satisfy `Self operator+(Self, Self)`.
+(Consistent with Rust / C# / Go / Swift; the C++ concept "expression validity" model is not adopted.)
 
-**开放分支不枚举实现者**：检查接口成员时只使用接口的声明签名，不遍历所有实现类型。
+**Open branches do not enumerate implementors**: when checking interface members, only the declared signatures of the interface are used; all implementing types are not traversed.
 
-**`|` 的成员**：`T: int | long` 的函数体只能使用两者共有的操作（算术、比较、赋值）；
-对开放分支（`IComparable`）与具体类型混用时，成员集通常为空，这是语义必然，不是缺陷。
+**Members of `|`**: the body of a function with `T: int | long` may only use operations common to both (arithmetic, comparison, assignment);
+when an open branch (`IComparable`) is mixed with a concrete type, the member set is usually empty; this is a semantic necessity, not a defect.
 
-**诊断**必须指出缺什么，例如：
+The **diagnostic** must state what is missing, for example:
 
 ```
 type `Money` does not satisfy `IAddable` for type parameter `T`: no `operator+` accepting `(Money, Money)`
@@ -851,101 +851,101 @@ type `Money` does not satisfy `IAddable` for type parameter `T`: no `operator+` 
 
 #### 3.15.6 `Self`
 
-- `Self` **只在 `interface` 体内**有效，指「实现者类型」。
-- 作为约束（`T: I`）时，`Self` 替换为实参类型；作为动态接口类型时，含 `Self` 的方法不进入 vtable
-  （object safety），这类接口不能作为值类型使用。
-- `Self` 只允许裸用（`Self x`），暂不支持嵌套（`Self[]`）。
-- 不用 `auto` 代替：`auto` 是推导占位符，`Self` 是依赖类型，两者语义正交。
+- `Self` is **valid only inside an `interface` body** and denotes the "implementor type".
+- As a constraint (`T: I`), `Self` is replaced by the type argument; as a dynamic interface type, methods containing `Self` do not enter the vtable
+  (object safety), so such interfaces cannot be used as value types.
+- `Self` may only be used bare (`Self x`); nesting is not supported yet (`Self[]`).
+- `auto` is not used as a substitute: `auto` is a deduction placeholder and `Self` is a dependent type; the semantics of the two are orthogonal.
 
-#### 3.15.7 当前限制（0.0.72）
+#### 3.15.7 Current limitations (0.0.72)
 
-| 限制 | 说明 |
+| Limitation | Description |
 |---|---|
-| 泛型接口**仅作约束** | `ISeq<int>` 可用于 `T:` 约束；**不能作变量/字段类型**（明确不做，理由见下） |
-| 泛型 struct/class 不支持接口基类 | `struct S<T> : I` 暂报错，等 U33 与 M5b |
-| 泛型 struct/class 不支持 `const` 成员 | 类型级编译期常量待接入 |
-| 泛型接口不支持继承 | `interface IList<T> : ISeq<T>` 暂报错 |
-| 不支持 | 方法级泛型、类型实参推导、关联类型、特化、泛型 `extern`、泛型类型别名 |
+| A generic interface is **only usable as a constraint** | `ISeq<int>` may be used in a `T:` constraint; it **cannot be used as the type of a variable/field** (explicitly not done; the rationale is given below) |
+| A generic struct/class does not support interface base classes | `struct S<T> : I` is currently an error, pending U33 and M5b |
+| A generic struct/class does not support `const` members | Type-level compile-time constants are not wired up yet |
+| A generic interface does not support inheritance | `interface IList<T> : ISeq<T>` is currently an error |
+| Not supported | Method-level generics, type argument deduction, associated types, specialization, generic `extern`, generic type aliases |
 
-#### 3.15.8 为什么没有「值类型作接口值」
+#### 3.15.8 Why there is no "value type as an interface value"
 
-值类型 → 接口值在无借用检查的语言里只有一条实现路径：**装箱**（复制到堆 + 引用计数）。其成本与
-`new` 一个 `class` 对象相当（省一个对象头，多一次拷贝），却失去了 `class` 的显式生命周期、`as` 向下转换
-与 `weak`。因此本语言明确不提供：
+In a language without borrow checking there is only one implementation path from a value type to an interface value: **boxing** (copying to the heap + reference counting). Its cost is
+comparable to `new`ing a `class` object (one object header saved, one extra copy), yet it loses the explicit lifetime of a `class`, the `as` downcast,
+and `weak`. Therefore this language explicitly does not provide:
 
-- 运行时多态 → `class`（单继承 + 接口 + vtable + RC）；
-- 编译期能力检查 → `T: I`（3.15.5）与 `struct S : I`（U33），零运行时成本；
-- 异构值集合 → 和类型（10.1），而不是接口装箱。
+- Runtime polymorphism → `class` (single inheritance + interfaces + vtable + RC);
+- Compile-time capability checking → `T: I` (3.15.5) and `struct S : I` (U33), at zero runtime cost;
+- Heterogeneous value collections → sum types (10.1), rather than interface boxing.
 
-`ISeq<int> x;`、`Animal a = cat;` 都是编译错误。若将来引入借用检查，`ref I` 式零成本借用接口可重新评估
-（详见 backlog U33「最终决策」与 U34 M5b）。
+`ISeq<int> x;` and `Animal a = cat;` are both compile errors. If borrow checking is introduced in the future, a zero-cost borrowed interface of the `ref I` form can be reconsidered
+(see backlog U33 "Final Decision" and U34 M5b for details).
 
-## 4. 声明与作用域
+## 4. Declarations and scopes
 
-- 声明语法：`Type name1 [= init1], name2 [= init2];`
-  - 初始化形式：
-    - 无初始化：`int x;`（局部读取未初始化值是 UB；unit 级变量默认零初始化）
-    - 表达式初始化：`int x = 1;`、`Point p = Point(1, 2);`、`Point q = p;`
-    - 花括号聚合初始化：`Point p = {1, 2};`、`Point p = {x = 1, y = 2};`、`int[5] a = {1, 2, 3};`
-    - 空花括号零初始化（仅聚合类型）：`Point p = {};`、`int[5] a = {};`、`int[] s = {};`、`string s = {};`
-    - 标量零值用各自的常量：`int n = 0;`、`float f = 0.0;`、`bool b = false;`、`char c = '\0'`、指针/class 引用 `= null`
-  - 声明中不写 `T x(...)`；构造表达式 `T(...)` 只用于非声明位置或 `=` 的右值。
-  - `Point p = Point(1, 2)` 与 `Point p = {1, 2}` 等价；RHS 的 prvalue 直接构造到 `p`，无额外拷贝。
-  - 花括号初始化只在声明初始化位置出现，不是一般表达式；非声明位置一律用 `T(...)`。
-  - 结构体花括号：所有字段必须给出，位置或命名，不可混用；空 `{}` 表示全零。
-  - **花括号可嵌套**：字段/元素本身可以用花括号初始化。
+- Declaration syntax: `Type name1 [= init1], name2 [= init2];`
+  - Initialization forms:
+    - No initializer: `int x;` (reading an uninitialized local value is UB; unit-level variables are zero-initialized by default)
+    - Expression initialization: `int x = 1;`, `Point p = Point(1, 2);`, `Point q = p;`
+    - Brace aggregate initialization: `Point p = {1, 2};`, `Point p = {x = 1, y = 2};`, `int[5] a = {1, 2, 3};`
+    - Empty-brace zero initialization (aggregate types only): `Point p = {};`, `int[5] a = {};`, `int[] s = {};`, `string s = {};`
+    - Scalars use their own zero constants: `int n = 0;`, `float f = 0.0;`, `bool b = false;`, `char c = '\0'`, pointers/class references `= null`
+  - Do not write `T x(...)` in a declaration; the construction expression `T(...)` is only used in non-declaration positions or as the right-hand side of `=`.
+  - `Point p = Point(1, 2)` is equivalent to `Point p = {1, 2}`; the prvalue on the right-hand side is constructed directly into `p`, with no extra copy.
+  - Brace initialization appears only in the declaration-initializer position; it is not a general expression. In non-declaration positions always use `T(...)`.
+  - Struct braces: every field must be given, either positional or named; the two cannot be mixed. An empty `{}` means all zeros.
+  - **Braces may nest**: fields/elements may themselves be initialized with braces.
     - `struct Box { int[3] v; }` → `Box b = {{1, 2, 3}};`
-    - `Pt[2] ps = {{4, 5}, {6, 7}};`（数组元素是结构体）
-    - 命名字段的值也可以是花括号：`Rec r = {p = {1, 2}, name = "hi"};`
-    - 定长 `char[N]` 字段可用 `string` 字面量直接初始化：`{name = "hi"}`（补 NUL 与零）。
-  - 定长数组花括号：按位置给元素；元素不足补零；超过长度报错；多维用嵌套花括号。
-  - **区间填充**（0.0.62）：位置列表里可以写 `a..b`，展开为 `a, a+1, …, b-1`（半开）。
-    端点必须是**编译期整数常量**；`a >= b` 展开为 0 个元素；元素类型限整型/`char`/`byte`。
-    例：`int[10] a = {1, 2, 5..9, 10};`（1,2,5,6,7,8,10,0,0,0）、`Box b = {{0..3}};`。
-    花括号内**不支持** `..=` 与 `step`（避免与 for-in 的语义分叉）；切片初始化不支持区间填充。
-    动态数组花括号（仅一维）：按元素个数分配新数组。
-  - 空花括号 `{}` 是声明专用的“零值”初始化，仅用于聚合类型（struct、定长数组、切片、`string`）：struct→字段递归清零，定长数组→全零，切片→空（null 句柄），`string`→空字符串。标量（数值/bool/char/指针/class 引用）不能用 `{}`，各自用 `0`/`0.0`/`false`/`'\0'`/`null`。聚合类型不再支持 `= 0`（旧写法报错并提示改用 `{}`）；`{}` 不参与普通表达式转换。
-  - 多个声明符可各用不同初始化形式：`Point a = {1, 2}, b = {}, c;`，按从左到右求值。
-  - 一个类型后可跟多个变量名，全部共享前面的类型（仅变量 / 字段 / unit 级声明；函数参数不走这条规则，必须逐个写类型，见 7）。
-  - 指针/数组维度属于类型，对同一声明中的所有变量生效：
+    - `Pt[2] ps = {{4, 5}, {6, 7}};` (the array elements are structs)
+    - The value of a named field may also be braces: `Rec r = {p = {1, 2}, name = "hi"};`
+    - A fixed-size `char[N]` field can be initialized directly from a `string` literal: `{name = "hi"}` (padded with NUL and zeros).
+  - Fixed-size array braces: elements are given by position; missing elements are padded with zeros; too many elements is an error; multidimensional arrays use nested braces.
+  - **Range fill** (0.0.62): a positional list may contain `a..b`, which expands to `a, a+1, …, b-1` (half-open).
+    The endpoints must be **compile-time integer constants**; `a >= b` expands to 0 elements; element types are limited to integer/`char`/`byte`.
+    Example: `int[10] a = {1, 2, 5..9, 10};` (1,2,5,6,7,8,10,0,0,0), `Box b = {{0..3}};`.
+    `..=` and `step` are **not supported** inside braces (to avoid diverging from the semantics of for-in); slice initialization does not support range fill.
+    Dynamic array braces (one-dimensional only): a new array is allocated with the given element count.
+  - Empty braces `{}` are a declaration-only "zero value" initialization, used only for aggregate types (struct, fixed-size array, slice, `string`): struct → fields recursively zeroed, fixed-size array → all zeros, slice → empty (null handle), `string` → empty string. Scalars (numeric/bool/char/pointer/class reference) cannot use `{}`; they use `0`/`0.0`/`false`/`'\0'`/`null` respectively. Aggregate types no longer support `= 0` (the old form is an error that suggests switching to `{}`); `{}` does not participate in ordinary expression conversion.
+  - Multiple declarators may each use a different initialization form: `Point a = {1, 2}, b = {}, c;`, evaluated from left to right.
+  - A type may be followed by multiple variable names, all sharing the preceding type (variables / fields / unit-level declarations only; function parameters do not follow this rule and must spell out their type one by one, see 7).
+  - Pointer/array dimensions belong to the type and apply to every variable in the same declaration:
     ```c
-    int* p, q;        // p、q 都是 int*
-    int[5] a, b;      // a、b 都是 int[5]
+    int* p, q;        // both p and q are int*
+    int[5] a, b;      // both a and b are int[5]
     ```
-    这与 C 的 `int* p, q;`（q 是 int）不同，需在文档中强调。
-- 解析约定：类型名与值名不得同域冲突；类型须先声明后使用；函数定义用 `T name(params) { ... }`，外部函数用 `extern`，不提供裸函数原型；函数体内不允许嵌套函数；unit 级变量直接声明（默认 `private`，`extern` 表示外部符号）。声明一律是 `Type name` 后跟 `=` 或 `;`，因此不会与函数声明混淆，彻底避免 C++ 的 most vexing parse。
-- 块作用域；变量在声明点之后可见。
-- 同作用域不允许重复声明；**内层允许遮蔽外层同名变量**（已实现）。
-- `const` 修饰整条声明的所有变量：`const int a = 1, b = 2;`。
-- 局部类型推断：`auto name = expr;`
-  - 仅局部变量；必须有初始化器；不能用于参数、返回值、字段、unit 级变量。
-  - 同一声明的多个声明符必须推断出同一类型：`auto a = 1, b = 2;` 合法；`auto a = 1, b = 2.0;` 报错。
-  - 不能从 `null`、`{...}`、void 表达式推断；`auto x = 0` 推断为 `int`（不是聚合零初始化）。
-  - `const auto name = expr;` **已实现**（不可变 + 推断）；unit 级变量不能用 `auto`（必须显式类型）。
-  - `auto` 只做表达式类型直取，不做 Hindley-Milner 统一。
-- 除 `auto` 外，参数、返回值、字段、unit 级变量都必须显式写类型。
-- unit 级变量直接声明（`int g = 1;`），默认 `private`（unit 内可见）；跨 unit 用 `public`；`extern` 表示外部符号。
-- **unit 级变量的初始化器**：必须是**编译期常量表达式**（规则见 3.7.2；`const` 与非 `const` 全局同样要求）——
-  字面量、一元 `-`/`+`/`not`/`!`、`as`、算术/位运算/比较/`and`/`or`，以及**引用其它常量**
-  （unit 级 `const`、枚举成员、类型级 `const` 成员）与 `sizeof(T)` / `alignof(T)`；
-  支持前向引用；`const int B = A + 1;`、`int g = 1 + 2;`、`int G = Cat.MaxAge;` 都合法。循环依赖与除零报错。
-  字符串/聚合常量仍按字面量或聚合初始化（`const string S = "hi";`、`const int[] G = {10, 20, 30};`）。
-- **局部 `const`** 可以用运行期表达式初始化（`const int x = f();` 合法），只是初始化后不可再赋值。
-- 类型体内的 `const` 是**类型级常量**，必须当场初始化且必须是编译期常量，见 3.7.1。
-- `static` 已移除（0.0.32）：unit 级变量天然具有静态存储期；不支持函数内 `static` 局部变量或 `static` 函数。
-- 参数是可变局部绑定（第一阶段，C 语义）；是否改为默认不可变待定。
-- **参数是拥有型局部变量**（0.0.47 起，与 3.8 一致）：参数值在进入时 retain、退出时 release；
-  class/interface/`string`/切片/含引用字段的 struct 参数都适用。函数体内可自由重绑定参数，
-  不影响调用方；把 owned 值（`new`/调用结果）赋给参数不会泄漏。调用方的实参仍按值传递。
-- `ref T` 参数（**0.0.62；0.0.63 起支持标量**）：按引用借用调用方变量；callee 可写，但不能重绑定或存储；
-  可借基本类型/枚举/指针/纯值 struct；方法/构造器与 `extern` 不支持。
-- `ref T` 返回（**0.0.63**）：借用必须源自 `ref` 参数、`this`、全局/静态或指针·切片存储；结果不可存储，
-  只能当场写穿或作借用实参（详见 3.8）。
-- `ref const T p` 是**只读借用**：不可重绑定，也不可经借用写字段/元素；实参须可寻址（不允许临时值）。
-- **`ref` 是绑定模式，不是可存储的类型**：不引入 `T&`；借用不能作变量/字段/元素/数组元素的类型
-  （无 `ref T x;`、无 `T&[]`），与 `for ref` 共享「不可存储」规则（详见 3.8）。
+    This differs from C's `int* p, q;` (where q is an int) and must be emphasized in the documentation.
+- Parsing conventions: type names and value names must not conflict within the same scope; a type must be declared before use; a function definition uses `T name(params) { ... }`, external functions use `extern`, and no bare function prototypes are provided; nested functions are not allowed inside a function body; unit-level variables are declared directly (default `private`; `extern` denotes an external symbol). A declaration is always `Type name` followed by `=` or `;`, so it cannot be confused with a function declaration, completely avoiding C++'s most vexing parse.
+- Block scope; a variable is visible after its declaration point.
+- Duplicate declarations in the same scope are not allowed; **an inner scope may shadow an outer variable of the same name** (implemented).
+- `const` applies to all variables in the whole declaration: `const int a = 1, b = 2;`.
+- Local type inference: `auto name = expr;`
+  - Local variables only; an initializer is required; cannot be used for parameters, return values, fields, or unit-level variables.
+  - Multiple declarators in the same declaration must deduce the same type: `auto a = 1, b = 2;` is legal; `auto a = 1, b = 2.0;` is an error.
+  - Cannot be deduced from `null`, `{...}`, or a void expression; `auto x = 0` deduces to `int` (not an aggregate zero initialization).
+  - `const auto name = expr;` is **implemented** (immutable + deduced); unit-level variables cannot use `auto` (an explicit type is required).
+  - `auto` only takes the expression type directly; it does not perform Hindley-Milner unification.
+- Except for `auto`, parameters, return values, fields, and unit-level variables must all have an explicit type.
+- Unit-level variables are declared directly (`int g = 1;`) and are `private` by default (visible within the unit); use `public` across units; `extern` denotes an external symbol.
+- **Initializers of unit-level variables**: must be a **compile-time constant expression** (rules in 3.7.2; the same requirement applies to both `const` and non-`const` globals) —
+  literals, unary `-`/`+`/`not`/`!`, `as`, arithmetic/bitwise/comparison/`and`/`or`, and **references to other constants**
+  (unit-level `const`, enum members, type-level `const` members) as well as `sizeof(T)` / `alignof(T)`;
+  forward references are supported; `const int B = A + 1;`, `int g = 1 + 2;`, `int G = Cat.MaxAge;` are all legal. Cyclic dependencies and division by zero are errors.
+  String/aggregate constants are still written as literals or aggregate initialization (`const string S = "hi";`, `const int[] G = {10, 20, 30};`).
+- **Local `const`** may be initialized with a runtime expression (`const int x = f();` is legal); it simply cannot be assigned again after initialization.
+- A `const` inside a type body is a **type-level constant**, must be initialized on the spot, and must be a compile-time constant; see 3.7.1.
+- `static` has been removed (0.0.32): unit-level variables naturally have static storage duration; `static` local variables inside functions and `static` functions are not supported.
+- Parameters are mutable local bindings (phase one, C semantics); whether they become immutable by default is pending.
+- **Parameters are owning local variables** (since 0.0.47, consistent with 3.8): parameter values are retained on entry and released on exit;
+  this applies to class/interface/`string`/slice parameters and to struct parameters that contain reference fields. A parameter may be freely rebound inside the function body,
+  without affecting the caller; assigning an owned value (`new`/a call result) to a parameter does not leak. Arguments at the call site are still passed by value.
+- `ref T` parameters (**0.0.62; scalars supported since 0.0.63**): borrow the caller's variable by reference; the callee may write, but cannot rebind or store;
+  primitive types/enums/pointers/pure value structs may be borrowed; methods/constructors and `extern` are not supported.
+- `ref T` returns (**0.0.63**): the borrow must originate from a `ref` parameter, `this`, global/static storage, or pointer·slice storage; the result cannot be stored,
+  it can only be written through on the spot or passed as a borrow argument (see 3.8).
+- `ref const T p` is a **read-only borrow**: it cannot be rebound, and fields/elements cannot be written through the borrow; the argument must be addressable (temporaries are not allowed).
+- **`ref` is a binding mode, not a storable type**: it does not introduce `T&`; a borrow cannot be the type of a variable/field/element/array element
+  (no `ref T x;`, no `T&[]`), sharing the "not storable" rule with `for ref` (see 3.8).
 
-### 4.5 类型别名（`type`，0.0.62）
+### 4.5 Type aliases (`type`, 0.0.62)
 
 ```mu
 type int32 = int;
@@ -953,79 +953,79 @@ type intArray = int[];
 type Callback = bool;
 
 type P = Point;
-type PP = P;          // 别名套别名
+type PP = P;          // alias of an alias
 ```
 
-- 形式：`type NAME = <type>;`，**每条声明只定义一个别名**（`type A = int, B = int;` 是编译错误）。
-- `type` 是**上下文关键字**：只有声明起始位置 `type Ident =` 才按别名解析，其它位置仍是普通标识符
-  （保护 C 互操作结构体里的 `type` 字段）。
-- 只能写在 **unit 级**（struct/class/union 体内报错，并给出提示）。
-- 可见性随 `public`：默认 unit 内可见；`public type` 可跨 unit（`use` 后按类型名引用）。
-- 别名是**透明**的，不产生新类型：与底层类型完全等价（`as`、重载、`extern` 签名、`sizeof`/`alignof`
-  一律按底层展开）；不是 newtype。
-- 后缀视为作用于别名整体：`type A = int[];` 之后写 `A` 就是 `int[]`，`const`/`weak` 可修饰别名
-  （展开后按底层校验）。
-- 支持前向引用与任意声明顺序：`type A = B; type B = int;` 合法；循环依赖
-  （`type A = B; type B = A;`）是编译错误；别名与同 unit 其它声明重名报冲突。
-- 诊断优先显示别名名；`auto` 推导出的是**底层类型**。
+- Form: `type NAME = <type>;`; **each declaration defines exactly one alias** (`type A = int, B = int;` is a compile error).
+- `type` is a **contextual keyword**: only `type Ident =` at the start of a declaration is parsed as an alias; everywhere else it remains an ordinary identifier
+  (protecting the `type` field in C interop structs).
+- May only be written at **unit level** (an error with a hint inside struct/class/union bodies).
+- Visibility follows `public`: visible within the unit by default; `public type` works across units (referenced by type name after `use`).
+- An alias is **transparent** and does not create a new type: it is fully equivalent to the underlying type (`as`, overloads, `extern` signatures, `sizeof`/`alignof`
+  all expand to the underlying type); it is not a newtype.
+- A suffix applies to the alias as a whole: after `type A = int[];`, writing `A` means `int[]`; `const`/`weak` may modify the alias
+  (checked against the underlying type after expansion).
+- Forward references and arbitrary declaration order are supported: `type A = B; type B = int;` is legal; a cyclic dependency
+  (`type A = B; type B = A;`) is a compile error; an alias with the same name as another declaration in the same unit is a conflict.
+- Diagnostics prefer to show the alias name; `auto` deduces the **underlying type**.
 
 ---
 
-## 5. 表达式与运算符
+## 5. Expressions and operators
 
-### 5.1 优先级（高 → 低，建议）
+### 5.1 Precedence (high → low, proposed)
 
-| 级别 | 运算符 | 结合性 |
+| Level | Operators | Associativity |
 |---|---|---|
-| 1 | `()` `[]` `.` `as` | 左 |
-| 2 | `-` `+` `&` `*` `~` `sizeof` `alignof` `len` | 一元（前缀） |
-| 3 | `*` `/` `%` | 左 |
-| 4 | `+` `-` | 左 |
-| 5 | `<<` `>>` | 左 |
-| 6 | `&`（按位与） | 左 |
-| 7 | `^`（按位异或） | 左 |
-| 8 | `\|`（按位或） | 左 |
-| 9 | `<` `<=` `>` `>=` | 左（不可链式） |
-| 10 | `==` `!=` | 左 |
-| 11 | `not` | 一元（前缀） |
-| 12 | `and` | 左 |
-| 13 | `or` | 左 |
-| 14 | `?:` | 右（**已定，0.0.46**：保留，见 5.2） |
-| 15 | 赋值 `= += -= *= /= %= &= |= ^= <<= >>=` | 语句，非表达式 |
+| 1 | `()` `[]` `.` `as` | left |
+| 2 | `-` `+` `&` `*` `~` `sizeof` `alignof` `len` | unary (prefix) |
+| 3 | `*` `/` `%` | left |
+| 4 | `+` `-` | left |
+| 5 | `<<` `>>` | left |
+| 6 | `&` (bitwise and) | left |
+| 7 | `^` (bitwise xor) | left |
+| 8 | `\|` (bitwise or) | left |
+| 9 | `<` `<=` `>` `>=` | left (not chainable) |
+| 10 | `==` `!=` | left |
+| 11 | `not` | unary (prefix) |
+| 12 | `and` | left |
+| 13 | `or` | left |
+| 14 | `?:` | right (**settled, 0.0.46**: kept, see 5.2) |
+| 15 | assignment `= += -= *= /= %= &= |= ^= <<= >>=` | statement, not an expression |
 
-- 注意：位运算优先级**高于**比较（与 Rust 一致，修正 C 的 `a & b == 0` 陷阱）。
-- 用户重载的运算符沿用本表优先级；内建类型的运算符语义不变。
-- 位运算：二元 `&`、`^`、`|`；一元 `~` 是**按位取反**（与 C 相同）。逻辑非是关键字 `not`。
-  - `~` 只接受整数类型（或用户类型的 `operator~` 重载）；对 `bool` 使用 `~` 是编译错误（请用 `not`）。
-  - `!` 已不再使用：`!x` 会报错并提示「逻辑非用 `not`，位取反用 `~`」。
-- **`>>` 一律算术右移**（按操作数最内层位宽）：有符号类型正常符号扩展；**无符号类型也取补码解释做算术右移**
-  （`uint 0x80000000 >> 4` = `0xF8000000`）。这与 C 的「无符号右移是逻辑右移」不同，是当前实现已固化的语义；
-  编译器后端的常量求值与运行期代码生成必须保持一致，若将来改成「有符号算术 / 无符号逻辑」，要同时改这两处。
-  `<<` 按位左移（溢出按补码回绕）；移位位数 ≥ 位宽仍是未定义行为（8.2）。
-- `%` 对浮点也合法（LLVM `frem`，与 C `fmod` 同义：结果符号随被除数）；整数 `%` 为截断取余（符号随被除数）。
-- **不提供幂运算符**（已定）：`^` 专用于位异或，避免与 C 用户直觉冲突（`a ^ b` 静默变成幂会导致无声错误）。
-  - 幂运算通过函数提供：浮点用 libc `pow`（`extern double pow(double, double);`），整数幂由用户/库函数（如 `powi`）实现。
-  - `**` 被明确排除：`a * *b`（乘一个解引用值）会因最长匹配变成 `a ** b`，属静默语义错误，不能靠空格规则补救。
-- `not` 是**低优先级**前缀一元运算符，只高于 `and`/`or`、低于比较（Python 风格）：
-  - `not a == b` 解析为 `not (a == b)`
-  - `not a and b` 解析为 `(not a) and b`
-  - `not a or not b` 解析为 `(not a) or (not b)`
-  - 若要对整个 `and`/`or` 表达式取反，需显式括号：`not (a and b)`
-- `and`/`or` 短路；`not` 作用于 `bool`。
-- 比较返回 `bool`，不能与整数混用。
-- 赋值是语句，不能出现在表达式里（避免 `if (x = y)`）。
-- `++`/`--` 只作为**独立语句**（前缀/后缀均可），不产生值，不能出现在表达式里；语义等价 `x += 1` / `x -= 1`。
-  - 因此 `x = i++`、`f(i++)`、`*(p++)` 都是错误（括号内也不行）；`*p++` 解析为 `(*p)++`，即对解引用结果自增。
-- 不提供逗号运算符。
-- `sizeof(T)` / `alignof(T)` 作用于类型；`sizeof(expr)` 待定。
-- `len(seq)` 作用于数组/切片。
-- 内建函数：`alloc(bytes: usize) -> void*`、`realloc(p: void*, bytes: usize) -> void*`、`free(p: void*)`。
-- 结构体构造表达式：`Point(1, 2)`、`Point(x = 1, y = 2)`、`Point()`（零值）；花括号初始化不是表达式。
-- `new T(...)` 是表达式（`T` 必须是 class），返回 class 引用；没有对应的释放语句（`del` 已移除，置 null 即可）。
-- 表达式中的 `0` 是 `int`；零值初始化（聚合 `{}` / 标量常量）只用于声明初始化位置。结构体在表达式/赋值里的零值用 `Point()`，不能写 `p = {}`、`p = 0` 或 `f(0)`。
-- 字符串字面量类型 `string`；可隐式转 `const char*`；`"abc"[0]` 合法。
+- Note: bitwise operators bind **tighter** than comparison (as in Rust, fixing C's `a & b == 0` trap).
+- User-overloaded operators follow the precedence in this table; the operator semantics of built-in types are unchanged.
+- Bitwise operators: binary `&`, `^`, `|`; unary `~` is **bitwise complement** (as in C). Logical negation is the keyword `not`.
+  - `~` only accepts integer types (or a user type's `operator~` overload); using `~` on `bool` is a compile error (use `not`).
+  - `!` is no longer used: `!x` is an error that suggests "use `not` for logical negation and `~` for bitwise complement".
+- **`>>` is always an arithmetic right shift** (using the innermost bit width of the operand): signed types sign-extend normally; **unsigned types are also interpreted as two's complement for an arithmetic right shift**
+  (`uint 0x80000000 >> 4` = `0xF8000000`). This differs from C's "unsigned right shift is a logical shift" and is the semantics the current implementation has settled on;
+  compile-time constant evaluation and runtime code generation in the compiler backend must stay consistent; if this ever changes to "signed arithmetic / unsigned logical", both places must change together.
+  `<<` is a bitwise left shift (overflow wraps in two's complement); a shift count ≥ the bit width is still undefined behavior (8.2).
+- `%` is also legal for floating point (LLVM `frem`, synonymous with C `fmod`: the sign of the result follows the dividend); integer `%` is truncated remainder (the sign follows the dividend).
+- **No exponentiation operator is provided** (settled): `^` is reserved for bitwise xor, avoiding a clash with C users' intuition (`a ^ b` silently becoming exponentiation would produce silent bugs).
+  - Exponentiation is provided through functions: floating point uses libc `pow` (`extern double pow(double, double);`); integer powers are implemented by user/library functions (such as `powi`).
+  - `**` is explicitly excluded: `a * *b` (multiplying by a dereferenced value) would become `a ** b` under longest-match, a silent semantic error that cannot be fixed by whitespace rules.
+- `not` is a **low-precedence** prefix unary operator, binding only tighter than `and`/`or` and looser than comparison (Python style):
+  - `not a == b` parses as `not (a == b)`
+  - `not a and b` parses as `(not a) and b`
+  - `not a or not b` parses as `(not a) or (not b)`
+  - To negate an entire `and`/`or` expression, use explicit parentheses: `not (a and b)`
+- `and`/`or` short-circuit; `not` operates on `bool`.
+- Comparison returns `bool` and cannot be mixed with integers.
+- Assignment is a statement and cannot appear inside an expression (avoiding `if (x = y)`).
+- `++`/`--` are only allowed as **standalone statements** (prefix or postfix), produce no value, and cannot appear inside expressions; the semantics are equivalent to `x += 1` / `x -= 1`.
+  - Therefore `x = i++`, `f(i++)`, and `*(p++)` are all errors (even inside parentheses); `*p++` parses as `(*p)++`, i.e. incrementing the dereferenced result.
+- No comma operator is provided.
+- `sizeof(T)` / `alignof(T)` operate on types; `sizeof(expr)` is pending.
+- `len(seq)` operates on arrays/slices.
+- Built-in functions: `alloc(bytes: usize) -> void*`, `realloc(p: void*, bytes: usize) -> void*`, `free(p: void*)`.
+- Struct construction expression: `Point(1, 2)`, `Point(x = 1, y = 2)`, `Point()` (zero value); brace initialization is not an expression.
+- `new T(...)` is an expression (`T` must be a class) and returns a class reference; there is no corresponding release statement (`del` has been removed; just set it to null).
+- `0` in an expression is an `int`; zero-value initialization (aggregate `{}` / scalar constants) is only used in the declaration-initializer position. For a struct's zero value in an expression/assignment use `Point()`; you cannot write `p = {}`, `p = 0`, or `f(0)`.
+- A string literal has type `string`; it converts implicitly to `const char*`; `"abc"[0]` is legal.
 
-### 5.2 条件表达式 `?:`（已实现 0.0.46）
+### 5.2 Conditional expression `?:` (implemented in 0.0.46)
 
 ```mu
 int m = a > b ? a : b;
@@ -1033,33 +1033,33 @@ string s = empty ? "none" : label;
 Cat c = pick ? first : second;
 ```
 
-- 形式 `cond ? a : b`；`cond` 必须是 `bool`（与 `if`/`while` 一致，无整数真值）。
-- 优先级低于 `or`、高于赋值（赋值本来就是语句），**右结合**：
-  `a ? b : c ? d : e` 等价 `a ? b : (c ? d : e)`。
-- **只求值被选中的分支**，另一分支完全不执行（与 `and`/`or` 短路同性质）。
-- 结果类型按以下顺序确定：
-  1. 两侧同类型 → 该类型；
-  2. 否则取**隐式加宽**方向（`int → long`、`T* → const T*`、`class → 基类/接口`、
-     `T[N] → T[]` 等，见 3.6）；
-  3. `null` 字面量适配另一侧的指针 / class / interface / 动态数组；
-  4. 都不成立 → 编译错误，要求用 `as` 显式转换其中一侧。
-- 字面量按上下文适配：`cond ? 1 : 2.5` 两侧都是 `double`；`cond ? 'a' : b`（`b` 为 `byte`/`char`）按 8 位整数适配。
-- 两侧都是 `void` 时结果为 `void`，只能作表达式语句（`cond ? f() : g();`）。
-- 结果按**值**语义产生（prvalue）：struct/string/定长数组复制（引用字段逐字段 retain）；
-  class/interface 得到一份新的强引用（借用分支 +1，`new`/调用结果直接转移所有权）；
-  动态数组转移/共享句柄（与 `T[N] → T[]` 的分配语义一致）。
-- 结果不是左值：`(cond ? a : b) = x`、`&(cond ? a : b)` 都是编译错误。
-- 不参与编译期常量求值（与 `and`/`or` 一致）：unit 级 `const` 初始化器里不能出现 `?:`。
-- 不提供 GNU 的 `a ?: b` 简写；两个分支都必须写。
+- Form `cond ? a : b`; `cond` must be `bool` (consistent with `if`/`while`; there is no integer truthiness).
+- Precedence is lower than `or` and higher than assignment (assignment is already a statement); it is **right-associative**:
+  `a ? b : c ? d : e` is equivalent to `a ? b : (c ? d : e)`.
+- **Only the selected branch is evaluated**; the other branch is not executed at all (the same nature as `and`/`or` short-circuiting).
+- The result type is determined in the following order:
+  1. Both sides have the same type → that type;
+  2. Otherwise take the **implicit widening** direction (`int → long`, `T* → const T*`, `class → base class/interface`,
+     `T[N] → T[]`, etc.; see 3.6);
+  3. A `null` literal adapts to the pointer / class / interface / dynamic array on the other side;
+  4. If none applies → compile error, requiring an explicit `as` conversion on one side.
+- Literals adapt to the context: in `cond ? 1 : 2.5` both sides are `double`; in `cond ? 'a' : b` (where `b` is `byte`/`char`) they adapt as 8-bit integers.
+- When both sides are `void` the result is `void`, usable only as an expression statement (`cond ? f() : g();`).
+- The result is produced with **value** semantics (prvalue): structs/strings/fixed-size arrays are copied (reference fields are retained field by field);
+  class/interface yields a new strong reference (a borrowed branch is +1, a `new`/call result transfers ownership directly);
+  a dynamic array transfers/shares the handle (consistent with the allocation semantics of `T[N] → T[]`).
+- The result is not an lvalue: `(cond ? a : b) = x` and `&(cond ? a : b)` are both compile errors.
+- It does not participate in compile-time constant evaluation (consistent with `and`/`or`): `?:` cannot appear in a unit-level `const` initializer.
+- GNU's `a ?: b` shorthand is not provided; both branches must be written.
 
 ---
 
-## 6. 语句与控制流
+## 6. Statements and control flow
 
-### 6.1 块与表达式语句
+### 6.1 Blocks and expression statements
 
-- `{ ... }` 块；空块合法；**单独的 `;` 空语句禁止**（已实现，报错）。
-- 表达式语句：函数调用、赋值、复合赋值、`x++` / `x--`（自增自减没有返回值，只能单独成句）。
+- `{ ... }` blocks; empty blocks are legal; **a bare `;` empty statement is forbidden** (implemented; it is an error).
+- Expression statements: function calls, assignment, compound assignment, `x++` / `x--` (increment/decrement produce no value and can only stand alone as a statement).
 
 ### 6.2 if / else
 
@@ -1073,50 +1073,50 @@ if cond {
 }
 ```
 
-- `cond` 必须是 `bool`；无整数真值。
-- 花括号强制。
-- 条件和循环头的括号**可选**，规范写法省略；C 式 `if (cond) { ... }` 仍然合法（`(cond)` 只是带括号的表达式）。
-- 括号仍可用于分组：`if (a or b) and c { ... }`。
-- 结构体构造使用 `Point(...)`，条件中不再出现 `Type { ... }` 与块结尾 `{` 的歧义。
-- `elif` 是 `else if` 的语法糖（**已实现**，两者等价）。
+- `cond` must be `bool`; there is no integer truthiness.
+- Braces are mandatory.
+- Parentheses around the condition and loop header are **optional** and omitted in canonical style; the C-style `if (cond) { ... }` is still legal (`(cond)` is just a parenthesized expression).
+- Parentheses can still be used for grouping: `if (a or b) and c { ... }`.
+- Struct construction uses `Point(...)`, so the ambiguity between `Type { ... }` in a condition and a block's opening `{` no longer arises.
+- `elif` is syntactic sugar for `else if` (**implemented**; the two are equivalent).
 
 ### 6.3 while
 
 ```c
 while cond { ... }
-while true { ... }   // 无限循环，靠 break 退出
+while true { ... }   // infinite loop, exited via break
 ```
 
-- `continue` 跳到条件判断；`break` 退出。
-- C 式 `while (cond) { ... }` 仍然合法，规范写法省略括号。
+- `continue` jumps to the condition check; `break` exits.
+- The C-style `while (cond) { ... }` is still legal; canonical style omits the parentheses.
 
 ### 6.4 for-in
 
 ```c
-for x in seq { ... }       // x 是每次迭代的值绑定（默认拷贝）
-for ref x in seq { ... }   // x 是元素的可变引用
-for i, x in seq { ... }    // 带下标/序号（见 6.4.4）
+for x in seq { ... }       // x is the value binding for each iteration (copied by default)
+for ref x in seq { ... }   // x is a mutable reference to the element
+for i, x in seq { ... }    // with index/ordinal (see 6.4.4)
 ```
 
-- 也接受带括号的 `for (x in seq)` / `for (i, x in seq)` / `for (ref x in seq)`，规范写法省略括号。
-- 内置序列：半开区间 `a..b`、定长数组、切片、`string`（按字节遍历）。
-- **多维数组不支持 `for-in`**（`T[m,n,...]` 与 `T[,]` 都算）：用下标循环；静态多维可先取一行再遍历。
-- 用户类型：按 6.4.1–6.4.3 的**迭代形态**降级（**索引形态已实现；游标形态尚未实现**）；
-  内置序列不参与形态匹配。
-- `x` 作用域仅循环体；默认不可变、按值绑定；`x` 是**拥有型局部变量**（0.0.47 语义），元素为
-  class/interface 时每轮进入 retain、退出 release；`ref` 形式可写元素。
-- `seq` 只求值一次；长度在开始时确定；遍历期间不得增删元素（UB 或运行期错误）。
-  - 简单左值（变量、成员访问链）直接遍历；其他表达式由编译器先求值并存起来，再遍历。
-  - `for ref` 的序列必须是变量或成员访问（需要可寻址）；`for ref v in arr[f()]` 是错误。
-- `continue` → 下一次迭代；`break` → 退出。
-- 空序列零次迭代。
-- 区间：默认半开 `a..b`（含 `a`，不含 `b`），`..=` 含上界；可选 `step n`（须非零编译期常量）。
-  - 正 step：`a >= b`（或 `a > b` 用 `..=`）时零次；负 step 自动倒序，`a <= b` 时零次。
-  - 例：`for i in 0..10 step 2`、`for i in 10..=0 step -1`；`step 0` 是编译错误。
-  - 索引形态 `for i, x in a..b` 的 `i` 是**迭代序号**（0 起，与步长无关）。
-- 标签 `break label` 待定。
+- The parenthesized forms `for (x in seq)` / `for (i, x in seq)` / `for (ref x in seq)` are also accepted; canonical style omits the parentheses.
+- Built-in sequences: half-open range `a..b`, fixed-size arrays, slices, `string` (iterated byte by byte).
+- **`for-in` is not supported for multidimensional arrays** (both `T[m,n,...]` and `T[,]` count): use an index loop; for a static multidimensional array you can take a row first and then iterate.
+- User types: lowered according to the **iteration forms** of 6.4.1–6.4.3 (**the index form is implemented; the cursor form is not implemented yet**);
+  built-in sequences do not participate in form matching.
+- `x` is scoped to the loop body only; immutable and bound by value by default; `x` is an **owning local variable** (0.0.47 semantics), so when the element is a
+  class/interface it is retained on entry and released on exit of each round; the `ref` form can write to elements.
+- `seq` is evaluated only once; its length is fixed at the start; elements must not be added or removed during iteration (UB or a runtime error).
+  - A simple lvalue (a variable, a member access chain) is iterated directly; other expressions are evaluated by the compiler first, stored, and then iterated.
+  - The sequence of `for ref` must be a variable or member access (it must be addressable); `for ref v in arr[f()]` is an error.
+- `continue` → the next iteration; `break` → exit.
+- An empty sequence iterates zero times.
+- Ranges: half-open `a..b` by default (includes `a`, excludes `b`); `..=` includes the upper bound; an optional `step n` (must be a non-zero compile-time constant).
+  - Positive step: zero iterations when `a >= b` (or `a > b` with `..=`); a negative step automatically counts down, with zero iterations when `a <= b`.
+  - Example: `for i in 0..10 step 2`, `for i in 10..=0 step -1`; `step 0` is a compile error.
+  - In the index form `for i, x in a..b`, `i` is the **iteration ordinal** (starting at 0, independent of the step).
+- Labeled `break label` is pending.
 
-#### 6.4.1 索引形态（随机访问，优先；已实现）
+#### 6.4.1 Index form (random access, preferred; implemented)
 
 ```c
 class Vec {
@@ -1124,111 +1124,111 @@ class Vec {
     int* data;
     usize length() { return n; }
 }
-int operator[](Vec v, usize i) { return v.data[i]; }   // 自由函数运算符，见 3.11
+int operator[](Vec v, usize i) { return v.data[i]; }   // free-function operator, see 3.11
 ```
 
-- 条件（同时满足）：
-  - 方法 `length() -> usize`；
-  - 自由函数运算符 `operator[](C, usize) -> T`。
-- 签名按 `usize` **精确匹配**：`operator[](C, int)` 不满足（不做窄化转换），报错时给出实际签名。
-- 降级：`usize n = c.length();`（只求值一次）→ `for (usize i = 0; i < n; ++i) { T x = c[i]; ... }`。
-- 元素类型 = `operator[]` 的返回类型（若返回 `ref T`，元素类型即 `T`）；**不识别代理/引用包装**
-  （不支持 `vector<bool>` 式的 proxy 设计）。
-- `length()` 必须等于 `[]` 的有效下标个数；不一致是用户错误（debug 越界检查兜底）。
-- `for i, x` 的 `i` 为 `usize` 真实下标。
-- `for ref` 要求 `operator[]` 返回 `ref T`（此时元素可寻址）；`[]` 返回值时用 `for i, x` + `c[i] = ...`。
-- **拷贝成本**：`operator[](C, usize)` 是普通调用；`C` 为 struct 时每次迭代整份拷贝
-  （引用字段逐字段 retain/release）。可迭代容器建议用 `class`，或让接收者写成 `ref C`。
-- 临时容器（`for x in makeVec()`）只构造一次，循环结束时按 U24 清理。
+- Conditions (all must hold):
+  - a method `length() -> usize`;
+  - a free-function operator `operator[](C, usize) -> T`.
+- Signatures are matched **exactly** on `usize`: `operator[](C, int)` does not qualify (no narrowing conversion); on error the actual signature is reported.
+- Lowering: `usize n = c.length();` (evaluated only once) → `for (usize i = 0; i < n; ++i) { T x = c[i]; ... }`.
+- The element type is the return type of `operator[]` (if it returns `ref T`, the element type is `T`); **proxy/reference wrappers are not recognized**
+  (a `vector<bool>`-style proxy design is not supported).
+- `length()` must equal the number of valid indices of `[]`; a mismatch is a user error (debug bounds checks catch it).
+- In `for i, x`, `i` is the real `usize` index.
+- `for ref` requires `operator[]` to return `ref T` (the element is then addressable); when `[]` returns a value, use `for i, x` + `c[i] = ...`.
+- **Copy cost**: `operator[](C, usize)` is an ordinary call; when `C` is a struct, the whole struct is copied on every iteration
+  (reference fields are retained/released field by field). Iterable containers should preferably be `class`, or the receiver should be written as `ref C`.
+- A temporary container (`for x in makeVec()`) is constructed only once and cleaned up at loop exit according to U24.
 
-#### 6.4.2 游标形态（顺序访问；尚未实现）
+#### 6.4.2 Cursor form (sequential access; not implemented yet)
 
 ```c
 struct Iter {
-    bool next() { ... }      // 推进；false = 结束
-    int  current() { ... }   // 当前元素
+    bool next() { ... }      // advance; false = end
+    int  current() { ... }   // current element
 }
 class List { Iter iterator() { ... } }
 ```
 
-- 条件：方法 `iterator() -> It`，且 `It` 有方法 `next() -> bool` 与 `current() -> T`。
-- 降级：`auto it = c.iterator(); while it.next() { T x = it.current(); ... }`；`iterator()` 只求值一次。
-- 元素类型 = `current()` 的返回类型。
-- 游标是按值返回的 struct：零分配、静态派发、可内联；含 class/interface 字段时按 U24 逐字段 RC，
-  循环结束 / `break` / `return` 时清理。
-- 游标形态不支持 `for ref`（`current()` 返回值）；可变遍历走索引形态（`[]` 返回 `ref T`）或 `for i, x`。
+- Conditions: a method `iterator() -> It`, and `It` has the methods `next() -> bool` and `current() -> T`.
+- Lowering: `auto it = c.iterator(); while it.next() { T x = it.current(); ... }`; `iterator()` is evaluated only once.
+- The element type is the return type of `current()`.
+- The cursor is a struct returned by value: zero allocation, static dispatch, inlinable; with class/interface fields it does per-field RC according to U24,
+  cleaning up at loop exit / `break` / `return`.
+- The cursor form does not support `for ref` (`current()` returns a value); mutable iteration goes through the index form (`[]` returning `ref T`) or `for i, x`.
 
-#### 6.4.3 判定顺序与诊断
+#### 6.4.3 Resolution order and diagnostics
 
-1. 内置序列 → 内置降级（见本节开头），不参与形态匹配；
-2. 满足索引形态 → 索引降级（**已实现**）；
-3. 否则满足游标形态 → 游标降级（尚未实现）；
-4. 两者都满足 → 采用**索引**形态并给 warning（提示语义由 `[]` 决定；随游标形态落地）；
-5. 都不满足 → 编译错误，分别列出两组缺失成员（当前只报索引形态的缺失项）。
+1. Built-in sequence → built-in lowering (see the start of this section); it does not participate in form matching;
+2. Satisfies the index form → index lowering (**implemented**);
+3. Otherwise satisfies the cursor form → cursor lowering (not implemented yet);
+4. Both are satisfied → the **index** form is used and a warning is emitted (the semantics are determined by `[]`; this lands together with the cursor form);
+5. Neither is satisfied → a compile error listing the missing members of both sets (currently only the missing items of the index form are reported).
 
-- `len(e)` **只**服务内置类型（定长数组/切片/多维数组/`string`），**不**分派到用户类型；
-  用户容器写 `e.length()`。
+- `len(e)` serves **only** built-in types (fixed-size arrays/slices/multidimensional arrays/`string`) and does **not** dispatch to user types;
+  user containers write `e.length()`.
 
-#### 6.4.4 索引变量 `i`
+#### 6.4.4 Index variable `i`
 
-- `for i, x in seq`：`i` 是 `usize`，作用域同 `x`，循环内只读。
-- 内置序列：从 0 起的顺序号（区间为相对 `lo` 的偏移）。
-- 索引形态：真实下标；游标形态：迭代序号。
-- 已实现（内置序列 + 索引形态）；游标形态的迭代序号随 6.4.2 落地。
+- `for i, x in seq`: `i` is a `usize` with the same scope as `x` and is read-only inside the loop.
+- Built-in sequences: a sequential number starting at 0 (for a range, the offset relative to `lo`).
+- Index form: the real index; cursor form: the iteration ordinal.
+- Implemented (built-in sequences + index form); the iteration ordinal of the cursor form lands together with 6.4.2.
 
-### 6.5 其他
+### 6.5 Miscellaneous
 
-- `return expr;` / `return;`（void）。
-- 释放引用：`c = null;`（0.0.47 起 `del` 已移除，见 3.8 / 8.3）。
-- 不提供 `do-while`、C 风格 `for`、`goto`。
-- `switch` 见 6.6：无 fallthrough，分支体必须带花括号。
-- 无异常、无 `try/catch`；致命错误用 `abort()`（libc）或返回错误码。
+- `return expr;` / `return;` (void).
+- Releasing a reference: `c = null;` (since 0.0.47 `del` has been removed; see 3.8 / 8.3).
+- `do-while`, C-style `for`, and `goto` are not provided.
+- `switch` is covered in 6.6: no fallthrough, and branch bodies must use braces.
+- No exceptions, no `try/catch`; for fatal errors use `abort()` (libc) or return an error code.
 
-### 6.6 switch（已实现 0.0.45）
+### 6.6 switch (implemented in 0.0.45)
 
 ```mu
 switch code {
     0:         { return 0; }
     1, 2:      { return 1; }
-    3..10:     { return 2; }      // 半开区间：[3, 10)
+    3..10:     { return 2; }      // half-open range: [3, 10)
     Color.Red: { return 3; }
     else:      { return -1; }
 }
 ```
 
-- 形式：`switch expr { 分支* }`。`expr` 的括号**可选**（与 `if/while/for` 一致，规范写法省略）；`}` 后不加 `;`。
-- 分支：`模式列表 : { 语句* }` 或 `else : { 语句* }`。分支体**必须**是花括号块（与项目“花括号强制”一致），每个分支体是独立块作用域。
-- `else` 至多一个，且必须是最后一个分支。空分支写 `{}`。
-- **无 fallthrough**，也不需要 `break`；同一个分支要匹配多个值直接写 `,`。
-- 模式必须是**编译期常量**：整数字面量、字符字面量、带一元 `-`/`+` 的字面量、枚举成员。变量（包括运行期初始化的 `const`）不能作模式。
-- 区间 `a..b` 为**半开区间**（含 `a`，不含 `b`），`a..=b` 含上界；端点须为同类型常量，空区间是编译错误。
-  **不支持 `step`**（分支里没有迭代概念，写了会报错）；区间口径与 for-in 一致（见 6.4）。
-- **枚举**：
-  - 分支只接受该枚举的成员：可省略前缀（`Red`），也可写 `Color.Red` / `unit.Color.Red`；不做整数隐式转换（`0` 匹配 `Color` 是错误）。
-  - 不支持区间分支（枚举成员没有数值序）。
-  - **必须穷尽**：覆盖全部成员，否则编译错误并列出缺少的成员；写 `else` 等于放弃穷尽保证（此时若已覆盖全部成员，`else` 不可达，给 warning）。
-- **整型 / `char` / `byte`**：`else` 可选；未命中的值直接跳过，不是错误。
-- 被匹配值的类型仅限整型与枚举；`bool`、浮点、指针、class、interface、`string`、struct、数组都是编译错误。
-  **这是定案，不是实现限制**：不扩展 `switch` 到其它被匹配类型（`string` 分支需要哈希或比较链，是性能陷阱）。
-- 被匹配表达式只求值一次；分支按源码顺序匹配。模式重复或重叠（区间相交、值与区间相交）是编译错误，因此顺序不影响语义，后端可自由重排。
-- `break` / `continue` **不属于** `switch`：始终作用于最近的循环；没有外层循环时按既有规则报错。`switch` 不能作为 `break` 的目标。
-- 枚举被 `as` 造出未声明的值、且没有 `else` 时，落空是 **UB**（与 `as` 不做校验一致）；debug 构建可 trap。
-- 实现：密集整数/枚举值走 LLVM `switch`（跳表），区间分支走比较链，`else` 作默认分支。
-- **不做扩展（已定，0.0.62）**：`switch` 定位为 C 风格的**常量分发**，保持「小而可预测」，不被模式匹配
-  拖成第二套控制流。以下全部**明确不做**：
-  - `switch` 表达式形式（`let x = switch ...`）；
-  - 守卫（分支上的 `if` 子句）；
-  - 绑定（`x @ pattern`）；
-  - or 模式（`p1 | p2`，多值请用逗号列表）；
-  - 类型分支（`switch` 按运行期类型/和类型分派）；
-  - struct / 元组 / 数组解构；
-  - C 式 `case` 标签与 fallthrough；
-  - `match` 关键字（不保留）。
-  将来若引入和类型/模式匹配，另立构造，不重载 `switch` 语义。
+- Form: `switch expr { cases* }`. Parentheses around `expr` are **optional** (consistent with `if/while/for`; canonical style omits them); no `;` after `}`.
+- Case: `pattern list : { statements* }` or `else : { statements* }`. The case body **must** be a brace-delimited block (consistent with the project's "braces are mandatory"), and each case body is its own block scope.
+- There is at most one `else`, and it must be the last case. An empty case is written `{}`.
+- **No fallthrough**, and no `break` is needed; to match several values in one case just write them separated by `,`.
+- Patterns must be **compile-time constants**: integer literals, character literals, literals with a unary `-`/`+`, enum members. Variables (including runtime-initialized `const`) cannot be patterns.
+- A range `a..b` is **half-open** (includes `a`, excludes `b`); `a..=b` includes the upper bound; the endpoints must be constants of the same type, and an empty range is a compile error.
+  **`step` is not supported** (a case has no notion of iteration, so writing it is an error); the range convention matches for-in (see 6.4).
+- **Enums**:
+  - A case only accepts members of that enum: the prefix may be omitted (`Red`), or written as `Color.Red` / `unit.Color.Red`; no implicit integer conversion (`0` matching `Color` is an error).
+  - Range cases are not supported (enum members have no numeric order).
+  - **Exhaustiveness is mandatory**: all members must be covered, otherwise it is a compile error listing the missing members; writing `else` gives up the exhaustiveness guarantee (in that case, if all members are already covered, `else` is unreachable and a warning is emitted).
+- **Integers / `char` / `byte`**: `else` is optional; unmatched values are simply skipped, which is not an error.
+- The type of the matched value is restricted to integers and enums; `bool`, floating point, pointers, class, interface, `string`, struct, and arrays are all compile errors.
+  **This is a decision, not an implementation limitation**: `switch` will not be extended to other matched types (a `string` case would need hashing or a comparison chain, which is a performance trap).
+- The matched expression is evaluated only once; cases are matched in source order. Duplicate or overlapping patterns (intersecting ranges, a value intersecting a range) are compile errors, so order does not affect semantics and the backend is free to reorder.
+- `break` / `continue` **do not belong** to `switch`: they always apply to the nearest loop; with no enclosing loop they are errors under the existing rules. `switch` cannot be the target of `break`.
+- When `as` produces an undeclared value for an enum and there is no `else`, falling through is **UB** (consistent with `as` performing no checking); debug builds may trap.
+- Implementation: dense integer/enum values use LLVM `switch` (jump table), range cases use a comparison chain, and `else` becomes the default case.
+- **No extensions (settled, 0.0.62)**: `switch` is positioned as C-style **constant dispatch**, kept "small and predictable", and will not be
+  dragged by pattern matching into a second control-flow construct. All of the following are **explicitly not done**:
+  - `switch` expression form (`let x = switch ...`);
+  - guards (an `if` clause on a case);
+  - bindings (`x @ pattern`);
+  - or patterns (`p1 | p2`; for multiple values use a comma list);
+  - type cases (`switch` dispatching on runtime type / sum types);
+  - struct / tuple / array destructuring;
+  - C-style `case` labels and fallthrough;
+  - the `match` keyword (not reserved).
+  If sum types/pattern matching are introduced in the future, a separate construct will be established rather than overloading `switch` semantics.
 
 ---
 
-## 7. 函数
+## 7. Functions
 
 ```c
 int add(int a, int b) {
@@ -1236,396 +1236,396 @@ int add(int a, int b) {
 }
 ```
 
-- 返回类型必须写；无返回值必须显式写 `void`，不能省略。
-- `void` 只能用作返回类型或 `void*` 的基类型；不能声明 `void` 变量、字段、参数、数组元素。
-- 空参数列表写 `()`，表示无参数；`(void)` 兼容写法暂不支持（待定）。
-- `void` 函数用 `return;`；不能 `return expr;`；void 函数调用的结果没有值，不能用于需要值的表达式（可作为表达式语句）。
-- 非 `void` 函数必须保证所有路径返回值；执行到末尾掉出是**编译错误**（已定）。`main` 例外：掉出等价于 `return 0;`。
-- 参数形式 `T name`；`const T* p` 表示通过 p 只读。
-- **每个参数单独声明**：每个参数都必须写出完整的 `类型 名称`，参数之间用逗号分隔。
-  不支持 C 式的共享类型写法，`int add(int a, b)` 是**编译错误**（诊断：每个参数单独声明类型）。
-  这与变量/字段声明不同——声明中一个类型可带多个名字（见 4.1），但参数列表**没有**这条糖。
-- 类型属于单个参数：`int f(int* p, int q)` 中只有 `p` 是指针，`q` 是 `int`；后缀（`*` / `[N]` / `[]`）不会跨参数生效。
-- 函数定义写作 `T name(params) { ... }`，外部函数用 `extern`；不提供裸函数原型；`static` 已移除。函数体内不允许嵌套函数。变量声明一律为 `T name = ...` / `T name;`，与函数声明 `T name(params)` 不会混淆。
-- 函数调用暂不支持命名参数；`f(x = ...)` 只有在 `f` 解析为类型时才是结构体构造（见 3.4）。
-- 同一 unit 内允许先调用后定义（两遍解析）。
-- 递归合法。
-- 允许函数重载（规则见 3.11）；支持类型级泛型（见 3.15）；不支持默认参数、闭包、嵌套函数；可变参数仅限 `extern`（见 7.1）。
-- 类方法、构造器、`this` 见 3.11/3.12；方法默认虚，覆盖写 `override`。
-- 参数是可变绑定（第一阶段）；是否默认不可变待定。
-- `extern` 声明：
+- The return type must be written; with no return value, `void` must be written explicitly and cannot be omitted.
+- `void` can only be used as a return type or as the base type of `void*`; `void` variables, fields, parameters, and array elements cannot be declared.
+- An empty parameter list is written `()`, meaning no parameters; the `(void)` compatibility form is not supported yet (pending).
+- `void` functions use `return;`; `return expr;` is not allowed; the result of a void function call has no value and cannot be used in an expression that needs a value (it may be an expression statement).
+- A non-`void` function must guarantee a return value on all paths; falling off the end is a **compile error** (settled). `main` is the exception: falling off is equivalent to `return 0;`.
+- Parameter form `T name`; `const T* p` means read-only through p.
+- **Each parameter is declared separately**: every parameter must spell out the full `type name`, with parameters separated by commas.
+  The C-style shared-type form is not supported; `int add(int a, b)` is a **compile error** (diagnostic: declare a type for each parameter).
+  This differs from variable/field declarations — in a declaration one type may carry several names (see 4.1), but the parameter list has **no** such sugar.
+- A type belongs to a single parameter: in `int f(int* p, int q)` only `p` is a pointer and `q` is an `int`; suffixes (`*` / `[N]` / `[]`) do not carry across parameters.
+- A function definition is written `T name(params) { ... }`, external functions use `extern`; no bare function prototypes are provided; `static` has been removed. Nested functions are not allowed inside a function body. Variable declarations are always `T name = ...` / `T name;`, so they cannot be confused with the function declaration `T name(params)`.
+- Function calls do not support named arguments for now; `f(x = ...)` is a struct construction only when `f` resolves to a type (see 3.4).
+- Within the same unit, calling before the definition is allowed (two-pass parsing).
+- Recursion is legal.
+- Function overloading is allowed (rules in 3.11); type-level generics are supported (see 3.15); default arguments, closures, and nested functions are not supported; variadic parameters are limited to `extern` (see 7.1).
+- Class methods, constructors, and `this` are covered in 3.11/3.12; methods are virtual by default, and an override is marked `override`.
+- Parameters are mutable bindings (phase one); whether they become immutable by default is pending.
+- `extern` declaration:
 
 ```c
 extern int puts(const char* s);
 ```
 
-  使用 C ABI；`const` 不影响 ABI。
-- `main`：
-  - `int main()` 或 `int main(int argc, char** argv)`（**已实现**）；返回值作为进程退出码；执行到末尾等价于 `return 0;`。
-  - 带参数形式由 C 启动代码传入：`argc` 是参数个数（`argv[0]` 是程序名，所以恒 ≥ 1），`argv` 是 `char**`、
-    **以 null 结尾**（`argv[argc] == null`）。
-  - 参数名任意，但类型必须精确匹配 `(int, char**)`：1 个参数、`char*`、非 `int` 返回都是编译错误。
-  - 用 `char**` 而不是 `string[]`：`argv` 是 C 侧的裸指针数组，不带 RC；需要 `string` 时用
-    `std.string.string(argv[i])` 构造（复制一份）。
-- 函数指针待定；`extern` 的可变参数已支持（见 7.1），语言内**不提供**自定义 varargs。
+  Uses the C ABI; `const` does not affect the ABI.
+- `main`:
+  - `int main()` or `int main(int argc, char** argv)` (**implemented**); the return value becomes the process exit code; reaching the end is equivalent to `return 0;`.
+  - The parameterized form is passed in by the C startup code: `argc` is the argument count (`argv[0]` is the program name, so it is always ≥ 1), `argv` is `char**`
+    and is **null-terminated** (`argv[argc] == null`).
+  - The parameter names are arbitrary, but the types must match `(int, char**)` exactly: one parameter, `char*`, or a non-`int` return are all compile errors.
+  - `char**` is used rather than `string[]`: `argv` is a C-side bare pointer array without RC; when a `string` is needed, construct it with
+    `std.string.string(argv[i])` (which copies it).
+- Function pointers are pending; `extern` variadic parameters are supported (see 7.1); the language **does not provide** user-defined varargs.
 
-### 7.1 可变参数（仅 `extern`，已实现）
+### 7.1 Variadic parameters (`extern` only, implemented)
 
 ```c
 extern int printf(const char* fmt, ...);
 ```
 
-- 只有 `extern` 声明可以带 `...`。Mulan 里**不能定义**可变参数函数（`int f(int a, ...) {}` 是编译错误）：
-  类型不安全的读取与原则 4「编译期能查的错不留到运行期」冲突；C 生态需要 varargs 的 API 基本都是 `extern` 的 C 函数。
-- `...` 必须写在参数列表最后，且前面至少有一个命名参数（`extern int f(...)` 非法）。
-- 实参按 **C 默认实参提升**传递：
+- Only `extern` declarations may have `...`. Variadic functions **cannot be defined** in Mulan (`int f(int a, ...) {}` is a compile error):
+  type-unsafe reads conflict with principle 4, "errors that can be caught at compile time are not left to runtime"; APIs in the C ecosystem that need varargs are almost all `extern` C functions.
+- `...` must be written last in the parameter list, and at least one named parameter must precede it (`extern int f(...)` is illegal).
+- Arguments are passed according to **C default argument promotions**:
 
-  | 实参类型 | 提升为 |
+  | Argument type | Promoted to |
   |---|---|
   | `float` | `double` |
   | `bool` / `byte` / `char` / `short` / `ushort` | `int` |
-  | 枚举 | 底层整数类型 |
-  | `string` | 底层 `const char*`（对应 `printf("%s", s)`） |
-  | 指针 / POD struct / union | 原样 |
+  | enum | the underlying integer type |
+  | `string` | the underlying `const char*` (for `printf("%s", s)`) |
+  | pointer / POD struct / union | unchanged |
 
-- `...` 的实参不参与引用计数：含 RC 的类型（class/interface 引用、动态数组、含引用字段或含用户析构器的 struct）
-  作为可变实参是**编译错误**。
-- 不做运行期类型检查：`printf("%d", 1.5)` 与 C 一样是 UB（格式串与实参类型由调用者保证）。
-- 需要「Mulan 内部的可变参数 API」时用 `Value[]`（tagged union，见 10.1），**不要**引入 `va_arg` 式机制。
-- 不提供 `va_list` / `va_start` / `va_arg` / `va_copy`：转发 C 的 `vprintf` 族或向 C 提供 varargs 函数
-  是另一档特性，见 backlog U31。
+- Arguments to `...` do not participate in reference counting: types that contain RC (class/interface references, dynamic arrays, structs with reference fields or with a user destructor)
+  are a **compile error** as variadic arguments.
+- No runtime type checking: `printf("%d", 1.5)` is UB as in C (the caller guarantees that the format string matches the argument types).
+- When a "variadic API internal to Mulan" is needed, use `Value[]` (a tagged union, see 10.1); do **not** introduce a `va_arg`-style mechanism.
+- `va_list` / `va_start` / `va_arg` / `va_copy` are not provided: forwarding C's `vprintf` family or exposing variadic functions to C
+  is a different class of feature; see backlog U31.
 
 ---
 
-## 8. 内存管理
+## 8. Memory management
 
-### 8.1 内建函数
+### 8.1 Built-in functions
 
-| 函数 | 语义 |
+| Function | Semantics |
 |---|---|
-| `alloc(bytes: usize) -> void*` | 分配未初始化内存；失败返回 `null` |
-| `realloc(p: void*, bytes: usize) -> void*` | 调整大小；失败返回 `null`，原块不变 |
-| `free(p: void*)` | 释放；`free(null)` 为空操作 |
-| `sizeof(T) -> usize` | 类型大小 |
-| `alignof(T) -> usize` | 类型对齐 |
-| `len(seq) -> usize` | 数组/切片/字符串长度（**仅内置类型**，不分派到用户类型；用户容器用 `length()`，见 6.4.3） |
+| `alloc(bytes: usize) -> void*` | Allocates uninitialized memory; returns `null` on failure |
+| `realloc(p: void*, bytes: usize) -> void*` | Resizes; returns `null` on failure, leaving the original block unchanged |
+| `free(p: void*)` | Frees; `free(null)` is a no-op |
+| `sizeof(T) -> usize` | Type size |
+| `alignof(T) -> usize` | Type alignment |
+| `len(seq) -> usize` | Length of an array/slice/string (**built-in types only**; it does not dispatch to user types; user containers use `length()`, see 6.4.3) |
 
-- `alloc` 返回至少 16 字节对齐（与常见 malloc 一致），这是**下界保证**，不是上限。
-  过对齐类型在堆上的限制见 3.4（class 对象由编译器按需对齐分配；动态数组元素 `align ≤ 8`；
-  手工 `alloc` 的 struct 实例 `align > 16` 为 UB）。通用的 `alloc_aligned` 仍待定（backlog U27）。
-- 无 GC、无所有权、无借用检查；是否泄漏由程序员负责。
+- `alloc` returns memory aligned to at least 16 bytes (consistent with common malloc); this is a **lower-bound guarantee**, not an upper bound.
+  For heap restrictions on over-aligned types see 3.4 (class objects are allocated by the compiler with the required alignment; dynamic array elements have `align ≤ 8`;
+  a manually `alloc`ed struct instance with `align > 16` is UB). A general `alloc_aligned` is still pending (backlog U27).
+- No GC, no ownership, no borrow checking; leaking is the programmer's responsibility.
 
-### 8.2 未定义行为（UB）
+### 8.2 Undefined behavior (UB)
 
-- 使用已释放内存、重复释放（`free(null)` 除外）。
-- 解引用 `null`、越界指针算术/解引用、悬垂指针。
-- 读取未初始化内存。
-- 未对齐访问：解引用位置未满足类型自然对齐的指针/字段（`packed` 结构的字段即属此类，见 3.4）。
-- 数据竞争（第一阶段无语言级并发）。
-- 除数为 0；移位位数 ≥ 位宽（待定：UB 还是定义）。
-- 有符号整数溢出：**已定：定义为二进制补码回绕**（避免 UB，简化优化；后端不发 `nsw`/`nuw`）。
-- 数组/切片越界：待定（建议 debug 检查，release 可关闭；或始终检查）。
-- 访问 `null` 的 class 引用；把句柄置 null 后继续使用（等同空引用）。
-- 对 class 对象使用 `alloc/free`，或把 `alloc` 得到的内存当 class 句柄赋值（两套内存管理不能交叉）。
+- Using freed memory, or double-freeing (`free(null)` excepted).
+- Dereferencing `null`, out-of-bounds pointer arithmetic/dereference, dangling pointers.
+- Reading uninitialized memory.
+- Misaligned access: a pointer/field whose dereference location does not satisfy the type's natural alignment (fields of a `packed` struct are such a case; see 3.4).
+- Data races (phase one has no language-level concurrency).
+- Division by zero; a shift count ≥ the bit width (pending: UB or defined).
+- Signed integer overflow: **settled: defined as two's-complement wraparound** (avoids UB and simplifies optimization; the backend does not emit `nsw`/`nuw`).
+- Array/slice out of bounds: pending (suggested: checked in debug builds, may be disabled in release; or always checked).
+- Accessing a class reference that is `null`; continuing to use a handle after it has been set to null (equivalent to a null reference).
+- Using `alloc/free` on a class object, or assigning memory obtained from `alloc` as a class handle (the two memory management schemes must not cross).
 
-### 8.3 class 的引用计数、虚表与 weak
+### 8.3 Reference counting, vtable, and weak for class
 
-对象布局（当前实现）：
+Object layout (current implementation):
 
 ```
 object:        [ rc | class_desc* | fields... ]
 class_desc:    { size, destroy, vtable*, itable*, base_desc* }
-interface 值:  { obj*, class_desc* }        // 16 字节；null = {null,null}
-动态数组 T[]:   { i64 rc, i64 len, i64 cap, data... }
-动态数组 T[,]:  { i64 rc, i64 d0, i64 d1, ..., data... }
+interface value: { obj*, class_desc* }        // 16 bytes; null = {null,null}
+dynamic array T[]:   { i64 rc, i64 len, i64 cap, data... }
+dynamic array T[,]:  { i64 rc, i64 d0, i64 d1, ..., data... }
 ```
 
-- 动态数组句柄就是头指针；null 表示空数组，`len` 为 0；复制句柄 +1，归零时逐元素 release 后 `free`。
+- A dynamic array handle is just the header pointer; null means an empty array with `len` 0; copying the handle is +1, and when it reaches zero each element is released and then `free` is called.
 
-- `vtable`：方法槽数组，槽序为「基类已有的槽在前，派生类新方法追加」；`override` 复用基类槽。
-- `itable`：全局接口方法槽表（按全程序接口方法签名去重编号），值为 thunk（类实现或接口默认实现）。
-- 每个 class 对象带**原子**强引用计数（relaxed）；`new` 创建后计数为 1。
-- **+1**：句柄复制（初始化、赋值重绑定、存入字段、返回后由调用方存储、存入接口值）。
-  参数传递：callee 在进入时 retain 一份（参数是拥有型局部变量），退出时 release；调用方按值传递。
-- **-1**：句柄被覆盖、离开作用域、字段随对象销毁、接口值被覆盖、句柄被置 null。
-- **归零**：`class_desc->destroy`：执行析构链（用户析构器 → 派生字段逆序释放 → 基类析构器 → …）后 `free` 对象。
-- **虚调用**：类方法走 `desc->vtable[slot]`；接口方法走 `desc->itable[slot]`，接口默认方法同理。
-- **接口值**：强引用；复制 +1、覆盖 -1；`null` 不计数；接口之间的向上转换不改变值。
-- `weak` 字段不计入计数、析构时也不释放；**目标销毁时自动置 null**（运行时 weak 注册表）：
-  赋值登记 {target, field}，覆盖/持有者析构时注销，目标销毁时把仍指向它的 weak 字段清零。
-  环必须用 `weak` 打破。
-- 环：**不收集**；未打破的环 = 泄漏。
-- 提前释放：`c = null;` 立即 -1 并把 c 置 null；对象仍被其他强引用持有则不销毁（`del` 已在 0.0.47 移除）。
-- 与裸内存分开：`alloc/free/realloc` 管裸内存，`new` 只用于 class，二者不能交叉使用。
-- 对象可跨线程共享；析构器在最后释放引用的线程执行，必须线程安全。
-- 构造失败（malloc 返回 null）当前直接 `abort()`。
-- 可选择 `--single-thread` 构建使用非原子快速路径（该构建禁止跨线程，待定）。
-- 没有用户析构函数以外的资源释放机制；析构器见 3.13。
+- `vtable`: the array of method slots, ordered so that "slots already present in the base class come first, and new methods of the derived class are appended"; `override` reuses the base-class slot.
+- `itable`: the global interface method slot table (deduplicated and numbered by whole-program interface method signature); the value is a thunk (the class implementation or the interface default implementation).
+- Every class object carries an **atomic** strong reference count (relaxed); after `new` creates it the count is 1.
+- **+1**: copying a handle (initialization, assignment rebinding, storing into a field, storing by the caller after a return, storing into an interface value).
+  Parameter passing: the callee retains one reference on entry (parameters are owning local variables) and releases it on exit; the caller passes by value.
+- **-1**: the handle is overwritten, leaves scope, the field is destroyed with its object, the interface value is overwritten, or the handle is set to null.
+- **Reaching zero**: `class_desc->destroy`: runs the destruction chain (user destructor → derived fields released in reverse order → base class destructor → …) and then `free`s the object.
+- **Virtual calls**: class methods go through `desc->vtable[slot]`; interface methods go through `desc->itable[slot]`, and interface default methods likewise.
+- **Interface values**: strong references; copying is +1, overwriting is -1; `null` is not counted; upcasting between interfaces does not change the value.
+- `weak` fields are not counted and are not released during destruction; **they are automatically set to null when the target is destroyed** (a runtime weak registry):
+  assignment registers {target, field}, unregisters on overwrite/the holder's destruction, and when the target is destroyed any weak field still pointing at it is cleared.
+  Cycles must be broken with `weak`.
+- Cycles: **not collected**; an unbroken cycle = a leak.
+- Early release: `c = null;` immediately -1s and sets c to null; if the object is still held by other strong references it is not destroyed (`del` was removed in 0.0.47).
+- Separate from raw memory: `alloc/free/realloc` manage raw memory and `new` is only for class; the two must not be used interchangeably.
+- Objects may be shared across threads; the destructor runs on the thread that releases the last reference and must be thread-safe.
+- Construction failure (malloc returns null) currently calls `abort()` directly.
+- An optional `--single-thread` build can use a non-atomic fast path (that build forbids cross-thread use; pending).
+- There is no resource release mechanism other than a user destructor; destructors are covered in 3.13.
 
 ---
 
-## 9. 模块与 C 互操作
+## 9. Modules and C interoperability
 
-- 每个文件一个 unit：
+- One unit per file:
 
 ```c
 unit example;
 ```
 
-  必须是文件首个声明。
-- `use other;` 导入其他 unit，以 `other.symbol` 访问；循环依赖禁止。
-- **unit 名与文件映射**（已实现）：unit 名可含点号，`unit std.string` 对应 `libs/std/string.mu`
-  （点号映射为目录分隔）。库搜索路径依次为：入口文件所在目录、`-I` 指定目录（可多次）、
-  环境变量 `MUC_LIBS`、当前目录及其祖先目录下的 `libs` 与 `libs/std`。
-- 可见性（**已实现（0.0.30）**，详见 `visibility-design.md`）：
-  - 两个修饰符：`private` = 本 unit 内可见；`public` = 跨 unit 可见。
-  - 默认值：顶层声明 `private`；struct 成员 `public`；class 成员 `private`。
-  - struct / class 体内支持 `public:` / `private:` 分段标签，后续成员沿用该默认值；
-    逐成员前缀（`public int x;`）覆盖当前段。析构器不可修饰。
-  - `use` 之后，目标 unit 的 `public` 声明可直接**无前缀使用**（类型/函数/常量/枚举/struct 构造）；
-    查找顺序为局部 → 当前 unit → 直接 `use` 的 unit → std.string；本地声明优先；
-    多个来源同名时在使用点报歧义并要求写限定名。
-  - **库边界 = unit 名的第一段**（`std.string` → 库 `std`；无点号 unit 属于根库）。跨库 `use`
-    要求目标 unit 声明为 `public unit`。
-  - 跨 unit 的聚合初始化要求 struct 字段全部 `public`。
-  - `private` 的边界是 unit（不是类内）：运算符自由函数、同 unit 继承/测试可访问内部表示。
-  - `extern` 隐式公开，禁止再加 `public`/`private`；非 `public` 顶层符号使用 `internal` linkage。
-  - `public` 声明不能泄露非 `public` 类型（签名、字段类型、基类、接口递归检查）。
-  - 后端：非 `public` 顶层符号使用 `internal` linkage（`public` / `extern` / `main` 保持外部链接）。
-  - **可见性是编译期 API 契约，不是安全边界**（`void*`/`as` 可绕过）。
-- 无预处理器；模块级常量用顶层 `const`。
-- `extern` 用于 C 函数/全局变量；C ABI；struct 布局兼容 C。`extern` 函数不能重载。
-- class 对象不能传给 C：C 侧不参与引用计数；需要跨语言时用 struct + `alloc`。
-- 字符串字面量为 NUL 结尾的 `const char*`，可直接传给 C。
-- 符号修饰/命名冲突规则待定。
+  It must be the first declaration in the file.
+- `use other;` imports another unit and accesses it as `other.symbol`; cyclic dependencies are forbidden.
+- **Unit name to file mapping** (implemented): a unit name may contain dots; `unit std.string` maps to `libs/std/string.mu`
+  (dots map to directory separators). The library search path is, in order: the directory of the entry file, directories given with `-I` (may be repeated),
+  the `MUC_LIBS` environment variable, and `libs` and `libs/std` under the current directory and its ancestors.
+- Visibility (**implemented (0.0.30)**; see `visibility-design.md` for details):
+  - Two modifiers: `private` = visible within this unit; `public` = visible across units.
+  - Defaults: top-level declarations `private`; struct members `public`; class members `private`.
+  - struct / class bodies support `public:` / `private:` section labels, and subsequent members follow that default;
+    a per-member prefix (`public int x;`) overrides the current section. Destructors cannot be modified.
+  - After `use`, the target unit's `public` declarations can be used directly **without a prefix** (types/functions/constants/enums/struct construction);
+    the lookup order is local → current unit → directly `use`d units → std.string; local declarations win;
+    if several sources have the same name, an ambiguity is reported at the use site and a qualified name is required.
+  - **The library boundary is the first segment of the unit name** (`std.string` → library `std`; a unit without dots belongs to the root library). A cross-library `use`
+    requires the target unit to be declared `public unit`.
+  - Cross-unit aggregate initialization requires all struct fields to be `public`.
+  - The boundary of `private` is the unit (not the class body): operator free functions, same-unit inheritance/tests can access the internal representation.
+  - `extern` is implicitly public; adding `public`/`private` is forbidden; non-`public` top-level symbols use `internal` linkage.
+  - A `public` declaration must not leak a non-`public` type (recursive checks on signatures, field types, base classes, and interfaces).
+  - Backend: non-`public` top-level symbols use `internal` linkage (`public` / `extern` / `main` keep external linkage).
+  - **Visibility is a compile-time API contract, not a security boundary** (`void*`/`as` can bypass it).
+- No preprocessor; module-level constants use top-level `const`.
+- `extern` is used for C functions/global variables; C ABI; struct layout is compatible with C. `extern` functions cannot be overloaded.
+- Class objects cannot be passed to C: the C side does not participate in reference counting; when crossing languages use a struct + `alloc`.
+- A string literal is a NUL-terminated `const char*` and can be passed to C directly.
+- Symbol mangling/naming conflict rules are pending.
 
 ---
 
-## 10. 第一阶段非目标
+## 10. Phase-one non-goals
 
-- 多继承（class 只允许单继承）
-- 动态数组 / 容器类（后续作为引用类型提供）
-- 异常/panic 展开
-- 闭包/lambda
-- GC/所有权/借用检查
-- 无限制运算符重载（只允许 3.11 的限定集合）
-- 幂运算符（`^` 留给位异或；幂用 `pow` 函数）
-- 预处理器/宏
-- RTTI/反射
-- 语言级并发
-- 语言级动态类型（`dynamic`）
-- 完整标准库（仅内建函数 + libc）
+- Multiple inheritance (class allows single inheritance only)
+- Dynamic arrays / container classes (to be provided later as reference types)
+- Exception/panic unwinding
+- Closures/lambdas
+- GC/ownership/borrow checking
+- Unrestricted operator overloading (only the limited set in 3.11 is allowed)
+- Exponentiation operator (`^` is reserved for bitwise xor; use the `pow` function for exponentiation)
+- Preprocessor/macros
+- RTTI/reflection
+- Language-level concurrency
+- Language-level dynamic typing (`dynamic`)
+- A complete standard library (only built-in functions + libc)
 
-### 10.1 异构值的推荐路线
+### 10.1 Recommended route for heterogeneous values
 
-- **第一阶段**：`void*` + 手工 tag（底层逃生口）。
-- **近期**：库级 `Variant` / `Any` 结构体（tag + union/字节缓冲区，手动内存，C ABI 兼容）。
-- **后续**：语言级和类型（enum with payload）+ `match`，用于封闭集合的异构数据。
-- `dynamic` 仅作为未来“运行时动态类型”的预留命名，不进入第一阶段；即使将来需要，也应作为独立的运行时层，而不是核心语言特性。
-- `any` 预留为静态顶层类型/库类型，与 `dynamic` 区分。
+- **Phase one**: `void*` + manual tag (a low-level escape hatch).
+- **Near term**: library-level `Variant` / `Any` structs (tag + union/byte buffer, manual memory, C ABI compatible).
+- **Later**: language-level sum types (enum with payload) + `match`, for heterogeneous data in closed sets.
+- `dynamic` is only reserved as the name for future "runtime dynamic typing" and does not enter phase one; even if needed later, it should be an independent runtime layer rather than a core language feature.
+- `any` is reserved as a static top type/library type, distinct from `dynamic`.
 
 ---
 
-## 11. 与 C 的主要差异
+## 11. Main differences from C
 
-| 主题 | C | Mulan |
+| Topic | C | Mulan |
 |---|---|---|
-| 可变性 | `const` 限定符 | 默认可变；`const` 类型限定符（C 模型） |
-| 可变参数 | `...` + `va_arg`（可自定义） | 仅 `extern` 声明可带 `...`；不提供 `va_list` |
-| 声明 | 声明符与类型混杂 | 类型在前，多变量共享类型（含指针/数组） |
-| 无返回值 | 可省略返回类型（C89） | 必须显式写 `void` |
-| 初始化 | `T x = 1;` | 声明只用 `=`：`T x = expr`、`T x = {...}`、`T x = {}`（聚合零值）、标量 `= 0`/`= null`；`T(...)` 仅表达式 |
-| 局部类型推断 | — | `auto x = expr;`；仅局部、必须有初始化器；多声明符类型一致 |
-| 动态类型 | 无语言级（void*/variant） | 第一阶段无；`dynamic` 仅预留 |
-| unit 级变量 | 可直接声明 | 直接声明；默认 `private`，`public` 跨 unit |
-| 零值初始化 | — | 声明：聚合 `T x = {}`、标量 `= 0`/`= null`；表达式 `T()`；不再有 `T x()` |
-| 花括号初始化 | 任意位置 | 仅声明初始化位置 |
-| 循环 | `for(;;)`、`while`、`do-while` | `while`、`for-in` |
-| 自增 | `++`/`--` | `x++` / `x--`（仅语句，无返回值） |
-| 条件 | 任意标量真值 | 必须是 `bool` |
-| 花括号 | 可省略 | 强制 |
-| 条件括号 | 必需 | 可选，规范省略 |
-| 转换 | 大量隐式 | 仅值域不丢失的加宽；其余 `as` |
-| 数组 | 退化指针、值语义混合 | 定长数组值语义；切片显式 |
-| 字符串 | `char*` | std.string `string`（UTF-8；NUL 仅保证完整串/字面量） |
-| 类型转换 | `(T)x` | `x as T` |
-| 逻辑 | `&&` / `||` / `!` | `and` / `or` / `not` |
-| 位取反 | `~` | `~`（`not` 专用于逻辑非） |
-| 幂运算 | `pow()` 库函数 | 同样只用 `pow()`，**不提供运算符** |
-| 位运算优先级 | 低于比较 | 高于比较 |
-| `not` 优先级 | 一元，最高档 | 低优先级，仅高于 `and`/`or` |
-| 预处理 | 有 | 无 |
-| goto | 有 | 不提供 |
-| switch | 有 fallthrough、`case` 标签 | 有；无 fallthrough、无 `case`、`模式列表 : { }`、枚举必须穷尽（6.6） |
-| 结构体构造 | `(struct S){...}` | 声明 `S s = {x=..., y=...}`；表达式 `S(...)` |
-| 堆对象 | `malloc/free` | `new` + 引用计数（无 GC）；提前释放写 `x = null` |
-| 引用 | 指针 + `->` | `class` 句柄，自动解引用；struct 用 `ref` 参数 |
-| 环 | 手动 | `weak` 字段手动断环；无环收集器 |
-| 继承 | 有 | 单继承 + 默认虚方法；无多继承 |
-| 接口 | 抽象类 / 接口 | `interface`：多实现、接口多继承、默认方法 |
-| 重载 | 有 | 函数/方法/构造器/运算符；有界解析（3.11） |
-| 运算符重载 | 成员/自由函数 | 仅自由函数，限定集合（3.11） |
+| Mutability | `const` qualifier | Mutable by default; `const` type qualifier (C model) |
+| Variadic parameters | `...` + `va_arg` (user-definable) | Only `extern` declarations may have `...`; `va_list` is not provided |
+| Declarations | Declarators mixed with types | Type first; multiple variables share the type (including pointers/arrays) |
+| No return value | The return type may be omitted (C89) | `void` must be written explicitly |
+| Initialization | `T x = 1;` | Declarations use `=` only: `T x = expr`, `T x = {...}`, `T x = {}` (aggregate zero value), scalars `= 0`/`= null`; `T(...)` is expressions only |
+| Local type inference | — | `auto x = expr;`; local only, an initializer is required; multiple declarators must have the same type |
+| Dynamic typing | None at language level (void*/variant) | None in phase one; `dynamic` is reserved only |
+| Unit-level variables | May be declared directly | Declared directly; `private` by default, `public` across units |
+| Zero-value initialization | — | Declarations: aggregates `T x = {}`, scalars `= 0`/`= null`; expressions `T()`; no more `T x()` |
+| Brace initialization | Anywhere | Declaration-initializer position only |
+| Loops | `for(;;)`, `while`, `do-while` | `while`, `for-in` |
+| Increment | `++`/`--` | `x++` / `x--` (statement only, no return value) |
+| Conditions | Any scalar truthiness | Must be `bool` |
+| Braces | May be omitted | Mandatory |
+| Condition parentheses | Required | Optional, omitted in canonical style |
+| Conversions | Many implicit | Only widening that loses no range; otherwise `as` |
+| Arrays | Degenerate to pointers, mixed value semantics | Fixed-size arrays have value semantics; slices are explicit |
+| Strings | `char*` | std.string `string` (UTF-8; NUL guaranteed only for complete strings/literals) |
+| Type casts | `(T)x` | `x as T` |
+| Logic | `&&` / `\|\|` / `!` | `and` / `or` / `not` |
+| Bitwise complement | `~` | `~` (`not` is reserved for logical negation) |
+| Exponentiation | `pow()` library function | Also only `pow()`, **no operator provided** |
+| Bitwise precedence | Lower than comparison | Higher than comparison |
+| `not` precedence | Unary, highest tier | Low precedence, only higher than `and`/`or` |
+| Preprocessing | Yes | No |
+| goto | Yes | Not provided |
+| switch | Fallthrough, `case` labels | Yes; no fallthrough, no `case`, `pattern list : { }`, enums must be exhaustive (6.6) |
+| Struct construction | `(struct S){...}` | Declaration `S s = {x=..., y=...}`; expression `S(...)` |
+| Heap objects | `malloc/free` | `new` + reference counting (no GC); early release is written `x = null` |
+| References | Pointers + `->` | `class` handles, auto-dereferenced; structs use `ref` parameters |
+| Cycles | Manual | Break cycles manually with `weak` fields; no cycle collector |
+| Inheritance | Yes | Single inheritance + virtual methods by default; no multiple inheritance |
+| Interfaces | Abstract classes / interfaces | `interface`: multiple implementations, interface multiple inheritance, default methods |
+| Overloading | Yes | Functions/methods/constructors/operators; bounded resolution (3.11) |
+| Operator overloading | Members/free functions | Free functions only, limited set (3.11) |
 
 ---
 
-## 12. 待定问题清单
+## 12. List of Open Questions
 
-| # | 问题 | 建议默认 |
+| # | Question | Suggested default |
 |---|---|---|
-| 1 | 声明语法 | 已定：C# 风格，类型在前，多变量共享类型 |
-| 2 | 条件括号是否强制 | 已定：可选，规范省略；C 式仍合法 |
-| 3 | 固定宽度类型命名（C 名 vs `i32`） | 先用 C 名 |
-| 4 | `string` 的布局与 `byte[]` 转换 | 已定：`string` 是 **std 库提供的值类型**，布局/缓冲区/RC/API 属库实现（`lib-std-string.md`）；语言只保证 §3.3 的可见契约 |
-| 5 | 数组是否隐式衰减为指针 | 不衰减 |
-| 6 | 动态数组是否纳入第一阶段 | 已定：纳入（`T[]` / `T[,]`，RC 堆数组） |
-| 7 | 边界检查策略 | debug 检查；release 可配 |
-| 8 | 有符号溢出 | 已定（已实现）：二进制补码回绕（后端不发 `nsw`/`nuw`） |
-| 9 | `switch`/`match` | 已定（0.0.45；扩展于 0.0.62 明确不做）：只有 `switch`（无 fallthrough、`模式: { }`、多值、半开区间、枚举穷尽）；**表达式形式/守卫/绑定/or 模式/类型分支/解构全部不做**；`match` 不保留，将来若需模式匹配置另立构造 |
-| 10 | `goto`/`typedef`/函数指针/varargs | `goto`/函数指针不做（第一阶段）；`typedef` 语法不做，类型别名为 `type A = B;`（已实现 0.0.62，见 4.5）；varargs 仅限 `extern` |
-| 11 | `for-in` 的索引形态 / `ref` / 默认拷贝 | **已定（索引形态已实现）**：值绑定 + `ref`（仅内置）；`for i, x` 提供 `usize` 下标/序号（6.4.4）；用户类型走 6.4.1/6.4.2 的迭代形态；`for ref` 不对用户类型开放；**多维数组禁止 `for-in`** |
-| 12 | range 的 `..=` / `step` / 倒序 | 已实现（0.0.62）：`..=` 含上界；`step` 只跟序列表达式（`0..10 step 2`），须非零编译期常量；倒序靠**显式负 step**（`a..b` 不自动反序）；switch 分支区间支持 `..=`、**不支持 `step`** |
-| 13 | 局部类型推断 | 已定：`auto x = expr;`；仅局部、必须有初始化器；多声明符类型一致 |
-| 14 | 参数默认可变性 | 可变（C 语义） |
-| 15 | `main` 带参数 | **已实现**：`int main(int argc, char** argv)`，`argv` 以 null 结尾；其余签名报错 |
-| 16 | 错误处理约定 | 返回码 + `null`；不引入异常 |
-| 17 | 模块可见性/命名修饰 | 已实现（0.0.30）：`private`=unit 内、`public`=跨 unit；struct 成员默认 public、class 成员默认 private；支持 `public:`/`private:` 分段标签；库边界 = unit 名第一段，跨库需 `public unit`；`use` 后 public 符号可直接无前缀使用；非 public 符号用 `internal` linkage（见 `visibility-design.md`） |
-| 18 | 结构体对齐/packed | 已实现（0.0.42）：`packed`（无参数，等价 `pack(1)`）与 `align(N)`（2 的幂常量，覆盖整体对齐、尾部补齐）为**关键字修饰符**，正交可组合；`N` 与自然对齐比较，`N < 自然对齐` 报错。详见 3.4 |
-| 19 | `string` 与 `byte[]`/`char[N]` 的转换细节 | `string` 不可变视图；`char[N]` 初始化按字节拷贝；其余转换属库 API（见库文档） |
-| 20 | 结构体构造函数 / `this` | class 构造器与 `this` 见 3.11/3.12；struct 仍用聚合构造 |
-| 21 | `elif` 是否作为语法糖 | 已定（已实现）：支持，与 `else if` 等价 |
-| 22 | 动态数组字面量的存储与生命周期 | `T[] a = {...}` 分配新数组（RC）；不支持借用视图 |
-| 23 | `byte`/`char` 的符号性与命名 | `byte`=u8（唯一无符号 8 位名，无别名）；`char`=i8（C 风格有符号） |
-| 24 | `const` 是否要求编译期常量 | 局部不要求（可运行期初始化）；**unit 级 `const` 初始化器必须是编译期常量**（见 4）；`constexpr` 后续 |
-| 25 | `const int* p` 的读法 | C 模型：`const int*` = 指向只读 int；`const int x` = 绑定只读；`T* const` 不提供 |
-| 26 | 参数列表是否允许多变量共享类型 | 已定：**不允许**；每个参数单独写 `类型 名称`（`int f(int a, b)` 报错），实现见 7 |
-| 27 | 结构体聚合初始化 | 声明 `S s = {x=..., y=...}`；表达式 `S(...)`；位置/命名不可混用；字段给全 |
-| 28 | 命名参数语法 `=` vs `:` | 先用 `=`；`:` 作为备选 |
-| 29 | 零值构造 `S()` / `S s = {}` | 已定：零初始化（所有字段清零） |
-| 30 | 类型名与函数/变量同名 | 同一作用域禁止冲突 |
-| 31 | 函数调用是否支持命名参数 | 第一阶段不支持；仅结构体构造 |
-| 32 | 声明中是否允许 `T x(...)` | 不提供；声明只用 `=`；聚合零值用 `{}`、标量用各自常量 |
-| 33 | 声明初始化与表达式构造的关系 | `T x = T(...)` 与 `T x = {...}` 等价；prvalue 免拷贝 |
-| 34 | 数组/切片初始化 | 声明用 `= {...}` / `= {}`；表达式无字面量 |
-| 35 | prvalue 初始化免拷贝 | 语义上直接构造；无用户拷贝构造/析构 |
-| 36 | 类型必须先声明后使用 | 第一阶段要求；后续可加前向声明 |
-| 37 | `f(void)` 兼容写法 | 暂不支持；`()` 表示无参数 |
-| 38 | 非 `void` 函数路径返回检查 | 已定：强制（末尾掉出是编译错误；`main` 例外） |
-| 39 | unit 级变量声明 | 已定：直接声明，默认 private；`public` 跨 unit；`extern` 外部符号。`static` 已移除 |
-| 40 | `static` 函数 | 已移除（用 `private`/`public` 控制可见性） |
-| 41 | 函数体内 `static` 局部变量 | 已移除（不支持） |
-| 42 | unit 级变量默认零初始化 | 是（静态存储期） |
-| 43 | 零初始化对 `string`/切片/数组的含义 | 空字符串 / 空切片 / 全零元素 |
-| 44 | 零值初始化的适用范围 | 聚合类型用 `{}`，标量用各自常量（`0`/`0.0`/`false`/`'\0'`/`null`）；仅声明初始化位置 |
-| 45 | 花括号初始化规则 | 仅声明；结构体给全字段（空 `{}` 为全零）；数组不足补零；切片按元素数 |
-| 46 | 非声明位置的构造 | 仅 `T(...)`；不能用 `{...}`、`{}` 或 `= 0` |
-| 47 | 空花括号 `{}` | 已定：聚合类型（struct/数组/切片/string）零初始化；标量写 `{}` 报错，用各自常量 |
-| 48 | 声明中的拷贝初始化 `T x = expr` | 允许；lvalue 拷贝，prvalue 免拷贝 |
-| 49 | 表达式里的 `0` vs 声明里的零值初始化 | 表达式里是 int；声明里聚合用 `{}`、标量用常量 |
-| 50 | 语言级动态类型 | 第一阶段非目标；`dynamic` 仅预留 |
-| 51 | `any` 的用途 | 预留为静态顶层类型/库类型；与 `dynamic` 区分 |
-| 55 | 异构值方案 | 先库级 Variant；后续和类型 + `match` |
-| 56 | `any` 与 `dynamic` 的关系 | `any` 用于静态顶层/库类型；`dynamic` 用于运行时动态；不混用 |
-| 52 | `auto` 与 `const` | 已定（已实现）：允许 `const auto` |
-| 53 | `auto` 多声明符 | 所有变量推断结果必须相同 |
-| 54 | `auto` 是否可用于 unit 级 | 不允许；unit 级显式类型 |
-| 57 | 位取反符号 | 已定：`~`（与 C 一致）；`not` 专用于逻辑非 |
-| 58 | `not` 优先级 | 已定：低优先级，仅高于 `and`/`or` |
-| 59 | 位运算符集合 | 已定：`&` `\|` `~`（取反）`^`（异或） |
-| 60 | 幂运算符 | 已定：不提供运算符；位异或独占 `^`；幂用 `pow`（libc）/库函数 |
-| 61 | 若 `^` 作幂，异或用什么 | 已废弃：`^` 不作幂，异或保持 `^` |
-| 62 | `string` 比较语义 | 已定：`==`/`!=` 按字节值比较；不与 `null` 比较；零值与 `""` 相等（库类型契约，非语言特例） |
-| 63 | 浮点字面量窄化 | 已定：字面量按上下文适配（`float f = 1.5;` 合法），变量间仍需 `as` |
-| 64 | 整数 ↔ 枚举转换 | 已定：双向都无隐式转换，必须 `as`（枚举不是整数的加宽目标，整数也不是枚举的隐式来源） |
-| 65 | 整数字面量上限 | 已定：`2^63-1`，超出报错 |
-| 66 | `const`/`const`/`string` 可写性检查 | 已定：编译器必须拒绝写入（见 3.7） |
-| 67 | 对象模型 | 已定：struct 值 / class 引用；RC + weak；无环收集器（见 3.8 / 8.3） |
-| 68 | `weak` 的范围 | 仅 class 字段；局部/参数/返回值禁用 |
-| 69 | `del` 的语义 | **已移除（0.0.47）**：`del x;` 等价于 `x = null;`，没有独立语义，已从语言中删除（保留关键字只为迁移诊断） |
-| 70 | class 参数的所有权 | 已改（0.0.47）：参数是**拥有型局部变量**（进入 +1、退出 -1）；函数体内可重绑定；后续可用借用/逃逸分析优化 |
-| 71 | class 与 C 互操作 | 禁止传给 `extern`；跨语言用 struct + alloc |
-| 72 | class 数组 | 已定：静态 `Cat[N]` 与动态 `Cat[]` 均支持（逐元素 RC） |
-| 73 | `sizeof`/`alignof` class | 已定（已实现）：class 取句柄大小（8）、interface 取接口值大小（16）；对象大小不暴露 |
-| 74 | 多线程引用计数 | 已定（见 94）：原子 RC（relaxed），对象可跨线程共享；`--single-thread` 非原子快速路径仍待定 |
-| 75 | 用户析构 `deinit` | 第一阶段不做；字段按声明逆序释放 |
-| 76 | 继承模型 | 已定：单继承 + 接口多实现；无多继承（见 3.9/3.10） |
-| 77 | 虚方法 | 已定：默认虚；覆盖/实现写 `override` |
-| 78 | 抽象类 | 已定：有未实现方法即隐式抽象，不能 `new` |
-| 79 | 接口默认方法 | 已定：允许；冲突时类必须显式覆盖 |
-| 80 | 构造器 | 已定：可重载；`super(args)` 第一条；C++ 式派发；字段先清零 |
-| 81 | 重载解析 | 已定：精确 > 隐式加宽；合并基类重载；歧义报错（见 3.11） |
-| 82 | 运算符重载 | 已定：仅自由函数；算术/一元 `-`/比较/位运算；class `==` 身份固定 |
-| 83 | 对象布局 | 已定：`[rc][class_desc*]`；desc 含 vtable 与 itable 目录（见 8.3） |
-| 84 | 接口值布局 | 已定：`{obj*, class_desc*}` 两字；`null` 支持 |
-| 85 | class 数组/动态数组 | 支持；Widget 树仍推荐 `first_child/next_sibling` |
-| 86 | `sizeof`/`alignof` class | 已定（已实现）：同 #73（class=8、interface=16） |
-| 87 | 多线程 RC | 已定（同 94）：原子 RC（relaxed）；线程本地堆方案已否决 |
-| 88 | 名字修饰 | 已定：带参数类型；`extern` 原名；`main` 特殊 |
-| 89 | 一元 `~` 重载 | 允许（`operator~`，1 个参数） |
-| 90 | class 静态数组 | 已定：允许（struct 禁止）；逐元素 retain/release |
-| 91 | `[]` 重载 | 已定：`operator[]` 读、`operator[]=` 写；显式区分，不用 `&`/`const` |
-| 92 | 用户析构器 | 已定：`~T()`，RC 归零时执行；派生先于基类 |
-| 93 | 异常模型 | 已定：非检查、`Exception` 基类、`finally`；见 3.14（尚未实现） |
-| 94 | RC 线程模型 | 已定：原子 RC（relaxed），对象可跨线程共享 |
-| 95 | 泛型路线 | 已定 + 已实现（0.0.64–0.0.72）：单态化、`<>` 语法、结构化约束、`Self`；详见 3.15 |
-| 96 | 保留字 | 已定：见 2.5 |
-| 97 | 异常展开 ABI | 待定：先做 SEH/Itanium spike |
-| 98 | `const` class 视图 / `const` 方法 | 已定（0.0.61）：**明确不做**——不引入 const 视图类型，也不提供 const 方法；`const` 只作命名类型的**只读绑定标记**（局部/参数：不可重绑、不可经它直写字段）与指针/切片 pointee 限定；需要只读 API 边界用只读 `interface` |
-| 99 | `ref` 参数 / 返回值 | 已实现（0.0.62 参数；0.0.63 扩展）：`ref` 是绑定模式而非可存储类型——`ref T p` / `ref const T p` / `ref T f()`，不引入 `T&`；可借基本类型/枚举/指针/纯值 struct；返回借用须源自 `ref` 参数、`this`、全局或指针·切片存储，结果不可存储（只能当场写穿/传借用/`for ref`）；借局部/按值参数/临时值是编译错误；方法/构造器参数与 `extern` 不支持（见 3.8、backlog U8） |
-| 100 | `interface` → 派生 `interface` 向下转换 | 已定：第一阶段不支持（只允许向上；`as` 会报错） |
-| 101 | 非 ASCII 字符字面量 | 已定：第一阶段不支持（字面量是单字节 `byte`；用 `'\xNN'` 或 `string`） |
-| 102 | 枚举比较 | 已定：仅同一枚举之间；支持 `== != < <= > >=`，序 = 底层整数值的序；跨枚举/与整数比较需 `as`（见 §3.5） |
-| 103 | 枚举成员限定引用 | 已定：`Color.Red` 与无前缀 `Red` 等价；跨 unit 写 `unit.Color.Red`；成员是常量（不可赋值/取地址） |
-| 104 | 条件表达式 `?:` | 已定（0.0.46）：`cond ? a : b`，右结合；条件必须 `bool`；只求值一个分支；两侧同类型 / 隐式加宽 / `null` 适配，否则需 `as`；结果不是左值；见 5.2 |
-| 105 | 字段声明上的 `const` | 已定（0.0.59）：**实例字段不能是 `const`**（没有只读字段，也没有构造器赋值的 `readonly`）；类型体内的 `const` 只表示**类型级编译期常量**（无实例存储，`Type.NAME` 访问），见 3.7.1；`const int x;` 报错 |
-| 106 | 浮点 `%` | 已定（已实现）：合法，语义 = LLVM `frem` / C `fmod`（符号随被除数） |
-| 107 | unit 级 `const` 引用其它 `const`/枚举成员 | 已实现（0.0.59）：编译期常量求值器支持引用 unit 级 `const`、枚举成员、类型级 `const` 成员，支持前向引用；`const int B = A + 1;`、`const int C = sizeof(int) as int;` 合法；循环依赖/除零报错（见 3.7.2） |
-| 108 | 类型级 `const` 常量（`const` 成员） | 已定（0.0.59）：`const T NAME = <const-expr>;` 在 struct/class 体内，语义为编译期常量、无实例存储；`Type.NAME` / 类型方法体内裸名 / 基类链访问；`obj.NAME`、`this.NAME`、赋值、取地址均报错；union/interface 不允许（见 3.7.1） |
-| 109 | 位域（bit-fields） | 已定（0.0.62）：**明确不做**。不提供 C 式 `int x : 3;`，也不提供 Zig/Rust 风格的显式位宽语法；分配顺序/跨单元边界是实现定义，与可预测布局冲突。替代：掩码+移位 / `byte[N]`+offset / `packed`+访问器 / C shim（见 3.4） |
-| 110 | 泛型接口作值类型 / 值类型作接口值 | **已定（0.0.75）：明确不做**。无借用检查时值类型→接口值必然装箱（堆分配 + RC），成本与 `new` 一个 class 对象相当，且丧失显式生命周期与向下转换；运行时多态由 `class` 完整覆盖，异构值集合用和类型（10.1）。泛型接口只作约束（3.15.7）；`struct S : I` 只作静态满足（U33）。若将来引入借用检查，可重新评估 `ref I` 式零成本借用 |
-| 111 | 泛型成员 `const` / 泛型接口继承 | 待定：泛型 struct/class 的 `const` 成员与 `interface IList<T> : ISeq<T>` 暂报错 |
-| 110 | 类型别名 `type A = B;` | 已定（0.0.62）：`type` 为**上下文关键字**（声明起始位置 `type Ident =` 才解析为别名，其它位置仍是标识符，保护 C 互操作结构体的 `type` 字段）；每声明一个别名；别名透明（非 newtype）（见 4.5） |
-| 111 | range 扩展 `..=` / `step` / 倒序 | 已定（0.0.62）：`..=` 含上界；`step` 只跟序列表达式（`0..10 step 2`）；倒序靠**显式负 step**，`a..b` 不自动反序；`step 0` 编译错误；步长限编译期常量（见 6.4） |
-| 112 | 数组初始化区间展开 | 已定（0.0.62）：`int[10] a = {1, 2, 5..9, 10};` 中 `5..9` 展开为 5,6,7,8；端点须编译期常量；花括号内只支持 `..`（不接 `..=`/`step`）；展开后参与「不足补零 / 超长报错」（见 4.1） |
-| 113 | `switch` 扩展 | 已定（0.0.62）：**明确不做**（表达式形式/守卫/绑定/or 模式/类型分支/解构/`case`/fallthrough）；被匹配类型限整型与枚举（见 6.6） |
+| 1 | Declaration syntax | Decided: C# style, type first, multiple variables share the type |
+| 2 | Whether condition parentheses are mandatory | Decided: optional, omitted in the spec; C style remains legal |
+| 3 | Fixed-width type naming (C names vs `i32`) | Use C names first |
+| 4 | Layout of `string` and conversion to `byte[]` | Decided: `string` is a **value type provided by the std library**, and the layout/buffer/RC/API are library implementation details (`lib-std-string.md`); the language only guarantees the visible contract of §3.3 |
+| 5 | Whether arrays implicitly decay to pointers | No decay |
+| 6 | Whether dynamic arrays are included in phase one | Decided: included (`T[]` / `T[,]`, RC heap arrays) |
+| 7 | Bounds checking strategy | Checked in debug; configurable in release |
+| 8 | Signed overflow | Decided (implemented): two's-complement wraparound (the backend emits no `nsw`/`nuw`) |
+| 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
+| 10 | `goto`/`typedef`/function pointers/varargs | `goto`/function pointers are not done (phase one); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
+| 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding + `ref` (built-ins only); `for i, x` provides a `usize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; `for ref` is not available for user types; **multi-dimensional arrays forbid `for-in`** |
+| 12 | `..=` / `step` / reverse order for ranges | Implemented (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`) and must be a non-zero compile-time constant; reverse order relies on an **explicit negative step** (`a..b` does not reverse automatically); switch case ranges support `..=` and **do not support `step`** |
+| 13 | Local type inference | Decided: `auto x = expr;`; locals only, an initializer is required; all declarators must have the same type |
+| 14 | Default mutability of parameters | Mutable (C semantics) |
+| 15 | `main` with parameters | **Implemented**: `int main(int argc, char** argv)`, `argv` is null-terminated; other signatures are errors |
+| 16 | Error handling convention | Return codes + `null`; no exceptions are introduced |
+| 17 | Module visibility / linkage modifiers | Implemented (0.0.30): `private`=within a unit, `public`=across units; struct members are public by default, class members are private by default; `public:`/`private:` section labels are supported; the library boundary = the first segment of the unit name, crossing libraries requires `public unit`; after `use`, public symbols can be used directly without a prefix; non-public symbols use `internal` linkage (see `visibility-design.md`) |
+| 18 | Struct alignment/packed | Implemented (0.0.42): `packed` (no arguments, equivalent to `pack(1)`) and `align(N)` (a power-of-two constant, covering overall alignment and tail padding) are **keyword modifiers**, orthogonal and composable; `N` is compared against the natural alignment, and `N < natural alignment` is an error. See 3.4 for details |
+| 19 | Details of the conversions between `string` and `byte[]`/`char[N]` | `string` is an immutable view; `char[N]` initialization copies byte by byte; the remaining conversions are library APIs (see the library documentation) |
+| 20 | Struct constructors / `this` | class constructors and `this` are covered in 3.11/3.12; structs still use aggregate construction |
+| 21 | Whether `elif` is syntax sugar | Decided (implemented): supported, equivalent to `else if` |
+| 22 | Storage and lifetime of dynamic array literals | `T[] a = {...}` allocates a new array (RC); borrowed views are not supported |
+| 23 | Signedness and naming of `byte`/`char` | `byte`=u8 (the only unsigned 8-bit name, no alias); `char`=i8 (C-style signed) |
+| 24 | Whether `const` requires a compile-time constant | Locals do not (they may be initialized at run time); **unit-level `const` initializers must be compile-time constants** (see 4); `constexpr` comes later |
+| 25 | How to read `const int* p` | C model: `const int*` = pointer to a read-only int; `const int x` = a read-only binding; `T* const` is not provided |
+| 26 | Whether a parameter list allows multiple variables to share a type | Decided: **not allowed**; each parameter writes its own `type name` (`int f(int a, b)` is an error), see 7 for the implementation |
+| 27 | Struct aggregate initialization | Declaration `S s = {x=..., y=...}`; expression `S(...)`; positional and named forms cannot be mixed; all fields must be given |
+| 28 | Named-argument syntax `=` vs `:` | Use `=` first; `:` as an alternative |
+| 29 | Zero-value construction `S()` / `S s = {}` | Decided: zero-initialization (all fields cleared to zero) |
+| 30 | A type name colliding with a function/variable name | Conflicts are forbidden in the same scope |
+| 31 | Whether function calls support named arguments | Not supported in phase one; struct construction only |
+| 32 | Whether `T x(...)` is allowed in a declaration | Not provided; declarations use only `=`; aggregate zero values use `{}`, scalars use their own constants |
+| 33 | Relationship between declaration initialization and expression construction | `T x = T(...)` and `T x = {...}` are equivalent; prvalues are copy-elided |
+| 34 | Array/slice initialization | Declarations use `= {...}` / `= {}`; there is no literal in expressions |
+| 35 | Copy elision for prvalue initialization | Constructed directly in terms of semantics; there are no user-defined copy constructors/destructors |
+| 36 | A type must be declared before use | Required in phase one; forward declarations may be added later |
+| 37 | The `f(void)` compatibility form | Not supported for now; `()` means no parameters |
+| 38 | Return checking on all paths of a non-`void` function | Decided: mandatory (falling off the end is a compile error; `main` is an exception) |
+| 39 | Unit-level variable declarations | Decided: declared directly, private by default; `public` across units; `extern` for external symbols. `static` has been removed |
+| 40 | `static` functions | Removed (use `private`/`public` to control visibility) |
+| 41 | `static` local variables inside a function body | Removed (not supported) |
+| 42 | Unit-level variables are zero-initialized by default | Yes (static storage duration) |
+| 43 | Meaning of zero-initialization for `string`/slices/arrays | Empty string / empty slice / all-zero elements |
+| 44 | Scope of zero-value initialization | Aggregate types use `{}`, scalars use their own constants (`0`/`0.0`/`false`/`'\0'`/`null`); only at declaration-initialization positions |
+| 45 | Brace initialization rules | Declarations only; structs must give all fields (an empty `{}` means all zeros); arrays are zero-padded when short; slices are sized by element count |
+| 46 | Construction at non-declaration positions | Only `T(...)`; `{...}`, `{}` and `= 0` are not allowed |
+| 47 | The empty braces `{}` | Decided: zero-initialization for aggregate types (struct/array/slice/string); writing `{}` for a scalar is an error, use its own constant |
+| 48 | Copy initialization in a declaration `T x = expr` | Allowed; lvalues are copied, prvalues are copy-elided |
+| 49 | `0` in expressions vs zero-value initialization in declarations | In an expression it is an int; in a declaration, aggregates use `{}` and scalars use constants |
+| 50 | Language-level dynamic typing | Not a goal of phase one; `dynamic` is only reserved |
+| 51 | The purpose of `any` | Reserved as a static top-level type/library type; distinguished from `dynamic` |
+| 55 | Heterogeneous value scheme | A library-level Variant first; sum types + `match` later |
+| 56 | The relationship between `any` and `dynamic` | `any` is for static top-level/library types; `dynamic` is for runtime dynamism; they are not mixed |
+| 52 | `auto` and `const` | Decided (implemented): `const auto` is allowed |
+| 53 | Multiple declarators with `auto` | All variables must have the same inferred type |
+| 54 | Whether `auto` can be used at unit level | Not allowed; unit-level declarations require an explicit type |
+| 57 | Bitwise NOT operator | Decided: `~` (same as C); `not` is reserved for logical negation |
+| 58 | `not` precedence | Decided: low precedence, higher only than `and`/`or` |
+| 59 | Set of bitwise operators | Decided: `&` `\|` `~` (NOT) `^` (XOR) |
+| 60 | Exponentiation operator | Decided: no operator is provided; bitwise XOR has exclusive use of `^`; use `pow` (libc)/a library function for exponentiation |
+| 61 | If `^` were the exponentiation operator, what would XOR use | Deprecated: `^` is not the exponentiation operator, XOR keeps `^` |
+| 62 | `string` comparison semantics | Decided: `==`/`!=` compare byte values; no comparison with `null`; the zero value equals `""` (a library type contract, not a language special case) |
+| 63 | Floating-point literal narrowing | Decided: literals adapt to the context (`float f = 1.5;` is legal), but variables still require `as` |
+| 64 | Integer ↔ enum conversions | Decided: no implicit conversion in either direction, `as` is required (an enum is not a widening target for an integer, and an integer is not an implicit source for an enum) |
+| 65 | Upper limit of integer literals | Decided: `2^63-1`, exceeding it is an error |
+| 66 | Writability checks for `const`/`const`/`string` | Decided: the compiler must reject writes (see 3.7) |
+| 67 | Object model | Decided: struct values / class references; RC + weak; no cycle collector (see 3.8 / 8.3) |
+| 68 | Scope of `weak` | Class fields only; locals/parameters/return values are forbidden |
+| 69 | Semantics of `del` | **Removed (0.0.47)**: `del x;` is equivalent to `x = null;`, it has no separate semantics and has been deleted from the language (the keyword is kept only for migration diagnostics) |
+| 70 | Ownership of class parameters | Changed (0.0.47): the parameter is an **owning local variable** (+1 on entry, -1 on exit); it can be rebound inside the function body; it can be optimized later with borrow/escape analysis |
+| 71 | Interop between class and C | Passing to `extern` is forbidden; use a struct + alloc across languages |
+| 72 | Arrays of class | Decided: both static `Cat[N]` and dynamic `Cat[]` are supported (RC per element) |
+| 73 | `sizeof`/`alignof` on a class | Decided (implemented): a class takes the handle size (8), an interface takes the interface value size (16); the object size is not exposed |
+| 74 | Multithreaded reference counting | Decided (see 94): atomic RC (relaxed), objects may be shared across threads; the `--single-thread` non-atomic fast path is still undecided |
+| 75 | User destructor `deinit` | Not done in phase one; fields are released in reverse declaration order |
+| 76 | Inheritance model | Decided: single inheritance + multiple interface implementations; no multiple inheritance (see 3.9/3.10) |
+| 77 | Virtual methods | Decided: virtual by default; overrides/implementations are written `override` |
+| 78 | Abstract classes | Decided: having unimplemented methods makes a class implicitly abstract and it cannot be `new`ed |
+| 79 | Interface default methods | Decided: allowed; on conflict the class must explicitly override |
+| 80 | Constructors | Decided: overloading is allowed; `super(args)` comes first; C++-style dispatch; fields are cleared to zero first |
+| 81 | Overload resolution | Decided: exact > implicit widening; base-class overloads are merged; ambiguity is an error (see 3.11) |
+| 82 | Operator overloading | Decided: free functions only; arithmetic/unary `-`/comparison/bitwise; a class's `==` is fixed as identity comparison |
+| 83 | Object layout | Decided: `[rc][class_desc*]`; the desc contains the vtable and itable directories (see 8.3) |
+| 84 | Interface value layout | Decided: `{obj*, class_desc*}`, two words; `null` is supported |
+| 85 | Arrays/dynamic arrays of class | Supported; the Widget tree still recommends `first_child/next_sibling` |
+| 86 | `sizeof`/`alignof` on a class | Decided (implemented): same as #73 (class=8, interface=16) |
+| 87 | Multithreaded RC | Decided (same as 94): atomic RC (relaxed); the thread-local heap scheme has been rejected |
+| 88 | Name mangling | Decided: parameter types are included; `extern` keeps the original name; `main` is special |
+| 89 | Unary `~` overloading | Allowed (`operator~`, 1 parameter) |
+| 90 | Static arrays of class | Decided: allowed (forbidden for structs); retain/release per element |
+| 91 | `[]` overloading | Decided: `operator[]` reads, `operator[]=` writes; explicitly distinguished, no `&`/`const` |
+| 92 | User destructors | Decided: `~T()`, executed when the RC reaches zero; derived runs before base |
+| 93 | Exception model | Decided: unchecked, an `Exception` base class, `finally`; see 3.14 (not yet implemented) |
+| 94 | RC thread model | Decided: atomic RC (relaxed), objects may be shared across threads |
+| 95 | Generics roadmap | Decided + implemented (0.0.64–0.0.72): monomorphization, `<>` syntax, structural constraints, `Self`; see 3.15 for details |
+| 96 | Reserved words | Decided: see 2.5 |
+| 97 | Exception unwinding ABI | Undecided: do an SEH/Itanium spike first |
+| 98 | `const` class views / `const` methods | Decided (0.0.61): **explicitly not done** — no const view types are introduced and no const methods are provided; `const` serves only as a **read-only binding marker** for named types (locals/parameters: not rebindable, fields cannot be written directly through them) and as a qualifier for the pointee of pointers/slices; use a read-only `interface` when a read-only API boundary is needed |
+| 99 | `ref` parameters / return values | Implemented (0.0.62 for parameters; extended in 0.0.63): `ref` is a binding mode rather than a storable type — `ref T p` / `ref const T p` / `ref T f()`, and no `T&` is introduced; primitive types/enums/pointers/pure-value structs can be borrowed; a returned borrow must originate from a `ref` parameter, `this`, a global, or pointer/slice storage, and the result is not storable (it can only be written through on the spot / passed as a borrow / used with `for ref`); borrowing a local, a by-value parameter, or a temporary is a compile error; method/constructor parameters and `extern` do not support it (see 3.8, backlog U8) |
+| 100 | Downcast from an `interface` to a derived `interface` | Decided: not supported in phase one (only upcasts are allowed; `as` is an error) |
+| 101 | Non-ASCII character literals | Decided: not supported in phase one (a literal is a single-byte `byte`; use `'\xNN'` or `string`) |
+| 102 | Enum comparison | Decided: only between the same enum; `== != < <= > >=` are supported, the order is the order of the underlying integer values; cross-enum or integer comparisons require `as` (see §3.5) |
+| 103 | Qualified references to enum members | Decided: `Color.Red` is equivalent to the unprefixed `Red`; across units write `unit.Color.Red`; members are constants (not assignable, and their address cannot be taken) |
+| 104 | Conditional expression `?:` | Decided (0.0.46): `cond ? a : b`, right-associative; the condition must be `bool`; only one branch is evaluated; the two sides must have the same type / implicit widening / `null` adaptation, otherwise `as` is required; the result is not an lvalue; see 5.2 |
+| 105 | `const` on field declarations | Decided (0.0.59): **instance fields cannot be `const`** (there are no read-only fields, nor `readonly` assigned in a constructor); `const` inside a type body only denotes a **type-level compile-time constant** (no instance storage, accessed via `Type.NAME`), see 3.7.1; `const int x;` is an error |
+| 106 | Floating-point `%` | Decided (implemented): legal, the semantics are LLVM `frem` / C `fmod` (the sign follows the dividend) |
+| 107 | Unit-level `const` referencing other `const`s/enum members | Implemented (0.0.59): the compile-time constant evaluator supports referencing unit-level `const`s, enum members, and type-level `const` members, and supports forward references; `const int B = A + 1;` and `const int C = sizeof(int) as int;` are legal; cyclic dependencies/division by zero are errors (see 3.7.2) |
+| 108 | Type-level `const` constants (`const` members) | Decided (0.0.59): `const T NAME = <const-expr>;` inside a struct/class body, semantically a compile-time constant with no instance storage; accessed via `Type.NAME` / as a bare name inside a type method body / through the base-class chain; `obj.NAME`, `this.NAME`, assignment and taking the address are all errors; not allowed in unions/interfaces (see 3.7.1) |
+| 109 | Bit-fields | Decided (0.0.62): **explicitly not done**. No C-style `int x : 3;` is provided, nor is any Zig/Rust-style explicit bit-width syntax; the allocation order and cross-unit boundaries are implementation-defined, which conflicts with predictable layout. Alternatives: mask+shift / `byte[N]`+offset / `packed`+accessors / a C shim (see 3.4) |
+| 110 | A generic interface as a value type / a value type as an interface value | **Decided (0.0.75): explicitly not done**. Without borrow checking, a value type → interface value necessarily boxes (heap allocation + RC), at a cost comparable to `new`ing a class object, and it loses explicit lifetimes and downcasting; runtime polymorphism is fully covered by `class`, and heterogeneous value collections use sum types (10.1). Generic interfaces serve only as constraints (3.15.7); `struct S : I` provides only static satisfaction (U33). If borrow checking is introduced in the future, zero-cost borrows of the `ref I` form can be re-evaluated |
+| 111 | `const` members in generic types / generic interface inheritance | Undecided: `const` members of generic structs/classes and `interface IList<T> : ISeq<T>` are errors for now |
+| 110 | Type alias `type A = B;` | Decided (0.0.62): `type` is a **contextual keyword** (it is parsed as an alias only at the start of a declaration, `type Ident =`; elsewhere it is still an identifier, which protects the `type` field of C-interop structs); each declaration declares one alias; aliases are transparent (not newtypes) (see 4.5) |
+| 111 | Range extensions `..=` / `step` / reverse order | Decided (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`); reverse order relies on an **explicit negative step**, `a..b` does not reverse automatically; `step 0` is a compile error; the step size is limited to compile-time constants (see 6.4) |
+| 112 | Range expansion in array initialization | Decided (0.0.62): in `int[10] a = {1, 2, 5..9, 10};` the `5..9` expands to 5,6,7,8; the endpoints must be compile-time constants; only `..` is supported inside braces (it does not take `..=`/`step`); after expansion it participates in "zero-pad when short / error when too long" (see 4.1) |
+| 113 | `switch` extensions | Decided (0.0.62): **explicitly not done** (the expression form/guards/bindings/or-patterns/type branches/destructuring/`case`/fallthrough); the matched type is limited to integers and enums (see 6.6) |
 
 ---
 
-## 13. 示例
+## 13. Examples
 
-见 [`examples/example.mu`](../examples/example.mu) 与 [`examples/math.mu`](../examples/math.mu)。示例对应本草案，尚未保证可编译。
+See [`examples/example.mu`](../examples/example.mu) and [`examples/math.mu`](../examples/math.mu). The examples correspond to this draft and are not guaranteed to compile.
 
 ---
 
-## 14. 实现路线（非规范）
+## 14. Implementation Roadmap (non-normative)
 
-- **阶段 A**：生成 C99 源码，用 clang/cl 编译，快速验证语义与运行时。
-  - 状态：2026-11-08 实现并用于验证；**0.0.2 起移除**（双后端维护成本高），
-    代码保留在 git 历史 `cf3af48`，需要时可取回做差分对照。
-- **阶段 B**：生成 LLVM IR；Windows 用 COFF + `lld-link`，逐步摆脱 C 工具链。
-  - 状态（2026-11-08）：已实现（`src/codegen_llvm.cpp`，LLVM C++ API 直接产出 COFF 目标文件），
-    为当前唯一后端。
-  - 当前仍用 gcc 链接，尚未接入优化管线、调试信息与 `lld-link`。
-- **对象模型**（class/继承/接口/重载/构造器/运算符）已完成设计、前端语义与 **LLVM 代码生成**：
-  - 2026-11-09：类型模型、注册/继承/字段扁平化、方法/构造器/析构器检查、`this`/`super`、`new`/`del`、
-    重载解析、运算符派发（含一元与 `[]`/`[]=`）、接口默认方法冲突、抽象类推导、继承环检查、`weak` 字段。
-  - 2026-11-09（0.0.3–0.0.13）：对象头/desc/vtable/itable、构造与析构链、原子 RC、局部引用清理、
-    引用数组逐元素 RC、`as` 向下转换（desc 基类链）、临时值释放；端到端用例 41 个。
-  - **第一阶段不支持**：`const` **方法 / 深度只读视图（已定不做）**、`ref` 参数、`interface` 向派生接口的向下转换（见 12 表 98–100）；
-    跨线程 RC 压力验证后续补。
-  - 特征矩阵与偏差见 `object-model-plan.md`。
-- **异常**：设计已定（3.14），实现前先做 Windows EH ABI spike；并发的语言级支持为后续里程碑。
-- **泛型**：已实现单态化（3.15，0.0.64–0.0.72）。实例化 = 克隆 AST + 替换类型参数 + 规范化命名，
-  因此后端不需要感知泛型；剩余项为泛型接口继承。
-- 手动内存直接映射 libc `malloc/free/realloc`；运行时只需少量入口/支持代码。
-- 无 GC/异常/栈图需求，后端选择面比托管语言宽。
-- `for-in` 降级：区间 → 索引循环；数组/切片 → 带长度缓存的索引循环；`continue` 目标必须指向「推进处」。
-- `const` 单赋值、`const` 不参与代码生成，均为前端/优化友好信息。
-- 声明解析：`Type name` 后只跟 `=` 或 `;`；函数是 `Type name(params) { ... }`，不需要区分 `T x(...)` 是变量还是函数。
-- 初始化降级：`= expr` 拷贝/直接构造；`= {...}` 聚合初始化；`= {}` 编译为零值（结构体/数组/切片/`string` 递归清零/置空）。
-- prvalue 初始化直接构造目标，避免额外拷贝。
-- unit 级变量由加载器/启动代码零初始化。
-- `auto` 仅在前端做表达式类型直取；多声明符要求推断结果一致；无运行时开销。
-- 动态类型不在第一阶段；未来优先实现库级 Variant，再评估和类型 + `match`；`dynamic` 作为独立运行时层而非核心类型。
+- **Phase A**: generate C99 source, compile it with clang/cl, and quickly validate the semantics and the runtime.
+  - Status: implemented on 2026-11-08 and used for validation; **removed as of 0.0.2** (the maintenance cost of two backends is too high),
+    the code is kept in the git history at `cf3af48` and can be retrieved for differential comparison if needed.
+- **Phase B**: generate LLVM IR; on Windows use COFF + `lld-link`, gradually getting rid of the C toolchain.
+  - Status (2026-11-08): implemented (`src/codegen_llvm.cpp`, the LLVM C++ API directly produces COFF object files),
+    and it is the only backend at present.
+  - gcc is still used for linking; the optimization pipeline, debug info and `lld-link` are not hooked up yet.
+- **Object model** (class/inheritance/interfaces/overloading/constructors/operators) has completed its design, front-end semantics and **LLVM code generation**:
+  - 2026-11-09: type model, registration/inheritance/field flattening, method/constructor/destructor checks, `this`/`super`, `new`/`del`,
+    overload resolution, operator dispatch (including unary and `[]`/`[]=`), interface default method conflicts, abstract class deduction, inheritance cycle checks, `weak` fields.
+  - 2026-11-09 (0.0.3–0.0.13): object header/desc/vtable/itable, construction and destruction chains, atomic RC, cleanup of local references,
+    per-element RC for reference arrays, `as` downcasts (desc base-class chain), release of temporaries; 41 end-to-end test cases.
+  - **Not supported in phase one**: `const` **methods / deep read-only views (decided not to do)**, `ref` parameters, downcasts from an `interface` to a derived interface (see 12 table 98–100);
+    cross-thread RC stress validation will follow.
+  - See `object-model-plan.md` for the feature matrix and the deviations.
+- **Exceptions**: the design is decided (3.14); before implementing, do a Windows EH ABI spike first; language-level support for concurrency is a later milestone.
+- **Generics**: monomorphization is implemented (3.15, 0.0.64–0.0.72). Instantiation = clone the AST + substitute the type parameters + canonicalize the name,
+  so the backend does not need to be aware of generics; the remaining item is generic interface inheritance.
+- Manual memory maps directly onto libc `malloc/free/realloc`; the runtime only needs a small amount of entry/support code.
+- There is no need for GC/exceptions/stack maps, so the backend has a wider choice than managed languages.
+- `for-in` degradation: ranges → index loops; arrays/slices → index loops with a cached length; the target of `continue` must point at the "advance point".
+- `const` single assignment and `const` not participating in code generation are both front-end/optimization-friendly facts.
+- Declaration parsing: after `Type name` only `=` or `;` follows; a function is `Type name(params) { ... }`, so there is no need to distinguish whether `T x(...)` is a variable or a function.
+- Initialization degradation: `= expr` copies/directly constructs; `= {...}` performs aggregate initialization; `= {}` compiles to the zero value (structs/arrays/slices/`string` are recursively cleared/emptied).
+- prvalue initialization constructs the target directly, avoiding an extra copy.
+- Unit-level variables are zero-initialized by the loader/startup code.
+- `auto` only takes the expression type directly in the front end; multiple declarators require identical inference results; no runtime overhead.
+- Dynamic typing is not in phase one; in the future, implement a library-level Variant first, then evaluate sum types + `match`; `dynamic` acts as a separate runtime layer rather than a core type.
 
 
 

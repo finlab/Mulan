@@ -1,9 +1,9 @@
 unit check_weak_forward;
 
-// weak 字段可以引用后声明的 class；weak 字段可赋值、可读取
+// a weak field may reference a class declared later; weak fields are assignable and readable
 
 class A {
-    weak B b;         // B 在后面才声明
+    weak B b;         // B is declared later
     A() { b = null; }
 }
 

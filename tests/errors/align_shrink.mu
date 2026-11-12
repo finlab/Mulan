@@ -1,4 +1,4 @@
-// align(N) 不能小于自然对齐（降对齐只能用 packed）
+// align(N) cannot be smaller than the natural alignment (use packed to reduce alignment)
 unit align_shrink;
 
 align(2) struct Bad {

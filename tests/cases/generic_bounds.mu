@@ -1,4 +1,4 @@
-// generic_bounds.mu — 结构化约束（U34 M3b）：接口运算符成员 + 内置/用户运算符
+// generic_bounds.mu — structural constraints (U34 M3b): interface operator members + builtin/user operators
 unit generic_bounds;
 
 extern int puts(const char* s);

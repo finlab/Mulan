@@ -1,4 +1,4 @@
-// 布局修饰符只能用于 struct：class 上不允许
+// layout modifiers apply only to structs: not allowed on classes
 unit packed_class;
 
 packed class Bad {

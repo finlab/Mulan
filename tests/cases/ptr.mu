@@ -1,4 +1,4 @@
-// ptr.mu — &x / *p、指针参数、p[i]、alloc/free、null 判断、const int*
+// ptr.mu — &x / *p, pointer parameters, p[i], alloc/free, null checks, const int*
 unit ptr;
 
 extern int puts(const char* s);
@@ -30,7 +30,7 @@ void print_int(int v) {
     }
 }
 
-// 通过指针写调用方的变量
+// writes to the caller's variable through a pointer
 void add_to(int* p, int d) {
     *p += d;
 }
@@ -41,7 +41,7 @@ void swap(int* a, int* b) {
     *b = t;
 }
 
-// 只读指针参数：接口契约
+// read-only pointer parameter: interface contract
 int sum_readonly(const int* p, int n) {
     int s = 0;
     for i in 0..n {
@@ -57,28 +57,28 @@ int main() {
     print_int(*px); putchar('\n');   // 10
     *px = 15;
     print_int(x); putchar('\n');     // 15
-    *px += 5;                        // 通过指针复合赋值
+    *px += 5;                        // compound assignment through the pointer
     print_int(x); putchar('\n');     // 20
 
-    // ---------- 指针参数 ----------
+    // ---------- pointer parameters ----------
     add_to(&x, 7);
     print_int(x); putchar('\n');     // 27
     swap(&x, &y);
     print_int(x); putchar(' ');      // 20
     print_int(y); putchar('\n');     // 27
 
-    // ---------- 指针指向数组：p[i] 与指针算术 ----------
+    // ---------- pointer to an array: p[i] and pointer arithmetic ----------
     int[4] arr = {5, 6, 7, 8};
     int* p = &arr[0];
     print_int(p[2]); putchar('\n');      // 7
     print_int(*(p + 3)); putchar('\n');  // 8
-    p[0] += 1;                           // 指向数组本体，写穿透
+    p[0] += 1;                           // points at the array itself, writes go through
     print_int(arr[0]); putchar('\n');    // 6
 
     // ---------- const int* ----------
     print_int(sum_readonly(&arr[0], 4)); putchar('\n');   // 6+6+7+8 = 27
 
-    // ---------- alloc / free + null 检查 ----------
+    // ---------- alloc / free + null check ----------
     int* buf = alloc(4 * sizeof(int)) as int*;
     if buf == null {
         puts("alloc failed");
@@ -91,13 +91,13 @@ int main() {
     print_int(sum_readonly(buf, 4)); putchar('\n');   // 0+3+6+9 = 18
     free(buf as void*);
 
-    // ---------- null 指针 ----------
+    // ---------- null pointer ----------
     int* empty = null;
     if empty == null {
         puts("null ok");
     }
 
-    // ---------- 指向结构体：(*pp).field ----------
+    // ---------- pointing at a struct: (*pp).field ----------
     Point pt = {1, 2};
     Point* pp = &pt;
     (*pp).x = 42;

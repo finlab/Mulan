@@ -18,7 +18,7 @@ Box mk() {
 }
 
 int main() {
-    // 字面量/长度/下标/字节遍历/值比较
+    // literal / length / indexing / byte iteration / value comparison
     string s = "abc";
     if len(s) != 3 { return 1; }
     if s[0] != 'a' or s[2] != 'c' { return 2; }
@@ -31,7 +31,7 @@ int main() {
     for c in "xyz" { n += 1; }
     if n != 6 { return 7; }
 
-    // 零值 / 方法
+    // zero value / methods
     string z = {};
     if len(z) != 0 { return 8; }
     if not z.empty() { return 9; }
@@ -39,7 +39,7 @@ int main() {
     if s.length() != 3 { return 11; }
     if s.at(1) != 'b' { return 12; }
 
-    // 拼接 / 子串 / c_str / from_cstr
+    // concat / substring / c_str / from_cstr
     string t = s.concat("de");
     if t != "abcde" { return 13; }
     if t[4] != 'e' { return 14; }
@@ -52,7 +52,7 @@ int main() {
     string f = string("cstr");
     if f != "cstr" { return 19; }
 
-    // struct 字段 / 拷贝 / 返回 / class 字段
+    // struct field / copy / return / class field
     Box b = {"box", 1};
     if b.s != "box" { return 20; }
     Box b2 = b;
@@ -62,12 +62,12 @@ int main() {
     Holder h = new Holder();
     h.name = "held";
     if h.name != "held" { return 23; }
-    h = null; // 全局 string 与 char[N] 字面量初始化
+    h = null; // global string and char[N] literal initialization
     if G != "global" or len(G) != 6 { return 24; }
     char[8] buf = "abc";
     if buf[2] != 'c' or buf[3] != 0 { return 25; }
 
-    // 拼接结果可安全传回 C
+    // the concat result can be passed back to C safely
     if puts("str struct ok") < 0 { return 27; }
     return 0;
 }

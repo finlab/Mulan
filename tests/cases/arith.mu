@@ -1,4 +1,4 @@
-// arith.mu — 四则、取模、移位、优先级（含位运算 vs 比较）、while 累加
+// arith.mu — arithmetic, modulo, shifts, precedence (bitwise vs comparison), while accumulation
 unit arith;
 
 extern int puts(const char* s);
@@ -27,44 +27,44 @@ void print_int(int v) {
 }
 
 int main() {
-    // ---------- 四则与取模（/、% 向零截断） ----------
-    print_int(7 + 3 * 2); putchar('\n');     // 13：* 比 + 紧
-    print_int((7 + 3) * 2); putchar('\n');   // 20：括号优先
-    print_int(20 / 6); putchar('\n');        // 3：整数除法截断
+    // ---------- Arithmetic and modulo (/ and % truncate toward zero) ----------
+    print_int(7 + 3 * 2); putchar('\n');     // 13: * binds tighter than +
+    print_int((7 + 3) * 2); putchar('\n');   // 20: parentheses first
+    print_int(20 / 6); putchar('\n');        // 3: integer division truncates
     print_int(20 % 6); putchar('\n');        // 2
-    print_int(-(3 + 4) * 2); putchar('\n');  // -14：一元负号紧贴 (3+4)
-    print_int(100 - 7 - 8); putchar('\n');   // 85：- 左结合
+    print_int(-(3 + 4) * 2); putchar('\n');  // -14: unary minus binds to (3+4)
+    print_int(100 - 7 - 8); putchar('\n');   // 85: - is left-associative
 
-    // ---------- 移位与 +：+ 比 <<、>> 更紧（C 优先级惯例） ----------
+    // ---------- Shifts and +: + binds tighter than << and >> (C precedence convention) ----------
     print_int(1 << 2 + 1); putchar('\n');    // 1 << 3 = 8
     print_int((1 << 2) + 1); putchar('\n');  // 5
     print_int(16 >> 2 + 1); putchar('\n');   // 16 >> 3 = 2
     print_int((16 >> 2) + 1); putchar('\n'); // 5
 
-    // ---------- & 与 +：+ 更紧（加法先算） ----------
+    // ---------- & and +: + binds tighter (addition first) ----------
     print_int(9 & 3 + 4); putchar('\n');     // 9 & 7 = 1
     print_int((9 & 3) + 4); putchar('\n');   // 1 + 4 = 5
 
-    // ---------- ^ 与 &：& 更紧 ----------
+    // ---------- ^ and &: & binds tighter ----------
     print_int(12 & 5 ^ 3); putchar('\n');    // (12&5)=4, 4^3 = 7
     print_int(12 & (5 ^ 3)); putchar('\n');  // 12&6 = 4
 
-    // ---------- | 与 &：| 更松 ----------
+    // ---------- | and &: | binds looser ----------
     print_int(3 & 12 | 10); putchar('\n');   // (3&12)|10 = 0|10 = 10
     print_int(3 & (12 | 10)); putchar('\n'); // 3&14 = 2
 
-    // ---------- 位运算比比较更紧：6 & 2 == 2 即 (6 & 2) == 2 ----------
+    // ---------- Bitwise binds tighter than comparison: 6 & 2 == 2 means (6 & 2) == 2 ----------
     if 6 & 2 == 2 {
         puts("bitwise binds tighter than ==");
     }
-    // 4 < 6 & 2 即 4 < (6 & 2) = 4 < 2 = false
+    // 4 < 6 & 2 parses as 4 < (6 & 2) = 4 < 2 = false
     if 4 < 6 & 2 {
         puts("WRONG: relational bound tighter");
     } else {
         puts("relational binds looser than |");
     }
 
-    // ---------- while 累加 ----------
+    // ---------- while accumulation ----------
     int total = 0;
     int k = 1;
     while k <= 10 {
@@ -73,7 +73,7 @@ int main() {
     }
     print_int(total); putchar('\n');         // 55
 
-    // ---------- 其它复合赋值 ----------
+    // ---------- Other compound assignments ----------
     int acc = 12;
     acc *= 5;                                // 60
     acc /= 4;                                // 15

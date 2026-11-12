@@ -1,23 +1,25 @@
-"""Mulan 回归测试运行器。
+"""Mulan regression test runner.
 
-对每个用例执行
+For every case it runs
     <MUC_CMD> build <case> -o build/tests/<name>.exe --run
-把 stdout 与 tests/expected/<name>.txt 比较后给出 PASS/FAIL。
+and reports PASS/FAIL after comparing stdout with tests/expected/<name>.txt.
 
-编译器命令通过环境变量 MUC_CMD 配置（默认 `muc`），例如：
+The compiler command is configured through the MUC_CMD environment variable
+(default `muc`), for example:
     $env:MUC_CMD = "build/muc.exe"; python tests/run_tests.py   (PowerShell)
 
-用法:
-    python tests/run_tests.py                 # 全部用例（含 examples/example.mu）
-    python tests/run_tests.py --filter arith  # 只跑名字含 "arith" 的用例
-    python tests/run_tests.py -v              # 失败时打印完整实际输出
-    python tests/run_tests.py --keep-c        # 保留生成的 .c（默认编完即删）
+Usage:
+    python tests/run_tests.py                 # all cases (including examples/example.mu)
+    python tests/run_tests.py --filter arith  # only cases whose name contains "arith"
+    python tests/run_tests.py -v              # print the full actual output on failure
+    python tests/run_tests.py --keep-c        # keep the generated .ll/.o intermediates
 
-已知限制:
-  * `muc build --run` 会把编译器状态行（`+ gcc ...`、`ok: <exe>`）
-    与程序 stdout 混在一起，运行器会剔除以 `+ `、`ok: ` 开头的行再比较。
-    因此用例自身不要输出以这两个前缀开头的行。
-  * 只用标准库；在仓库根目录下直接 `python tests/run_tests.py` 运行。
+Known limitations:
+  * `muc build --run` mixes compiler status lines (`+ gcc ...`, `ok: <exe>`) into the
+    program's stdout; the runner strips lines starting with `+ ` and `ok: ` before
+    comparing, so cases must not print lines with these prefixes themselves.
+  * Standard library only; run it from the repository root as
+    `python tests/run_tests.py`.
 """
 
 from __future__ import annotations
@@ -37,22 +39,23 @@ ERRORS_DIR = ROOT / "tests" / "errors"
 CHECKS_DIR = ROOT / "tests" / "check"
 BUILD_DIR = ROOT / "build" / "tests"
 
-# 编译器命令：<MUC_CMD> build <case.mu> -o <exe> --run
-# 默认 `muc`（即编译出来的 muc.exe）。
+# Compiler command: <MUC_CMD> build <case.mu> -o <exe> --run
+# Defaults to `muc` (the compiler binary that was built).
 DEFAULT_COMPILER = "muc"
 
-# 编译器自身打到 stdout 的状态行前缀（与被剔除）
+# Status-line prefixes the compiler writes to stdout (stripped before comparison)
 COMPILER_PREFIXES = ("+ ", "ok: ", "error: ")
-RUN_TIMEOUT = 120  # 秒
+RUN_TIMEOUT = 120  # seconds
 
 
 def resolve_compiler() -> list[str]:
-    """把 MUC_CMD 拆成命令 token 列表。
+    """Split MUC_CMD into a list of command tokens.
 
-    支持三种写法：
-      * 不含空格（如 `muc`、`build\\muc.exe`）→ 单 token；
-      * 是当前机器上存在的单个文件路径（允许含空格）→ 单 token；
-      * 含空格且不是文件路径（如带参数的包装脚本）→ shlex 拆分。
+    Three forms are supported:
+      * no spaces (such as `muc`, `build\\muc.exe`) → a single token;
+      * an existing single file path on this machine (spaces allowed) → a single token;
+      * contains spaces but is not a file path (such as a wrapper script with
+        arguments) → split with shlex.
     """
     raw = (os.environ.get("MUC_CMD") or DEFAULT_COMPILER).strip()
     if " " not in raw:
@@ -74,13 +77,13 @@ def collect_cases() -> list[Case]:
     cases: list[Case] = []
     for src in sorted(CASES_DIR.glob("*.mu")):
         cases.append(Case(src.stem, src, EXPECTED_DIR / f"{src.stem}.txt"))
-    # examples/example.mu 也作为一个用例
+    # examples/example.mu also runs as a case
     cases.append(Case("example", ROOT / "examples" / "example.mu", EXPECTED_DIR / "example.txt"))
     return cases
 
 
 class ErrCase:
-    """必须被编译器拒绝的用例：.err 每行是一个必须出现在错误输出里的子串。"""
+    """A case the compiler must reject: each .err line is a substring that must appear in the diagnostics."""
 
     def __init__(self, name: str, src: Path, spec: Path) -> None:
         self.name = name
@@ -89,16 +92,17 @@ class ErrCase:
 
 
 def collect_error_cases() -> list[ErrCase]:
-    # 以 lib_ 开头的文件是多 unit 报错用例的依赖库，不作为独立用例
+    # Files starting with lib_ are dependency libraries for multi-unit error cases, not cases themselves
     return [ErrCase(s.stem, s, ERRORS_DIR / f"{s.stem}.err")
             for s in sorted(ERRORS_DIR.glob("*.mu"))
             if not s.stem.startswith("lib_")]
 
 
 class CheckCase:
-    """只需要通过语义检查（`check`）就必须成功的用例。
+    """A case that only has to pass the semantic check (`check`).
 
-    用于 codegen 尚未覆盖、但语义层已完整支持的特性（如 class / interface）。
+    Used for features the semantic layer fully supports but codegen does not cover
+    yet (such as class / interface).
     """
 
     def __init__(self, name: str, src: Path) -> None:
@@ -109,7 +113,7 @@ class CheckCase:
 def collect_check_cases() -> list[CheckCase]:
     if not CHECKS_DIR.is_dir():
         return []
-    # 以 lib_ 开头的文件是多 unit 测试的依赖库，不作为独立用例
+    # Files starting with lib_ are dependency libraries for multi-unit tests, not cases themselves
     return [CheckCase(s.stem, s) for s in sorted(CHECKS_DIR.glob("*.mu"))
             if not s.stem.startswith("lib_")]
 
@@ -122,23 +126,23 @@ def run_check_case(case: CheckCase, verbose: bool) -> tuple[bool, str]:
             errors="replace", timeout=RUN_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        return False, f"超时（>{RUN_TIMEOUT}s）: " + " ".join(cmd)
+        return False, f"timeout (>{RUN_TIMEOUT}s): " + " ".join(cmd)
     except OSError as e:
-        return False, f"无法执行编译器 `{cmd[0]}`（{e}）"
+        return False, f"cannot execute compiler `{cmd[0]}` ({e})"
 
     if r.returncode == 0:
         return True, "ok"
-    lines = ["语义检查失败（应通过）", "  命令: " + " ".join(cmd)]
+    lines = ["semantic check failed (it should pass)", "  command: " + " ".join(cmd)]
     text = ((r.stderr or "") + "\n" + (r.stdout or "")).strip()
     lines += ["    " + ln for ln in text.splitlines()[:10]]
     if verbose:
-        lines.append("  --- stderr 全文 ---")
+        lines.append("  --- full stderr ---")
         lines += ["  " + ln for ln in (r.stderr or "").splitlines()]
     return False, "\n".join(lines)
 
 
 def normalize(text: str) -> list[str]:
-    """剔除编译器状态行、行尾空白与末尾空行。"""
+    """Strip compiler status lines, trailing whitespace and trailing blank lines."""
     out: list[str] = []
     for line in text.splitlines():
         if line.startswith(COMPILER_PREFIXES):
@@ -150,7 +154,7 @@ def normalize(text: str) -> list[str]:
 
 
 def run_case(case: Case, keep_c: bool, verbose: bool) -> tuple[bool, str]:
-    """返回 (是否通过, 说明)。"""
+    """Return (passed, explanation)."""
     exe = BUILD_DIR / (case.name + (".exe" if sys.platform == "win32" else ""))
     cmd = resolve_compiler() + [
         "build",
@@ -164,20 +168,20 @@ def run_case(case: Case, keep_c: bool, verbose: bool) -> tuple[bool, str]:
             errors="replace", timeout=RUN_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        return False, f"超时（>{RUN_TIMEOUT}s）: " + " ".join(cmd)
+        return False, f"timeout (>{RUN_TIMEOUT}s): " + " ".join(cmd)
     except OSError as e:
-        return False, f"无法执行编译器 `{cmd[0]}`（{e}）；可用 MUC_CMD 指定，如 `build/muc.exe`"
+        return False, f"cannot execute compiler `{cmd[0]}` ({e}); set MUC_CMD, e.g. `build/muc.exe`"
 
     if not case.expected.is_file():
-        return False, f"缺少期望文件 {case.expected}"
+        return False, f"missing expected file {case.expected}"
 
     if r.returncode != 0:
         msg = [
-            f"build --run 失败（退出码 {r.returncode}）",
-            "  命令: " + " ".join(cmd),
-            "  stderr 尾部:",
+            f"build --run failed (exit code {r.returncode})",
+            "  command: " + " ".join(cmd),
+            "  stderr tail:",
         ]
-        msg += ["    " + ln for ln in (r.stderr.strip().splitlines() or ["<空>"])[-8:]]
+        msg += ["    " + ln for ln in (r.stderr.strip().splitlines() or ["<empty>"])[-8:]]
         return False, "\n".join(msg)
 
     actual = normalize(r.stdout)
@@ -187,22 +191,22 @@ def run_case(case: Case, keep_c: bool, verbose: bool) -> tuple[bool, str]:
     if actual == wanted:
         return True, "ok"
 
-    # 找第一个差异，打印上下文
+    # Locate the first difference and print some context
     i = 0
     while i < len(actual) and i < len(wanted) and actual[i] == wanted[i]:
         i += 1
     lines = [
-        f"输出不匹配：第一个差异在第 {i + 1} 行（共实际 {len(actual)} 行 / 期望 {len(wanted)} 行）",
-        "  上下文 [expected | actual]:",
+        f"output mismatch: first difference at line {i + 1} (actual {len(actual)} lines / expected {len(wanted)} lines)",
+        "  context [expected | actual]:",
     ]
     lo, hi = max(0, i - 2), max(i + 3, min(len(actual), len(wanted)))
     for j in range(lo, hi):
-        got = actual[j] if j < len(actual) else "<缺失>"
-        exp = wanted[j] if j < len(wanted) else "<缺失>"
+        got = actual[j] if j < len(actual) else "<missing>"
+        exp = wanted[j] if j < len(wanted) else "<missing>"
         mark = " " if j < len(actual) and j < len(wanted) and actual[j] == wanted[j] else ">"
         lines.append(f"  {mark} {j + 1:>3} | exp: {exp!r} | act: {got!r}")
     if verbose:
-        lines.append("  --- 完整实际输出 ---")
+        lines.append("  --- full actual output ---")
         lines += ["  " + ln for ln in r.stdout.splitlines()]
         if not lines[-1]:
             lines.pop()
@@ -210,9 +214,9 @@ def run_case(case: Case, keep_c: bool, verbose: bool) -> tuple[bool, str]:
 
 
 def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
-    """用例必须被拒绝；.err 里每行子串都必须出现在错误输出中。"""
+    """The case must be rejected; every .err line substring must appear in the diagnostics."""
     if not case.spec.is_file():
-        return False, f"缺少期望文件 {case.spec}（每行一个必须出现的错误子串）"
+        return False, f"missing expectation file {case.spec} (one required error substring per line)"
     wanted = [
         ln.strip()
         for ln in case.spec.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -225,29 +229,29 @@ def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
             errors="replace", timeout=RUN_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        return False, f"超时（>{RUN_TIMEOUT}s）: " + " ".join(cmd)
+        return False, f"timeout (>{RUN_TIMEOUT}s): " + " ".join(cmd)
     except OSError as e:
-        return False, f"无法执行编译器 `{cmd[0]}`（{e}）"
+        return False, f"cannot execute compiler `{cmd[0]}` ({e})"
 
     text = (r.stderr or "") + "\n" + (r.stdout or "")
     if r.returncode == 0:
-        return False, "编译器接受了这个应当报错的程序（漏检）\n  命令: " + " ".join(cmd)
+        return False, "the compiler accepted this program, which must be rejected (missed diagnostic)\n  command: " + " ".join(cmd)
     missing = [w for w in wanted if w not in text]
     if missing:
-        lines = ["错误信息缺少预期关键词: " + ", ".join(repr(m) for m in missing), "  实际输出:"]
+        lines = ["diagnostics are missing expected keywords: " + ", ".join(repr(m) for m in missing), "  actual output:"]
         lines += ["    " + ln for ln in text.strip().splitlines()[:10]]
         if verbose:
-            lines.append("  --- stderr 全文 ---")
+            lines.append("  --- full stderr ---")
             lines += ["  " + ln for ln in (r.stderr or "").splitlines()]
         return False, "\n".join(lines)
     return True, "ok"
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Mulan 回归测试运行器")
-    ap.add_argument("--filter", help="只跑用例名包含该子串的用例")
-    ap.add_argument("-v", "--verbose", action="store_true", help="失败时打印完整实际输出")
-    ap.add_argument("--keep-c", action="store_true", help="保留生成的 C 源码与 exe")
+    ap = argparse.ArgumentParser(description="Mulan regression test runner")
+    ap.add_argument("--filter", help="only run cases whose name contains this substring")
+    ap.add_argument("-v", "--verbose", action="store_true", help="print the full actual output on failure")
+    ap.add_argument("--keep-c", action="store_true", help="keep the generated .ll/.o intermediates and the exe")
     args = ap.parse_args(argv)
 
     cases = collect_cases()
@@ -258,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         err_cases = [c for c in err_cases if args.filter in c.name]
         check_cases = [c for c in check_cases if args.filter in c.name]
     if not cases and not err_cases and not check_cases:
-        print(f"没有匹配 `{args.filter}` 的用例")
+        print(f"no cases match `{args.filter}`")
         return 1
     total = len(cases) + len(err_cases) + len(check_cases)
 
@@ -299,13 +303,13 @@ def main(argv: list[str] | None = None) -> int:
             print(msg)
 
     print()
-    print(f"通过 {len(passed)} / {total}")
-    print(f"  （成功用例 {len(cases)}，必须报错用例 {len(err_cases)}，check 用例 {len(check_cases)}）")
+    print(f"passed {len(passed)} / {total}")
+    print(f"  ({len(cases)} run cases, {len(err_cases)} must-fail cases, {len(check_cases)} check cases)")
     if failed:
-        print("失败用例: " + ", ".join(failed))
+        print("failed cases: " + ", ".join(failed))
         code = 1
     else:
-        print("全部通过")
+        print("all passed")
         code = 0
 
     if not args.keep_c:
@@ -314,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
                 p.unlink()
             except FileNotFoundError:
                 pass
-        # LLVM 后端的中间产物（build/<case>.ll / .o）
+        # LLVM backend intermediates (build/<case>.ll / .o)
         for pattern in ("*.ll", "*.o"):
             for p in (ROOT / "build").glob(pattern):
                 try:

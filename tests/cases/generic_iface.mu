@@ -1,4 +1,4 @@
-// generic_iface.mu — 泛型接口作约束（M5a）：结构化满足，无需声明 `:`
+// generic_iface.mu — generic interface as a constraint (M5a): structural satisfaction, no `:` declaration needed
 unit generic_iface;
 
 extern int puts(const char* s);
