@@ -119,6 +119,8 @@ struct Member : Expr {
     // `Sum.None`: a unit alternative used as a value
     TypePtr sum_ty;
     int sum_alt = -1;
+    // a generic sum's alternative: `Option<int>.None` (the type arguments of the base type)
+    std::vector<TypeSpecPtr> type_args;
 };
 
 struct Index : Expr {

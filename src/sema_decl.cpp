@@ -328,8 +328,9 @@ namespace muc_detail {
     }
 
     // Sum type (SPEC 10.1): resolve the alternatives' payload types and synthesize the layout type
-    // `struct { i32 tag; union { payload... } }`. The sum `Type` was registered in `place_structs`, so it
-    // is filled in place and every earlier reference keeps pointing at the same object.
+    // `struct { i32 tag; union { payload... } }`. `sd->ty` must already exist (created in
+    // `place_structs` for a declared sum, or by the instantiator for a generic instance), and it is
+    // filled in place so every reference keeps pointing at the same object.
     void Sema::resolve_sum(SumDecl* sd, Unit* u) {
         if (sd->alts.size() < 2) {
             err("sum type `" + sd->name + "` needs at least two alternatives", sd);

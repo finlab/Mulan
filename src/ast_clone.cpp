@@ -443,8 +443,23 @@ std::unique_ptr<Decl> clone_decl(const Decl& d) {
         r->is_template = p->is_template;
         return r;
     }
-    if (auto p = dynamic_cast<const ClassDecl*>(&d)) {
-        auto r = mk<ClassDecl>(d);
+    if (auto p = dynamic_cast<const SumDecl*>(&d)) {
+        auto r = mk<SumDecl>(d);
+        r->name = p->name;
+        for (const auto& alt : p->alts) {
+            SumAlt copy;
+            copy.name = alt.name;
+            copy.line = alt.line;
+            copy.col = alt.col;
+            for (const auto& fs : alt.fields) copy.fields.push_back(fs ? clone_type_spec(*fs) : nullptr);
+            r->alts.push_back(std::move(copy));
+        }
+        r->type_params = clone_type_params(p->type_params);
+        r->is_public = p->is_public;
+        r->is_template = p->is_template;
+        return r;
+    }
+    if (auto p = dynamic_cast<const ClassDecl*>(&d)) {        auto r = mk<ClassDecl>(d);
         r->name = p->name;
         r->bases = p->bases;
         r->base_specs = clone_type_args(p->base_specs);

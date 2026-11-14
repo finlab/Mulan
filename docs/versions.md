@@ -10,6 +10,28 @@
 
 ## Releases
 
+### 0.0.117 — 2026-11-14
+
+**Generic sums (U42 S3): `Option<T>` / `Result<T, E>` instantiate like a generic struct.**
+
+- `type Option<T> = Some(T) | None;` takes type parameters; `Option<int>` and `Option<const char*>`
+  are distinct instances with their own layout and alternatives (`sizeof` is 8 for the `int` payload,
+  16 for a pointer). Alternatives, construction (`Option<int>.Some(3)`, `Option<int>.None`) and `match`
+  all use the familiar forms.
+- Generic instantiations, construction and alternative access now go through the parser's existing
+  speculative `<...>` probe: `Option<int>.Some(3)` parses as a member call carrying the instantiation's
+  type arguments, and `Option<int>.None` as a member carrying them too.
+- `SumDecl` joins the generic machinery end to end: `index_templates`, `clone_decl` (it had no clone
+  branch, which crashed the instantiator), `subst_decl` (alternative payload types were not
+  substituted, which made `T` unresolvable), and the instantiation path itself.
+- **Fixed along the way**: the instance label for a type argument with no `name` (pointer, slice,
+  array, function type) was empty, so `Result<int, const char*>` and `Result<int, char*>` would have
+  collapsed into one instance. Labels now fall back to the argument's textual form.
+- Tests: `sum_generic` (`Option<int>`, `Option<const char*>`, `Result<int, const char*>`, an RC
+  payload released at scope exit, per-instantiation `sizeof`).
+
+**Tests**: 527/527 (163 pass + 341 must-fail + 20 check + 3 ir)
+
 ### 0.0.116 — 2026-11-14
 
 **Sum types, stage 2: `match` with bindings and exhaustiveness (SPEC 10.1.2).**

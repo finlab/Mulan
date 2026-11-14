@@ -2089,6 +2089,11 @@ Value d = Value.None;        // a unit alternative is a plain value
   by `|`: `type Name = Alt | Alt(T1, ...) | ...;`. Anything else after `type X =` remains a
   transparent alias (4.5), so existing code is unaffected. `|` is the same operator the constraint
   syntax uses (`T: int | long`): the alternatives are the value set.
+- **Generic sums** (0.0.117): `type Option<T> = Some(T) | None;` takes type parameters and instantiates
+  per concrete argument, exactly like a generic struct — `Option<int>` and `Option<const char*>` are
+  two different types with their own layout and alternatives. Construction and `match` use the same
+  forms: `Option<int>.Some(3)`, `Option<int>.None`, `match o { Some(v): ... None: ... }`. A generic
+  alias (`type A<T> = B<T>;`) is still rejected, as before.
 - **Alternatives** have 0..n payload types (types only, no names, as with any anonymous function
   type). Duplicate alternative names and a single alternative are errors.
 - **Layout**: `{ i32 tag; union payload }` — the payload area behaves like a `union` (every
@@ -2101,10 +2106,8 @@ Value d = Value.None;        // a unit alternative is a plain value
   copied by value, same rule as array elements).
 - **Construction**: `Type.Alt(values...)` for a payload alternative, `Type.Alt` (no parentheses) for a
   unit alternative. The argument count and types are checked against the declaration.
-- **Not provided yet**: `match`/pattern dispatch ~~(`Value` can be built, copied, stored and destroyed,
-  but not inspected)~~ → **implemented in 0.0.116** (below), `==` between sums, sums as `extern`
-  signatures, and generic sums
-  (`Option<T>`) — generic instantiation of sums is part of the next step.
+- **Not provided yet**: ~~generic sums (`Option<T>`)~~ → **implemented in 0.0.117**, `==` between sums,
+  and sums as `extern` signatures.
 - C ABI: the layout is the classic `{ tag, union }` shape, but the type is not passed to C yet.
 
 #### 10.1.2 `match` (implemented 0.0.116)

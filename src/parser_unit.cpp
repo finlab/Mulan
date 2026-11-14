@@ -117,15 +117,18 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             continue;
         }
 
-        // contextual keyword `type`: `type Ident = <type>;` (transparent type alias, exactly one definition per declaration)
+        // contextual keyword `type`: `type Ident = <type>;` (transparent type alias) or
+        // `type Ident = Alt | Alt(T);` (sum type), optionally with type parameters for a sum.
         if (peek().kind == TokKind::Ident && peek().text == "type" && peek(1).kind == TokKind::Ident &&
-            peek(2).is_op("=")) {
+            (peek(2).is_op("=") || peek(2).is_op("<"))) {
             if (has_layout) {
                 throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` or `union` declaration",
                              layout_tok);
             }
             advance();  // type
             const Token name_tok = expect_ident("type alias name");
+            std::vector<TypeParam> type_params;
+            if (at_op("<")) type_params = parse_type_params();
             expect_op("=");
             // `type X = A | B(T) | C;` declares a **sum type** (SPEC 10.1); everything else stays a
             // transparent alias.
@@ -185,9 +188,15 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 semicolon();
                 sd->is_public = is_pub;
                 sd->is_export = is_export;
+                sd->type_params = std::move(type_params);
                 type_names_.insert(sd->name);
                 unit->decls.push_back(std::move(sd));
                 continue;
+            }
+            if (!type_params.empty()) {
+                throw err_at("generic type aliases are not supported; only sum types take type "
+                             "parameters (`type Option<T> = Some(T) | None;`)",
+                             name_tok);
             }
             auto d = std::make_unique<TypeAliasDecl>();
             d->name = name_tok.text;

@@ -4,6 +4,8 @@
 // This file holds expression type checking (definitions of Sema members).
 #include "sema_impl.hpp"
 
+#include "ast_clone.hpp"
+
 namespace muc_detail {
 
     TypePtr Sema::check_expr(Expr* e, const TypePtr& expected) {
@@ -801,6 +803,16 @@ namespace muc_detail {
                 if (lookup_local(nm->ident) == nullptr &&
                     info().globals.find(nm->ident) == info().globals.end()) {
                     et = find_type_in_expr(nm->ident, e);
+                    if (!et && !e->type_args.empty()) {
+                        // a generic sum used as an alternative: `Option<int>.None`
+                        TypeSpec spec;
+                        spec.kind = TypeSpec::K::Named;
+                        spec.name = nm->ident;
+                        spec.line = e->line;
+                        spec.col = e->col;
+                        for (auto& a : e->type_args) spec.args.push_back(clone_type_spec(*a));
+                        et = instantiate_generic(&spec, cur_);
+                    }
                     if (et) nm->ty = et;
                 }
             } else if (auto inner = dynamic_cast<Member*>(base)) {
@@ -831,25 +843,40 @@ namespace muc_detail {
                 }
             }
             if (et) {
-                if (et->kind == TypeKind::Sum) {
-                    // `Value.None`: a unit alternative is a value; alternatives with a payload are
-                    // constructed as `Value.Int(3)` (handled in check_call).
-                    int idx = -1;
-                    for (size_t k = 0; k < et->sum_names.size(); ++k) {
-                        if (et->sum_names[k] == e->name) { idx = static_cast<int>(k); break; }
+                if (et->kind == TypeKind::Sum || e->type_args.size() > 0) {
+                    // `Value.None` / `Option<int>.None`: a unit alternative is a value; alternatives with
+                    // a payload are constructed as `Value.Int(3)` (handled in check_call).
+                    TypePtr st = et;
+                    std::string base_name;
+                    if (auto on = dynamic_cast<Name*>(obj); on) base_name = on->ident;
+                    if (e->type_args.size() > 0) {
+                        TypeSpec spec;
+                        spec.kind = TypeSpec::K::Named;
+                        spec.name = base_name;
+                        spec.line = e->line;
+                        spec.col = e->col;
+                        for (auto& a : e->type_args) spec.args.push_back(clone_type_spec(*a));
+                        st = instantiate_generic(&spec, cur_);
                     }
-                    if (idx < 0) err("sum type `" + et->str() + "` has no alternative `" + e->name + "`", e);
-                    if (!et->sum_fields[static_cast<size_t>(idx)].empty()) {
-                        err("alternative `" + e->name + "` of `" + et->str() +
-                                "` carries a payload: construct it with `" + et->str() + "." + e->name +
+                    if (!st || st->kind != TypeKind::Sum) {
+                        err("`" + base_name + "` is not a sum type", e);
+                    }
+                    int idx = -1;
+                    for (size_t k = 0; k < st->sum_names.size(); ++k) {
+                        if (st->sum_names[k] == e->name) { idx = static_cast<int>(k); break; }
+                    }
+                    if (idx < 0) err("sum type `" + st->str() + "` has no alternative `" + e->name + "`", e);
+                    if (!st->sum_fields[static_cast<size_t>(idx)].empty()) {
+                        err("alternative `" + e->name + "` of `" + st->str() +
+                                "` carries a payload: construct it with `" + st->str() + "." + e->name +
                                 "(...)`",
                             e);
                     }
                     e->kind = "sum_unit";
-                    e->sum_ty = et;
+                    e->sum_ty = st;
                     e->sum_alt = idx;
-                    obj->ty = et;
-                    return et;
+                    obj->ty = st;
+                    return st;
                 }
                 if (et->kind == TypeKind::Enum) {
                     EnumConst* ec = find_enum_member(et, e->name);

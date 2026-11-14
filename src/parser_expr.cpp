@@ -656,7 +656,9 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
             bool ok = false;
             try {
                 std::vector<TypeSpecPtr> args = parse_type_args();
-                if (at_op("(")) {
+                // `f<int>(...)` or a generic sum alternative `Option<int>.Some(...)` / `Option<int>.None`:
+                // the type arguments belong to the call or the member access.
+                if (at_op("(") || (at_op(".") && peek(1).kind == TokKind::Ident)) {
                     pending_type_args = std::move(args);
                     ok = true;
                 }
@@ -732,6 +734,11 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
             node->name = std::move(nm);
             node->line = t.line;
             node->col = t.col;
+            // a generic sum's alternative: `Option<int>.None` / `Option<int>.Some(...)`
+            if (!pending_type_args.empty() && dynamic_cast<Name*>(node->obj.get())) {
+                node->type_args = std::move(pending_type_args);
+                pending_type_args.clear();
+            }
             e = std::move(node);
             continue;
         }

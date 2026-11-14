@@ -72,7 +72,9 @@ void split_qualified(const std::string& full, std::string& unit, std::string& na
 // declare `Item` get distinct instances of `Box<Item>`.
 static std::string instance_label(const TypePtr& t, const TypeSpec* fallback, const std::string& tmpl_unit) {
     if (!t) return fallback ? canon_spec(*fallback) : std::string("?");
-    if (t->unit.empty() || t->unit == tmpl_unit) return t->name;
+    // Pointer/slice/array/function types have no `name`; their textual form already carries any
+    // nested unit qualification (`Result<int, const char*>`).
+    if (t->unit.empty() || t->unit == tmpl_unit) return t->name.empty() ? t->str() : t->name;
     return t->unit + "." + t->name;
 }
 
@@ -86,6 +88,8 @@ void Sema::index_templates() {
                 name = c->name;
             } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
                 name = i->name;
+            } else if (auto sm = dynamic_cast<SumDecl*>(d.get())) {
+                name = sm->name;
             } else if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
                 name = f->name;
             } else {
@@ -179,11 +183,14 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     auto* sd_tmpl = dynamic_cast<StructDecl*>(tmpl_decl);
     auto* cd_tmpl = dynamic_cast<ClassDecl*>(tmpl_decl);
     auto* id_tmpl = dynamic_cast<InterfaceDecl*>(tmpl_decl);
-    if (!sd_tmpl && !cd_tmpl && !id_tmpl) {
+    auto* sm_tmpl = dynamic_cast<SumDecl*>(tmpl_decl);
+    if (!sd_tmpl && !cd_tmpl && !id_tmpl && !sm_tmpl) {
         err_ts("`" + base + "` is not a generic type", spec);
     }
     const std::vector<TypeParam>& tps =
-        sd_tmpl ? sd_tmpl->type_params : (cd_tmpl ? cd_tmpl->type_params : id_tmpl->type_params);
+        sm_tmpl ? sm_tmpl->type_params
+                : (sd_tmpl ? sd_tmpl->type_params
+                           : (cd_tmpl ? cd_tmpl->type_params : id_tmpl->type_params));
     if (tps.size() != spec->args.size()) {
         err_ts("generic `" + base + "` expects " + std::to_string(tps.size()) +
                    " type argument(s) but got " + std::to_string(spec->args.size()),
@@ -196,11 +203,12 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         if (!sd_tmpl->const_members.empty() || !sd_tmpl->bases.empty()) {
             err_ts("generic struct `" + base + "` does not support const members or interfaces yet", spec);
         }
-    } else {
+    } else if (cd_tmpl) {
         if (!cd_tmpl->const_members.empty()) {
             err_ts("generic class `" + base + "` does not support const members yet", spec);
         }
     }
+    // generic sum types have no extra restrictions: the alternatives are plain payload types
 
     Unit* tmpl_unit_ptr = nullptr;
     auto info_it = infos_.find(tmpl_unit);
@@ -225,12 +233,97 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     auto* sd = dynamic_cast<StructDecl*>(clone.get());
     auto* cd = dynamic_cast<ClassDecl*>(clone.get());
     auto* id = dynamic_cast<InterfaceDecl*>(clone.get());
+    auto* sm = dynamic_cast<SumDecl*>(clone.get());
     if (sd) {
         sd->name = display;
     } else if (cd) {
         cd->name = display;
+    } else if (sm) {
+        sm->name = display;
     } else {
         id->name = display;
+    }
+
+    // ---------------- generic sums: `type Option<T> = Some(T) | None;` instantiates like a struct ----------------
+    if (sm) {
+        TypePtr ty = Type::make_sum(tmpl_unit, display, {}, {}, {}, nullptr);
+        sm->ty = ty;
+        Unit* saved_cur = cur_;
+        cur_ = tmpl_unit_ptr;
+        if (sm->alts.size() < 2) {
+            err_ts("sum type `" + display + "` needs at least two alternatives", spec);
+        }
+        std::vector<std::string> names;
+        std::vector<std::vector<TypePtr>> fields;
+        std::vector<TypePtr> payload;
+        std::unordered_set<std::string> seen;
+        for (auto& alt : sm->alts) {
+            if (!seen.insert(alt.name).second) {
+                err_ts("duplicate alternative `" + alt.name + "` in sum type `" + display + "`", spec);
+            }
+            std::vector<TypePtr> fts;
+            for (auto& fs : alt.fields) {
+                TypePtr ft = resolve_type(fs.get(), tmpl_unit_ptr);
+                if (is_void(ft)) err_ts("payload of alternative `" + alt.name + "` cannot be `void`", spec);
+                if (noncopyable_struct(ft)) {
+                    err_ts("payload of alternative `" + alt.name + "` is struct `" + ft->str() +
+                               "`, which has a destructor and cannot be stored by value in a sum",
+                           spec);
+                }
+                fts.push_back(ft);
+            }
+            TypePtr pt;
+            if (fts.size() == 1) {
+                pt = fts[0];
+            } else if (fts.size() > 1) {
+                pt = Type::make_struct(tmpl_unit, "$alt$" + display + "$" + alt.name);
+                for (size_t i = 0; i < fts.size(); ++i) {
+                    Field f;
+                    f.name = "f" + std::to_string(i);
+                    f.type = fts[i];
+                    pt->fields.push_back(std::move(f));
+                }
+            }
+            names.push_back(alt.name);
+            payload.push_back(pt);
+            fields.push_back(std::move(fts));
+        }
+        TypePtr uni = Type::make_struct(tmpl_unit, "$payload$" + display);
+        uni->is_union = true;
+        for (size_t i = 0; i < payload.size(); ++i) {
+            if (!payload[i]) continue;
+            Field f;
+            f.name = "a" + std::to_string(i);
+            f.type = payload[i];
+            uni->fields.push_back(std::move(f));
+        }
+        if (uni->fields.empty()) {
+            Field f;
+            f.name = "none";
+            f.type = Type::make_prim("byte");
+            uni->fields.push_back(std::move(f));
+        }
+        TypePtr layout = Type::make_struct(tmpl_unit, "$sum$" + display);
+        {
+            Field tag;
+            tag.name = "tag";
+            tag.type = Type::make_prim("int");
+            layout->fields.push_back(std::move(tag));
+            Field pay;
+            pay.name = "payload";
+            pay.type = uni;
+            layout->fields.push_back(std::move(pay));
+        }
+        cur_ = saved_cur;
+        ty->sum_names = std::move(names);
+        ty->sum_fields = std::move(fields);
+        ty->sum_payload = std::move(payload);
+        ty->sum_layout = std::move(layout);
+        generic_insts_[key] = ty;
+        infos_[tmpl_unit].sums[display] = sm;
+        generic_busy_.erase(key);
+        generic_decls_.push_back(std::move(clone));
+        return ty;
     }
 
     // ---------------- generic interfaces: used only for constraints (M5a), no value type is produced ----------------
@@ -802,3 +895,4 @@ void Sema::check_bound(const TypePtr& t, const TypeParam& p, Unit* u, const Node
 }
 
 }  // namespace muc_detail
+

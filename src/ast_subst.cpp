@@ -254,6 +254,14 @@ void subst_decl(Decl& d, const TypeBindings& b) {
         if (p->dtor && p->dtor->body) subst_block(*p->dtor->body, b);
         return;
     }
+    if (auto p = dynamic_cast<SumDecl*>(&d)) {
+        for (auto& alt : p->alts) {
+            for (auto& fs : alt.fields) {
+                if (fs) subst_type_spec(*fs, b);
+            }
+        }
+        return;
+    }
     if (auto p = dynamic_cast<InterfaceDecl*>(&d)) {
         for (auto& bs : p->base_specs) {
             if (bs) subst_type_spec(*bs, b);

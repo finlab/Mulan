@@ -4,6 +4,8 @@
 // This file holds call checking and miscellany (definitions of Sema members).
 #include "sema_impl.hpp"
 
+#include "ast_clone.hpp"
+
 namespace muc_detail {
 
     TypePtr Sema::check_fnptr_args(Call* c, const TypePtr& ft) {
@@ -222,6 +224,16 @@ namespace muc_detail {
                 // Checked before `check_expr(obj)`, because a type name is not an expression.
                 if (auto nm = dynamic_cast<Name*>(obj); nm && lookup_local(nm->ident) == nullptr) {
                     TypePtr st = find_type_named(cur_->name, nm->ident, false);
+                    if (!st && !m->type_args.empty()) {
+                        // a generic sum: `Option<int>.Some(3)` — instantiate with the member's type arguments
+                        TypeSpec spec;
+                        spec.kind = TypeSpec::K::Named;
+                        spec.name = nm->ident;
+                        spec.line = c->line;
+                        spec.col = c->col;
+                        for (auto& a : m->type_args) spec.args.push_back(clone_type_spec(*a));
+                        st = instantiate_generic(&spec, cur_);
+                    }
                     if (!st) {
                         for (auto& use : cur_->uses) {
                             if (!unit_visible(use->unit_name)) continue;
