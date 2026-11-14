@@ -42,10 +42,11 @@
 - Tests: `tests/abi/{abi_agg,abi_mix,abi_float}` (a C shim compiled by gcc is linked in and calls
   back into the exported functions: 16/24/8/4/3-byte and packed structs, unions, array fields, nested
   structs, float-only and mixed aggregates, sret + byval + scalars in one call), `tests/ir/abi_surface`
-  (the exported symbol shapes), must-fail `export_slice`, `export_class_param`, `export_ref_param`,
-  `extern_array_return` (C has no array results).
+  (the exported symbol shapes), `tests/cases/export_abi_mutual` (internal and exported functions calling
+  each other in both directions, across units and within one), must-fail `export_slice`,
+  `export_class_param`, `export_ref_param`, `extern_array_return` (C has no array results).
 
-**Tests**: 540/540 (165 pass + 348 must-fail + 20 check + 4 ir + 3 c abi)
+**Tests**: 541/541 (166 pass + 348 must-fail + 20 check + 4 ir + 3 c abi)
 
 ### 0.0.120 — 2026-11-14
 

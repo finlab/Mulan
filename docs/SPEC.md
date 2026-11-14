@@ -1803,7 +1803,10 @@ extern int puts(const char* s);
 - **The C ABI applies to `extern` and `export`, and to nothing else** (0.0.121). A purely internal call keeps
   the backend's own convention (aggregates in registers, no copy), which is faster; the C ABI is paid for
   only on the boundary. Because a symbol has exactly one convention, the **Mu-side call sites of an `export`ed
-  function also use the C ABI** — so do not mark hot internal helpers `export`.
+  function also use the C ABI** — so do not mark hot internal helpers `export`. The two kinds of function
+  call each other normally in **both** directions (an `export`ed function's body may call internal helpers,
+  and internal code may call exported ones): the convention is a property of the callee, and every call
+  site is emitted from it.
 - **Aggregates by value** (struct/union parameters and results) follow the platform rule, not the backend's:
 
   | Target | 1/2/4/8-byte aggregate | other aggregates |
