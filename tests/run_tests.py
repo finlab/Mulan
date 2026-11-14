@@ -20,6 +20,11 @@ Known limitations:
     comparing, so cases must not print lines with these prefixes themselves.
   * Standard library only; run it from the repository root as
     `python tests/run_tests.py`.
+
+Expected files (`tests/expected/<name>.txt`) hold the program's stdout, plus up to two kinds of
+marker lines that are stripped before comparison:
+    @exit <code>   the run must end with this exit code (default 0; `abort()` cases use 3)
+    @ <args>       extra options appended to the `muc build` command (for example `--bounds=off`)
 """
 
 from __future__ import annotations
@@ -74,6 +79,31 @@ class Case:
         self.name = name
         self.src = src
         self.expected = expected
+
+
+def parse_expected(path: Path) -> tuple[list[str], int, list[str]]:
+    """Split an expected file into (output lines, expected exit code, extra compiler args).
+
+    Two marker lines are recognised and removed from the output comparison:
+      * `@exit <code>` — the run must end with that process exit code (default 0; a case that
+        documents `abort()` expects 3 on Windows);
+      * `@ <args>` — extra options appended to the `muc build` command (for example `@ --bounds=off`).
+    """
+    exit_code = 0
+    extra: list[str] = []
+    out: list[str] = []
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        for raw in f.read().splitlines():
+            line = raw.rstrip()
+            if line.startswith("@exit"):
+                exit_code = int(line[len("@exit"):].strip())
+            elif line.startswith("@"):
+                extra += shlex.split(line[1:].strip())
+            else:
+                out.append(line)
+    while out and out[-1] == "":
+        out.pop()
+    return out, exit_code, extra
 
 
 def _strip_comments_and_literals(text: str) -> str:
@@ -154,8 +184,10 @@ def collect_error_cases() -> list[ErrCase]:
 class CheckCase:
     """A case that only has to pass the semantic check (`check`).
 
-    Used for features the semantic layer fully supports but codegen does not cover
-    yet (such as class / interface).
+    These are semantic-level exercises — visibility (`private` / `public` across units and
+    libraries), import forms, declaration shapes — whose `main` is written for the checker, not
+    for execution (many print nothing or return an arbitrary value). Features that deserve a
+    runtime assertion belong in `tests/cases/` (run cases) instead.
     """
 
     def __init__(self, name: str, src: Path) -> None:
@@ -256,11 +288,12 @@ def run_abi_case(case: AbiCase, verbose: bool) -> tuple[bool, str]:
     return compare_run_output(case.expected, r, cmd, verbose)
 
 
-def compare_run_output(expected: Path, r, cmd: list[str], verbose: bool) -> tuple[bool, str]:
-    """Compare the run's stdout with the expected file (compiler status lines stripped)."""
-    if r.returncode != 0:
+def compare_run_output(expected: Path, expected_code: int, r, cmd: list[str],
+                       verbose: bool) -> tuple[bool, str]:
+    """Compare the run's exit code and stdout with the expectation (compiler status lines stripped)."""
+    if r.returncode != expected_code:
         msg = [
-            f"build --run failed (exit code {r.returncode})",
+            f"build --run failed (exit code {r.returncode}, expected {expected_code})",
             "  command: " + " ".join(cmd),
             "  stderr tail:",
         ]
@@ -270,6 +303,10 @@ def compare_run_output(expected: Path, r, cmd: list[str], verbose: bool) -> tupl
     actual = normalize(r.stdout)
     with open(expected, "r", encoding="utf-8", newline="") as f:
         wanted = normalize(f.read())
+    # Marker lines (`@exit`, `@ <args>`) are not part of the output
+    wanted = [ln for ln in wanted if not ln.startswith("@")]
+    while wanted and wanted[-1] == "":
+        wanted.pop()
 
     if actual == wanted:
         return True, "ok"
@@ -389,13 +426,16 @@ def normalize(text: str) -> list[str]:
 
 def run_case(case: Case, keep_c: bool, verbose: bool) -> tuple[bool, str]:
     """Return (passed, explanation)."""
+    if not case.expected.is_file():
+        return False, f"missing expected file {case.expected}"
+    _, expected_code, extra = parse_expected(case.expected)
     exe = BUILD_DIR / (case.name + (".exe" if sys.platform == "win32" else ""))
     cmd = resolve_compiler() + [
         "build",
         str(case.src.relative_to(ROOT)),
         "-o", str(exe.relative_to(ROOT)),
         "--run",
-    ]
+    ] + extra
     try:
         r = subprocess.run(
             cmd, cwd=ROOT, capture_output=True, text=True,
@@ -406,10 +446,7 @@ def run_case(case: Case, keep_c: bool, verbose: bool) -> tuple[bool, str]:
     except OSError as e:
         return False, f"cannot execute compiler `{cmd[0]}` ({e}); set MUC_CMD, e.g. `build/muc.exe`"
 
-    if not case.expected.is_file():
-        return False, f"missing expected file {case.expected}"
-
-    return compare_run_output(case.expected, r, cmd, verbose)
+    return compare_run_output(case.expected, expected_code, r, cmd, verbose)
 
 
 def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
