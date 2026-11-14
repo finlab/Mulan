@@ -10,6 +10,121 @@
 
 ## Releases
 
+### 0.0.112 — 2026-11-14
+
+**Closure finishing touches (U41 D4): per-iteration captures, `delegate == null`, `para` boundaries.**
+
+- **`delegate == null` / `!= null`**: an empty delegate is the one whose entry point is null; the
+  comparison reads the first word (`{code, env}`), so it costs a pointer compare. Two delegates are
+  still not comparable with each other (like `fn`).
+- **`for` bodies**: `[x]` captures a fresh copy per iteration (verified: three delegates from one loop
+  see 0/1/2), while `[ref x]` shares the variable and every delegate sees the final value — documented
+  as the classic loop-closure hazard instead of being special-cased.
+- **`para` regions** (SPEC 3.17.2): a section may call a delegate captured by value before the region
+  (the environment is immutable for it), but `[ref …]` and `[this]` captures **inside** a section are
+  compile errors — a section must not write enclosing locals, and `this` is not usable there in v1.
+- Tests: `delegate_loop` (per-iteration vs shared, null comparison, calling a captured delegate inside
+  a `para` section through a shared class field), must-fail `delegate_para_ref`.
+
+**Tests**: 518/518 (158 pass + 337 must-fail + 20 check + 3 ir)
+
+### 0.0.111 — 2026-11-14
+
+**`[this]` capture (U41 D4): a class keeps the object alive, a struct copies it, `[ref this]` writes
+through.**
+
+- **Semantics**: `[this]` captures the receiver of the enclosing method. A **class** contributes its
+  handle (the environment retains it, so the object outlives the delegate); a **struct** contributes a
+  copy, so later changes to the original are invisible (value semantics). `[ref this]` on a **struct**
+  stores the object's address — writes from the body reach the object the delegate was taken from
+  (the out-parameter pattern, caller-owned lifetime); `[ref this]` on a **class** is rejected (the
+  handle already is a reference).
+- **The body keeps working as usual**: `this`, implicit field access and method calls resolve through
+  the environment — sema rebinds the lambda's `this` to the captured type and codegen points
+  `thisSlot` at the environment field (the handle for a class, the object address for a struct).
+- **Also**: the "returning a `[ref ...]` lambda" guard now distinguishes frame-owned from
+  caller-owned storage — `this` of a struct method, `ref` parameters and `for ref` bindings may
+  escape (their lifetime is the caller's responsibility, like `&x`), plain locals may not.
+- **Latent hazard found while implementing**: `Name::sym` for `this` points at a `LocalVar` owned by
+  `Sema::this_local_`, which the next `begin_member` frees — codegen must never dereference it (it
+  kept crashing with `std::bad_alloc` on garbage). `addrOf("this")` therefore relies on `thisSlot`
+  alone, which the lambda path already points at the environment field.
+
+Tests: `delegate_this` (class keep-alive, struct copy, struct `[ref this]` write-back, capture list
+mixing `[ref this, by]`), must-fail `delegate_this_class_ref` and `delegate_this_outside`.
+
+**Tests**: 516/516 (157 pass + 336 must-fail + 20 check + 3 ir)
+
+### 0.0.110 — 2026-11-14
+
+**Capturing lambdas (U41 D2/D3): `[x]` copies into a synthesized environment, `[ref x]` writes back.**
+
+- **Capture list** `[x, ref y] (…) => …`, parsed before the parameter list. **Explicit only**: a name
+  the body uses from an enclosing scope must be listed, otherwise the diagnostic tells you to write
+  `[x]` (copy) or `[ref x]` (writes reach the original). `[this]` is rejected for now (the struct-copy
+  vs class-handle decision is still open); a capturing lambda's type is a `delegate`, a
+  non-capturing one remains a plain `fn`.
+- **Environment object**: one synthesized `class` per capturing lambda, one field per capture, built by
+  sema (fields + a shell `ClassDecl` appended to the unit) and handed to codegen, which allocates it
+  (`rc = 1`, descriptor, zeroed fields), copies (or address-takes) each capture and stores `{code, env}`.
+  Layout, descriptor and destructor come from the ordinary class machinery, so an RC capture is
+  retained by the environment and released when the delegate dies.
+- **`[ref x]`**: stores the captured variable's address and binds the name as a `by_ref` local inside
+  the body, so reads and writes go straight through the pointer — the out-parameter pattern
+  (`void fill(ref int out) { Acc f = [ref out] (int v) => { out = v; }; … }`) works with caller-owned
+  storage. Only borrowable types qualify (same rule as `ref` parameters); the caller owns the
+  lifetime and an escaping delegate is UB (documented).
+- **Statically rejected**: duplicate captures, a non-local name, `[ref …]` of a reference-counted type,
+  by-value capture of a struct with a destructor, and `return [ref x] …` (the variable always dies
+  with the call — the one escape the compiler can see).
+- **Codegen**: `Emitter::emitClassAlloc` (shared with `new`), `slotFor` resolves a captured local to
+  `env->field` while a lambda body is emitted (`lambdaEnvIndex` / `lambdaEnvArg` / `lambdaEnvTy`),
+  `valueOwned` treats a lambda as an owned value, and delegate assignments now release the old
+  environment (the value-assignment cleanup path learned `TypeKind::Delegate`) — that omission was
+  caught by a live-object counter in the new test.
+- **Destructor fix**: the generated class destructor derived "own vs base fields" from the AST field
+  list, which is empty for a synthesized environment, so `baseCount` swallowed every field and RC
+  captures leaked. It now uses the base class's field count (0 when there is no base).
+
+Tests: `delegate_capture` (copy vs write-back, RC-string capture, out-parameter, escaping by value,
+nested capture, class capture keeping the object alive then releasing it, cursor implementing
+`IEnumerable<T>`), must-fail `delegate_capture_ref_rc` (`[ref]` of a `String`) and
+`delegate_capture_return_ref` (returning a `[ref]` lambda); `fn_capture`'s expected message follows
+the new wording.
+
+**Tests**: 513/513 (156 pass + 334 must-fail + 20 check + 3 ir)
+
+### 0.0.109 — 2026-11-14
+
+**`delegate`: the two-word callable type (closures step D1; capture analysis still to come).**
+
+- **New type** `delegate (T1, T2) => R`: two words `{code, env}`, `sizeof`/`alignof` = 16/8, distinct from
+  `fn` (one word, C ABI — unchanged). `delegate` is a **contextual keyword**: `delegate (` starts a type,
+  everywhere else it remains an identifier, so existing code that uses the word is unaffected.
+- **Calling convention**: `d(args...)` calls `code(env, args...)`. The environment is the first hidden
+  argument, so C code can be handed `{code, env}` as two `void*` and call `ret (*)(void*, ...)`.
+- **Conversions**: `fn → delegate` is implicit and materializes `{thunk, null}` — the thunk drops the
+  unused environment, so free functions and non-capturing lambdas work as delegates today.
+  `delegate → fn` is a compile error; `null` converts to the empty delegate.
+- **RC plumbing**: the environment is an RC object; copying a delegate retains it, destroying the value
+  releases it, so delegates are ordinary values in fields, arrays, parameters and return values. With a
+  null environment every retain/release is a no-op — the same code path a capturing closure will use.
+- **`extern`**: a delegate is rejected in `extern` parameter and return position (C has no ABI for a pair
+  whose environment must be released); pass `.code`/`.env` explicitly as `void*`.
+- **What is still missing** (backlog U41 D2–D4): lambdas cannot capture yet — the capture list `[x]`,
+  the capture analysis and the synthesized environment class are the next steps, so every environment is
+  `null` in this build and `for-in`/`auto` inference still produce `fn` values.
+- Files: `src/types.{hpp,cpp}` (kind, layout, `str`, `same_type`, conversion, cleanup), `src/mangle.cpp`
+  (`dlg_…`), `src/parser_expr.cpp` (type syntax, `is_type_start`), `src/{parser_unit,sema_generic,
+  sema_impl}.hpp/cpp` (canonical spelling), `src/sema_call.cpp` (`is_callable_value`, delegate callee),
+  `src/sema_decl.cpp` (`extern` rejection), `src/codegen_{expr,expr2,support,func,runtime,class,impl}`
+  (layout, thunk, indirect call, retain/release).
+
+Tests: `delegate_basic` (fn→delegate, lambda→delegate, field/argument/return, `sizeof`), must-fail
+`delegate_to_fn` and `delegate_extern`.
+
+**Tests**: 510/510 (155 pass + 332 must-fail + 20 check + 3 ir)
+
 ### 0.0.108 — 2026-11-14
 
 **Generic interfaces are real interfaces: `IEnumerable<T>` works end to end; structs implement contracts

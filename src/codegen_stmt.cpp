@@ -330,7 +330,7 @@ using ArgPack = Emitter::ArgPack;
                 TypePtr tty = as->target->ty;
                 if (!weakTarget && tty && needsCleanup(tty) &&
                     (tty->kind == TypeKind::Array || tty->kind == TypeKind::Struct ||
-                     tty->kind == TypeKind::Slice)) {
+                     tty->kind == TypeKind::Slice || tty->kind == TypeKind::Delegate)) {
                     auto* tmp = entryAlloca(lt(tty), "val.tmp", alignOf(tty));
                     b.CreateStore(nv, tmp);
                     if (!convOwns(as->value.get(), tty)) emitRetainValue(tmp, tty);

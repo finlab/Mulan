@@ -1,1 +1,1 @@
-lambda cannot capture `base`
+lambda cannot capture `base` implicitly

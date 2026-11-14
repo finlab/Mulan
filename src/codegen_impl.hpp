@@ -144,6 +144,7 @@ struct Emitter {
     std::map<std::string, Function*> sliceFreeCache;  // element type -> free function
     LStruct* descTy = nullptr;
     LStruct* ifaceTy = nullptr;  // {ptr obj, ptr desc}
+    LStruct* delegateTy = nullptr;  // {ptr code, ptr env}
     std::map<std::string, LStruct*> named;
     std::map<std::string, std::vector<unsigned>> fieldMap;  // struct: model field index -> LLVM index
     std::map<std::string, Constant*> strCache;
@@ -258,6 +259,11 @@ struct Emitter {
     std::vector<const MethodSig*> islotSigs;
     std::map<std::string, int> islotIndex;
     std::map<std::string, Function*> thunkCache;
+    std::unordered_map<std::string, Value*> delegateThunkCache;  // fn value + fn type -> `env`-dropping thunk
+    // Lambda captures: while a lambda body is emitted, its environment is the hidden first argument.
+    std::unordered_map<const LocalVar*, int> lambdaEnvIndex;  // captured local -> environment field
+    Value* lambdaEnvArg = nullptr;
+    TypePtr lambdaEnvTy;
     std::map<const LType*, std::vector<const MethodSig*>> vtabMemo;
     std::map<const Type*, std::vector<const MethodSig*>> vtabMemo2;
 
@@ -308,7 +314,9 @@ struct Emitter {
     Value* fieldSlot(LStruct* st, const TypePtr& ty, Value* base, int idx);
 
     Value* fieldAddr(Value* objPtr, const TypePtr& cls, int field_index);
-
+    // Allocate a class object (rc = 1, descriptor set, fields zeroed); the caller fills the fields.
+    // Used by `new` and by the synthesized lambda environment (U41).
+    Value* emitClassAlloc(const TypePtr& cls);
     Value* descOf(const TypePtr& cls);
 
     LType* lt(const TypePtr& t);
@@ -480,6 +488,9 @@ struct Emitter {
     Value* compareOp(const std::string& op, Value* l, Value* r, bool is_signed, bool is_float);
 
     Value* coerce(Expr* e, const TypePtr& to);
+    // `ret(void* env, params...)` wrapper that calls a plain `fn` value and ignores the env;
+    // cached per (function value name, function type).
+    Value* emitDelegateThunk(Value* fp, const TypePtr& ft);
 
     Value* evalBinary(Binary* e);
 

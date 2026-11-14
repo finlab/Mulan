@@ -466,13 +466,15 @@ namespace muc_detail {
     // the object pointer inside a reference value (a class handle or an interface value)
     Value* Emitter::refObj(Value* v, const TypePtr& ty) {
         if (ty && ty->kind == TypeKind::Interface) return b.CreateExtractValue(v, {0});
+        // a delegate's RC object is its environment (the second word)
+        if (ty && ty->kind == TypeKind::Delegate) return b.CreateExtractValue(v, {1});
         return v;
     }
 
     void Emitter::emitRetainRef(Value* v, const TypePtr& ty) {
         if (!ty) return;
-        if (ty->kind == TypeKind::Interface) {
-            emitRetain(b.CreateExtractValue(v, {0}));
+        if (ty->kind == TypeKind::Interface || ty->kind == TypeKind::Delegate) {
+            emitRetain(refObj(v, ty));
         } else {
             emitRetain(v);
         }
@@ -480,8 +482,8 @@ namespace muc_detail {
 
     void Emitter::emitReleaseRef(Value* v, const TypePtr& ty) {
         if (!ty) return;
-        if (ty->kind == TypeKind::Interface) {
-            emitRelease(b.CreateExtractValue(v, {0}));
+        if (ty->kind == TypeKind::Interface || ty->kind == TypeKind::Delegate) {
+            emitRelease(refObj(v, ty));
         } else {
             emitRelease(v);
         }
@@ -564,6 +566,9 @@ namespace muc_detail {
         if (!e) return false;
         if (dynamic_cast<NewExpr*>(e)) return true;
         if (dynamic_cast<Call*>(e)) return true;
+        // a capturing lambda materializes a fresh environment (rc = 1), so its value is owned; a
+        // non-capturing lambda is a bare function address and carries no ownership either way
+        if (dynamic_cast<Lambda*>(e)) return true;
         if (auto b = dynamic_cast<Binary*>(e); b && b->op_func) return true;
         if (dynamic_cast<Ternary*>(e)) return true;  // the result slot is already materialized with owned semantics
         if (auto u = dynamic_cast<Unary*>(e); u && u->op_func) return true;

@@ -412,13 +412,29 @@ using ArgPack = Emitter::ArgPack;
             }
             return nullptr;
         }
-        if (c->callee_kind == "fnptr") {
+        if (c->callee_kind == "fnptr" || c->callee_kind == "delegate") {
             const TypePtr& ft = c->fn_ty;
-            if (!ft || ft->kind != TypeKind::Func) fail("LLVM backend: indirect call without a function type", c->line, c->col);
-            Value* fp = eval(c->callee.get());
+            if (!ft || !is_callable_value(ft)) {
+                fail("LLVM backend: indirect call without a function type", c->line, c->col);
+            }
             std::vector<Expr*> rawArgs;
             for (auto& a : c->args) rawArgs.push_back(a.get());
             ArgPack pack = prepareArgs(rawArgs, ft->fparams);
+            if (ft->kind == TypeKind::Delegate) {
+                // delegate calling convention: `code(env, args...)`
+                Value* dv = eval(c->callee.get());
+                Value* code = b.CreateExtractValue(dv, {0});
+                Value* env = b.CreateExtractValue(dv, {1});
+                std::vector<LType*> ptys{ptrTy()};
+                for (auto& pt : ft->fparams) ptys.push_back(lt(pt));
+                std::vector<Value*> vals{env};
+                for (auto* v : pack.vals) vals.push_back(v);
+                Value* r = b.CreateCall(FunctionType::get(lt(ft->fret), ptys, false), code, vals);
+                releaseTemps(pack);
+                emitCheckPending();
+                return r;
+            }
+            Value* fp = eval(c->callee.get());
             std::vector<LType*> ptys;
             for (auto& pt : ft->fparams) ptys.push_back(lt(pt));
             Value* r = b.CreateCall(FunctionType::get(lt(ft->fret), ptys, false), fp, pack.vals);
@@ -487,8 +503,44 @@ using ArgPack = Emitter::ArgPack;
             if (!f) fail("LLVM backend: lambda without a synthesized function", e->line, e->col);
             std::vector<LType*> ptys;
             for (auto& pt : f->pty) ptys.push_back(lt(pt));
-            return mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, false))
-                .getCallee();
+            Value* callee = mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, false))
+                                .getCallee();
+            if (!lm->env_ty) return callee;
+            // Capturing lambda (U41): allocate the environment object and copy (or take the address of)
+            // each captured variable. `[x]` stores a copy and takes its own reference; `[ref x]` stores
+            // the address, so writes from the body reach the original variable.
+            Value* env = emitClassAlloc(lm->env_ty);
+            for (size_t i = 0; i < lm->env_src.size(); ++i) {
+                const LocalVar* src = lm->env_src[i];
+                Value* dst = fieldAddr(env, lm->env_ty, static_cast<int>(i));
+                if (!src) {
+                    // `[this]`: the receiver of the enclosing method. `load(thisSlot)` is the class
+                    // handle for a class method and the object address for a struct method.
+                    Value* objp = b.CreateLoad(ptrTy(), thisSlot);
+                    if (lm->env_src_ref[i]) {
+                        b.CreateStore(objp, dst);  // `[ref this]` on a struct: writes reach the object
+                    } else if (f->this_capture_ty && f->this_capture_ty->kind == TypeKind::Struct) {
+                        b.CreateStore(b.CreateLoad(lt(f->this_capture_ty), objp), dst);
+                        if (needsCleanup(f->this_capture_ty)) emitRetainValue(dst, f->this_capture_ty);
+                    } else {
+                        b.CreateStore(objp, dst);  // the handle; the environment keeps the object alive
+                        emitRetain(objp);
+                    }
+                    continue;
+                }
+                Value* sslot = slotFor(src);
+                if (lm->env_src_ref[i]) {
+                    Value* addr = src->by_ref ? b.CreateLoad(ptrTy(), sslot) : sslot;
+                    b.CreateStore(addr, dst);
+                } else {
+                    b.CreateStore(loadAt(lt(src->rty), sslot, false), dst);
+                    if (needsCleanup(src->rty)) emitRetainValue(dst, src->rty);
+                }
+            }
+            Value* dv = UndefValue::get(lt(e->ty));
+            dv = b.CreateInsertValue(dv, callee, {0});
+            dv = b.CreateInsertValue(dv, env, {1});
+            return dv;
         }
         if (auto v = dynamic_cast<IntLit*>(e)) {
             if (isRefKind(e->ty)) return Constant::getNullValue(lt(e->ty));

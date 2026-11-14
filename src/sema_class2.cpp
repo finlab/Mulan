@@ -342,6 +342,23 @@ namespace muc_detail {
             return;
         }
         in_return_ = true;
+        // A `[ref x]` capture stores the address of a frame-owned local, so a returned delegate would
+        // always dangle. Caller-owned storage (`this` of a struct method, a `ref` parameter, a `for ref`
+        // binding) is the caller's responsibility, exactly like `&x` — those are allowed.
+        if (auto lm = dynamic_cast<Lambda*>(s->value.get())) {
+            for (size_t i = 0; i < lm->captures.size(); ++i) {
+                auto& cap = lm->captures[i];
+                if (!cap.by_ref) continue;
+                const LocalVar* src = i < lm->env_src.size() ? lm->env_src[i] : nullptr;
+                const bool caller_owned = (cap.name == "this") || (src && src->by_ref);
+                if (!caller_owned) {
+                    err("cannot return a lambda that captures `ref " + cap.name +
+                            "`: the captured local dies when this function returns (capture it by "
+                            "value, or keep the state in a `class`)",
+                        s->value.get());
+                }
+            }
+        }
         check_assign(s->value.get(), rt, "return value");
         in_return_ = false;
     }

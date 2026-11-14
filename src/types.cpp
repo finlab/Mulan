@@ -164,6 +164,14 @@ TypePtr Type::make_func(const std::vector<TypePtr>& params, const TypePtr& ret) 
     return t;
 }
 
+TypePtr Type::make_delegate(const std::vector<TypePtr>& params, const TypePtr& ret) {
+    auto t = std::make_shared<Type>();
+    t->kind = TypeKind::Delegate;
+    t->fparams = params;
+    t->fret = ret;
+    return t;
+}
+
 // ---------------------------------------------------------------- Textual form
 
 std::string Type::str() const {
@@ -212,8 +220,9 @@ std::string Type::str() const {
             return "null";
         case TypeKind::Range:
             return "range";
-        case TypeKind::Func: {
-            std::string out = "(";
+        case TypeKind::Func:
+        case TypeKind::Delegate: {
+            std::string out = kind == TypeKind::Delegate ? "delegate (" : "(";
             for (size_t i = 0; i < fparams.size(); ++i) {
                 if (i) out += ", ";
                 out += fparams[i] ? fparams[i]->str() : std::string("void");
@@ -267,6 +276,7 @@ bool Type::needs_cleanup() const {
         case TypeKind::Array:
             return elem && elem->needs_cleanup();
         case TypeKind::Slice: return true;  // dynamic array: the handle holds an RC
+        case TypeKind::Delegate: return true;  // the environment is an RC object
         default: return false;
     }
 }
@@ -337,6 +347,7 @@ size_t size_impl(const TypePtr& t, int depth) {
         case TypeKind::Ptr:
         case TypeKind::Slice: return 8;
         case TypeKind::Interface: return 16;
+        case TypeKind::Delegate: return 16;   // {code, env}
         case TypeKind::Enum: return 4;
         case TypeKind::Array: return size_impl(t->elem, depth + 1) * t->array_size;
         case TypeKind::Struct: {
@@ -474,6 +485,7 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
         case TypeKind::Module:
             return a->unit == b->unit;
         case TypeKind::Func:
+        case TypeKind::Delegate:
             if (!same_type(a->fret, b->fret)) return false;
             if (a->fparams.size() != b->fparams.size()) return false;
             for (size_t i = 0; i < a->fparams.size(); ++i) {
@@ -557,16 +569,28 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
     if (same_type(src, dst)) return true;
     if (!src || !dst) return false;
 
-    // null -> pointer / slice / class / interface / function value
+    // null -> pointer / slice / class / interface / function value / delegate
     if (src->kind == TypeKind::Null) {
         return dst->kind == TypeKind::Ptr || dst->kind == TypeKind::Slice ||
                dst->kind == TypeKind::Class ||
-               dst->kind == TypeKind::Interface || dst->kind == TypeKind::Func;
+               dst->kind == TypeKind::Interface || dst->kind == TypeKind::Func ||
+               dst->kind == TypeKind::Delegate;
     }
 
     // A function value is a pointer: it converts to `void*` implicitly (the reverse needs `as`, 3.16)
     if (src->kind == TypeKind::Func) {
-        return dst->kind == TypeKind::Ptr && dst->elem && dst->elem->kind == TypeKind::Void;
+        if (dst->kind == TypeKind::Ptr && dst->elem && dst->elem->kind == TypeKind::Void) return true;
+        // `fn` -> `delegate`: the environment is null, so a plain function works as a delegate
+        // (the missing `env` argument is supplied by a thunk, 3.16).
+        if (dst->kind == TypeKind::Delegate) {
+            if (!same_type(src->fret, dst->fret)) return false;
+            if (src->fparams.size() != dst->fparams.size()) return false;
+            for (size_t i = 0; i < src->fparams.size(); ++i) {
+                if (!same_type(src->fparams[i], dst->fparams[i])) return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     // class / interface subtypes (single inheritance + interfaces)

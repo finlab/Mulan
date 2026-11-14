@@ -289,7 +289,122 @@ namespace muc_detail {
     TypePtr Sema::check_lambda(Lambda* e) {
         // The node may be checked twice (`auto` deduces the type and then the initializer is converted again):
         // the lambda is lowered only once.
-        if (e->synth) return Type::make_func(e->synth->pty, e->synth->rty);
+        if (e->synth) {
+            // A capturing lambda's value is a delegate; its signature excludes the environment.
+            const auto& p = e->synth->pty;
+            std::vector<TypePtr> ps = e->env_ty ? std::vector<TypePtr>(p.begin() + 1, p.end()) : p;
+            return e->env_ty ? Type::make_delegate(ps, e->synth->rty)
+                             : Type::make_func(ps, e->synth->rty);
+        }
+
+        // ---- capture list (U41) ---------------------------------------------------------------
+        // `[x]` copies the value into the environment object; `[ref x]` stores its address, so writes
+        // reach the captured variable (the caller keeps it alive; escaping the delegate is UB).
+        std::vector<const LocalVar*> cap_src;
+        std::vector<bool> cap_ref;
+        TypePtr env_ty;
+        int this_cap_index = -1;
+        TypePtr this_cap_ty;
+        bool this_cap_ref = false;
+        if (!e->captures.empty()) {
+            std::vector<TypePtr> field_types;
+            for (auto& cap : e->captures) {
+                // `para` sections may read enclosing locals but not write them (SPEC 3.17.2), so a
+                // capture that hands out storage (`[ref …]`) is rejected there; `this` is not usable
+                // inside a section at all in v1.
+                if (!para_stack_.empty()) {
+                    if (cap.by_ref) {
+                        err("a `para` section cannot capture `ref " + cap.name +
+                                "`: the section must not write enclosing locals (pass a `class` object or "
+                                "copy the value with `[" + cap.name + "]`)",
+                            e);
+                    }
+                    if (cap.name == "this") {
+                        err("`this` cannot be used inside a `para` section in v1: pass the object as an "
+                            "explicit argument",
+                            e);
+                    }
+                }
+                if (cap.name == "this") {
+                    // `[this]`: the enclosing method's receiver. A class captures the handle (the
+                    // environment keeps the object alive); a struct captures a copy, or its address
+                    // with `[ref this]` so writes reach the original object (U41 decision).
+                    if (!cur_class_) {
+                        err("`[this]` can only appear in a method, constructor or destructor", e);
+                    }
+                    if (this_cap_index >= 0) err("`this` is captured more than once", e);
+                    TypePtr vt = cur_class_;
+                    TypePtr ft = vt;
+                    if (cap.by_ref) {
+                        if (vt->kind == TypeKind::Class) {
+                            err("`[ref this]` is meaningless for a class: `this` is already a reference; "
+                                "write `[this]`",
+                                e);
+                        }
+                        if (!borrowable_type(vt)) {
+                            err("`[ref this]`: struct `" + vt->str() +
+                                    "` cannot be captured by reference (it has reference-counted fields or "
+                                    "a destructor)",
+                                e);
+                        }
+                        ft = Type::make_ptr(vt);
+                    } else if (vt->kind == TypeKind::Struct && noncopyable_struct(vt)) {
+                        err("`[this]`: struct `" + vt->str() +
+                                "` has a destructor and cannot be captured by value (use `[ref this]`)",
+                            e);
+                    }
+                    field_types.push_back(ft);
+                    cap_src.push_back(nullptr);  // `this` has no enclosing LocalVar to read from
+                    cap_ref.push_back(cap.by_ref);
+                    this_cap_index = static_cast<int>(field_types.size() - 1);
+                    this_cap_ty = vt;
+                    this_cap_ref = cap.by_ref;
+                    continue;
+                }
+                LocalVar* lv = lookup_local(cap.name);
+                if (!lv) err("`" + cap.name + "` is not a local variable, so it cannot be captured", e);
+                for (auto* prev : cap_src) {
+                    if (prev == lv) err("`" + cap.name + "` is captured more than once", e);
+                }
+                const TypePtr& vt = lv->rty;
+                TypePtr ft = vt;
+                if (cap.by_ref) {
+                    if (!borrowable_type(vt)) {
+                        err("`[ref " + cap.name + "]`: `" + vt->str() +
+                                "` cannot be captured by reference (only scalars, enums, pointers and "
+                                "value structs; a borrow cannot hold reference-counted fields)",
+                            e);
+                    }
+                    ft = Type::make_ptr(vt);
+                } else if (noncopyable_struct(vt)) {
+                    err("`[" + cap.name + "]`: struct `" + vt->str() +
+                            "` has a destructor and cannot be captured by value (use `[ref " + cap.name +
+                            "]` or keep it in a `class`)",
+                        e);
+                }
+                field_types.push_back(ft);
+                cap_src.push_back(lv);
+                cap_ref.push_back(cap.by_ref);
+            }
+            // The environment is a synthesized class with one field per capture: the existing class
+            // machinery gives it layout, a descriptor and a destructor that releases RC fields.
+            std::string env_name = "$env$" + std::to_string(++lambda_seq_);
+            env_ty = Type::make_class(cur_->name, env_name);
+            for (size_t i = 0; i < field_types.size(); ++i) {
+                Field f;
+                f.name = "c" + std::to_string(i);
+                f.type = field_types[i];
+                f.is_public = false;
+                env_ty->fields.push_back(std::move(f));
+            }
+            auto cd = std::make_unique<ClassDecl>();
+            cd->name = env_name;
+            cd->line = e->line;
+            cd->col = e->col;
+            cd->ty = env_ty;
+            synth_decls_.push_back(std::move(cd));
+        }
+
         auto fn = std::make_unique<FuncDecl>();
         fn->name = "$lambda$" + std::to_string(++lambda_seq_);
         fn->line = e->line;
@@ -302,6 +417,17 @@ namespace muc_detail {
         }
         fn->pty_ref.assign(fn->pty.size(), false);
         fn->pty_cref.assign(fn->pty.size(), false);
+
+        // The environment is the hidden first argument of the generated function; the delegate's own
+        // signature starts after it.
+        if (env_ty) {
+            fn->pty.insert(fn->pty.begin(), env_ty);
+            fn->pty_ref.insert(fn->pty_ref.begin(), false);
+            fn->pty_cref.insert(fn->pty_cref.begin(), false);
+        }
+        e->env_ty = env_ty;
+        e->env_src = cap_src;
+        e->env_src_ref = cap_ref;
 
         // A lambda is its own function: no `this`, no outer loop, no enclosing `finally` (and no captures, checked in check_name).
         FuncDecl* saved_func = cur_func_;
@@ -360,15 +486,50 @@ namespace muc_detail {
                  saved_loop,
                  std::move(saved_this)};
 
+        if (env_ty) {
+            auto ev = std::make_unique<LocalVar>();
+            ev->name = "$env";
+            ev->rty = env_ty;
+            ev->line = e->line;
+            ev->col = e->col;
+            declare_local(ev.get());
+            fn->param_locals.push_back(std::move(ev));
+        }
         for (size_t i = 0; i < e->params.size(); ++i) {
             Param* p = e->params[i].get();
             auto lv = std::make_unique<LocalVar>();
             lv->name = p->name;
-            lv->rty = fn->pty[i];
+            // The generated function's parameter 0 is the environment, so shift by one.
+            lv->rty = fn->pty[env_ty ? i + 1 : i];
             lv->line = p->line;
             lv->col = p->col;
             declare_local(lv.get());
             fn->param_locals.push_back(std::move(lv));
+        }
+        // Captures are ordinary locals of the lambda body whose storage is the environment field;
+        // codegen maps `env_index` to `env->field` (U41).
+        for (size_t i = 0; i < cap_src.size(); ++i) {
+            bool is_this = e->captures[i].name == "this";
+            auto lv = std::make_unique<LocalVar>();
+            lv->name = e->captures[i].name;
+            lv->rty = is_this ? this_cap_ty : cap_src[i]->rty;
+            lv->by_ref = cap_ref[i];
+            lv->env_index = static_cast<int>(i);
+            lv->line = e->captures[i].line;
+            lv->col = e->captures[i].col;
+            declare_local(lv.get());
+            if (is_this) {
+                // The body may use `this` and implicit field access: keep a this-local pointing at the
+                // environment field (`Defer` restores the enclosing method's `this_local_`).
+                this_local_.clear();
+                this_local_.push_back(std::move(lv));
+                fn->this_capture_ty = this_cap_ty;
+                fn->this_capture_index = this_cap_index;
+                fn->this_capture_ref = this_cap_ref;
+                cur_class_ = this_cap_ty;
+            } else {
+                fn->capture_locals.push_back(std::move(lv));
+            }
         }
 
         TypePtr retty;
@@ -435,7 +596,9 @@ namespace muc_detail {
             fn->name = "$lambda$" + std::to_string(++lambda_seq_);
             fn->cname = func_cname(cur_->name, fn.get());
         }
-        TypePtr ft = Type::make_func(fn->pty, retty);
+        std::vector<TypePtr> sig = fn->pty;
+        if (env_ty) sig.erase(sig.begin());  // the environment is not part of the delegate signature
+        TypePtr ft = env_ty ? Type::make_delegate(sig, retty) : Type::make_func(sig, retty);
         cur_->lambdas.push_back(std::move(fn));
         e->synth = cur_->lambdas.back().get();
         return ft;
@@ -464,15 +627,16 @@ namespace muc_detail {
                     if (!has) ctx.seen.push_back(lv);
                 }
             }
-            // A lambda has no captures (3.16): a local of an enclosing scope is off limits.
+            // A lambda captures explicitly (U41): a name from an enclosing scope must appear in the
+            // capture list, so the copying (or the borrow) is visible where the lambda is written.
             if (!lambda_stack_.empty()) {
                 const std::size_t base = lambda_stack_.back().scope_base;
                 for (std::size_t i = 0; i < base && i < scopes_.size(); ++i) {
                     auto it = scopes_[i].find(e->ident);
                     if (it != scopes_[i].end() && it->second == lv) {
                         err("lambda cannot capture `" + e->ident +
-                                "` from the enclosing scope; use a class with a single-method interface for a "
-                                "stateful callback",
+                                "` implicitly: add `" + e->ident + "` (a copy) or `ref " + e->ident +
+                                "` (writes reach it) to the capture list",
                             e);
                     }
                 }
@@ -979,12 +1143,14 @@ namespace muc_detail {
                 }
                 if (other->kind == TypeKind::Ptr || other->kind == TypeKind::Slice ||
                     other->kind == TypeKind::Null || other->kind == TypeKind::Class ||
-                    other->kind == TypeKind::Interface || other->kind == TypeKind::Func) {
+                    other->kind == TypeKind::Interface || other->kind == TypeKind::Func ||
+                    other->kind == TypeKind::Delegate) {
                     return t_bool();
                 }
             }
             if (is_numeric(lt) && is_numeric(rt)) return t_bool();
-            if (lt->kind == TypeKind::Func || rt->kind == TypeKind::Func) {
+            if (lt->kind == TypeKind::Func || rt->kind == TypeKind::Func ||
+                lt->kind == TypeKind::Delegate || rt->kind == TypeKind::Delegate) {
                 if (!same_type(lt, rt)) {
                     err("function values of different types cannot be compared (`" + lt->str() + "` vs `" +
                             rt->str() + "`)",

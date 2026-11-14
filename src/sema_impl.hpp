@@ -49,8 +49,9 @@ inline std::string spec_text(const TypeSpec* s) {
                    (s->is_const ? " (const)" : "");
         case TypeSpec::K::Array:
             return spec_text(s->elem.get()) + "[" + std::to_string(s->size) + "]";
-        case TypeSpec::K::Func: {
-            std::string out = "(";
+        case TypeSpec::K::Func:
+        case TypeSpec::K::Delegate: {
+            std::string out = s->kind == TypeSpec::K::Delegate ? "delegate (" : "(";
             for (size_t i = 0; i < s->params.size(); ++i) {
                 if (i) out += ", ";
                 out += spec_text(s->params[i].get());
@@ -163,6 +164,7 @@ private:
     std::unordered_map<std::string, FuncDecl*> generic_func_insts_;  // "unit.f<int>" → instantiated function
     std::unordered_set<std::string> generic_busy_;              // being instantiated (recursion guard)
     std::vector<std::unique_ptr<Decl>> generic_decls_;          // instantiation products (lifetime)
+    std::vector<std::unique_ptr<Decl>> synth_decls_;            // synthesized lambda environment classes (lifetime)
 
     // ------------------------------------------------------------ utilities
 

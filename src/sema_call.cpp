@@ -19,7 +19,7 @@ namespace muc_detail {
         for (size_t i = 0; i < ft->fparams.size() && i < c->args.size(); ++i) {
             check_assign(c->args[i].get(), ft->fparams[i], "argument of a call through a function value");
         }
-        c->callee_kind = "fnptr";
+        c->callee_kind = ft->kind == TypeKind::Delegate ? "delegate" : "fnptr";
         c->fn_ty = ft;
         return ft->fret;
     }
@@ -56,7 +56,7 @@ namespace muc_detail {
         if (auto nm = dynamic_cast<Name*>(callee)) {
             if (lookup_local(nm->ident) != nullptr) {
                 TypePtr vt = check_expr(callee);
-                if (vt && vt->kind == TypeKind::Func) return check_fnptr_args(c, vt);
+                if (vt && is_callable_value(vt)) return check_fnptr_args(c, vt);
                 err("`" + nm->ident + "` is a variable, not a function", c);
             }
             // Candidates: current unit + directly `use`d units (public only) + std.string (implicit)
@@ -120,7 +120,7 @@ namespace muc_detail {
                 }
                 if (is_global) {
                     TypePtr vt = check_expr(callee);
-                    if (vt && vt->kind == TypeKind::Func) return check_fnptr_args(c, vt);
+                    if (vt && is_callable_value(vt)) return check_fnptr_args(c, vt);
                     err("`" + nm->ident + "` is a variable, not a function", c);
                 }
                 // struct construction: current unit first, then public types of `use`d units
@@ -224,7 +224,7 @@ namespace muc_detail {
                     collect_methods(ot, m->name, ms);
                     if (ms.empty()) {
                         TypePtr ft = ot->field_type(m->name);
-                        if (ft && ft->kind == TypeKind::Func) {
+                        if (ft && is_callable_value(ft)) {
                             TypePtr ct = check_expr(callee);  // resolves the field access and sets the node's type
                             return check_fnptr_args(c, ct);
                         }
@@ -247,7 +247,7 @@ namespace muc_detail {
                     collect_methods(ot, m->name, ms);
                     if (ms.empty()) {
                         TypePtr ft = ot->field_type(m->name);
-                        if (ft && ft->kind == TypeKind::Func) {
+                        if (ft && is_callable_value(ft)) {
                             TypePtr ct = check_expr(callee);  // resolves the field access and sets the node's type
                             return check_fnptr_args(c, ct);
                         }
@@ -268,7 +268,7 @@ namespace muc_detail {
                 // any other callee expression: `arr[i](...)` / `getfn()(...)`
                 {
                     TypePtr ft = check_expr(callee);
-                    if (ft && ft->kind == TypeKind::Func) return check_fnptr_args(c, ft);
+                    if (ft && is_callable_value(ft)) return check_fnptr_args(c, ft);
                 }
                 err("`" + m->name + "` is not a function", c);
             }
@@ -296,7 +296,7 @@ namespace muc_detail {
         } else {
             // any callee expression of function type: `fp(...)`, `arr[i](...)`, `getfn()(...)`
             TypePtr ft = check_expr(callee);
-            if (ft && ft->kind == TypeKind::Func) return check_fnptr_args(c, ft);
+            if (ft && is_callable_value(ft)) return check_fnptr_args(c, ft);
             err("only functions and struct constructors can be called", c);
         }
 

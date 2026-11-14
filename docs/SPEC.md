@@ -1083,6 +1083,59 @@ type Unary = (int) => int;
   Handler h = null;
   ```
 
+#### 3.16.1a `delegate`: the two-word callable (implemented 0.0.109, capture pending)
+
+```c
+type Op = delegate (int, int) => int;
+```
+
+- **A `delegate` is `{code, env}`, two words** (`sizeof`/`alignof` = 16/8): the entry point plus an
+  environment object. It is a **separate type**, not a fatter `fn` — the one-word, C-ABI-compatible
+  promise of `fn` stays intact.
+- **Calling convention**: `d(args...)` calls `code(env, args...)`, i.e. the environment is always the
+  first hidden argument. C code can therefore be handed `{code, env}` as a pair of `void*` and call
+  `ret (*)(void* env, ...)`.
+- **Environment lifetime**: `env` is a reference-counted object (today always `null` — see below);
+  copying a delegate retains it, destroying the value releases it, so delegates live in fields,
+  arrays, parameters and return values like any other RC-carrying value.
+- **Conversions**: `fn → delegate` is implicit (the value becomes `{thunk, null}`, where the thunk
+  drops the unused `env` argument); **`delegate → fn` is an error** — the environment has nowhere to
+  go. `null` converts to a delegate (the empty value).
+- **Not allowed in `extern` signatures** (parameter or return): C has no ABI for a pair whose
+  environment must be released; pass `.code`/`.env` explicitly as `void*` instead.
+- **Position rules** follow function types: parameters and fields may spell the anonymous form,
+  block-/unit-level declarations and return types need `auto` or a `type` alias.
+- **Status (0.0.111)**: the type, the layout, the calling convention, the thunk, the RC plumbing and
+  capturing are in place. A capture list `[x]` / `[ref x]` is **mandatory for every outer variable the
+  body uses** (implicit capture is an error, so the copying cost is visible at the definition site):
+  - `[x]` copies the value into a synthesized environment **class** (one field per capture); a
+    reference-counted value (`String`, slice, `class` handle, nested `delegate`) is retained by the
+    environment, so the delegate keeps it alive.
+  - `[ref x]` stores the **address** of the variable, so writes from the body reach it — the
+    out-parameter pattern. Only borrowable types qualify (scalars, enums, pointers, value structs
+    without reference fields or a destructor), mirroring `ref` parameters; the caller owns the
+    variable's lifetime, and a delegate that outlives it is UB like any other dangling raw pointer.
+  - `[this]` captures the receiver of the enclosing method: a **class** contributes its handle (the
+    environment retains it, so the object stays alive), a **struct** contributes a copy (value
+    semantics — later changes to the original are invisible). `[ref this]` on a **struct** stores the
+    object's address so writes reach it; on a class it is rejected (the handle already is a
+    reference). The body keeps working as usual: `this` and implicit field access resolve through the
+    environment.
+  - A capturing lambda's value is a `delegate`; a non-capturing one is still a plain `fn`.
+  - **`for` bodies**: each iteration captures its own copy with `[x]` (the loop variable is a fresh
+    local per iteration). `[ref x]` shares the one variable, so every delegate sees its final value —
+    the classic loop-closure hazard, documented rather than special-cased.
+  - **Empty value**: `d == null` / `d != null` compare the entry point, so a delegate built from a
+    `null` literal is "empty" (calling it is UB).
+  - **`para` regions** (3.17.2): a section may **call** a delegate captured by value before the
+    region, but `[ref …]` and `[this]` inside a section are rejected — a section must not write
+    enclosing locals.
+  - Statically rejected: capturing the same name twice, capturing a name that is not a local,
+    `[ref ...]` of a reference-containing type, by-value capture of a struct with a destructor, and
+    **returning a `[ref ...]` lambda** of frame-owned storage (the variable always dies with the
+    call). `[ref]` of caller-owned storage — `this` of a struct method, a `ref` parameter, a
+    `for ref` binding — may escape; its lifetime is then the caller's responsibility.
+
   Rationale: "declaration vs expression statement" stays a single-token decision (a declaration starts with a keyword
   or an identifier), and `(int) => int f` would read like a cast.
 - `const` cannot qualify an **anonymous** function type: there is no pointee to protect, and a declaration cannot begin
@@ -1165,6 +1218,8 @@ Handler h = (int e) => { print(e); };
 
 Capturing closures are a phase-one non-goal (10). If they are ever added they must be a **separate type**
 (`delegate`, `{ code, env }`, two words), not a fatter `fn`: the one-word C-ABI promise must stay intact.
+The type itself has landed in 0.0.109 (3.16.1a) — with a null environment until capture analysis does —
+so the table above still holds for stateful callbacks today.
 
 #### 3.16.5 Implementation status
 
@@ -1174,7 +1229,8 @@ by the matching `)` followed by `=>`), the `Func` type kind (canonical spelling 
 value, lambda lowering and single-pass result-type inference), and codegen (`ptr` + an indirect call; each lambda is a
 hidden `FuncDecl` emitted with the unit).
 
-Not implemented: capturing closures (a future `delegate`), method values, generic function values
+Not implemented: capturing closures (the `delegate` type exists since 0.0.109 — 3.16.1a — but its environment
+is always null until capture analysis lands), method values, generic function values
 (`max2<int>` as a value), and anonymous function types in declaration positions (a unit-level variable, a local
 declaration and a return type must name the type with `type` first).
 
@@ -2179,7 +2235,7 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 | 116 | Function type syntax | Decided and implemented (3.16, 0.0.84): `(T1, T2) => R`; a one-word pointer value with no `*` and no declarator nesting; `sizeof` = pointer size; `=>` has lowest precedence and is right-associative; `*`/`[]` bind to the return type; block-/unit-level declarations never begin with an anonymous function type and a return type is never anonymous (use `auto` or a `type` alias), while fields and parameters may |
 | 117 | Lambdas | Decided and implemented (3.16, 0.0.84): `(int a) => expr` or `(int a) => { ... }`; parameter types are always written; the return type is inferred from the body (all `return` types must be identical; no `return expr` means `void`); **no captures**; each lambda is a hidden `private` function (C ABI, no allocation); stateful callbacks use `class` + single-method `interface` |
 | 118 | Free function / method values | Decided and implemented (3.16, 0.0.84): a free function name is already a function value (no `&`, and `&f` is an error); overloaded names need a target type; generic function names cannot be used as values; `u.f` and `extern` functions are values; **methods are not values** |
-| 119 | Capturing closures | Decided: phase-one non-goal; if added later, a separate two-word `delegate` type (`{code, env}`), never a fatter `fn` |
+| 119 | Capturing closures | Decided: phase-one non-goal; if added later, a separate two-word `delegate` type (`{code, env}`), never a fatter `fn`. **The type landed in 0.0.109** (3.16.1a): layout, calling convention `code(env, args...)`, the `fn → delegate` thunk, RC of the environment and the `extern` prohibition are in place; capture analysis and the synthesized environment object are the remaining steps (backlog U41) |
 | 120 | Concurrency model | Decided (design only, 3.17): **structured** — M:N tasks on carrier threads, stackful fibers, fixed task stacks, cooperative cancellation, no preemption, no detached tasks. Language surface: `para` / `para for` / `thread`; deferred join is library-only |
 | 121 | `async` / `await` | **Decided: not provided.** Colored async functions are rejected; a blocking call parks the task, so no call-site marker is needed. Deferred join is a library task group plus a one-slot `Channel<T>` |
 | 122 | Timeouts / concurrency caps in `para` | **Decided: not provided.** A timeout can only be enforced at a cancellable IO operation (`conn.read(buf, ms)`); a concurrency cap is an engine resource (pool size) or a semaphore, never a per-region syntax parameter |

@@ -823,6 +823,21 @@ namespace muc_detail {
                 f->pty_cref.push_back(p->by_ref && p->is_const);
             }
             if (f->is_extern) {
+                // A delegate owns an environment: C has no such ABI (and no way to release it).
+                if (f->rty && f->rty->kind == TypeKind::Delegate) {
+                    err("`extern` function `" + f->name +
+                            "` cannot return a `delegate` (the environment is reference counted; pass "
+                            "`.code`/`.env` explicitly as `void*`)",
+                        f);
+                }
+                for (auto& pt : f->pty) {
+                    if (pt && pt->kind == TypeKind::Delegate) {
+                        err("`extern` function `" + f->name +
+                                "` cannot take a `delegate` parameter (pass `.code`/`.env` explicitly as "
+                                "`void*`)",
+                            f);
+                    }
+                }
                 if (contains_reference_type(f->rty)) {
                     err("`extern` function `" + f->name + "` cannot return a class or interface (C code does not participate in reference counting)",
                         f);
@@ -881,6 +896,14 @@ Program Sema::run() {
             for (auto& d : generic_decls_) units_.front()->decls.push_back(std::move(d));
         }
         generic_decls_.clear();
+    }
+    // Synthesized lambda environment classes (U41): codegen emits their descriptors and destructors
+    // from the unit's declaration list, like any other class.
+    if (!synth_decls_.empty()) {
+        if (!units_.empty()) {
+            for (auto& d : synth_decls_) units_.front()->decls.push_back(std::move(d));
+        }
+        synth_decls_.clear();
     }
 
     Program prog;

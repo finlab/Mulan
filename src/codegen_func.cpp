@@ -74,6 +74,36 @@ namespace muc_detail {
             ++i;
         }
         b.SetInsertPoint(bodyBB);
+        // Lambda bodies: the hidden first argument is the environment; captured locals resolve to its
+        // fields (U41). Restored by the caller-visible state below (nested emission is not recursive).
+        lambdaEnvIndex.clear();
+        lambdaEnvArg = nullptr;
+        lambdaEnvTy = nullptr;
+        if ((!f->capture_locals.empty() || f->this_capture_index >= 0) && !f->pty.empty()) {
+            lambdaEnvArg = fn->getArg(0);
+            lambdaEnvTy = f->pty[0];
+            for (auto& cl : f->capture_locals) {
+                if (cl && cl->env_index >= 0) lambdaEnvIndex[cl.get()] = cl->env_index;
+            }
+        }
+        // `[this]` capture: the body's `this` is the environment field. A class field holds the handle;
+        // a struct field holds the object value (so `thisSlot` points at that field) or, with
+        // `[ref this]`, the object address.
+        if (f->this_capture_ty && lambdaEnvArg && f->this_capture_index >= 0) {
+            curClassTy = f->this_capture_ty;
+            Value* field = fieldAddr(lambdaEnvArg, f->pty[0], f->this_capture_index);
+            thisSlot = entryAlloca(ptrTy(), "this");
+            b.SetInsertPoint(bodyBB);
+            if (f->this_capture_ty->kind == TypeKind::Struct) {
+                if (f->this_capture_ref) {
+                    b.CreateStore(b.CreateLoad(ptrTy(), field), thisSlot);  // object address
+                } else {
+                    b.CreateStore(field, thisSlot);  // address of the captured copy
+                }
+            } else {
+                b.CreateStore(b.CreateLoad(ptrTy(), field), thisSlot);  // the handle
+            }
+        }
         ownParams(f->param_locals);
         block(f->body.get());
         popRefScope();
@@ -185,6 +215,8 @@ namespace muc_detail {
         descTy->setBody({i64(), ptrTy(), ptrTy(), ptrTy(), ptrTy()}, false);
         ifaceTy = LStruct::create(ctx, "mu_iface");
         ifaceTy->setBody({ptrTy(), ptrTy()}, false);
+        delegateTy = LStruct::create(ctx, "mu_delegate");
+        delegateTy->setBody({ptrTy(), ptrTy()}, false);  // {code, env}
         weakNodeTy = LStruct::create(ctx, "mu_weak_node");
         weakNodeTy->setBody({ptrTy(), ptrTy(), ptrTy()}, false);
         new GlobalVariable(*mod, ptrTy(), /*isConstant=*/false, GlobalValue::InternalLinkage,

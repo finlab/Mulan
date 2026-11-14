@@ -27,7 +27,7 @@ struct Node {
 // ---------------------------------------------------------------- Type syntax
 
 struct TypeSpec {
-    enum class K { Named, Ptr, Array, Slice, Func } kind = K::Named;
+    enum class K { Named, Ptr, Array, Slice, Func, Delegate } kind = K::Named;
     std::string name;          // Named: "int" / "Point" / "math.Point" / "Vec"
     // Non-empty when Named is a generic instantiation: the type arguments of `Vec<int>` (`Vec` itself is a template).
     std::vector<std::unique_ptr<TypeSpec>> args;
@@ -179,14 +179,28 @@ struct Call : Expr {
     bool ref_const = false;   // whether the borrow is read-only (`ref const T`)
 };
 
-// Lambda expression: `(int a) => expr` / `(int a) => { ... }` (no captures).
-// sema lowers it to a hidden `private` function (`synth`) and the expression's value is that function's address.
+// Lambda expression: `(int a) => expr` / `(int a) => { ... }`, optionally with a capture list
+// `[x, ref y] (int a) => ...` (U41: `[x]` copies the value into the environment, `[ref x]` stores the
+// address, so writes reach the captured variable; the caller owns its lifetime).
+// sema lowers it to a hidden `private` function (`synth`). Without captures its value is that
+// function's address (`fn`); with captures the value is a `delegate` `{code, env}`.
 struct Lambda : Expr {
+    // one entry of the capture list, as written
+    struct Capture {
+        std::string name;
+        bool by_ref = false;
+        int line = 0;
+        int col = 0;
+    };
+    std::vector<Capture> captures;  // the parsed list (empty: no captures)
     std::vector<std::unique_ptr<Param>> params;
     ExprPtr expr_body;            // `=> expr`
     std::unique_ptr<Block> block_body;  // `=> { ... }`
     // sema
     FuncDecl* synth = nullptr;
+    TypePtr env_ty;                        // synthesized environment class (null when not capturing)
+    std::vector<const LocalVar*> env_src;  // the outer variable copied/made addressable (the creation site)
+    std::vector<bool> env_src_ref;         // whether that capture is `[ref x]`
 };
 
 struct NewExpr : Expr {
@@ -385,6 +399,7 @@ struct LocalVar : Stmt {
     std::string cname;
     bool by_ref = false;  // a for-in ref binding / ref parameter: it is T* on the C side and is dereferenced at the use site
     bool is_ref_param = false;  // a `ref` parameter: it cannot be rebound (a for-in ref variable can write elements)
+    int env_index = -1;   // >= 0: a lambda capture; the storage is field `env_index` of the environment object
     int group = 0;        // shared by multiple declarators in the same declaration statement (used for the auto consistency check)
 };
 
@@ -583,6 +598,16 @@ struct FuncDecl : Decl {
     std::vector<bool> pty_ref;   // whether each parameter is a `ref` borrow (one pointer on the C side)
     std::vector<bool> pty_cref;  // `ref const T`: a read-only borrow
     std::vector<std::unique_ptr<LocalVar>> param_locals;
+    // Lambda captures: locals whose storage lives in the environment object (`LocalVar::env_index` is
+    // the field). They are declared in the lambda's scope after the parameters, so `param_locals`
+    // stays aligned with `pty`.
+    std::vector<std::unique_ptr<LocalVar>> capture_locals;
+    // `[this]` capture: the lambda body sees `this` as the environment field at `this_capture_index`.
+    // A class captures the handle (RC keep-alive); a struct captures a copy, or its address with
+    // `[ref this]` (writes reach the original object).
+    TypePtr this_capture_ty;
+    int this_capture_index = -1;
+    bool this_capture_ref = false;
     std::string cname;
     bool is_entry = false;    // the entry unit's `main`: renamed to `mu_main` and called by the generated wrapper
     FuncDecl* sym = nullptr;  // self

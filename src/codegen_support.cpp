@@ -266,6 +266,34 @@ bool is_zero_literal(Init* init) {
         return b.CreateStructGEP(st, objPtr, idx);
     }
 
+    // Allocate a class object: header (rc = 1, class descriptor) plus zeroed fields. The caller stores
+    // the fields — `new` then runs a constructor, a synthesized lambda environment (U41) copies the
+    // captures directly.
+    Value* Emitter::emitClassAlloc(const TypePtr& cls) {
+        uint64_t sz = objectSize(cls);
+        Value* p = nullptr;
+        if (classNeedsAlignedAlloc(cls)) {
+            p = b.CreateCall(libFn("_aligned_malloc", ptrTy(), {i64(), i64()}),
+                             {ConstantInt::get(i64(), sz),
+                              ConstantInt::get(i64(), objectAlign(cls))});
+        } else {
+            p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {ConstantInt::get(i64(), sz)});
+        }
+        BasicBlock* okBB = BasicBlock::Create(ctx, "alloc.ok", curFn);
+        BasicBlock* failBB = BasicBlock::Create(ctx, "alloc.fail", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), failBB, okBB);
+        b.SetInsertPoint(failBB);
+        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateUnreachable();
+        b.SetInsertPoint(okBB);
+        b.CreateMemSet(p, ConstantInt::get(i8(), 0), ConstantInt::get(i64(), sz),
+                       MaybeAlign(objectAlign(cls)));
+        b.CreateStore(ConstantInt::get(i64(), 1),
+                      b.CreateGEP(i8(), p, ConstantInt::get(i64(), 0)));
+        b.CreateStore(descOf(cls), b.CreateGEP(i8(), p, ConstantInt::get(i64(), 8)));
+        return p;
+    }
+
     Value* Emitter::descOf(const TypePtr& cls) {
         return mod->getOrInsertGlobal(class_desc_name(cls->unit, cls->name), descTy);
     }
@@ -280,6 +308,7 @@ bool is_zero_literal(Init* init) {
             case TypeKind::Array: return arrayOf(t);
             case TypeKind::Struct: return structOf(t);
             case TypeKind::Interface: return ifaceTy ? ifaceTy : ptrTy();
+            case TypeKind::Delegate: return delegateTy ? delegateTy : structOf(t);
             case TypeKind::Enum: return i32();
             default: return ptrTy();
         }
@@ -468,6 +497,12 @@ bool is_zero_literal(Init* init) {
                                 b.CreateGEP(frameTy, frameArg,
                                             {ConstantInt::get(i32(), 0),
                                              ConstantInt::get(i32(), cap->second)}));
+        }
+        // lambda capture (U41): the storage is a field of the environment object, which is the hidden
+        // first argument of the generated function.
+        auto env = lambdaEnvIndex.find(lv);
+        if (env != lambdaEnvIndex.end() && lambdaEnvArg && lambdaEnvTy) {
+            return fieldAddr(lambdaEnvArg, lambdaEnvTy, env->second);
         }
         auto it = slots.find(lv);
         if (it != slots.end()) return it->second;

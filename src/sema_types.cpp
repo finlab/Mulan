@@ -78,7 +78,9 @@ namespace muc_detail {
                 }
                 return Type::make_array(elem, spec->size);
             }
-            case TypeSpec::K::Func: {
+            case TypeSpec::K::Func:
+            case TypeSpec::K::Delegate: {
+                const bool is_delegate = spec->kind == TypeSpec::K::Delegate;
                 std::vector<TypePtr> ps;
                 for (auto& p : spec->params) {
                     TypePtr pt = decay_param_type(resolve_type(p.get(), u));
@@ -92,7 +94,7 @@ namespace muc_detail {
                 if (is_borrow_type(rt)) {
                     err_ts("a function type cannot return a borrow (`ref T`)", spec);
                 }
-                return Type::make_func(ps, rt);
+                return is_delegate ? Type::make_delegate(ps, rt) : Type::make_func(ps, rt);
             }
         }
         err_ts("unknown type " + spec_text(spec), spec);

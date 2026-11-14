@@ -158,8 +158,9 @@ static bool is_numeric(const TypePtr& t) {
     Value* Emitter::addrOf(Expr* e) {
         if (auto n = dynamic_cast<Name*>(e)) {
             if (n->ident == "this") {
-                // `this` is a reference to the current object: for a struct the receiver is itself the object address,
-                // for class/interface the receiver is a handle (a value), so locating the handle slot is enough.
+                // `this` is the receiver: for a struct it is the object address, for a class the
+                // handle slot. Inside a `[this]` lambda, emitFunction points `thisSlot` at the
+                // environment field, so this path serves both cases (U41).
                 if (curClassTy && curClassTy->kind == TypeKind::Struct)
                     return b.CreateLoad(ptrTy(), thisSlot);
                 return thisSlot;
@@ -268,6 +269,38 @@ static bool is_numeric(const TypePtr& t) {
         return tmp;
     }
 
+    // `ret(void* env, params...)` wrapper around a plain function value: the delegate calling
+    // convention always passes the environment first, a `fn` has none to receive.
+    Value* Emitter::emitDelegateThunk(Value* fp, const TypePtr& ft) {
+        std::string fname;
+        if (auto* fn = llvm::dyn_cast<Function>(fp)) fname = fn->getName().str();
+        const std::string key = fname + "|" + ft->str();
+        auto cached = delegateThunkCache.find(key);
+        if (cached != delegateThunkCache.end()) return cached->second;
+
+        std::string tname = "mu_dlgthunk_" + std::to_string(delegateThunkCache.size());
+        std::vector<LType*> ptys{ptrTy()};
+        for (auto& p : ft->fparams) ptys.push_back(lt(p));
+        Function* thunk = cast<Function>(
+            mod->getOrInsertFunction(tname, FunctionType::get(lt(ft->fret), ptys, false)).getCallee());
+        thunk->setLinkage(GlobalValue::InternalLinkage);
+        IRBuilder<> tb(ctx);
+        auto* entry = BasicBlock::Create(ctx, "entry", thunk);
+        tb.SetInsertPoint(entry);
+        std::vector<Value*> args;
+        for (unsigned i = 1; i < thunk->arg_size(); ++i) args.push_back(thunk->getArg(i));
+        std::vector<LType*> cp;
+        for (auto& p : ft->fparams) cp.push_back(lt(p));
+        Value* r = tb.CreateCall(FunctionType::get(lt(ft->fret), cp, false), fp, args);
+        if (r->getType()->isVoidTy()) {
+            tb.CreateRetVoid();
+        } else {
+            tb.CreateRet(r);
+        }
+        delegateThunkCache[key] = thunk;
+        return thunk;
+    }
+
     Value* Emitter::compareOp(const std::string& op, Value* l, Value* r, bool is_signed, bool is_float) {
         if (is_float) {
             if (op == "==") return b.CreateFCmpOEQ(l, r);
@@ -314,6 +347,17 @@ static bool is_numeric(const TypePtr& t) {
             // non-lvalue array (a function result) `addrOf` materializes it; the pointer is then
             // only valid within the enclosing statement.
             return addrOf(e);
+        }
+        if (e && to && to->kind == TypeKind::Delegate && e->ty && e->ty->kind == TypeKind::Func) {
+            // `fn` -> `delegate` (3.16): a plain function has no environment, so the value is
+            // `{thunk that drops the env argument, null}`. Non-capturing lambdas and free functions
+            // both land here; a capturing lambda will bring its own environment (D2/D3).
+            Value* fp = eval(e);
+            Value* thunk = emitDelegateThunk(fp, e->ty);
+            Value* dv = UndefValue::get(lt(to));
+            dv = b.CreateInsertValue(dv, thunk, {0});
+            dv = b.CreateInsertValue(dv, Constant::getNullValue(ptrTy()), {1});
+            return dv;
         }
         if (e && to && to->kind == TypeKind::Slice && e->ty &&
             e->ty->kind == TypeKind::Array) {
@@ -393,6 +437,14 @@ static bool is_numeric(const TypePtr& t) {
                 if (ownsReference(e->left.get())) emitReleaseRef(l, lt_);
                 if (ownsReference(e->right.get())) emitReleaseRef(r, rt_);
                 return cmp;
+            }
+            // `d == null` / `d != null` for a delegate (U41): the first word is the entry point, so an
+            // empty delegate is the one with a null `code`.
+            if (lt_->kind == TypeKind::Delegate || rt_->kind == TypeKind::Delegate) {
+                Value* code = nullptr;
+                if (lt_->kind == TypeKind::Delegate) code = b.CreateExtractValue(l, {0});
+                else code = b.CreateExtractValue(r, {0});
+                return compareOp(op, code, Constant::getNullValue(ptrTy()), false, false);
             }
         }
         if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {

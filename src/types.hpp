@@ -12,7 +12,7 @@
 
 // Ref: a borrow (`ref T` / `ref const T`). It appears only in the return type position of a function/method,
 // and in parameter patterns (the parameter side is still recorded with the pty_ref boolean, see FuncDecl). It cannot be used as a variable/field/element type.
-enum class TypeKind { Void, Prim, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref, Func };
+enum class TypeKind { Void, Prim, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref, Func, Delegate };
 
 struct Type;
 using TypePtr = std::shared_ptr<Type>;
@@ -80,6 +80,8 @@ struct Type {
     static TypePtr make_null();
     static TypePtr make_range();
     static TypePtr make_func(const std::vector<TypePtr>& params, const TypePtr& ret);
+// `delegate (T1, T2) => R`: a two-word value `{code, env}` whose environment is an RC object (3.16).
+static TypePtr make_delegate(const std::vector<TypePtr>& params, const TypePtr& ret);
 
     std::string str() const;
     bool is_integer() const;   // integer or enum
@@ -103,6 +105,10 @@ TypePtr t_range();
 // One definition for the whole compiler: an identical inline body in sema_impl.hpp and
 // codegen_support.cpp used to violate the ODR and broke the link on GCC 16.
 inline bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
+// A value that can be called: a plain function value (`fn`) or a capturing one (`delegate`).
+inline bool is_callable_value(const TypePtr& t) {
+    return t && (t->kind == TypeKind::Func || t->kind == TypeKind::Delegate);
+}
 
 const std::vector<std::string>& prim_names();
 bool is_prim_name(const std::string& n);

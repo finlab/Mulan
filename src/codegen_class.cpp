@@ -349,6 +349,11 @@ namespace muc_detail {
             emitSliceRelease(loadAt(lt(ty), addr, unaligned), ty);
             return;
         }
+        if (ty->kind == TypeKind::Delegate) {
+            // `{code, env}`: the environment is the RC object
+            emitReleaseRef(loadAt(lt(ty), addr, unaligned), ty);
+            return;
+        }
         if (ty->kind == TypeKind::Struct) {
             if (ty->has_dtor) {
                 FunctionCallee dtor = mod->getOrInsertFunction(
@@ -385,6 +390,10 @@ namespace muc_detail {
         }
         if (ty->kind == TypeKind::Slice) {
             emitSliceRetain(loadAt(lt(ty), addr, unaligned));
+            return;
+        }
+        if (ty->kind == TypeKind::Delegate) {
+            emitRetainRef(loadAt(lt(ty), addr, unaligned), ty);
             return;
         }
         if (ty->kind == TypeKind::Struct) {
@@ -427,8 +436,12 @@ namespace muc_detail {
 
         // release the reference fields declared by this class (in reverse order); weak fields only unregister
         size_t total = c->ty->fields.size();
-        size_t own = c->fields.size();
-        size_t baseCount = total >= own ? total - own : 0;
+        // Base fields come first in the flattened layout. `c->fields` is empty for a synthesized class
+        // (a lambda environment, U41), so derive the split from the base class instead of the AST list.
+        size_t baseCount = 0;
+        if (c->ty->base && c->ty->base->kind == TypeKind::Class) {
+            baseCount = c->ty->base->fields.size();
+        }
         for (size_t k = total; k > baseCount; --k) {
             size_t idx = k - 1;
             Value* fa = fieldAddr(curThis, c->ty, static_cast<int>(idx));

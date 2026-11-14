@@ -63,6 +63,9 @@ bool Parser::is_type_start(const Token& t) const {
         return false;
     }
     if (t.kind == TokKind::Ident) {
+        // anonymous function / delegate type at the start of a type (`delegate (int) => int d;` is still
+        // not allowed in declaration position, but `sizeof(delegate (int) => int)` and casts see it).
+        if (t.text == "delegate" && peek(1).is_op("(")) return true;
         if (type_names_.count(t.text) != 0) return true;
         // qualified type `math.Point` / `std.string.string` / `lib.a.b.T`
         if (peek(1).is_op(".") && is_module_prefix(t.text)) return true;
@@ -181,6 +184,33 @@ TypeSpecPtr Parser::parse_type() {
     if (t.kind == TokKind::Kw && prims().count(t.text) != 0) {
         advance();
         spec = make_named_spec(t.text, t.line, t.col);
+    } else if (t.kind == TokKind::Ident && t.text == "delegate" && peek(1).is_op("(")) {
+        // `delegate (T1, T2) => R` — the capturing counterpart of `(T1, T2) => R` ({code, env}, two
+        // words). Handled before the generic name branch because `delegate` is an ordinary identifier
+        // (a contextual keyword) and only a following `(` makes it a type.
+        advance();  // `delegate`
+        advance();  // `(`
+        auto fn = std::make_unique<TypeSpec>();
+        fn->kind = TypeSpec::K::Delegate;
+        fn->line = t.line;
+        fn->col = t.col;
+        if (!at_op(")")) {
+            for (;;) {
+                fn->params.push_back(parse_type());
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+        }
+        expect_op(")");
+        if (!at_op("=>")) {
+            throw err_at("expected `=>` after the parameter types of a delegate type", peek());
+        }
+        advance();
+        fn->ret = parse_type();
+        return fn;
     } else if (t.kind == TokKind::Ident) {
         advance();
         std::string name = t.text;
@@ -191,14 +221,15 @@ TypeSpecPtr Parser::parse_type() {
         }
         spec = make_named_spec(name, t.line, t.col);
     } else if (t.kind == TokKind::Op && t.text == "(") {
-        // function type `(T1, T2) => R` (3.16). Suffixes bind to the return type, so the recursive call consumes
-        // them and this branch returns without running type_suffixes on the function type itself.
+        // function type `(T1, T2) => R` (3.16). Suffixes bind to the return type, so the recursive
+        // call consumes them and this branch returns without running type_suffixes on the function
+        // type itself.
         if (base_const) {
             throw err_at("`const` cannot qualify an anonymous function type; name it with `type F = ...` and write "
                          "`const F` for a read-only binding",
                          t);
         }
-        advance();
+        advance();  // `(`
         auto fn = std::make_unique<TypeSpec>();
         fn->kind = TypeSpec::K::Func;
         fn->line = t.line;
@@ -737,6 +768,8 @@ ExprPtr Parser::parse_call(ExprPtr callee) {
 
 bool Parser::looks_like_lambda() const {
     // pos_ points at `(`; find the matching `)` (skipping nested parentheses) and check for a following `=>`.
+    // (A capture list `[...]` is consumed by parse_lambda before this check; the `[` case is handled by
+    // the caller.)
     int depth = 0;
     for (std::size_t i = pos_; i < toks_.size(); ++i) {
         const Token& tk = toks_[i];
@@ -756,8 +789,41 @@ bool Parser::looks_like_lambda() const {
 }
 
 ExprPtr Parser::parse_lambda() {
-    const Token t = expect_op("(");
     auto node = std::make_unique<Lambda>();
+    const Token t0 = peek();
+    node->line = t0.line;
+    node->col = t0.col;
+    // Capture list: `[x, ref y]` (U41). Explicit only: a name used inside the body but not listed is an
+    // error, so the copying cost is visible at the definition site.
+    if (at_op("[")) {
+        advance();
+        if (!at_op("]")) {
+            for (;;) {
+                Lambda::Capture cap;
+                const Token ct = peek();
+                cap.line = ct.line;
+                cap.col = ct.col;
+                if (at_kw("ref")) {
+                    advance();
+                    cap.by_ref = true;
+                }
+                if (at_kw("this")) {
+                    advance();
+                    cap.name = "this";
+                } else {
+                    cap.name = expect_ident("captured variable").text;
+                }
+                node->captures.push_back(std::move(cap));
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+        }
+        expect_op("]");
+    }
+    const Token t = expect_op("(");
     node->line = t.line;
     node->col = t.col;
     if (!at_op(")")) {
@@ -866,6 +932,32 @@ ExprPtr Parser::parse_primary() {
         node->line = t.line;
         node->col = t.col;
         return node;
+    }
+    if (t.kind == TokKind::Op && t.text == "[") {
+        // A capture list starts a lambda only when a parameter list and `=>` follow it.
+        int depth = 0;
+        for (std::size_t i = pos_; i < toks_.size(); ++i) {
+            const Token& tk = toks_[i];
+            if (tk.kind != TokKind::Op) continue;
+            if (tk.text == "[") {
+                depth++;
+            } else if (tk.text == "]") {
+                depth--;
+                if (depth == 0) {
+                    if (i + 1 < toks_.size() && toks_[i + 1].kind == TokKind::Op && toks_[i + 1].text == "(") {
+                        const std::size_t saved = pos_;
+                        pos_ = i + 1;
+                        const bool is_lambda = looks_like_lambda();
+                        pos_ = saved;
+                        if (is_lambda) return parse_lambda();
+                    }
+                    break;
+                }
+            } else if (tk.text == ";" || tk.text == "{" || tk.text == "}") {
+                break;
+            }
+        }
+        throw err_at("expected an expression", t);
     }
     if (t.kind == TokKind::Op && t.text == "(") {
         if (looks_like_lambda()) return parse_lambda();
