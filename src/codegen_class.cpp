@@ -360,7 +360,6 @@ namespace muc_detail {
             Value* tag = loadAt(i32(), fieldAddr(addr, st->sum_layout, 0), unaligned);
             Value* pay = fieldAddr(addr, st->sum_layout, 1);
             BasicBlock* done = BasicBlock::Create(ctx, "sum.rel.end", curFn);
-            BasicBlock* cur = b.GetInsertBlock();
             auto* sw = b.CreateSwitch(tag, done, static_cast<unsigned>(st->sum_fields.size()));
             for (size_t i = 0; i < st->sum_fields.size(); ++i) {
                 const auto& fs = st->sum_fields[i];
@@ -382,7 +381,6 @@ namespace muc_detail {
                 b.CreateBr(done);
             }
             b.SetInsertPoint(done);
-            (void)cur;
             return;
         }
         if (ty->kind == TypeKind::Struct) {
@@ -428,6 +426,7 @@ namespace muc_detail {
             return;
         }
         if (ty->kind == TypeKind::Sum) {
+            // retain the active alternative's payload: dispatch on the tag
             const TypePtr& st = ty;
             Value* tag = loadAt(i32(), fieldAddr(addr, st->sum_layout, 0), unaligned);
             Value* pay = fieldAddr(addr, st->sum_layout, 1);
