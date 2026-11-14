@@ -367,7 +367,7 @@ namespace muc_detail {
                 bool any = false;
                 for (auto& f : fs) any = any || f->needs_cleanup();
                 if (!any) continue;
-                BasicBlock* bb = BasicBlock::Create(ctx, "sum.rel", curFn);
+                    BasicBlock* bb = BasicBlock::Create(ctx, "sum.rel", curFn);
                 sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), static_cast<int>(i))), bb);
                 b.SetInsertPoint(bb);
                 if (fs.size() == 1) {

@@ -640,6 +640,15 @@ namespace muc_detail {
             }
             return true;
         }
+        // `match` is exhaustive by construction (check_match rejects an uncovered alternative without
+        // `else`), so it guarantees a return when every arm body does.
+        if (auto mt = dynamic_cast<MatchStmt*>(s)) {
+            if (mt->arms.empty()) return false;
+            for (auto& a : mt->arms) {
+                if (!guarantees_return(a->body.get())) return false;
+            }
+            return true;
+        }
         return false;
     }
 

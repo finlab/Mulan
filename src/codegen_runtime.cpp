@@ -499,6 +499,7 @@ namespace muc_detail {
         if (!lv || !needsCleanup(lv->rty) || lv->by_ref) return;
         auto it = slots.find(lv);
         if (it == slots.end()) return;
+        
         if (isRefKind(lv->rty)) {
             Value* v = b.CreateLoad(lt(lv->rty), it->second);
             emitReleaseRef(v, lv->rty);
@@ -622,3 +623,4 @@ namespace muc_detail {
     }
 
 }  // namespace muc_detail
+

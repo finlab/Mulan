@@ -301,14 +301,19 @@ using ArgPack = Emitter::ArgPack;
                 if (fs.size() == 1) {
                     Value* av = coerce(c->args[0].get(), fs[0]);
                     b.CreateStore(av, p);
-                    if (fs[0]->needs_cleanup()) emitRetainValue(p, fs[0]);
+                    // the sum takes ownership of an owned argument; a borrowed one is retained
+                    if (fs[0]->needs_cleanup() && !convOwns(c->args[0].get(), fs[0])) {
+                        emitRetainValue(p, fs[0]);
+                    }
                 } else {
                     TypePtr pt = st->sum_payload[static_cast<size_t>(alt)];
                     for (size_t k = 0; k < fs.size(); ++k) {
                         Value* fp = fieldAddr(p, pt, static_cast<int>(k));
                         Value* av = coerce(c->args[k].get(), fs[k]);
                         b.CreateStore(av, fp);
-                        if (fs[k]->needs_cleanup()) emitRetainValue(fp, fs[k]);
+                        if (fs[k]->needs_cleanup() && !convOwns(c->args[k].get(), fs[k])) {
+                            emitRetainValue(fp, fs[k]);
+                        }
                     }
                 }
             }

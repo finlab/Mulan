@@ -210,6 +210,12 @@ std::vector<StmtPtr> Parser::parse_stmt() {
         out.push_back(parse_switch());
         return out;
     }
+    // `match value { ... }`: a contextual keyword, so a call to a function named `match` is unaffected
+    if (peek().kind == TokKind::Ident && peek().text == "match" && !peek(1).is_op("(")) {
+        std::vector<StmtPtr> out;
+        out.push_back(parse_match());
+        return out;
+    }
     if (at_kw("break")) {
         advance();
         semicolon();
@@ -587,6 +593,54 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     node->body = std::move(body);
     node->line = tk.line;
     node->col = tk.col;
+    return node;
+}
+
+// `match value { Alt(a, b): { ... } Alt: { ... } else: { ... } }` — sum-type dispatch (SPEC 10.1.1).
+// `match` is a contextual keyword: it only starts a statement when it is not followed by `(`
+// (a call to a function named `match` keeps working).
+std::unique_ptr<Stmt> Parser::parse_match() {
+    const Token tk = advance();  // `match`
+    ExprPtr scrut = parse_expr();
+    forbid_inc_expr();
+    expect_op("{");
+    auto node = std::make_unique<MatchStmt>();
+    node->value = std::move(scrut);
+    node->line = tk.line;
+    node->col = tk.col;
+    bool saw_else = false;
+    while (!at_op("}")) {
+        if (at_eof()) throw err_at("unterminated `match`", tk);
+        auto arm = std::make_unique<MatchArm>();
+        const Token at = peek();
+        arm->line = at.line;
+        arm->col = at.col;
+        if (at_kw("else")) {
+            advance();
+            if (saw_else) throw err_at("`else` may appear only once in a `match`", at);
+            saw_else = true;
+        } else {
+            arm->alt = expect_ident("alternative name").text;
+            if (at_op("(")) {
+                advance();
+                if (!at_op(")")) {
+                    for (;;) {
+                        arm->binds.push_back(expect_ident("bound name").text);
+                        if (at_op(",")) {
+                            advance();
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                expect_op(")");
+            }
+        }
+        expect_op(":");
+        arm->body = parse_block();
+        node->arms.push_back(std::move(arm));
+    }
+    expect_op("}");
     return node;
 }
 

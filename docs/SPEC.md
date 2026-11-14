@@ -2101,10 +2101,35 @@ Value d = Value.None;        // a unit alternative is a plain value
   copied by value, same rule as array elements).
 - **Construction**: `Type.Alt(values...)` for a payload alternative, `Type.Alt` (no parentheses) for a
   unit alternative. The argument count and types are checked against the declaration.
-- **Not provided yet**: `match`/pattern dispatch (`Value` can be built, copied, stored and destroyed,
-  but not inspected), `==` between sums, sums as `extern` signatures, and generic sums
-  (`Option<T>`) — generic instantiation of sums is part of the `match` step.
+- **Not provided yet**: `match`/pattern dispatch ~~(`Value` can be built, copied, stored and destroyed,
+  but not inspected)~~ → **implemented in 0.0.116** (below), `==` between sums, sums as `extern`
+  signatures, and generic sums
+  (`Option<T>`) — generic instantiation of sums is part of the next step.
 - C ABI: the layout is the classic `{ tag, union }` shape, but the type is not passed to C yet.
+
+#### 10.1.2 `match` (implemented 0.0.116)
+
+```c
+match v {
+    Int(n): { total = total + n; }
+    Pair(a, b): { total = total + a * b; }
+    Text(s): { total = total + 1; }
+    None: { }
+}
+```
+
+- `match value { ... }` is a statement; `match` is a **contextual keyword** (a call to a function
+  named `match` still parses as a call).
+- An arm is `Alt` or `Alt(a, b)` followed by `:` and a block. The bound names are ordinary locals of
+  the arm (one per payload field, in declaration order); a reference-typed payload is retained for the
+  duration of the arm and released when it ends, so `Obj(b)` may use `b` freely.
+- **Exhaustiveness**: without an `else` arm every alternative must be covered — a missing one is a
+  compile error naming it. `else: { ... }` may be added once and covers the rest. Unknown or duplicate
+  alternatives, and a pattern whose binding count does not match the payload, are errors.
+- `match` counts as a terminating path for the return-value check when every arm returns, so a
+  function over a sum type does not need a trailing `return` after an exhaustive `match`.
+- Not provided: guards, or-patterns, nested destructuring, matching on a payload's value
+  (the same "no pattern-matching extensions" decision as `switch`, 6.6).
 
 ---
 

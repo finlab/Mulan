@@ -518,8 +518,25 @@ struct SwitchStmt : Stmt {
     bool enum_exhaustive = false;  // the enum covers all members (it is exhaustive even without an else)
 };
 
-struct BreakStmt : Stmt {};
-struct ContinueStmt : Stmt {};
+struct MatchArm : Node {
+    std::string alt;                 // the alternative name ("" for `else`)
+    std::vector<std::string> binds;  // names bound to the payload fields
+    std::unique_ptr<Block> body;
+};
+
+// `match value { Alt(bindings): { ... } Alt: { ... } else: { ... } }` — pattern dispatch on a sum type
+// (SPEC 10.1.1). Binding one name per payload field; `else` is optional and makes it non-exhaustive-safe.
+struct MatchStmt : Stmt {
+    ExprPtr value;
+    std::vector<std::unique_ptr<MatchArm>> arms;
+    // sema
+    TypePtr sum_ty;
+    std::vector<int> alt_index;                               // per arm (-1 for `else`)
+    std::vector<std::vector<LocalVar*>> bind_locals;          // per arm, one local per bound field
+    bool is_owned_temp = false;                               // the scrutinee is a temporary that needs cleanup
+};
+
+struct BreakStmt : Stmt {};struct ContinueStmt : Stmt {};
 
 struct ReturnStmt : Stmt {
     ExprPtr value;
@@ -624,6 +641,9 @@ struct FuncDecl : Decl {
     // the field). They are declared in the lambda's scope after the parameters, so `param_locals`
     // stays aligned with `pty`.
     std::vector<std::unique_ptr<LocalVar>> capture_locals;
+    // Storage for locals that sema synthesizes outside a declaration (currently `match` arm bindings),
+    // so the pointers stored in Name::sym stay valid after Sema is destroyed.
+    std::vector<std::unique_ptr<LocalVar>> synthetic_locals;
     // `[this]` capture: the lambda body sees `this` as the environment field at `this_capture_index`.
     // A class captures the handle (RC keep-alive); a struct captures a copy, or its address with
     // `[ref this]` (writes reach the original object).

@@ -154,6 +154,7 @@ private:
     std::unique_ptr<Stmt> parse_for();
     std::unique_ptr<Stmt> parse_para();
     std::unique_ptr<Stmt> parse_switch();
+    std::unique_ptr<Stmt> parse_match();
     std::unique_ptr<Stmt> parse_try();
 
     // ------------------------------------------------------ expressions

@@ -10,6 +10,29 @@
 
 ## Releases
 
+### 0.0.116 — 2026-11-14
+
+**Sum types, stage 2: `match` with bindings and exhaustiveness (SPEC 10.1.2).**
+
+- `match v { Int(n): { ... } Pair(a, b): { ... } None: { ... } }` dispatches on the tag and binds the
+  payload fields as ordinary locals (one per field, in declaration order). A reference-typed payload is
+  retained for the arm and released when it ends.
+- **Exhaustiveness**: without `else` every alternative must be covered (a missing one is a compile
+  error naming it); `else` may appear once. Unknown alternatives, duplicates and a binding count that
+  does not match the payload are errors. `match` also counts as a terminating path for the
+  return-value check.
+- `match` is a **contextual keyword** (`match x { ... }` starts a statement; a call to a function named
+  `match` is unaffected).
+- **Fixed**: sum construction retained an owned payload argument (`Holder.Obj(new Box(1))`) while
+  ownership was already transferred, leaking one reference; it now retains only borrowed arguments
+  (`convOwns`), the same rule every other store uses. Caught by a live-object counter: the value was
+  never released at scope exit.
+- Tests: `sum_match` (four-alternative dispatch, `else`, reference payload alive inside the arm and
+  released after, sum temporary released at block exit), must-fail `sum_match_missing`,
+  `sum_match_arity`, `sum_alt_unknown`.
+
+**Tests**: 526/526 (162 pass + 341 must-fail + 20 check + 3 ir)
+
 ### 0.0.115 — 2026-11-14
 
 **Sum types, stage 1 (SPEC 10.1.1): declaration, layout, construction, value semantics.**

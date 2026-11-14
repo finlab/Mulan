@@ -487,8 +487,73 @@ namespace muc_detail {
         return out;
     }
 
-    void Sema::check_switch(SwitchStmt* s) {
-        ScopeGuard guard(*this);
+    // `match` on a sum type (SPEC 10.1.1): every arm names an alternative and binds one local per
+    // payload field; without `else` the arms must cover every alternative (exhaustiveness).
+    void Sema::check_match(MatchStmt* s) {
+        TypePtr st = check_expr(s->value.get());
+        if (!st || st->kind != TypeKind::Sum) {
+            err("`match` needs a sum-type value, found " + (st ? st->str() : std::string("void")), s);
+        }
+        s->sum_ty = st;
+        std::vector<int> seen(st->sum_names.size(), 0);
+        bool has_else = false;
+        for (auto& arm : s->arms) {
+            if (arm->alt.empty()) {  // `else`
+                if (has_else) err("`else` may appear only once in a `match`", arm.get());
+                has_else = true;
+                s->alt_index.push_back(-1);
+                s->bind_locals.push_back({});
+                push();
+                check_block(arm->body.get());
+                pop();
+                continue;
+            }
+            int idx = -1;
+            for (size_t k = 0; k < st->sum_names.size(); ++k) {
+                if (st->sum_names[k] == arm->alt) { idx = static_cast<int>(k); break; }
+            }
+            if (idx < 0) {
+                err("sum type `" + st->str() + "` has no alternative `" + arm->alt + "`", arm.get());
+            }
+            if (seen[static_cast<size_t>(idx)]++ != 0) {
+                err("alternative `" + arm->alt + "` appears twice in this `match`", arm.get());
+            }
+            const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
+            if (arm->binds.size() != fs.size()) {
+                err("alternative `" + arm->alt + "` carries " + std::to_string(fs.size()) +
+                        " value(s), so the pattern must bind " + std::to_string(fs.size()) +
+                        " name(s)",
+                    arm.get());
+            }
+            s->alt_index.push_back(idx);
+            push();
+            std::vector<LocalVar*> locals;
+            for (size_t k = 0; k < fs.size(); ++k) {
+                auto lv = std::make_unique<LocalVar>();
+                lv->name = arm->binds[k];
+                lv->rty = fs[k];
+                lv->line = arm->line;
+                lv->col = arm->col;
+                declare_local(lv.get());
+                locals.push_back(lv.get());
+                if (cur_func_) cur_func_->synthetic_locals.push_back(std::move(lv));
+            }
+            check_block(arm->body.get());
+            pop();
+            s->bind_locals.push_back(std::move(locals));
+        }
+        if (!has_else) {
+            for (size_t k = 0; k < seen.size(); ++k) {
+                if (!seen[k]) {
+                    err("`match` does not cover alternative `" + st->sum_names[k] +
+                            "`; add that arm or an `else`",
+                        s);
+                }
+            }
+        }
+    }
+
+    void Sema::check_switch(SwitchStmt* s) {        ScopeGuard guard(*this);
         TypePtr st = check_expr(s->scrut.get());
         if (!st) err("switch is missing the value to match", s);
         const bool enum_sw = st->kind == TypeKind::Enum;

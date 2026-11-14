@@ -569,6 +569,7 @@ struct Emitter {
 
     // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
     void emitSwitch(SwitchStmt* s);
+    void emitMatch(MatchStmt* s);
 
     // ------------------------------------------------------------ interface table
 
