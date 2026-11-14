@@ -1,6 +1,7 @@
 // A computed negative length aborts (SPEC 6.6: an allocation that cannot be satisfied aborts)
 // instead of wrapping the byte count and handing out a heap buffer smaller than its advertised
-// length. Nothing is printed, so the expectation is only the exit code (abort() is 3 on Windows).
+// length. Nothing is printed, so the expectation is only the exit code (generated code ends with
+// `_exit(3)` on every Windows CRT).
 unit neg_len_runtime;
 int main() {
     int n = -1;

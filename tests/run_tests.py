@@ -23,7 +23,7 @@ Known limitations:
 
 Expected files (`tests/expected/<name>.txt`) hold the program's stdout, plus up to two kinds of
 marker lines that are stripped before comparison:
-    @exit <code>   the run must end with this exit code (default 0; `abort()` cases use 3)
+    @exit <code>   the run must end with this exit code (default 0; abnormal termination is 3)
     @ <args>       extra options appended to the `muc build` command (for example `--bounds=off`)
 """
 
@@ -86,7 +86,7 @@ def parse_expected(path: Path) -> tuple[list[str], int, list[str]]:
 
     Two marker lines are recognised and removed from the output comparison:
       * `@exit <code>` — the run must end with that process exit code (default 0; a case that
-        documents `abort()` expects 3 on Windows);
+        documents abnormal termination expects 3);
       * `@ <args>` — extra options appended to the `muc build` command (for example `@ --bounds=off`).
     """
     exit_code = 0

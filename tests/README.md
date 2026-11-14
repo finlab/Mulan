@@ -103,7 +103,7 @@ Notes per kind:
 - **Run (`tests/cases/`)**: besides plain output lines, an expected file may contain two marker
   lines that are stripped before comparison:
   - `@exit <code>` — the run must end with this exit code (default `0`; a case whose documented
-    behaviour is `abort()` writes `@exit 3`, the Windows abort code);
+    behaviour is abnormal termination writes `@exit 3`, the status `muc`-generated code exits with);
   - `@ <args>` — extra options appended to the `muc build` command (for example `@ --bounds=off`).
 - **C ABI (`tests/abi/`)**: both sides are really different compilers' object files, which is what
   checks the C ABI of `extern` / `export` aggregates (byval / sret) — something no single-language

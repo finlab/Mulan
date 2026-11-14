@@ -100,7 +100,7 @@ namespace muc_detail {
         b.SetInsertPoint(checkBB);
         b.CreateCondBr(b.CreateICmpUGE(axis, ConstantInt::get(i64(), rank)), badBB, okBB);
         b.SetInsertPoint(badBB);
-        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(okBB);
         Value* off = b.CreateAdd(ConstantInt::get(i64(), 8),
@@ -151,7 +151,7 @@ namespace muc_detail {
         BasicBlock* dimsOkBB = BasicBlock::Create(ctx, "arr.dims", curFn);
         b.CreateCondBr(bad, dimsBadBB, dimsOkBB);
         b.SetInsertPoint(dimsBadBB);
-        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(dimsOkBB);
 
@@ -180,7 +180,7 @@ namespace muc_detail {
         BasicBlock* sizeOkBB = BasicBlock::Create(ctx, "arr.size", curFn);
         b.CreateCondBr(overflow, sizeBadBB, sizeOkBB);
         b.SetInsertPoint(sizeBadBB);
-        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(sizeOkBB);
         Value* h = b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {bytes});
@@ -188,7 +188,7 @@ namespace muc_detail {
         BasicBlock* failBB = BasicBlock::Create(ctx, "arr.fail", curFn);
         b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), failBB, okBB);
         b.SetInsertPoint(failBB);
-        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(okBB);
         b.CreateMemSet(h, ConstantInt::get(i8(), 0), bytes, MaybeAlign(8));
@@ -211,6 +211,29 @@ namespace muc_detail {
     }
 
     void Emitter::emitSliceRetain(Value* h) { emitRetain(h); }
+
+    FunctionCallee Emitter::abortTrap() {
+        if (abortTrapFn) {
+            return FunctionCallee(abortTrapFn->getFunctionType(), abortTrapFn);
+        }
+        auto* ft = FunctionType::get(LType::getVoidTy(ctx), {}, false);
+        Function* fn = Function::Create(ft, GlobalValue::InternalLinkage, "mu_abort", *mod);
+        abortTrapFn = fn;
+
+        Function* savedFn = curFn;
+        IRBuilder<>::InsertPoint savedIP = b.saveIP();
+        curFn = fn;
+        b.SetInsertPoint(BasicBlock::Create(ctx, "entry", fn));
+        // fflush(NULL) flushes every output stream (C standard), so nothing is left for the CRT to
+        // write a second time while the process goes down.
+        b.CreateCall(libFn("fflush", i32(), {ptrTy()}), {Constant::getNullValue(ptrTy())});
+        b.CreateCall(libFn("_exit", LType::getVoidTy(ctx), {i32()}),
+                     {ConstantInt::get(i32(), 3)});
+        b.CreateUnreachable();
+        curFn = savedFn;
+        b.restoreIP(savedIP);
+        return FunctionCallee(ft, fn);
+    }
 
     // element release function: release the elements one by one (when they hold references), then free the header
     Function* Emitter::ensureSliceFree(const TypePtr& elem, int rank) {

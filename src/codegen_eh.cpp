@@ -80,12 +80,12 @@ namespace muc_detail {
         // A destructor / finally may still catch locally (a try inside it); only abort when
         // the exception would escape that cleanup context.
         if (!abortBases.empty() && ehStack.size() <= abortBases.back()) {
-            b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+            b.CreateCall(abortTrap(), {});
             b.CreateUnreachable();
             return;
         }
         if (ehStack.empty() && (inNothrow || curIsEntry)) {
-            b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+            b.CreateCall(abortTrap(), {});
             b.CreateUnreachable();
             return;
         }
@@ -123,7 +123,7 @@ namespace muc_detail {
         BasicBlock* nested = BasicBlock::Create(ctx, "unwind.nested", curFn);
         b.CreateCondBr(b.CreateICmpNE(loadPendingFlag(), ConstantInt::get(i32(), 0)), nested, ok);
         b.SetInsertPoint(nested);
-        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
 
         b.SetInsertPoint(ok);
@@ -158,7 +158,7 @@ namespace muc_detail {
         BasicBlock* bad = BasicBlock::Create(ctx, "throw.null", curFn);
         b.CreateCondBr(b.CreateICmpEQ(obj, Constant::getNullValue(ptrTy())), bad, ok);
         b.SetInsertPoint(bad);
-        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(ok);
         // `new ...` / a call result already owns one reference; a borrowed local must be retained.
@@ -209,7 +209,7 @@ namespace muc_detail {
         BasicBlock* bad = BasicBlock::Create(ctx, "cleanup.throw", curFn);
         b.CreateCondBr(b.CreateICmpNE(loadPendingFlag(), ConstantInt::get(i32(), 0)), bad, ok);
         b.SetInsertPoint(bad);
-        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(ok);
     }

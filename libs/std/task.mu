@@ -145,19 +145,6 @@ void fiber_release_locked(void* f) {
 
 extern void* muc_eh_slot();
 
-// ---------------------------------------------------------------- task-boundary abort
-
-// The generated task wrapper calls this when an exception escapes a section / item body (SPEC
-// 3.17.4: the B2 thread-boundary rule). Flushing first matters: the CRT's own abort path flushes
-// the shared stdio buffer, and a second flush of content that was already written duplicates every
-// buffered line. An explicit `fflush(null)` (C: all output streams) leaves nothing behind.
-extern int fflush(void* stream);
-
-public void muc_task_abort() {
-    fflush(null);
-    abort();
-}
-
 void eh_load(Task* t) {
     ulong* slot = muc_eh_slot() as ulong*;
     slot[0] = (*t).eh0;

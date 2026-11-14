@@ -244,7 +244,7 @@ using ArgPack = Emitter::ArgPack;
         BasicBlock* failBB = BasicBlock::Create(ctx, "new.fail", curFn);
         b.CreateCondBr(b.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), failBB, okBB);
         b.SetInsertPoint(failBB);
-        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(okBB);
         b.CreateMemSet(p, ConstantInt::get(i8(), 0), ConstantInt::get(i64(), sz),

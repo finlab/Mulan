@@ -144,6 +144,7 @@ struct Emitter {
     DIFile* diFile = nullptr;
     DISubprogram* diSub = nullptr;    LType* sliceTy = nullptr;  // dynamic array handle
     std::map<std::string, Function*> sliceFreeCache;  // element type -> free function
+    Function* abortTrapFn = nullptr;  // the shared `mu_abort` helper (see abortTrap())
     LStruct* descTy = nullptr;
     LStruct* ifaceTy = nullptr;  // {ptr obj, ptr desc}
     LStruct* delegateTy = nullptr;  // {ptr code, ptr env}
@@ -695,9 +696,13 @@ struct Emitter {
     // { frame*, item } — the per-item context type shared by the producer and the task body.
     LStruct* paraCtxTy(const TypePtr& elemTy, bool byRef);
     FunctionCallee runtimeFn(const char* unit, const char* name, LType* ret, std::vector<LType*> params);
-    // Terminates the process when an exception escapes a task body (std.task.muc_task_abort:
-    // flush the shared stdio buffer once, then abort) — SPEC 3.17.4, the B2 boundary rule.
-    FunctionCallee taskAbort();
+    // Abnormal termination shared by every "execution cannot continue" path (uncaught exception,
+    // failed allocation, an exception escaping a task body): flush stdio once, then `_exit(3)`.
+    // C `abort()` is deliberately not used — its process status depends on the CRT (msvcrt exits 3,
+    // UCRT reports STATUS_STACK_BUFFER_OVERRUN through a fail-fast), so the same program would end
+    // with a different code under the mingw64 and ucrt64 builds. The flush keeps the CRT's own exit
+    // path from writing already-buffered output a second time.
+    FunctionCallee abortTrap();
 
     void emitGlobals();
 

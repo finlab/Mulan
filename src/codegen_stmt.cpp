@@ -857,10 +857,6 @@ using ArgPack = Emitter::ArgPack;
              0, 0);
     }
 
-    FunctionCallee Emitter::taskAbort() {
-        return runtimeFn("std.task", "muc_task_abort", LType::getVoidTy(ctx), {});
-    }
-
     void Emitter::emitPara(ParaStmt* p) {
         FunctionCallee join = runtimeFn("std.task", "muc_para_join", LType::getVoidTy(ctx), {ptrTy()});
         std::vector<Value*> handles;
@@ -1099,7 +1095,7 @@ using ArgPack = Emitter::ArgPack;
         BasicBlock* done = BasicBlock::Create(ctx, "pf.done", wrapFn);
         b.CreateCondBr(b.CreateICmpNE(flag, ConstantInt::get(i32(), 0)), aborted, done);
         b.SetInsertPoint(aborted);
-        b.CreateCall(taskAbort(), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(done);
         b.CreateRetVoid();
@@ -1162,7 +1158,7 @@ using ArgPack = Emitter::ArgPack;
         BasicBlock* done = BasicBlock::Create(ctx, "para.done", wf);
         b.CreateCondBr(b.CreateICmpNE(flag, ConstantInt::get(i32(), 0)), aborted, done);
         b.SetInsertPoint(aborted);
-        b.CreateCall(taskAbort(), {});
+        b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(done);
         b.CreateRetVoid();

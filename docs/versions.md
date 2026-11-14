@@ -34,10 +34,13 @@ compiler crash and a duplicated-output abort.**
   `expression nesting too deep (limit 1024 levels)` or `... is too long (limit 2048 ...)`. `muc`
   also reserves 8 MB of main-thread stack, so 1000 levels of parentheses still compile; the measured
   overflow points are ~2000 levels and 5k-10k chain links, leaving ~2x margin.
-- **Duplicated stdout when a `para` region aborts** (#12): the abort path flushed the shared stdio
-  buffer twice, so every buffered line appeared twice. The section / item wrappers now call
-  `std.task.muc_task_abort` (`fflush(null)` then `abort()`): output appears exactly once and the exit
-  code stays 3.
+- **Abnormal termination is deterministic** (#12, and the CI failure it exposed): generated code used
+  C `abort()`, whose process status depends on the CRT — msvcrt exits 3, while UCRT reports
+  `STATUS_STACK_BUFFER_OVERRUN` (0xC0000409) through a fail-fast — and whose path flushed the shared
+  stdio buffer twice, printing buffered output a second time. Every "execution cannot continue" path
+  (uncaught exception, failed allocation, an exception escaping a task body) now calls one internal
+  `mu_abort` helper: `fflush(null)` then `_exit(3)`. Output appears exactly once and the process
+  status is 3 on both the mingw64 and the ucrt64 CRT.
 - **`Type::is_signed()`** (#16): documented as an integer-only predicate (floats and non-primitive
   kinds answer true, matching the prototype); the float → integer conversion in codegen is now an
   unconditional `FPToSI` instead of reading a sign off that fallback, and `widens_int`'s three
