@@ -100,6 +100,10 @@ TypePtr t_bool();
 TypePtr t_null();
 TypePtr t_range();
 
+// One definition for the whole compiler: an identical inline body in sema_impl.hpp and
+// codegen_support.cpp used to violate the ODR and broke the link on GCC 16.
+inline bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
+
 const std::vector<std::string>& prim_names();
 bool is_prim_name(const std::string& n);
 

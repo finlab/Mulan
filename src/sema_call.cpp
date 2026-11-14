@@ -170,6 +170,19 @@ namespace muc_detail {
                         TypePtr at = check_expr(c->args[0].get());
                         if (!is_integer(at))
                             err("the axis of `length(axis)` must be an integer", c->args[0].get());
+                        // A constant axis is checked here; a runtime axis aborts in `emitSliceDimDynamic`.
+                        if (const_ok(c->args[0].get())) {
+                            ConstVal cv;
+                            if (eval_const(c->args[0].get(), nullptr, cv) && !cv.is_float) {
+                                const long long a = cv.i;
+                                if (a < 0 || a >= ot->rank) {
+                                    err("axis " + std::to_string(a) + " is out of range for a rank-" +
+                                            std::to_string(ot->rank) + " sequence (valid axes: 0.." +
+                                            std::to_string(ot->rank - 1) + ")",
+                                        c->args[0].get());
+                                }
+                            }
+                        }
                     }
                     c->callee_kind = "slice_length";
                     return Type::make_prim("usize");

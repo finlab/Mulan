@@ -83,10 +83,10 @@ position matters. Files starting with `lib_` are dependency units, not cases.
 | `bitwise` | `& \| ^ ~` (`~` is bitwise complement), `<< >>` (including negative values), compound assignment `&= \|= ^= <<= >>=`, setting/clearing/flipping bits |
 | `control` | `if/elif/else`, `while` + `break/continue` (including `while true`), `for i in 0..n`, range endpoint expressions, nested loops |
 | `struct` | value semantics (copies and parameter passing are independent), `{x = 1, y = 2}`, `{3, 4}`, zero initialization, `Point(...)`, `Point()` |
-| `arrays` | `int[N]` aggregate initialization pads with zeros, value-semantics copy and parameter passing, `len`, `for v in arr`, `for ref v in arr` mutating elements |
+| `arrays` | `int[N]` aggregate initialization pads with zeros, value-semantics copy and parameter passing, **static arrays are C storage** (count with `sizeof(a)/sizeof(a[0])`, iterate with an index loop; no `len`, no `for-in`) |
 | `forin_index` | index-style user containers (`length()` + `operator[](C, usize)` for struct/class), `for i, x` (real array index, relative offset for ranges), temporary container evaluated once, empty container |
-| `strings` | `len`/`s[i]` (including literal indices and for-in iteration), `char[N] = "..."` copy + NUL, `puts(&buf[0])`, NUL truncation on write |
-| `unicode_escape` | `\u{...}`: strings encoded as UTF-8 (1–4 bytes, byte values and `len`), equivalence with raw UTF-8 in source, char literals limited to a single-byte code point (including `U+FF` → `char` −1), upper/lowercase hex and leading zeros |
+| `strings` | `s.length()` / `s[i]` (including literal indices and for-in iteration), `char[N] = "..."` copy + NUL, `puts(&buf[0])`, NUL truncation on write |
+| `unicode_escape` | `\u{...}`: strings encoded as UTF-8 (1–4 bytes, byte values and `s.length()`), equivalence with raw UTF-8 in source, char literals limited to a single-byte code point (including `U+FF` → `char` −1), upper/lowercase hex and leading zeros |
 | `const_member` | type-level `const`: every scalar type, constants referring to each other / unary / comparison, `sizeof`/`alignof`, `Type.Name`, bare names inside methods, base-class constants and bare names in derived classes, private same-unit access, unit-level const referring to type-level constants, `sizeof` unchanged by constants, unsigned `>>` constants consistent with runtime, locals shadowing constants |
 | `const_global_init` | constant initialization of non-`const` globals: `int g = 1 + 2;`, `int G = Cfg.K;`, enum/float/`long`, referencing unit-level const, with globals still mutable |
 | `ptr` | `&x`/`*p` (including compound assignment), pointer parameters, `p[i]` and pointer arithmetic, `alloc/free`, `null` checks, `const int*`, `(*pp).field` |

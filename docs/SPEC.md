@@ -1,8 +1,10 @@
 # Mulan Language Specification (Draft v0.2)
 
 > Date: drafted on 2026-11-07; the object model (class / single inheritance / interface / overload / constructor) was added on 2026-11-09;
-> 2026-11-10: added `switch` and the conditional expression `?:`, and aligned the specification with the implementation for behaviors that were implemented but undocumented (version 0.0.46)
-> Status: draft, current through version 0.0.84. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
+> 2026-11-14: aligned with the current implementation — string literals are `const char*` (0.0.89), `len` is
+> removed and static arrays are C storage (0.0.101), unit-level init/cleanup (9.1), `export` and the export
+> surface (0.0.104).
+> Status: draft, current through version 0.0.104. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
 > Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor, reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
 
@@ -113,7 +115,10 @@ and or not override operator super this
   - Written in a character literal it requires a code point ≤ `U+FF` (a single-byte bit pattern); otherwise it is an error and the compiler suggests using a string instead.
 - **Unicode code point type = `int`** (i32): the range is 0–`0x10FFFF`, arithmetic and comparison work naturally, and `-1` can serve as an invalid sentinel; **no** types or aliases such as `rune` / `unichar` / `char32` are **introduced**.
   APIs that iterate a string by code point (`s.chars()` and the like) belong to the string library and are designed together with the string type (see backlog U3); they will return `int`.
-- **String**: `"..."`, UTF-8, statically stored at compile time, NUL-terminated; the type is the std library's `string` value type (see 3.3, for the implementation see the library documentation), implicitly convertible to `const char*`; supports `\u{...}` (see above).
+- **String**: `"..."`, UTF-8, statically stored at compile time, NUL-terminated; **the type of a string
+  literal is `const char*`** (0.0.89, as in C). `String` (the std library value type, 3.3) is built from
+  a literal through its implicit `String(const char*)` constructor; the reverse direction needs
+  `.cstr()` (there is no implicit `String → const char*` conversion); supports `\u{...}` (see above).
 - **Boolean**: `true` / `false`.
 - **Null**: `null` (not 0); it can be assigned to pointers and class references, but cannot be used for structs/scalars.
 
@@ -1296,7 +1301,8 @@ on the execution engine.
   (unit-level `const`, enum members, type-level `const` members) as well as `sizeof(T)` / `alignof(T)`;
   forward references are supported; `const int B = A + 1;`, `int g = 1 + 2;`, `int G = Cat.MaxAge;` are all legal. Cyclic dependencies and division by zero are errors.
   Aggregate constants are still written as literals or aggregate initialization (`const int[] G = {10, 20, 30};`).
-  A `string` value cannot be a unit-level variable (3.3): write `const char* S = "hi";` instead.
+  A `const` unit-level `string` is still not allowed (a unit-level `const` must be a compile-time constant):
+  write `string S = "hi";` for a mutable global, or `const char* S = "hi";` when a compile-time literal is enough.
 - **Local `const`** may be initialized with a runtime expression (`const int x = f();` is legal); it simply cannot be assigned again after initialization.
 - A `const` inside a type body is a **type-level constant**, must be initialized on the spot, and must be a compile-time constant; see 3.7.1.
 - `static` has been removed (0.0.32): unit-level variables naturally have static storage duration; `static` local variables inside functions and `static` functions are not supported.
@@ -1390,7 +1396,8 @@ type PP = P;          // alias of an alias
 - Struct construction expression: `Point(1, 2)`, `Point(x = 1, y = 2)`, `Point()` (zero value); brace initialization is not an expression.
 - `new T(...)` is an expression (`T` must be a class) and returns a class reference; there is no corresponding release statement (`del` has been removed; just set it to null).
 - `0` in an expression is an `int`; zero-value initialization (aggregate `{}` / scalar constants) is only used in the declaration-initializer position. For a struct's zero value in an expression/assignment use `Point()`; you cannot write `p = {}`, `p = 0`, or `f(0)`.
-- A string literal has type `string`; it converts implicitly to `const char*`; `"abc"[0]` is legal.
+- A string literal has type `const char*` (as in C); `String` is built from it through the implicit
+  `String(const char*)` constructor and goes back with `s.cstr()`; `"abc"[0]` is legal.
 
 ### 5.2 Conditional expression `?:` (implemented in 0.0.46)
 

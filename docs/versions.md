@@ -10,6 +10,32 @@
 
 ## Releases
 
+### 0.0.105 — 2026-11-14
+
+**GitHub issue batch: ODR duplicate, `buffer<T>.ptr`, multi-index `operator[]`, constant axis
+check, doc reconciliation.**
+
+- **#1 duplicate `is_void`**: the non-inline definition in `codegen_support.cpp` and the inline one in
+  `sema_impl.hpp` violated the ODR (and broke the link on GCC 16). `is_void` now lives once, inline, in
+  `types.hpp`; both old definitions are gone, so a clean build links with any conforming toolchain.
+- **#2 `buffer<T>.ptr`** (and `T[].ptr`, the same type): the element data pointer for C interop, null
+  for a null handle. The operand must be a stable object — `.ptr` on a temporary is a compile error
+  because the pointer would dangle.
+- **#3 multi-index `operator[]`**: the member form takes 1–3 index parameters, the free form takes the
+  container plus 1–3 indices; every index must be an integer. The call path already forwarded every
+  index, so only the declaration arity checks had to change.
+- **#5 constant out-of-range axis**: `x.length(axis)` with a compile-time axis outside `0..rank-1` is
+  rejected at the call site (`axis 2 is out of range for a rank-2 sequence (valid axes: 0..1)`)
+  instead of reading header data; a runtime axis still aborts.
+- **#4 docs**: SPEC status is current through 0.0.104; §2.4/§3.7.2/§5.1 now state that a string literal
+  is `const char*`, that `String` has an implicit `String(const char*)` constructor and `.cstr()` goes
+  back, and that a `const` unit-level `string` is the only forbidden form; `tests/README.md` no longer
+  claims `len` or iteration over static arrays.
+
+Tests: `buffer_ptr`, `multi_index_op`; must-fail `length_axis_const`, `slice_ptr_temp`.
+
+**Tests**: 497/497 (150 pass + 325 must-fail + 19 check + 3 ir)
+
 ### 0.0.104 — 2026-11-14
 
 **`export` declarations + export-surface switch; self-registering unit init/cleanup.**

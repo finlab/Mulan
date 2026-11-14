@@ -683,6 +683,15 @@ namespace muc_detail {
         }
 
         TypePtr ot = check_expr(obj);
+        // `buffer<T>.ptr` / `T[].ptr`: the data pointer of a managed sequence (C interop, SPEC 3.3).
+        // The pointer borrows the buffer, so the operand must be a stable object.
+        if (ot && ot->kind == TypeKind::Slice && e->name == "ptr") {
+            if (!is_lvalue(obj)) {
+                err("`.ptr` borrows the buffer; the operand must be a variable or a field (bind the temporary first)", e);
+            }
+            e->kind = "slice_ptr";
+            return Type::make_ptr(ot->elem);
+        }
         if (ot && (ot->kind == TypeKind::Struct || ot->kind == TypeKind::Class)) {
             TypePtr ft = ot->field_type(e->name);
             if (!ft) {

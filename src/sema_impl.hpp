@@ -30,7 +30,6 @@ namespace muc_detail {
 
 inline bool is_integer(const TypePtr& t) { return t && t->is_integer(); }
 inline bool is_numeric(const TypePtr& t) { return t && t->is_numeric(); }
-inline bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
 inline bool is_prim(const TypePtr& t) { return t && t->kind == TypeKind::Prim; }
 inline bool is_enum_t(const TypePtr& t) { return t && t->kind == TypeKind::Enum; }
 // Enums may only be explicitly converted to and from "real integer types" (neither bool nor enums count)

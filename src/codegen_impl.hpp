@@ -114,8 +114,6 @@ std::string sane(std::string s);
 // Whether the initializer expression is the literal 0 (defined in codegen_support.cpp)
 bool is_zero_literal(Init* init);
 
-bool is_void(const TypePtr& t);
-
 // ------------------------------------------------------------ Emitter
 
 struct Emitter {

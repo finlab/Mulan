@@ -23,8 +23,6 @@ bool is_zero_literal(Init* init) {
     return false;
 }
 
-bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
-
     // ------------------------------------------------------------ basic utilities
     LType* Emitter::ptrTy() { return PointerType::get(ctx, 0); }
     LType* Emitter::i1() { return LType::getInt1Ty(ctx); }

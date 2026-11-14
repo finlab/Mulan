@@ -547,6 +547,23 @@ using ArgPack = Emitter::ArgPack;
                                                 FunctionType::get(lt((*f)->rty), ptys, (*f)->is_varargs))
                     .getCallee();
             }
+            if (m->kind == "slice_ptr") {
+                // `buffer.ptr`: null handle -> null pointer, otherwise the element data area.
+                Value* h = eval(m->obj.get());
+                BasicBlock* from = b.GetInsertBlock();
+                BasicBlock* nn = BasicBlock::Create(ctx, "ptr.nn", curFn);
+                BasicBlock* done = BasicBlock::Create(ctx, "ptr.done", curFn);
+                b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), done, nn);
+                b.SetInsertPoint(nn);
+                Value* data = sliceDataPtr(h, m->obj->ty->rank);
+                BasicBlock* nnEnd = b.GetInsertBlock();
+                b.CreateBr(done);
+                b.SetInsertPoint(done);
+                auto* phi = b.CreatePHI(ptrTy(), 2);
+                phi->addIncoming(Constant::getNullValue(ptrTy()), from);
+                phi->addIncoming(data, nnEnd);
+                return phi;
+            }
             if (m->kind == "field" && m->obj->ty && m->obj->ty->kind == TypeKind::Class) {
                 Value* p = eval(m->obj.get());
                 Value* addr = fieldAddr(p, m->obj->ty, m->field_index);

@@ -1,0 +1,1 @@
+`.ptr` borrows the buffer; the operand must be a variable or a field

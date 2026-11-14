@@ -632,7 +632,14 @@ namespace muc_detail {
         if (sym == "~") {
             if (n != 1) err("`operator~` takes 1 parameter", f);
         } else if (sym == "[]") {
-            if (n != 2) err("`operator[]` takes 2 parameters (container, index)", f);
+            if (n < 2 || n > 4)
+                err("`operator[]` takes 2 to 4 parameters (the container plus 1 to 3 indices)", f);
+            else {
+                for (size_t i = 1; i < n; ++i) {
+                    if (!is_integer(f->pty[i]))
+                        err("index " + std::to_string(i) + " of `operator[]` must be an integer", f);
+                }
+            }
         } else if (sym == "[]=") {
             err("`operator[]=` was removed: return `ref T` from `operator[]` so that `c[i] = v` writes through the borrow",
                 f);
@@ -683,8 +690,13 @@ namespace muc_detail {
         const size_t n = m->pty.size();
         auto bad = [&](const std::string& msg) { err("struct `" + owner->name + "`: " + msg, m); };
         if (sym == "[]") {
-            if (n != 1) bad("`operator[]` takes 1 parameter (the index); the receiver is `this`");
-            if (!is_integer(m->pty[0])) bad("index of `operator[]` must be an integer");
+            if (n < 1 || n > 3) {
+                bad("`operator[]` takes 1 to 3 parameters (the indices); the receiver is `this`");
+            } else {
+                for (size_t i = 0; i < n; ++i) {
+                    if (!is_integer(m->pty[i])) bad("index of `operator[]` must be an integer");
+                }
+            }
         } else if (sym == "[]=") {
             bad("`operator[]=` was removed: return `ref T` from `operator[]` so that `c[i] = v` writes through the borrow");
         } else if (sym == "~") {
