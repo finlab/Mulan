@@ -48,6 +48,14 @@
 
 **Tests**: 541/541 (166 pass + 348 must-fail + 20 check + 4 ir + 3 c abi)
 
+> **Documentation restructure (no code change, no version bump)**: the standard library was split out of
+> the language documents. `docs/` now holds only user-facing files: `SPEC.md` (language) and
+> `StdLibSPEC.md` (standard library: layers, unit inventory, error model, public contracts). All design
+> material moved to `agents/stdlib/` (`policy.md`, `c-bindings.md`, `interfaces.md`, `style.md`,
+> `task.md`, `backlog.md`, `string.md`, `task-runtime.md`), and `agents/design-backlog.md` keeps
+> language items only. Section numbers in `docs/SPEC.md` were kept on purpose because code comments and
+> tests cite them; paths named in older entries of this file are historical.
+
 ### 0.0.120 — 2026-11-14
 
 **Sum types never cross into C; `para`/`thread` treat them as ordinary values (U42 S5).**

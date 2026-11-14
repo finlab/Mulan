@@ -7,6 +7,12 @@
 > Status: draft, current through version 0.0.106. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
 > Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor, reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
+>
+> **Scope: this document specifies the *language*.** The standard library — unit inventory, APIs,
+> error model, C bindings, naming — is specified separately in
+> [docs/StdLibSPEC.md](file:///D:/dev/mu_lan/docs/StdLibSPEC.md). Sections here that describe a
+> library contract (§3.15.9, §3.17, §7.2) keep the language rule and point at the library spec;
+> section numbers are unchanged on purpose, because source comments and tests cite them.
 
 ---
 
@@ -196,7 +202,7 @@ where  move  typeof
     unchanged, as is initialization of a `char`/`byte` array from a string literal.
 - **Dynamic arrays**: `T[]` / `T[,]` / `T[,,]` are **syntax sugar for the container types**
   `Array<T>` / `Array2d<T>` / `Array3d<T>` (rank 1–3; decided 2026-11-14, containers themselves
-  still to be written — backlog U38). The sugar names a *library* container; it is not a distinct
+  still to be written — stdlib backlog U38). The sugar names a *library* container; it is not a distinct
   runtime type.
   - **Implementation status (0.0.106)**: until `Array*` lands, `T[]` and `buffer<T>` resolve to the
     **same** built-in reference-counted sequence (`{ i64 rc; i64 len; i64 cap; data... }`), so every
@@ -220,7 +226,7 @@ where  move  typeof
 - **`buffer<T>` is the built-in safe memory block** — the low-level infrastructure the `Array`
   family is built on, not a user-facing container. Zero-initialized, RC-shared, element-wise RC for
   class/interface elements, bounds-checked subscript, `b.ptr` for C interop. It stays lowercase
-  because it is compiler-provided (style.md §1); `T[]` sugar never denotes it.
+  because it is compiler-provided (the naming rules are internal: `agents/stdlib/style.md` §1); `T[]` sugar never denotes it.
 - **`String` is the canonical name** of the library string type; `string` is a `type` alias (0.0.101).
 - **Static rectangular multi-dimensional arrays**: `T[m,n,...]` (`m,n` compile-time constants), contiguous C storage.
   - `int[2,3] a = {{1, 2, 3}, {4, 5, 6}};` (nested braces, missing elements filled with zero).
@@ -248,8 +254,9 @@ where  move  typeof
 - Managed sequences answer `x.length()` (`usize`); **static arrays are C storage and have no `length()`** - derive the count with `sizeof(a) / sizeof(a[0])`.
 - **Bounds checking**: managed sequences (`T[]` / `buffer<T>`) are checked at the subscript; `--bounds=on|off` (default on) controls it, and a violation throws `std.exception.BoundsError { index, length, axis }`. Static arrays and `T*` are unchecked (C semantics).
 - All-zero/null values use `{}`: `int[5] a = {};`, `int[] s = {};`, `string s = {};` (aggregate types no longer support `= 0`).
-- **`String` is a value type provided by the std library** (`string` is a lowercase `type` alias; not a language built-in type; for layout, buffer management, and the full API see
-  `lib-std-string.md`). **The compiler knows nothing about its layout** (0.0.89):
+- **`String` is a value type provided by the std library** (`string` is a lowercase `type` alias; not a language built-in type; the spec of the library is
+  [docs/StdLibSPEC.md](file:///D:/dev/mu_lan/docs/StdLibSPEC.md) §6.3, the implementation notes are an
+  internal record). **The compiler knows nothing about its layout** (0.0.89):
   - **A string literal is a static, NUL-terminated UTF-8 byte buffer; its type is `const char*`** (as in C).
     `string s = "abc";` and `string s = cstr;` go through the library's `implicit string(const char*)`
     (a copy, one allocation, see 3.6); `"abc"` on its own stays `const char*` and is passed to C as is.
@@ -1018,29 +1025,20 @@ interface of the `ref I` form can be reconsidered (see backlog U33 "Final Decisi
 
 #### 3.15.9 Predeclared contracts (`std.interfaces`)
 
-`libs/std/interfaces.mu` (unit `std.interfaces`, loaded implicitly) declares the contracts the
-compiler and the library share. They are ordinary `interface` declarations — usable as `:` targets
-and as constraints in generic code; nothing is added to the runtime (structural check only).
+The predeclared contracts (`IIterator<T>`, `IEnumerable<T>`, `IIndexable<T>`, `IEquatable`,
+`IOrdered`, `IAddable` … `INumber`) are ordinary `interface` declarations in `std.interfaces`, a
+library unit loaded implicitly. The member tables — which signatures each contract requires and which
+types satisfy it — are library content:
+[docs/StdLibSPEC.md](file:///D:/dev/mu_lan/docs/StdLibSPEC.md) §6.2. The language rules,
+unchanged:
 
-| Interface | Members | Satisfied by |
-|---|---|---|
-| `IIterator<T>` | `bool next()`, `T current()` | a cursor for `for-in` (6.4.2): a struct (static) or a class (interface value, dynamic) |
-| `IEnumerable<T>` | `IIterator<T> iterator()` | a container; a class returning a class cursor, or a struct returning one (a struct cursor is still iterated statically by `for-in`) |
-| `IIndexable<T>` | `usize length()` (+ a structural subscript, 6.4.1) | containers; the subscript half is not declarable in an interface |
-| `IEquatable` | `==`, `!=` | numbers, pointers, a value type with those operators |
-| `IOrdered : IEquatable` | `<`, `<=`, `>`, `>=` (plus equality) | numbers, pointers, enums, a value type with those operators |
-| `IAddable` / `ISubtractable` / `IMultipliable` / `IDivisible` / `IModulable` | the binary `+ - * / %` returning `Self` | numbers (`%` is `frem` for floats) |
-| `INegatable` | unary `-` | numbers |
-| `INumber : IAddable, ISubtractable, IMultipliable, IDivisible, INegatable, IOrdered` | the arithmetic bundle (C# generic-math shape) | numbers; **not** enums (they do not take part in arithmetic) |
-
-- There is deliberately **no bitwise contract**: the constraint checker recognises only `+ - * / %`
-  and the comparison operators as built-in operators, so `IBitwise` could not be satisfied by the
-  built-in integer types today.
-- User value types satisfy these contracts by declaring the corresponding `operator` members
-  (or free `operator` functions in a visible unit); `class` equality stays identity, so a `class`
-  does not satisfy `IEquatable`.
-- A type can also declare the contract explicitly (`struct Money : IAddable`), which checks the
-  same shape at the definition site.
+- A type satisfies a contract **structurally** (3.15): providing the members with exactly the
+  required signatures is enough; declaring it (`struct Money : IAddable`) checks the same shape at the
+  definition site and is optional.
+- The constraint checker recognises only `+ - * / %` and the comparison operators as built-in
+  operators, so there is deliberately no bitwise contract.
+- User value types satisfy these contracts through `operator` members or free `operator` functions in
+  a visible unit; `class` equality stays identity, so a `class` does not satisfy `IEquatable`.
 
 ### 3.16 Function types and lambdas (implemented in 0.0.84)
 
@@ -1242,10 +1240,10 @@ declaration and a return type must name the type with `type` first).
 ### 3.17 Concurrency: `para`, `thread`
 
 > **Status: `para` and `para for` are implemented over every source form, including the cursor form
-> (0.0.92–0.0.97), and run on the M:N task runtime since 0.0.98 (SPEC 3.17.7); `thread` is not.**
+> (0.0.92–0.0.97), and run on the M:N task runtime since 0.0.98 (3.17.7); `thread` is not.**
 > The runtime layer (scheduler, task stacks, pollers, channels) is a **library**; this section fixes
-> only the language surface. The decision record, invariants and phasing live in
-> `agents/task-runtime.md`; the library contract is in `docs/lib-std-task.md`.
+> only the language surface. The library contract is [docs/StdLibSPEC.md](file:///D:/dev/mu_lan/docs/StdLibSPEC.md) §6.4;
+> the decision record and invariants are an internal record (`agents/stdlib/task-runtime.md`).
 
 #### 3.17.1 Model
 
@@ -1341,8 +1339,9 @@ para thread for i in 0..n { heavy(i); }
 
 #### 3.17.6 Stacks and threads
 
-- A task runs on a **fixed-size stack** (a small runtime default, tens of KiB); it does not grow. Deep
-  recursion and large locals belong in a `thread` section, which uses the OS stack.
+- A task runs on a **fixed-size stack**; it does not grow. Deep recursion and large locals belong in a
+  `thread` section, which uses the OS stack (the default sizes are runtime settings, see
+  [docs/StdLibSPEC.md](file:///D:/dev/mu_lan/docs/StdLibSPEC.md) §6.4).
 - Exceeding a task stack overflows it and aborts the process; this is not recoverable.
 - Data races between tasks or between threads are undefined behaviour (8.2). The compile-time rule
   against writing enclosing locals is a narrow, syntactic guard, not a race checker.
@@ -1350,41 +1349,29 @@ para thread for i in 0..n { heavy(i); }
 #### 3.17.7 Implementation status
 
 `para` (0.0.92) and `para for` over every source form (0.0.93–0.0.97) run on the **M:N task runtime**
-(0.0.98); `thread` is not implemented. Current behaviour and limitations:
+(0.0.98); `thread` is not implemented. What the language guarantees, and what it does not:
 
-- **Tasks, carriers, stacks**: one task per concurrent unit, each with its own **fixed-size fiber stack**
-  (default 64 KiB commit / 256 KiB reserve, `std.task.set_task_stack`); carriers are OS threads (one per
-  core, plus handoff ones, capped at 4x cores) that run one task at a time and switch stacks in O(1).
-  A parked task releases its carrier; a finished task's stack goes back to a pool and is reused.
-- **Joining**: a task that joins parks (its carrier runs other work, including nested `para` children);
-  `main`, a `std.thread` thread or a C thread that joins waits on a condition variable. A region joins
-  its own tasks in start order.
-- **Blocking calls pin a carrier**: `thread_sleep`, a blocking mutex/condvar or a blocking C call is not
-  a park point in this version (park points arrive with the IO poller). A monitor thread watches carrier
-  heartbeats and adds a carrier when work is queued and every carrier is stalled (handoff, design 6.4),
-  so blocking does not starve the queue; the runtime cannot distinguish blocking from CPU work.
-- **Exception state travels with the task**: the pending-exception slot is saved on switch-out and
-  loaded on switch-in, so a task may resume on another carrier without leaking pending state.
-- Still no cancellation: a started task always runs to completion; an exception that escapes a task body
-  **aborts the process** (the B2 thread-boundary rule), while exceptions caught inside it behave normally.
-- `this` and implicit field access inside a section are **compile errors** in v1 (pass the object as an
-  explicit argument). Writing, taking the address of, or passing by `ref` an enclosing local are
-  compile errors as specified in 3.17.2.
-- `para for` has **one task per item; chunking is never automatic** — a user or library splits the work
-  (`chunks(k)` or an explicit index loop). The producer is a single puller: it evaluates the source once
-  (so any expression is allowed as the source), calls `next()` between item starts (a blocking `next()`
-  is where backpressure lives) and stops at the end of the source. The loop variable keeps its ordinary
-  binding (value or `ref`, with element retain/release for reference-counted elements).
-  `break`/`continue` at the body level are errors and `for i, x` is not supported yet.
-- The scheduler enforces a **maximum number of live tasks** (default 10000, `std.task.set_max_live_tasks`)
-  and throws `std.task.TaskLimitError` when a start is refused. A failed start is an ordinary exception:
-  the region releases the failed item, joins the tasks that already started, and propagates.
-- An exception raised while **producing** an item (the source expression, `iterator()`, `next()`,
-  `current()`, `length()`, `operator[]`) is an ordinary exception of the region: the tasks that already
-  started are joined before the enclosing scopes are left, so no task ever outlives the producer's frame.
-- Carriers live for the whole process and are never shut down; `thread` (the compute pool) is not
-  implemented yet, and there are no park points for IO, so the poller/channel/server layers (P4) are
-  still missing.
+- A task has its own fixed-size stack (3.17.6): deep recursion and large locals need a `thread`
+  section or a runtime-configured larger stack.
+- A started task always runs to completion (no cancellation yet); an exception that escapes a task
+  body **aborts the process** (the B2 thread-boundary rule), while exceptions caught inside the task
+  behave normally.
+- `this` and implicit field access inside a section are **compile errors** in v1 (pass the object as
+  an explicit argument). Writing, taking the address of, or passing by `ref` an enclosing local are
+  compile errors (3.17.2).
+- `para for` has **one task per item; chunking is never automatic** — a user or library splits the
+  work (`chunks(k)` or an explicit index loop). The producer is a single puller (3.17.3).
+- A refused task start is an ordinary exception (`TaskLimitError`): the region releases the failed
+  item, joins the tasks that already started, and propagates.
+- An exception raised while **producing** an item is an ordinary exception of the region; the tasks
+  that already started are joined before the enclosing scopes are left, so no task ever outlives the
+  producer's frame.
+- Carriers live for the whole process and are never shut down; there are no park points for IO yet,
+  so the poller/channel/server layers (P4) and the compute pool are still missing.
+
+Scheduler internals — carriers and handoff, fiber pools, task limits, exception-state migration,
+`errno` behaviour — are library implementation detail, not language semantics (internal record:
+`agents/stdlib/task.md`).
 
 The section body is a hidden function that receives a frame of pointers to the caller's captured
 locals; the caller is suspended at the join, so those slots outlive every section. An item body is the
@@ -1866,28 +1853,23 @@ extern int printf(const char* fmt, ...);
 
 Mulan's integer widths are fixed: `long` is **always 64-bit**, while C's `long` is 32-bit on Windows (LLP64)
 and 64-bit on POSIX (LP64). Declaring an `extern` with Mulan's names therefore silently changes the ABI.
-`std.ctypes` provides the C-side names, implemented per platform (`libs/std/platform/<os>/std/ctypes.mu`),
-so the same source declares the same C function everywhere:
+
+- Rule: **every `extern` declaration uses the C-side names from `std.ctypes`** (`c_int`, `c_long`,
+  `c_size`, `c_voidp` …), never Mulan's `long`/`usize` directly. The aliases are transparent
+  (`c_long` *is* `int` on Windows), so no conversion or cost is introduced.
 
 ```mu
 use std.ctypes;
 
 extern c_long ftell(void* stream);                  // 32-bit on Windows, 64-bit on POSIX
 extern c_size fread(void* buf, c_size size, c_size n, void* stream);
-extern int fseek(void* stream, c_long offset, c_int origin);
 ```
 
-| Names | Width |
-|---|---|
-| `c_char` `c_schar` `c_uchar` `c_short` `c_ushort` `c_int` `c_uint` `c_float` `c_double` | fixed on every target |
-| `c_long` `c_ulong` | **platform-dependent** (32-bit on Windows, 64-bit on POSIX) |
-| `c_longlong` `c_ulonglong` | 64-bit |
-| `c_size` `c_ssize` `c_intptr` `c_uintptr` `c_voidp` | pointer-sized |
-| `c_wchar` | **platform-dependent** (16-bit on Windows, 32-bit elsewhere) |
+`c_voidp` is `void*`; struct by value, unions and function pointers interoperate as in C (3.16).
 
-- Rule: **every `extern` declaration uses these names**, never Mulan's `long`/`usize` directly; the aliases are
-  transparent (`c_long` *is* `int` on Windows), so no conversion or cost is introduced.
-- `c_voidp` is `void*`; struct by value, unions and function pointers interoperate as in C (3.16).
+The full name table, the per-platform implementation (`libs/std/platform/<os>/std/ctypes.mu`) and the
+binding policy are library content:
+an internal record (`agents/stdlib/c-bindings.md`) §3.
 
 ---
 
@@ -2242,7 +2224,7 @@ switch v {
 | 3 | Fixed-width type naming (C names vs `i32`) | Use C names first |
 | 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are allowed since 9.1 (a `const` one is still an error: unit-level `const` must be a compile-time constant) |
 | 5 | Whether arrays implicitly decay to pointers | **Decided (0.0.106): yes, as in C99.** An array in value position decays to a pointer to its first element (initializer, assignment, argument, struct-field access, row of a static multi-dimensional array); `sizeof`/`alignof` do not decay. The array object itself is **not assignable** (`a = b`, `int[N] b = a`, `s.v = a` are errors) and a `T[N]` parameter is `T*` (6.7.5.3p7). Kept as Mu extensions: an array-typed `return` copies, and a prvalue array (function result) can initialize an array. Arrays of class/interface elements keep value semantics (no pointer-to-reference type exists) |
-| 6 | Whether dynamic arrays are included in phase one | Decided: included. `T[]` / `T[,]` / `T[,,]` are **syntax sugar for `Array<T>` / `Array2d<T>` / `Array3d<T>`** (decided 2026-11-14; the containers are still to be written, backlog U38) and the built-in `buffer<T>` is the low-level safe block they build on. Until `Array*` lands both spellings resolve to the same built-in RC sequence (`{rc,len,cap,data}`), so the current semantics are those of `buffer<T>` |
+| 6 | Whether dynamic arrays are included in phase one | Decided: included. `T[]` / `T[,]` / `T[,,]` are **syntax sugar for `Array<T>` / `Array2d<T>` / `Array3d<T>`** (decided 2026-11-14; the containers are still to be written, stdlib backlog U38) and the built-in `buffer<T>` is the low-level safe block they build on. Until `Array*` lands both spellings resolve to the same built-in RC sequence (`{rc,len,cap,data}`), so the current semantics are those of `buffer<T>` |
 | 7 | Bounds checking strategy | Managed sequences checked by default (`--bounds=on` / `--bounds=off`), a violation throws `BoundsError`; static arrays and `T*` unchecked |
 | 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, and a constant expression reports it |
 | 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |

@@ -112,7 +112,7 @@ and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 - Cross-library may-throw summaries / explicit `nothrow` contracts (module-local may-throw analysis is implemented in 0.0.83)
 - Method-level generics, type-argument deduction, specialization, generic `extern` / generic type aliases (see SPEC 3.15)
 - Capturing closures, method values and `goto`
-- A standard library (`libs/std/` currently holds only minimal `cstdio`, `string`, and `exception` bindings)
+- A full standard library (today: the runtime contracts `std.task`/`std.thread`/`std.string`/`std.exception`/`std.interfaces` plus a minimal C binding layer `std.cstdio`/`std.ctypes`; formatting, IO, containers and the rest of the C bindings are planned — see [`docs/StdLibSPEC.md`](docs/StdLibSPEC.md))
 - Non-Windows targets: the backend is fixed to `x86_64-w64-windows-gnu` and emits COFF
 
 ## Quick start
@@ -143,6 +143,7 @@ If a dependency is missing: `python -m pip install cmake ninja`. For LLVM instal
 | File | Contents |
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | Language specification, each rule marked settled / suggested / open |
+| [`docs/StdLibSPEC.md`](docs/StdLibSPEC.md) | Standard library specification: layers, unit inventory, error model |
 | [`docs/versions.md`](docs/versions.md) | Per-version change log |
 
 > Design drafts, implementation plans and decision records are internal working documents and are

@@ -8,7 +8,7 @@
 //     extern c_long ftell(void* stream);
 //
 // This unit is platform-specific (``libs/std/platform/<os>/std/ctypes.mu``); the names are the same
-// everywhere, only the widths behind them change.
+// everywhere, only the widths behind them change. Policy: agents/stdlib/c-bindings.md.
 
 public unit std.ctypes;
 

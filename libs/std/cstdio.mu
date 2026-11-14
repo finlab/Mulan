@@ -6,6 +6,9 @@
 //
 // not bound: the `vprintf` family (needs `va_list`), `fgetpos`/`fsetpos` (need `fpos_t`),
 // `getline` (a POSIX extension), the `%n` semantics of `scanf`.
+//
+// Raw binding (layer L1): C semantics, no checks, no exceptions, no ownership. Policy and the
+// platform variance list: agents/stdlib/c-bindings.md.
 
 public unit std.cstdio;
 

@@ -214,7 +214,7 @@ private:
     }
 }
 
-// Lowercase alias kept for input convenience (docs/style.md: aliases may be lowercase).
+// Lowercase alias kept for input convenience (agents/stdlib/style.md: aliases may be lowercase).
 public type string = String;
 
 // A C string on the left (`"abc" == s`): a free function because a member needs the receiver on the left.
