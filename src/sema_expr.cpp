@@ -295,7 +295,7 @@ namespace muc_detail {
         fn->line = e->line;
         fn->col = e->col;
         for (auto& p : e->params) {
-            TypePtr pt = resolve_type(p->spec.get(), cur_);
+            TypePtr pt = decay_param_type(resolve_type(p->spec.get(), cur_));
             if (is_void(pt)) err("lambda parameter `" + p->name + "` cannot be `void`", p.get());
             if (is_borrow_type(pt)) err("a lambda cannot take a `ref` parameter", p.get());
             fn->pty.push_back(pt);

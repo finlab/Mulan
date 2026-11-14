@@ -15,7 +15,7 @@ int main() {
     if r[0].f() + r[1].f() != 3 { puts("iface array return fail"); return 1; }
     if live != 2 { puts("iface array return rc fail"); return 1; }
     Holder h = new Holder();
-    h.items = r;
+    for i in 0..2 { h.items[i] = r[i]; }   // element-wise: array fields are not assignable (C99)
     h = null;
     if r[0].f() != 1 { puts("iface array field rc fail"); return 1; }
     if live != 2 { puts("iface array field live fail"); return 1; }

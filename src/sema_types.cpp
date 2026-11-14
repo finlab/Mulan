@@ -8,6 +8,15 @@ namespace muc_detail {
 
     TypePtr Sema::resolve_type(const TypeSpec* spec, Unit* u) {
         if (!spec) err("missing type");
+        if (spec->resolved) {
+            // A generic type argument already resolved at the use site (see TypeSpec::resolved).
+            if (spec->is_const && !spec->resolved->is_const) {
+                auto c = std::make_shared<Type>(*spec->resolved);
+                c->is_const = true;
+                return c;
+            }
+            return spec->resolved;
+        }
         switch (spec->kind) {
             case TypeSpec::K::Named: {
                 if (spec->is_self) {
@@ -72,7 +81,7 @@ namespace muc_detail {
             case TypeSpec::K::Func: {
                 std::vector<TypePtr> ps;
                 for (auto& p : spec->params) {
-                    TypePtr pt = resolve_type(p.get(), u);
+                    TypePtr pt = decay_param_type(resolve_type(p.get(), u));
                     if (is_void(pt)) err_ts("a function type parameter cannot be `void`", p.get());
                     if (is_borrow_type(pt)) {
                         err_ts("a function type cannot take a `ref` parameter (a borrow is not a value type)", p.get());

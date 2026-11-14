@@ -538,6 +538,7 @@ namespace muc_detail {
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
                         err("struct `" + pt->str() +
@@ -564,6 +565,7 @@ namespace muc_detail {
                 ctor->pty.clear();
                 for (auto& p : ctor->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
                         err("struct `" + pt->str() +
@@ -606,7 +608,14 @@ namespace muc_detail {
             where.line = c->line;
             where.col = c->col;
             for (size_t i = 0; i < c->bases.size(); ++i) {
-                TypePtr bt = resolve_named_type(c->bases[i], u, &where);
+                // Structured spec first: an instantiated generic interface (`class C : IIterator<int>`)
+                // has no name to look up — it is created by the instantiator (U34 M5b).
+                TypePtr bt;
+                if (i < c->base_specs.size() && c->base_specs[i]) {
+                    bt = resolve_type(c->base_specs[i].get(), u);
+                } else {
+                    bt = resolve_named_type(c->bases[i], u, &where);
+                }
                 if (bt->kind == TypeKind::Class) {
                     if (i != 0 || has_base) err("a class may have at most one base class, and it must come first", c);
                     has_base = true;
@@ -634,6 +643,7 @@ namespace muc_detail {
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
                         err("struct `" + pt->str() +
@@ -658,6 +668,7 @@ namespace muc_detail {
                 ctor->pty.clear();
                 for (auto& p : ctor->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
                         err("struct `" + pt->str() +
@@ -704,8 +715,12 @@ namespace muc_detail {
             TypeSpec where;
             where.line = itf->line;
             where.col = itf->col;
-            for (auto& b : itf->bases) {
-                TypePtr bt = resolve_named_type(b, u, &where);
+            for (size_t i = 0; i < itf->bases.size(); ++i) {
+                // Structured spec when present: `interface IInt : Base<int>` names an instantiated
+                // generic interface, which has no lookup name.
+                TypePtr bt = (i < itf->base_specs.size() && itf->base_specs[i])
+                                 ? resolve_type(itf->base_specs[i].get(), u)
+                                 : resolve_named_type(itf->bases[i], u, &where);
                 if (bt->kind != TypeKind::Interface) {
                     err("an interface can only inherit from an interface", itf);
                 }
@@ -724,6 +739,7 @@ namespace muc_detail {
                 m->pty.clear();
                 for (auto& p : m->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
                     if (noncopyable_struct(pt)) {
                         err("struct `" + pt->str() +
@@ -779,6 +795,7 @@ namespace muc_detail {
             f->pty_cref.clear();
             for (auto& p : f->params) {
                 TypePtr pt = resolve_type(p->spec.get(), u);
+                if (!p->by_ref) pt = decay_param_type(pt);
                 if (is_void(pt)) err("parameter `" + p->name + "` cannot be void", p.get());
                 if (noncopyable_struct(pt)) {
                     err("struct `" + pt->str() +

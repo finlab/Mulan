@@ -11,8 +11,14 @@
 
 namespace muc_detail {
 
-// Type parameter name → type argument syntax (points at the TypeSpec owned by the caller; it is deep-copied during substitution)
-using TypeBindings = std::unordered_map<std::string, const TypeSpec*>;
+// Type parameter name → type argument: the use-site syntax (deep-copied during substitution) plus its
+// type resolved in the use-site unit. The instantiated declarations are resolved in the template's
+// unit, which cannot see use-site types, so the resolved type travels along.
+struct TypeBinding {
+    const TypeSpec* spec = nullptr;
+    TypePtr resolved;
+};
+using TypeBindings = std::unordered_map<std::string, TypeBinding>;
 
 void subst_type_spec(TypeSpec& s, const TypeBindings& b);
 void subst_expr(Expr& e, const TypeBindings& b);

@@ -21,8 +21,10 @@ int main() {
     if a[1][0] != 4 { puts("static idx [1][0]"); return 5; }
     a[1,2] = 9;
     if a[1][2] != 9 { puts("static write"); return 6; }
-    int[3] row = a[0];
+    int* row = a[0];            // a row of a static 2-D array decays to a pointer (C99)
     if row[2] != 3 { puts("static row"); return 7; }
+    row[2] = 33;
+    if a[0][2] != 33 { puts("static row write"); return 17; }
     if sizeof(int[2,3]) != 24 { puts("static sizeof"); return 8; }
 
     // 3-D static
@@ -71,7 +73,8 @@ int main() {
         cs[0,1] = new C(1);
         cs[1,0] = new C(2);
         if live != 2 { puts("static ref elems"); return 20; }
-        C[2,2] cs2 = cs;
+        C[2,2] cs2 = {};
+        for i in 0..2 { for j in 0..2 { cs2[i,j] = cs[i,j]; } }   // element-wise (arrays are not assignable)
         if live != 2 { puts("static ref copy"); return 21; }
         cs2[0,1] = new C(3);
         if live != 3 { puts("static ref assign"); return 22; }
@@ -98,7 +101,8 @@ int main() {
         ss[0,0].b = new int[2];
         ss[0,0].b[1] = 5;
         if ss[0,0].b[1] != 5 { puts("rect struct field"); return 30; }
-        S[2,2] st = ss;
+        S[2,2] st = {};
+        for i in 0..2 { for j in 0..2 { st[i,j] = ss[i,j]; } }   // element-wise (arrays are not assignable)
         if st[0,0].b[1] != 5 { puts("rect struct copy"); return 31; }
     }
 

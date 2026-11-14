@@ -66,6 +66,15 @@ void split_qualified(const std::string& full, std::string& unit, std::string& na
 
 }  // namespace
 
+// Stable spelling of one type argument inside an instance name: arguments from the template's own
+// unit (or built-ins) keep their bare name, everything else is qualified so two units that both
+// declare `Item` get distinct instances of `Box<Item>`.
+static std::string instance_label(const TypePtr& t, const TypeSpec* fallback, const std::string& tmpl_unit) {
+    if (!t) return fallback ? canon_spec(*fallback) : std::string("?");
+    if (t->unit.empty() || t->unit == tmpl_unit) return t->name;
+    return t->unit + "." + t->name;
+}
+
 void Sema::index_templates() {
     for (auto& u : units_) {
         for (auto& d : u->templates) {
@@ -148,8 +157,16 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         err_ts("`" + base + "` is not a generic type or has no type parameters", spec);
     }
 
-    // Canonical instance name and cache key
-    std::string display = canon_spec(*spec);
+    // Canonical instance name and cache key. A type argument that comes from another unit is
+    // qualified: `Box<Item>` written in two units must not collapse into one instance.
+    std::vector<TypePtr> arg_types;
+    for (const auto& ta : spec->args) arg_types.push_back(resolve_type(ta.get(), u));
+    std::string display = base + "<";
+    for (size_t i = 0; i < arg_types.size(); ++i) {
+        if (i) display += ", ";
+        display += instance_label(arg_types[i], spec->args[i].get(), tmpl_unit);
+    }
+    display += ">";
     std::string key = tmpl_unit + "." + display;
     auto cached = generic_insts_.find(key);
     if (cached != generic_insts_.end()) return cached->second;
@@ -172,16 +189,15 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
                spec);
     }
     if (id_tmpl) {
-        if (!id_tmpl->bases.empty()) {
-            err_ts("generic interface inheritance is not supported yet", spec);
-        }
+        // Generic interface inheritance (`interface IList<T> : ISeq<T>`) is resolved from the
+        // substituted base specs below, like any other instantiated interface.
     } else if (sd_tmpl) {
         if (!sd_tmpl->const_members.empty() || !sd_tmpl->bases.empty()) {
             err_ts("generic struct `" + base + "` does not support const members or interfaces yet", spec);
         }
     } else {
-        if (!cd_tmpl->const_members.empty() || cd_tmpl->bases.size() > 1) {
-            err_ts("generic class `" + base + "` does not support interfaces or const members yet", spec);
+        if (!cd_tmpl->const_members.empty()) {
+            err_ts("generic class `" + base + "` does not support const members yet", spec);
         }
     }
 
@@ -190,20 +206,16 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     if (info_it != infos_.end()) tmpl_unit_ptr = info_it->second.unit;
     if (!tmpl_unit_ptr) tmpl_unit_ptr = u;
 
-    // Constraint check (U34 M3b)
-    {
-        std::vector<TypePtr> arg_types;
-        for (const auto& ta : spec->args) arg_types.push_back(resolve_type(ta.get(), u));
-        for (size_t i = 0; i < tps.size(); ++i) {
-            check_bound(arg_types[i], tps[i], u, nullptr);
-        }
+    // Constraint check (U34 M3b); the argument types were resolved above (for the instance name).
+    for (size_t i = 0; i < tps.size(); ++i) {
+        check_bound(arg_types[i], tps[i], u, nullptr);
     }
 
     // Clone + substitute
     std::unique_ptr<Decl> clone = clone_decl(*tmpl_decl);
     TypeBindings bindings;
     for (size_t i = 0; i < tps.size(); ++i) {
-        bindings[tps[i].name] = spec->args[i].get();
+        bindings[tps[i].name] = TypeBinding{spec->args[i].get(), arg_types[i]};
     }
     subst_decl(*clone, bindings);
     clone->type_params.clear();
@@ -229,11 +241,31 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         cur_class_ = ity;  // make `Self` resolve to the interface type
 
         ity->methods.clear();
+        // Base interfaces: `id` is the substituted clone, so its base specs already carry the
+        // concrete arguments (`Base<T>` became `Base<int>`).
+        ity->interfaces.clear();
+        for (size_t i = 0; i < id->bases.size(); ++i) {
+            TypePtr bt = (i < id->base_specs.size() && id->base_specs[i])
+                             ? resolve_type(id->base_specs[i].get(), tmpl_unit_ptr)
+                             : nullptr;
+            if (!bt) {
+                err_ts("base `" + id->bases[i] + "` of `" + display + "` cannot be resolved", spec);
+            }
+            if (bt->kind != TypeKind::Interface) {
+                err_ts("an interface can only inherit from an interface (`" + display + "`)", spec);
+            }
+            for (auto& prev : ity->interfaces) {
+                if (same_type(prev, bt)) {
+                    err_ts("interface `" + display + "` inherits `" + bt->str() + "` more than once", spec);
+                }
+            }
+            ity->interfaces.push_back(bt);
+        }
         for (auto& m : id->methods) {
             if (m->ret) m->rty = resolve_type(m->ret.get(), tmpl_unit_ptr);
             m->pty.clear();
             for (auto& p : m->params) {
-                m->pty.push_back(resolve_type(p->spec.get(), tmpl_unit_ptr));
+                m->pty.push_back(decay_param_type(resolve_type(p->spec.get(), tmpl_unit_ptr)));
             }
             MethodSig sig;
             sig.name = m->name;
@@ -306,14 +338,31 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     Unit* saved_cur = cur_;
     cur_ = tmpl_unit_ptr;
 
-    // Base class (single, generic or not): instantiate it first, then flatten the base fields to the front
+    // Bases: at most one class (which must come first) plus any number of interfaces. A base may be an
+    // instantiated generic (`class Src<T> : IEnumerable<T>`), so every entry goes through
+    // `resolve_type` — the display-name string cannot produce `IEnumerable<int>`.
     if (!is_struct && !cd->base_specs.empty()) {
-        TypePtr bt = resolve_type(cd->base_specs[0].get(), tmpl_unit_ptr);
-        if (bt->kind != TypeKind::Class) {
-            err_ts("base `" + cd->bases[0] + "` of `" + base + "` is not a class", spec);
+        for (size_t i = 0; i < cd->base_specs.size(); ++i) {
+            if (!cd->base_specs[i]) continue;
+            TypePtr bt = resolve_type(cd->base_specs[i].get(), tmpl_unit_ptr);
+            const std::string spelled = i < cd->bases.size() ? cd->bases[i] : bt->str();
+            if (bt->kind == TypeKind::Class) {
+                if (i != 0) err_ts("a class may have at most one base class, and it must come first", spec);
+                ty->base = bt;
+                for (const auto& bf : bt->fields) ty->fields.push_back(bf);
+            } else if (bt->kind == TypeKind::Interface) {
+                for (auto& prev : ty->interfaces) {
+                    if (same_type(prev, bt)) {
+                        err_ts("class `" + display + "` implements interface `" + bt->str() +
+                                   "` more than once",
+                               spec);
+                    }
+                }
+                ty->interfaces.push_back(bt);
+            } else {
+                err_ts("`" + spelled + "` is not a class or interface", spec);
+            }
         }
-        ty->base = bt;
-        for (const auto& bf : bt->fields) ty->fields.push_back(bf);
     }
 
     // Fields (struct defaults to public; class follows field_visibility, private by default)
@@ -339,7 +388,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         if (m->ret) m->rty = resolve_type(m->ret.get(), tmpl_unit_ptr);
         m->pty.clear();
         for (auto& p : m->params) {
-            m->pty.push_back(resolve_type(p->spec.get(), tmpl_unit_ptr));
+            m->pty.push_back(decay_param_type(resolve_type(p->spec.get(), tmpl_unit_ptr)));
         }
         MethodSig sig;
         sig.name = m->name;
@@ -360,7 +409,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     for (auto& ctor : ctors) {
         ctor->pty.clear();
         for (auto& p : ctor->params) {
-            ctor->pty.push_back(resolve_type(p->spec.get(), tmpl_unit_ptr));
+            ctor->pty.push_back(decay_param_type(resolve_type(p->spec.get(), tmpl_unit_ptr)));
         }
         ctor->cname = ctor_cname(tmpl_unit, display, ctor->pty);
         ty->ctors.push_back(ctor->pty);
@@ -469,18 +518,16 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     }
 
     // Constraint check (U34 M3b): structural matching, argument types resolved first
-    {
-        std::vector<TypePtr> arg_types;
-        for (const auto& ta : c->type_args) arg_types.push_back(resolve_type(ta.get(), u));
-        for (size_t i = 0; i < tmpl->type_params.size(); ++i) {
-            check_bound(arg_types[i], tmpl->type_params[i], u, c);
-        }
+    std::vector<TypePtr> arg_types;
+    for (const auto& ta : c->type_args) arg_types.push_back(resolve_type(ta.get(), u));
+    for (size_t i = 0; i < tmpl->type_params.size(); ++i) {
+        check_bound(arg_types[i], tmpl->type_params[i], u, c);
     }
 
     std::string display = name + "<";
     for (size_t i = 0; i < c->type_args.size(); ++i) {
         if (i) display += ", ";
-        display += canon_spec(*c->type_args[i]);
+        display += instance_label(arg_types[i], c->type_args[i].get(), tmpl_unit);
     }
     display += ">";
 
@@ -496,7 +543,7 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     auto* fn = static_cast<FuncDecl*>(clone.get());
     TypeBindings bindings;
     for (size_t i = 0; i < tmpl->type_params.size(); ++i) {
-        bindings[tmpl->type_params[i].name] = c->type_args[i].get();
+        bindings[tmpl->type_params[i].name] = TypeBinding{c->type_args[i].get(), arg_types[i]};
     }
     subst_decl(*fn, bindings);
     fn->type_params.clear();
@@ -534,7 +581,9 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     fn->pty_ref.clear();
     fn->pty_cref.clear();
     for (auto& p : fn->params) {
-        fn->pty.push_back(resolve_type(p->spec.get(), tu));
+        TypePtr pt = resolve_type(p->spec.get(), tu);
+        if (!p->by_ref) pt = decay_param_type(pt);
+        fn->pty.push_back(pt);
         fn->pty_ref.push_back(p->by_ref);
         fn->pty_cref.push_back(p->by_ref && p->is_const);
     }

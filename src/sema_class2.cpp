@@ -341,7 +341,9 @@ namespace muc_detail {
             }
             return;
         }
+        in_return_ = true;
         check_assign(s->value.get(), rt, "return value");
+        in_return_ = false;
     }
 
     // Whether the origin of a returned borrow is stable: ref parameter / this / global / a path through a pointer or slice (heap storage) / forwarded borrow.
@@ -574,7 +576,7 @@ namespace muc_detail {
         }
     }
 
-    // Cursor form (6.4.2): the contract is declared in `libs/core/iter.mu` (core.iter.IIterator<T>);
+    // Cursor form (6.4.2): the contract is declared in `libs/std/interfaces.mu` (std.interfaces.IIterator<T>);
     // the compiler checks it structurally (no vtable, no boxing).
     void Sema::resolve_cursor_shape(ForInStmt* s, const TypePtr& st) {
         const MethodSig* it = nullptr;
@@ -586,9 +588,12 @@ namespace muc_detail {
         }
         if (!it) err("`iterator()` must take no parameters", s->seq.get());
         TypePtr cursor = it->ret;
-        if (!cursor || cursor->kind != TypeKind::Struct) {
-            err("`iterator()` must return a struct cursor (got " +
-                    (cursor ? cursor->str() : std::string("void")) + "); see core.iter.IIterator",
+        // A struct cursor is iterated statically (zero cost); an interface cursor (`IIterator<T>`,
+        // the shape `IEnumerable<T>` returns) is iterated through the itable, which is the dynamic
+        // channel. Anything else has no known `next()`/`current()`.
+        if (!cursor || (cursor->kind != TypeKind::Struct && cursor->kind != TypeKind::Interface)) {
+            err("`iterator()` must return a struct or `IIterator<T>` cursor (got " +
+                    (cursor ? cursor->str() : std::string("void")) + "); see std.interfaces.IIterator",
                 s->seq.get());
         }
         const MethodSig* nxt = nullptr;
@@ -598,11 +603,11 @@ namespace muc_detail {
             if (m.name == "current" && m.params.empty()) cur = &m;
         }
         if (!nxt || !(is_prim(nxt->ret) && nxt->ret->name == "bool")) {
-            err("the cursor type `" + cursor->str() + "` must provide `bool next()` (core.iter.IIterator)",
+            err("the cursor type `" + cursor->str() + "` must provide `bool next()` (std.interfaces.IIterator)",
                 s->seq.get());
         }
         if (!cur) {
-            err("the cursor type `" + cursor->str() + "` must provide `current()` (core.iter.IIterator)",
+            err("the cursor type `" + cursor->str() + "` must provide `current()` (std.interfaces.IIterator)",
                 s->seq.get());
         }
         if (s->by_ref) err("`for ref` is not supported for cursor sources (SPEC 6.4.2)", s);

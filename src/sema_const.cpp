@@ -72,6 +72,16 @@ namespace muc_detail {
     }
 
     bool Sema::assignable(Expr* e, const TypePtr& src, const TypePtr& dst) {
+        // C99 6.3.2.1: an array is not a modifiable lvalue and no expression has array type after
+        // decay — `a = b` and `int[N] b = a;` are errors (copy element by element, or use `memcpy`).
+        // Two Mu extensions keep copying: an array-typed `return`, and initialization from a prvalue
+        // array (a function result; there is no array expression to alias in that case).
+        if (dst && dst->kind == TypeKind::Array && src && src->kind == TypeKind::Array &&
+            !in_return_ && is_lvalue(e)) {
+            err("`" + dst->str() +
+                    "` is an array: arrays are not assignable (C99); copy the elements or use `memcpy`",
+                e);
+        }
         // C model: const may only be relaxed, never tightened (same_type ignores const, so this must be caught first)
         if (src && dst && src->kind == dst->kind &&
             (src->kind == TypeKind::Ptr || src->kind == TypeKind::Slice) &&

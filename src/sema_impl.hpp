@@ -110,6 +110,9 @@ private:
     int const_depth_ = 0;  // constant evaluation recursion depth (see DepthGuard)
     std::unordered_map<int, TypePtr> auto_groups_;  // inference result shared by auto in one declaration
     Expr* direct_init_expr_ = nullptr;  // direct-initialization expression currently under check (in-place constructor construction)
+    // Inside a `return` statement: an array-typed return still copies (array returns are a Mu
+    // extension; C99 has no array prvalues), while assignment/copy-initialization of arrays is rejected.
+    bool in_return_ = false;
     // 9.1: the unit-level variable whose initializer is being checked, and the variables of the
     // current unit that have already been checked (they are initialized before it).
     GlobalVar* cur_global_ = nullptr;
@@ -595,6 +598,12 @@ private:
 
     // Whether a type can be the referent of a borrow (`ref`): not reference counted, not void, not class/interface/string/slice.
     static bool borrowable_type(const TypePtr& t);
+    // C99 6.7.5.3p7: a parameter declared as an array of T is adjusted to a pointer to T (the bound
+    // is not part of the type, so `sizeof` inside the callee yields the pointer size). Only the
+    // outermost dimension decays: `int[2][3] rows` becomes a pointer to `int[3]`. Arrays whose
+    // element is a class/interface keep value semantics — this language has no pointer to a
+    // reference (3.8), so the parameter copies the handles (retain per element).
+    static TypePtr decay_param_type(const TypePtr& t);
 
     // Resolve the return type of a method or operator (handles the `ref` prefix + borrow referent validation).
     void resolve_method_ret(MethodDecl* m, Unit* u);

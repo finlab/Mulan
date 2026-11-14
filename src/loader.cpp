@@ -291,8 +291,9 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
     (void)visit(find_file("std.task"));
     // `std.thread` stays implicitly available as well (thread/mutex/condvar primitives).
     (void)visit(find_file("std.thread"));
-    // Compiler-facing contracts for `for-in` (SPEC 6.4.1/6.4.2); declarations only.
-    (void)visit(find_file("core.iter"));
+    // Compiler-facing contracts for `for-in` and the built-in capabilities (SPEC 6.4.1/6.4.2,
+    // 3.15.7); declarations only.
+    (void)visit(find_file("std.interfaces"));
 
     Unit* entry_unit = visit(entry_path);
     entry_name = entry_unit->name;

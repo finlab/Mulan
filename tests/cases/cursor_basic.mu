@@ -1,5 +1,5 @@
 // cursor_basic — the cursor form of `for-in` (SPEC 6.4.2). The cursor is a struct returned by value;
-// `next()`/`current()` follow the contract declared in libs/core/iter.mu (core.iter.IIterator<T>).
+// `next()`/`current()` follow the contract declared in libs/std/interfaces.mu (std.interfaces.IIterator<T>).
 
 unit cursor_basic;
 

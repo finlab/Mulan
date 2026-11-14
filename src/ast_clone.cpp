@@ -105,6 +105,7 @@ TypeSpecPtr clone_type_spec(const TypeSpec& s) {
     out->is_const = s.is_const;
     out->is_self = s.is_self;
     out->weak = s.weak;
+    out->resolved = s.resolved;
     out->line = s.line;
     out->col = s.col;
     return out;

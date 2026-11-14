@@ -364,19 +364,10 @@ namespace muc_detail {
                 // by `long f()`.
                 if (!same_type(impl->ret, req->ret)) {
                     err("override return type does not match the declaration in `" + itf_name + "`", sd);
-                } else if (!impl->is_override) {
-                    err("method `" + req->name + "` of struct `" + sd->name + "` implements `" +
-                            itf_name + "." + req->name + "` and must be marked `override`",
-                        sd);
                 }
-                continue;
-            }
-            if (impl) {
-                if (!impl->is_override) {
-                    err("method `" + req->name + "` of struct `" + sd->name + "` implements `" +
-                            itf_name + "." + req->name + "` and must be marked `override`",
-                        sd);
-                }
+                // `override` is optional here: for a value type the `:` list already declares the
+                // contract and nobody can subclass it, so the marker would not distinguish anything
+                // (a class keeps it mandatory — it says "this overrides the base chain").
                 continue;
             }
             // `Self` denotes the implementor type; a value type cannot spell itself in that position

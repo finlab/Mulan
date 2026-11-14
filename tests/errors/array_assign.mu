@@ -1,0 +1,7 @@
+unit array_assign;
+int main() {
+    int[3] a = {1, 2, 3};
+    int[3] b = {4, 5, 6};
+    a = b;
+    return 0;
+}

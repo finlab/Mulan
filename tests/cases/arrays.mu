@@ -1,4 +1,4 @@
-// arrays.mu — int[N] aggregate init with zero fill, len, for-in value binding vs ref binding
+// arrays.mu — int[N] aggregate init with zero fill, C99 array-to-pointer decay, index loops
 unit arrays;
 
 extern int puts(const char* s);
@@ -26,14 +26,19 @@ void print_int(int v) {
     }
 }
 
-// Array parameter is a copy: changes inside the function do not propagate back
+// An array parameter is a pointer (C99 6.7.5.3p7): `int[5] xs` is `int* xs`, so the bound is not
+// part of the type and the callee shares the caller's storage.
 int sum5(int[5] xs) {
     int s = 0;
     for i in 0..5 {
         s += xs[i];
     }
-    xs[0] = 999;    // affects the copy only
     return s;
+}
+
+// Writing through the decayed parameter reaches the caller's array.
+void set_first(int[5] xs, int v) {
+    xs[0] = v;
 }
 
 int main() {
@@ -44,15 +49,18 @@ int main() {
     print_int(a[3]); putchar(' ');   // 0 (zero-filled)
     print_int(a[4]); putchar('\n');  // 0 (zero-filled)
 
-    // ---------- Arrays are value types: copies are independent ----------
-    int[5] b = a;
-    b[0] = 100;
-    print_int(a[0]); putchar(' ');   // 1
-    print_int(b[0]); putchar('\n');  // 100
+    // ---------- Decay: a pointer shares the array's storage ----------
+    int* p = a;
+    p[0] = 10;
+    print_int(a[0]); putchar(' ');              // 10
+    print_int(p[1]); putchar(' ');              // 2
+    print_int(sizeof(p) as int); putchar('\n'); // 8 (a pointer, not the array)
+    print_int((sizeof(a) / sizeof(a[0])) as int); putchar('\n');  // 5 (no decay under sizeof)
 
-    // ---------- Argument copy ----------
-    print_int(sum5(a)); putchar('\n');   // 1+2+3+0+0 = 6
-    print_int(a[0]); putchar('\n');      // 1 (not changed to 999)
+    // ---------- Argument decay: the callee shares the array ----------
+    print_int(sum5(a)); putchar('\n');   // 10+2+3+0+0 = 15
+    set_first(a, 7);
+    print_int(a[0]); putchar('\n');      // 7 (written through the parameter)
 
     // ---------- a value binding is a copy: writing it does not affect the array ----------
     for i in 0..sizeof(a) / sizeof(a[0]) {
@@ -78,7 +86,7 @@ int main() {
     }
     putchar('\n');
 
-    // ---------- len(arr) is the array length N ----------
+    // ---------- sizeof(a) / sizeof(a[0]) is the element count ----------
     auto n = sizeof(a) / sizeof(a[0]);
     if n == 5 {
         puts("len ok");
@@ -87,7 +95,7 @@ int main() {
     for i in 0..sizeof(a) / sizeof(a[0]) {
         s2 += a[i];
     }
-    print_int(s2); putchar('\n');    // 1+2+3+0+0 = 6
+    print_int(s2); putchar('\n');    // 7+2+3+0+0 = 12
 
     return 0;
 }

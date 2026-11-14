@@ -40,6 +40,10 @@ struct TypeSpec {
     bool is_const = false;  // C model: whether this type node is const (a prefix const qualifies the base type, `* const` qualifies the pointer level)
     bool is_self = false;   // `Self` inside an interface body (the implementor type); only allowed in interface member signatures
     bool weak = false;         // the weak modifier on a class field
+    // Set by generic substitution when this position was a type parameter: the argument type, already
+    // resolved in the **use-site** unit. The instantiated declaration is re-resolved in the template's
+    // unit, which cannot see use-site types, so `resolve_type` returns this directly.
+    TypePtr resolved;
     int line = 0;
     int col = 0;
     std::string str() const;
@@ -428,7 +432,7 @@ struct ForInStmt : Stmt {
     const MethodSig* idx_method = nullptr;  // the index form: member operator[](usize) -> T
     std::string cname;
     std::unique_ptr<LocalVar> lvar;  // the loop variable symbol (codegen uses its cname/by_ref)
-    // cursor form (6.4.2): contract declared in core.iter (IIterator<T>)
+    // cursor form (6.4.2): contract declared in std.interfaces (IIterator<T>)
     TypePtr it_ty;                     // the cursor struct returned by iterator()
     const MethodSig* iter_sig = nullptr;
     const MethodSig* next_sig = nullptr;

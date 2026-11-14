@@ -3,8 +3,8 @@
 > Date: drafted on 2026-11-07; the object model (class / single inheritance / interface / overload / constructor) was added on 2026-11-09;
 > 2026-11-14: aligned with the current implementation — string literals are `const char*` (0.0.89), `len` is
 > removed and static arrays are C storage (0.0.101), unit-level init/cleanup (9.1), `export` and the export
-> surface (0.0.104).
-> Status: draft, current through version 0.0.104. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
+> surface (0.0.104), arrays decay to pointers (C99, 0.0.106).
+> Status: draft, current through version 0.0.106. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
 > Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor, reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
 
@@ -15,7 +15,7 @@
 | Topic | Conclusion |
 |---|---|
 | Loops | Only `while` and `for-in` are kept; C-style `for` and `do-while` are not kept |
-| Iteration | `for x in seq { }` (parentheses optional); ranges `a..b` / `a..=b` (optionally `step n`) and managed sequences (`T[]` / `buffer<T>` / `String`) are supported; static arrays are C storage and are not iterable; `continue` proceeds to the next iteration |
+| Iteration | `for x in seq { }` (parentheses optional); ranges `a..b` / `a..=b` (optionally `step n`) and managed sequences (`Array<T>` written `T[]` / `buffer<T>` / `String`) are supported; static arrays are C storage and are not iterable; `continue` proceeds to the next iteration |
 | Mutability | C#-style: the type is declared before use; mutable by default; `const` is a C-model prefix qualifier: on named types it is a read-only binding marker, on pointers/slices it makes the pointee read-only |
 | Declaration initialization | Declarations use only `=`: `Point p = {1, 2}`, `Point p = {}`, `Point p = Point(1, 2)`; in non-declaration positions use `Point(...)` |
 | Type inference | Local variables may use `auto x = expr;`; local only, and an initializer is required; `dynamic`/`any` are reserved names only |
@@ -175,10 +175,33 @@ where  move  typeof
 
 ### 3.3 Arrays and dynamic arrays
 
-- Fixed-size arrays: `T[N]`, where `N` is a compile-time integer constant; a **value type**, copied on assignment/argument passing.
-  - **C storage**: no `length()` and no `for-in`; use `sizeof(a) / sizeof(a[0])` for the count and an index loop for iteration.
-- Dynamic arrays: `T[]`, a **reference-counted heap array**; the handle is a pointer to an internal header
-  `{ i64 rc; i64 len; i64 cap; data... }` (`cap` is reserved for future growth).
+- Fixed-size arrays: `T[N]`, where `N` is a compile-time integer constant. **C storage, C99 semantics** (0.0.106):
+  - **Decay**: an array expression used as a value converts to a pointer to its first element
+    (`int* p = a;`, `f(a)` for `f(int*)`, `int* r = m[1];`, a struct field `int* q = s.v;`). No decay
+    under `sizeof`/`alignof`, which still report the array's own size.
+  - **Not assignable**: `a = b;`, `int[N] b = a;` and `s.v = a;` are compile errors ("arrays are not
+    assignable (C99)"). Copy element by element, or use `memcpy` for POD elements.
+    Two Mu extensions remain: an array-typed `return` still copies, and initializing an array from a
+    **prvalue** array (a function result) is allowed — there is no lvalue to alias. Arrays of
+    `class`/`interface` handles follow the same rule and are copied element by element (each element
+    assign retains/releases).
+  - **Parameter adjustment**: a parameter declared as `T[N]` is `T*` (C99 6.7.5.3p7) — `sizeof(xs)`
+    inside the callee is the pointer size, writes are shared with the caller, and only the outermost
+    dimension decays (`int[2][3] rows` is a pointer to `int[3]`). `ref T[N]` is still rejected
+    (`ref` borrows scalars and value structs, 3.8). Arrays whose element is a `class`/`interface`
+    keep value semantics, because this language has no pointer-to-reference type (3.8): such a
+    parameter copies the handles (retain per element).
+  - No `length()` and no `for-in`; use `sizeof(a) / sizeof(a[0])` for the count and an index loop.
+  - Aggregate initialization `T[N] a = {…}` (zero-padded when short) and `= {}` (all zeros) are
+    unchanged, as is initialization of a `char`/`byte` array from a string literal.
+- **Dynamic arrays**: `T[]` / `T[,]` / `T[,,]` are **syntax sugar for the container types**
+  `Array<T>` / `Array2d<T>` / `Array3d<T>` (rank 1–3; decided 2026-11-14, containers themselves
+  still to be written — backlog U38). The sugar names a *library* container; it is not a distinct
+  runtime type.
+  - **Implementation status (0.0.106)**: until `Array*` lands, `T[]` and `buffer<T>` resolve to the
+    **same** built-in reference-counted sequence (`{ i64 rc; i64 len; i64 cap; data... }`), so every
+    rule below describes that shared representation. When `Array` lands, `T[]` means `Array<T>`
+    (a library type over `buffer<T>`) and `buffer<T>` keeps its own spelling.
   - `new T[n]` creates one (`n` is a runtime integer, elements zeroed); `T[] s = {}` means empty (null handle).
   - Assignment/argument passing copies the **handle** (O(1)), sharing the same array; destroyed when the reference count reaches zero;
     if the element type holds class/interface references, release element by element.
@@ -194,14 +217,20 @@ where  move  typeof
   - Aggregate initialization `T[] s = {1, 2, 3};` allocates a new array and initializes the elements.
   - `T[N]` → `T[]` implicit conversion: **allocates and copies** (dynamic arrays no longer provide a borrowed view).
   - Sub-slicing/borrowed-view syntax (`s[1..]` etc.) is not provided yet.
-- **`buffer<T>` is the same type as `T[]`** - the public safe memory block (zero-initialized, RC-shared, element-wise RC for class/interface elements, `b.ptr` for C interop).
+- **`buffer<T>` is the built-in safe memory block** — the low-level infrastructure the `Array`
+  family is built on, not a user-facing container. Zero-initialized, RC-shared, element-wise RC for
+  class/interface elements, bounds-checked subscript, `b.ptr` for C interop. It stays lowercase
+  because it is compiler-provided (style.md §1); `T[]` sugar never denotes it.
 - **`String` is the canonical name** of the library string type; `string` is a `type` alias (0.0.101).
-- **Static rectangular multi-dimensional arrays**: `T[m,n,...]` (`m,n` compile-time constants), contiguous memory, value type.
+- **Static rectangular multi-dimensional arrays**: `T[m,n,...]` (`m,n` compile-time constants), contiguous C storage.
   - `int[2,3] a = {{1, 2, 3}, {4, 5, 6}};` (nested braces, missing elements filled with zero).
-  - Indexing `a[i,j]`, equivalent to the chained form `a[i][j]`; `a[i]` yields a row value of type `T[n]`.
+  - Indexing `a[i,j]`, equivalent to the chained form `a[i][j]`; a partially indexed `a[i]` is a row
+    **lvalue** of type `T[n]` that decays to `T*` (it is not copied; assignment of the row is an error).
   - The dimensions are derived with `sizeof`: `sizeof(a)/sizeof(a[0])` is dimension 0, `sizeof(a[0])/sizeof(a[0][0])` is dimension 1, and so on.
   - May contain class/interface/struct reference elements (RC element by element); `sizeof` is the total byte count.
-- **Dynamic rectangular multi-dimensional arrays**: `T[,]` (only the rank is written; the size is determined by `new`).
+- **Dynamic rectangular multi-dimensional arrays**: `T[,]` (only the rank is written; the size is determined by `new`) —
+  sugar for `Array2d<T>` (see the dynamic-array bullet above), same for `T[,,]` / `Array3d<T>`; 4+ dimensions
+  have no sugar (use `Array<T>` with a manual index).
   - `int[,] a = new int[m,n];`; any `new T[d0,d1,...]`.
   - Indexing `a[i,j]` (all dimensions must be given; taking a "row view" is not supported).
   - `a.length()` = dimension 0, `a.length(k)` = dimension k (k may be a runtime expression; subscripts are bounds-checked).
@@ -213,7 +242,8 @@ where  move  typeof
   - `new T[m][n]` is **not** legal syntax: a jagged array creates only one dimension at a time; for rectangular arrays use
     `new T[m,n]`. Static jagged arrays can use fixed-size row slots `T[][N]` or aggregate initialization.
 - All-zero: `int[5] c = {};`; empty dynamic/rectangular arrays: `int[] d = {};`, `int[,] e = {};`.
-- Arrays do **not implicitly decay to pointers**; take the first address with `&arr[0]`.
+- Arrays **do** decay to pointers in value position (C99 6.3.2.1, 0.0.106); `&arr[0]` remains an
+  equivalent explicit spelling. The array object itself is not assignable (see the rules above).
 - Indexing `x[i]` / `x[i,j]`; the index type is an integer, `usize` recommended.
 - Managed sequences answer `x.length()` (`usize`); **static arrays are C storage and have no `length()`** - derive the count with `sizeof(a) / sizeof(a[0])`.
 - **Bounds checking**: managed sequences (`T[]` / `buffer<T>`) are checked at the subscript; `--bounds=on|off` (default on) controls it, and a violation throws `std.exception.BoundsError { index, length, axis }`. Static arrays and `T*` are unchecked (C semantics).
@@ -409,6 +439,8 @@ enum Color { Red, Green, Blue }
   - signed small type → wider signed.
   - `T*` → `void*`; `T*` → `const T*`.
   - `T[]` → `const T[]`; the reverse (removing const) requires an explicit `as`.
+  - `T[N]` → `T*` (array-to-pointer decay, C99 6.3.2.1; same element type, const may only be relaxed;
+    also applies to `void*`). This is the only conversion that drops information (the bound).
   - `T[N]` → `T[]`, `T[m,n,...]` → `T[,]` (array to dynamic array: allocates and copies).
 - All other numeric/pointer conversions must be written with `as`.
 - Enums and integers (excluding floating point) can only be converted explicitly with `as` in both directions; enums do not participate in implicit widening, nor implicitly convert to `int`.
@@ -664,21 +696,32 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
   the downcast `interface → derived interface` is not supported in phase one (error).
 - Interface references are strong references: copying is +1, overwriting is -1; `weak` is only supported for class fields, and **interfaces do not support `weak` (not done in phase one)**.
 - An interface cannot be used as a parameter of an `extern` C function.
-- Generic interfaces (`interface ISeq<T>`) are supported (see 3.15), but are **currently only usable as constraints** and cannot be value types.
+- **Generic interfaces are real interfaces** (0.0.108): `interface ISeq<T>` instantiates on use, and an instantiated
+  interface (`IIterator<int>`, `IEnumerable<int>`) can be implemented by a class (`class Cursor : IIterator<int>`),
+  implemented by a generic class through its parameter (`class Src<T> : IEnumerable<T>`), used as a **value type**
+  (16-byte `{obj, desc}`, dispatch through the itable), a return type, a field/local type, a constraint
+  (`T: IEnumerable<int>`) and an `as` downcast target. Interface inheritance may be generic
+  (`interface Derived<T> : Base<T>`); each level is an interface value of its own type. What stays closed is the
+  *value type → interface value* direction: a `struct` cannot be handed out as an interface value (that is boxing,
+  3.15.8), so a struct container returns a **class** cursor.
 - A `struct` may also implement interfaces (`struct S : I1, I2`): after `:` you may **only list interfaces**; this is
   **static satisfaction**, which produces no value type and generates no vtable (see 3.15.7 and backlog U33).
   - An interface method with a default implementation is **materialized as an ordinary method of `S`** when `S` does not
     declare it: the body is instantiated with `this` = `S`, so its calls resolve statically (monomorphization, not
     inheritance — no layout change, no vtable slot, no `super`). A default written in another unit is resolved in that
     unit, while `S`'s own members stay reachable.
-  - Everything else must be implemented explicitly and marked `override`; a missing implementation is a compile error
-    (naming the interface and the full signature).
+  - Everything else must be implemented explicitly; a missing implementation is a compile error
+    (naming the interface and the full signature). **`override` is optional for a struct** (0.0.108): the `:` list is
+    the contract and a value type cannot be subclassed, so the marker would not distinguish anything; a class still
+    requires it on every interface method.
   - Two unrelated interfaces providing defaults with the same signature must be resolved explicitly, exactly as for a
     class; a default on a derived interface refines the base interface's default and wins.
   - Methods whose signature mentions `Self` are never materialized: a value type cannot spell itself in that position,
     so such a method must be implemented explicitly.
-- `for-in` does not depend on interfaces: it follows the **iteration form** of 6.4 (structural recognition, static, zero allocation).
-  Interface-driven traversal requires "interfaces as value types" (M5b), see backlog U30.
+- `for-in` does not depend on interfaces for the **static** path: a container with `iterator()` and a struct cursor
+  is iterated with static dispatch and zero allocation (6.4.2). A cursor that is an **interface value**
+  (`IIterator<T>`, the shape `IEnumerable<T>` returns) is iterated through the itable — same loop, dynamic dispatch,
+  one RC-managed 16-byte local.
 
 ### 3.11 Methods, Overloading and Operators
 
@@ -915,6 +958,7 @@ T: A | B  →  type set is the union (wider)  →  available members of T are th
 - Method members: `T` has a method with the same name and exactly the same parameter types and return type (looked up along the base class chain and in interface default methods).
 - Operator members: an operator that accepts `(T, T)` and returns `T` exists — a **built-in operator or an `operator` free function of a visible unit**.
 - Therefore **built-in types satisfy interfaces at zero cost**: `int` satisfies `Self operator+(Self, Self)` thanks to the built-in `+`.
+  The ready-made contracts (`IAddable`, `IOrdered`, `INumber`, …) live in `std.interfaces` (3.15.9).
 
 **Exact matching, no implicit conversion**: constraint checking performs no implicit widening and no overload "best candidate" selection.
 `Money operator+(Money, long)` does not satisfy `Self operator+(Self, Self)`.
@@ -959,8 +1003,44 @@ and `weak`. Therefore this language explicitly does not provide:
 - Compile-time capability checking → `T: I` (3.15.5) and `struct S : I` (U33), at zero runtime cost;
 - Heterogeneous value collections → sum types (10.1), rather than interface boxing.
 
-`ISeq<int> x;` and `Animal a = cat;` are both compile errors. If borrow checking is introduced in the future, a zero-cost borrowed interface of the `ref I` form can be reconsidered
-(see backlog U33 "Final Decision" and U34 M5b for details).
+Two questions are often mixed up here; only the second one stays closed.
+
+- **A generic interface as a value type** (`IIterator<int> x;`) **is supported** (0.0.108). The object behind the
+  interface is a `class`, so the two-word value is exactly the existing interface representation and dispatch goes
+  through the itable; each instantiation (`IIterator<int>` vs `IIterator<string>`) contributes its own slots, because
+  slots are keyed by the concrete method signature. Nothing is boxed.
+- **A value type as an interface value** (`Animal a = cat;` where `cat` is a `struct`) **stays closed**: it would have
+  to copy the struct to the heap and reference-count it — that is boxing, and the language does not do it implicitly.
+  `struct S : I` therefore gives a compile-time contract only, never an interface value.
+
+`Animal a = cat;` (struct) is a compile error. If borrow checking is introduced in the future, a zero-cost borrowed
+interface of the `ref I` form can be reconsidered (see backlog U33 "Final Decision").
+
+#### 3.15.9 Predeclared contracts (`std.interfaces`)
+
+`libs/std/interfaces.mu` (unit `std.interfaces`, loaded implicitly) declares the contracts the
+compiler and the library share. They are ordinary `interface` declarations — usable as `:` targets
+and as constraints in generic code; nothing is added to the runtime (structural check only).
+
+| Interface | Members | Satisfied by |
+|---|---|---|
+| `IIterator<T>` | `bool next()`, `T current()` | a cursor for `for-in` (6.4.2): a struct (static) or a class (interface value, dynamic) |
+| `IEnumerable<T>` | `IIterator<T> iterator()` | a container; a class returning a class cursor, or a struct returning one (a struct cursor is still iterated statically by `for-in`) |
+| `IIndexable<T>` | `usize length()` (+ a structural subscript, 6.4.1) | containers; the subscript half is not declarable in an interface |
+| `IEquatable` | `==`, `!=` | numbers, pointers, a value type with those operators |
+| `IOrdered : IEquatable` | `<`, `<=`, `>`, `>=` (plus equality) | numbers, pointers, enums, a value type with those operators |
+| `IAddable` / `ISubtractable` / `IMultipliable` / `IDivisible` / `IModulable` | the binary `+ - * / %` returning `Self` | numbers (`%` is `frem` for floats) |
+| `INegatable` | unary `-` | numbers |
+| `INumber : IAddable, ISubtractable, IMultipliable, IDivisible, INegatable, IOrdered` | the arithmetic bundle (C# generic-math shape) | numbers; **not** enums (they do not take part in arithmetic) |
+
+- There is deliberately **no bitwise contract**: the constraint checker recognises only `+ - * / %`
+  and the comparison operators as built-in operators, so `IBitwise` could not be satisfied by the
+  built-in integer types today.
+- User value types satisfy these contracts by declaring the corresponding `operator` members
+  (or free `operator` functions in a visible unit); `class` equality stays identity, so a `class`
+  does not satisfy `IEquatable`.
+- A type can also declare the contract explicitly (`struct Money : IAddable`), which checks the
+  same shape at the definition site.
 
 ### 3.16 Function types and lambdas (implemented in 0.0.84)
 
@@ -1528,25 +1608,36 @@ class List { Iter iterator() { ... } }
 ```
 
 - Conditions: a method `iterator() -> It`, and `It` has the methods `next() -> bool` and `current() -> T`.
-  The contract is declared explicitly in `libs/core/iter.mu` as `core.iter.IIterator<T>` (loaded
+  The contract is declared explicitly in `libs/std/interfaces.mu` as `std.interfaces.IIterator<T>` (loaded
   implicitly); the compiler checks it structurally, and a cursor may also declare `: IIterator<T>` to
   have the definition site checked. `next()` may block (a stream: an accept loop), in which case it is
   a park/cancellation point inside a task; a cursor is consumed by one loop at a time and need not be
-  thread-safe.
-- Lowering: `auto it = c.iterator(); while it.next() { T x = it.current(); ... }`; `iterator()` is evaluated only once.
+  thread-safe.- Lowering: `auto it = c.iterator(); while it.next() { T x = it.current(); ... }`; `iterator()` is evaluated only once.
 - The element type is the return type of `current()`.
 - The cursor is a struct returned by value: zero allocation, static dispatch, inlinable; with class/interface fields it does per-field RC according to U24,
   cleaning up at loop exit / `break` / `return`.
+- A cursor may instead be an **interface value** (`IIterator<T>`, 0.0.108): the loop then dispatches `next()`/`current()`
+  through the itable. This is the dynamic channel — it is what `IEnumerable<T>` returns, because an interface value
+  cannot hold a struct (no boxing). The loop holds one RC-managed local; the element type is still
+  `current()`'s return type.
 - The cursor form does not support `for ref` (`current()` returns a value); mutable iteration goes through the index form (`[]` returning `ref T`) or `for i, x`.
+- **How the compiler finds the iterator** (0.0.107): by the member **name** `iterator()` — the same
+  name-based structural recognition the index form uses for `length()` / the subscript. No interface
+  is required and none is consulted; the element type is the return type of the cursor's `current()`.
+  Interfaces in `std.interfaces` make the contract explicit at the definition site but are optional:
+  - the cursor may declare `: IIterator<T>` — checked against `bool next()` / `T current()`;
+  - the container may declare `: IEnumerable<T>` — checked against `IIterator<T> iterator()`.
+  `IEnumerable<T>` is an ordinary generic interface (0.0.108): a class implements it by returning a class
+  cursor as `IIterator<T>`, `for-in` iterates that value, and `T: IEnumerable<int>` works as a constraint.
 
 #### 6.4.3 Resolution order and diagnostics
 
 1. Built-in sequence → built-in lowering (see the start of this section); it does not participate in form matching;
 2. A user type with an `iterator()` method → **cursor** lowering (implemented 0.0.96; a type opts into
-   streaming by providing `iterator()`, and the cursor contract is `core.iter.IIterator<T>`);
+   streaming by providing `iterator()`, and the cursor contract is `std.interfaces.IIterator<T>`);
 3. Otherwise satisfies the index form → index lowering (**implemented**);
 4. Both could be satisfied → the **cursor** form wins (providing `iterator()` is an explicit choice);
-5. Neither is satisfied → a compile error that names `core.iter.IIterator<T>` and the index-form
+5. Neither is satisfied → a compile error that names `std.interfaces.IIterator<T>` and the index-form
    members (`length()` + a subscript).
 
 - `length()` is a normal method for user types and a compiler-lowered accessor for `T[]` / `buffer<T>`; static arrays have no `length()`;
@@ -1625,6 +1716,11 @@ int add(int a, int b) {
 - `void` functions use `return;`; `return expr;` is not allowed; the result of a void function call has no value and cannot be used in an expression that needs a value (it may be an expression statement).
 - A non-`void` function must guarantee a return value on all paths; falling off the end is a **compile error** (settled). `main` is the exception: falling off is equivalent to `return 0;`.
 - Parameter form `T name`; `const T* p` means read-only through p.
+- **An array parameter is a pointer** (C99 6.7.5.3p7, 0.0.106): `int[5] xs` is `int* xs` — the bound is
+  not part of the type, `sizeof(xs)` is the pointer size, and writes reach the caller's array. Only the
+  outermost dimension decays, so `int[2][3] rows` is a pointer to `int[3]`. Arrays of `class`/`interface`
+  elements keep value semantics (there is no pointer-to-reference type): such a parameter copies the
+  handles, retaining per element. `ref T[N]` is rejected like any other array borrow.
 - **Each parameter is declared separately**: every parameter must spell out the full `type name`, with parameters separated by commas.
   The C-style shared-type form is not supported; `int add(int a, b)` is a **compile error** (diagnostic: declare a type for each parameter).
   This differs from variable/field declarations — in a declaration one type may carry several names (see 4.1), but the parameter list has **no** such sugar.
@@ -1669,6 +1765,7 @@ extern int printf(const char* fmt, ...);
   | `float` | `double` |
   | `bool` / `byte` / `char` / `short` / `ushort` | `int` |
   | enum | the underlying integer type |
+  | fixed-size array `T[N]` | **`T*`** (C99 6.3.2.1 decay, applied before the promotions) |
   | `string` | **not allowed**: it holds reference-counted data; pass `s.cstr()` (a `const char*`) instead |
   | pointer / POD struct / union | unchanged |
 
@@ -1747,6 +1844,8 @@ extern int fseek(void* stream, c_long offset, c_int origin);
   optimization; the backend does not emit `nsw`/`nuw`). **Division is the one exception**: the CPU traps on `MIN / -1`,
   so it is UB exactly like division by zero; write `-x` (which wraps) when that value must be produced.
 - Managed-sequence out of bounds: checked by default and throws `BoundsError`; `--bounds=off` removes the check (then it is UB). Static arrays and `T*` are unchecked.
+- A pointer obtained by decaying an array **prvalue** (a function result, or the result of `?:`) is only
+  valid until the end of the enclosing statement: the temporary it points into is gone afterwards.
 - Accessing a class reference that is `null`; continuing to use a handle after it has been set to null (equivalent to a null reference).
 - Using `alloc/free` on a class object, or assigning memory obtained from `alloc` as a class handle (the two memory management schemes must not cross).
 
@@ -1935,7 +2034,7 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 | Braces | May be omitted | Mandatory |
 | Condition parentheses | Required | Optional, omitted in canonical style |
 | Conversions | Many implicit | Only widening that loses no range; otherwise `as` |
-| Arrays | Degenerate to pointers, mixed value semantics | Fixed-size arrays have value semantics; slices are explicit |
+| Arrays | Degenerate to pointers; array objects are not assignable | Same decay and non-assignability (C99, 0.0.106); `T[N]` parameters are `T*`; remaining differences: an array-typed `return` copies, arrays of `class`/`interface` handles are copied element by element, and `T[N]` → `T[]` allocates and copies |
 | Strings | `char*` | a literal is a `const char*`; `string` is a library value type (UTF-8, RC-backed; `.cstr()` for C, `strlen()` for C-string length) |
 | Type casts | `(T)x` | `x as T` |
 | Function pointers | `int (*f)(int)` declarators | `(int) => int`; one word, no `*`, no declarator nesting; lambdas are non-capturing (3.16) |
@@ -1966,8 +2065,8 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 | 2 | Whether condition parentheses are mandatory | Decided: optional, omitted in the spec; C style remains legal |
 | 3 | Fixed-width type naming (C names vs `i32`) | Use C names first |
 | 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are allowed since 9.1 (a `const` one is still an error: unit-level `const` must be a compile-time constant) |
-| 5 | Whether arrays implicitly decay to pointers | No decay |
-| 6 | Whether dynamic arrays are included in phase one | Decided: included (`T[]` / `T[,]`, RC heap arrays) |
+| 5 | Whether arrays implicitly decay to pointers | **Decided (0.0.106): yes, as in C99.** An array in value position decays to a pointer to its first element (initializer, assignment, argument, struct-field access, row of a static multi-dimensional array); `sizeof`/`alignof` do not decay. The array object itself is **not assignable** (`a = b`, `int[N] b = a`, `s.v = a` are errors) and a `T[N]` parameter is `T*` (6.7.5.3p7). Kept as Mu extensions: an array-typed `return` copies, and a prvalue array (function result) can initialize an array. Arrays of class/interface elements keep value semantics (no pointer-to-reference type exists) |
+| 6 | Whether dynamic arrays are included in phase one | Decided: included. `T[]` / `T[,]` / `T[,,]` are **syntax sugar for `Array<T>` / `Array2d<T>` / `Array3d<T>`** (decided 2026-11-14; the containers are still to be written, backlog U38) and the built-in `buffer<T>` is the low-level safe block they build on. Until `Array*` lands both spellings resolve to the same built-in RC sequence (`{rc,len,cap,data}`), so the current semantics are those of `buffer<T>` |
 | 7 | Bounds checking strategy | Managed sequences checked by default (`--bounds=on` / `--bounds=off`), a violation throws `BoundsError`; static arrays and `T*` unchecked |
 | 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, and a constant expression reports it |
 | 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
@@ -2071,8 +2170,8 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 | 107 | Unit-level `const` referencing other `const`s/enum members | Implemented (0.0.59): the compile-time constant evaluator supports referencing unit-level `const`s, enum members, and type-level `const` members, and supports forward references; `const int B = A + 1;` and `const int C = sizeof(int) as int;` are legal; cyclic dependencies/division by zero are errors (see 3.7.2) |
 | 108 | Type-level `const` constants (`const` members) | Decided (0.0.59): `const T NAME = <const-expr>;` inside a struct/class body, semantically a compile-time constant with no instance storage; accessed via `Type.NAME` / as a bare name inside a type method body / through the base-class chain; `obj.NAME`, `this.NAME`, assignment and taking the address are all errors; not allowed in unions/interfaces (see 3.7.1) |
 | 109 | Bit-fields | Decided (0.0.62): **explicitly not done**. No C-style `int x : 3;` is provided, nor is any Zig/Rust-style explicit bit-width syntax; the allocation order and cross-unit boundaries are implementation-defined, which conflicts with predictable layout. Alternatives: mask+shift / `byte[N]`+offset / `packed`+accessors / a C shim (see 3.4) |
-| 110 | A generic interface as a value type / a value type as an interface value | **Decided (0.0.75): explicitly not done**. Without borrow checking, a value type → interface value necessarily boxes (heap allocation + RC), at a cost comparable to `new`ing a class object, and it loses explicit lifetimes and downcasting; runtime polymorphism is fully covered by `class`, and heterogeneous value collections use sum types (10.1). Generic interfaces serve only as constraints (3.15.7); `struct S : I` provides only static satisfaction (U33). If borrow checking is introduced in the future, zero-cost borrows of the `ref I` form can be re-evaluated |
-| 111 | `const` members in generic types / generic interface inheritance | Undecided: `const` members of generic structs/classes and `interface IList<T> : ISeq<T>` are errors for now |
+| 110 | A generic interface as a value type / a value type as an interface value | **Split (0.0.108).** (a) *Generic interface as a value type*: **implemented** — `IIterator<int> x`, `class C : IIterator<int>`, `class Src<T> : IEnumerable<T>`, interface-valued returns/fields/locals, `T: IEnumerable<int>` constraints, `as` downcasts; two words `{obj, desc}`, itable slots keyed by the concrete signature, no boxing. (b) *Value type → interface value*: **still explicitly not done** (0.0.75 decision stands) — a struct would have to be boxed, so `Animal a = cat;` is a compile error and `struct S : I` is a compile-time contract only |
+| 111 | `const` members in generic types / generic interface inheritance | **Generic interface inheritance implemented (0.0.108)**: `interface Derived<T> : Base<T>` instantiates per level and both levels are interface values of their own type. Still an error: `const` members in generic structs/classes (not wired up) |
 | 112 | Type alias `type A = B;` | Decided (0.0.62): `type` is a **contextual keyword** (it is parsed as an alias only at the start of a declaration, `type Ident =`; elsewhere it is still an identifier, which protects the `type` field of C-interop structs); each declaration declares one alias; aliases are transparent (not newtypes) (see 4.5) |
 | 113 | Range extensions `..=` / `step` / reverse order | Decided (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`); reverse order relies on an **explicit negative step**, `a..b` does not reverse automatically; `step 0` is a compile error; the step size is limited to compile-time constants (see 6.4) |
 | 114 | Range expansion in array initialization | Decided (0.0.62): in `int[10] a = {1, 2, 5..9, 10};` the `5..9` expands to 5,6,7,8; the endpoints must be compile-time constants; only `..` is supported inside braces (it does not take `..=`/`step`); after expansion it participates in "zero-pad when short / error when too long" (see 4.1) |

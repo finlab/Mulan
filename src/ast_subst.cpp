@@ -13,14 +13,17 @@ namespace muc_detail {
 void subst_type_spec(TypeSpec& s, const TypeBindings& b) {
     if (s.kind == TypeSpec::K::Named && s.args.empty()) {
         auto it = b.find(s.name);
-        if (it != b.end()) {
+        if (it != b.end() && it->second.spec) {
             // Preserves the const / weak modifiers at the original position (`const T` → `const <type argument>`)
             const bool keep_const = s.is_const;
             const bool keep_weak = s.weak;
-            TypeSpecPtr rep = clone_type_spec(*it->second);
+            TypeSpecPtr rep = clone_type_spec(*it->second.spec);
             s = std::move(*rep);
             s.is_const = s.is_const || keep_const;
             s.weak = s.weak || keep_weak;
+            // The argument was resolved in the use-site unit; keep it so the template's unit does not
+            // have to resolve a name it cannot see.
+            if (it->second.resolved) s.resolved = it->second.resolved;
             return;  // the type argument is already complete, no need to recurse further
         }
     }
@@ -252,6 +255,9 @@ void subst_decl(Decl& d, const TypeBindings& b) {
         return;
     }
     if (auto p = dynamic_cast<InterfaceDecl*>(&d)) {
+        for (auto& bs : p->base_specs) {
+            if (bs) subst_type_spec(*bs, b);
+        }
         subst_methods(p->methods, b);
         return;
     }

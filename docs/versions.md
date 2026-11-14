@@ -10,6 +10,140 @@
 
 ## Releases
 
+### 0.0.108 — 2026-11-14
+
+**Generic interfaces are real interfaces: `IEnumerable<T>` works end to end; structs implement contracts
+without `override`.**
+
+- **An instantiated generic interface is an ordinary interface type** (`IIterator<int>`, `IEnumerable<int>`):
+  it can be implemented by a `class` (itable), implemented by a **generic class**
+  (`class Cursor<T> : IIterator<T>`, `class Src<T> : IEnumerable<T>`), used as a value type (16-byte
+  `{obj, desc}`), a return type, a field/local type, a structural constraint (`T: IEnumerable<int>`)
+  and an `as` downcast target. Slots are keyed by the concrete method signature, so `IIterator<int>` and
+  `IIterator<string>` coexist. Nothing is boxed. This supersedes backlog U34 M5b ("closed") and the
+  0.0.75 decision *only* for the generic-interface-as-value-type half; the value-type → interface half
+  (boxing a struct) stays closed.
+- **Bases are resolved from their structured spec, not the display string** (`src/sema_decl.cpp`,
+  `src/sema_generic.cpp`): `resolve_named_type("IIterator<int>")` could never succeed, which is why
+  `class C : IIterator<int>` reported "unknown type". Class bases, interface bases and instantiated
+  generic bases now all go through `resolve_type`. `class Cursor<T> : IIterator<T>` also needed the
+  generic-class guard removed (it rejected >1 base, i.e. class + interface) and the interface branch of
+  `instantiate_generic` to resolve its own substituted base specs.
+- **Generic interface inheritance** (`interface Derived<T> : Base<T>`) now works at instantiation:
+  `subst_decl` substitutes interface base specs (it used to skip them) and the instantiated interface
+  records its base interfaces, so a class implementing `Derived<int>` satisfies `Base<int>` methods too.
+- **`for-in` accepts an interface cursor** (`src/sema_class2.cpp`, `src/codegen_stmt.cpp`): the cursor
+  may be a struct (static dispatch, unchanged) or an interface value (`IIterator<T>`, the shape
+  `IEnumerable<T>` returns), which dispatches `next()`/`current()` through the itable; the loop owns
+  one RC-managed 16-byte local. `std.interfaces.IEnumerable<T>` is now the C# shape
+  `IIterator<T> iterator()` instead of the earlier cursor-typed `IEnumerable<It>`.
+- **`override` is optional for a struct** implementing an interface: the `:` list is the contract and a
+  value type cannot be subclassed, so the marker distinguishes nothing. A `class` still requires it on
+  every interface method (the must-fail case moved from
+  `tests/errors/struct_iface_no_override` to `tests/check/struct_iface_no_override`).
+- Docs: SPEC 3.10 (generic interfaces as real interfaces, struct/class `override` rule), 3.15.8 (which
+  half of the 0.0.75 decision still stands), 3.15.9 (`IEnumerable<T>` row), 6.4.2 (interface cursors),
+  §12 #110/#111 rewritten; backlog U34 M5b marked implemented.
+
+Tests: `iface_generic` (class + generic class + generic interface inheritance + struct container with a
+class cursor + constraint + downcast + `sizeof(interface)`), `struct_iface_no_override` (check), must-fail
+`iface_generic_no_override` (a class still needs `override`).
+
+**Tests**: 507/507 (154 pass + 330 must-fail + 20 check + 3 ir)
+
+### 0.0.107 — 2026-11-14
+
+**`libs/core` folded into `std`: `core.iter` → `std.interfaces`, which also declares the built-in
+capability contracts.**
+
+- `libs/core/` held exactly one declarations-only file (`iter.mu`) and bought nothing: the standard
+  library already has compiler-facing units (`std.string`, `std.exception`, `std.task`,
+  `std.thread`). It is now `libs/std/interfaces.mu`, unit `std.interfaces`.
+- **The unit is also the home of the built-in capability interfaces**: `IEquatable`, `IOrdered`
+  (ordering + equality), `IAddable` / `ISubtractable` / `IMultipliable` / `IDivisible` /
+  `IModulable`, `INegatable`, and the bundle `INumber : IAddable, ISubtractable, IMultipliable,
+  IDivisible, INegatable, IOrdered`, next to the existing `IIterator<T>` / `IIndexable<T>` and the
+  new `IEnumerable<It>` (the container half of the cursor form).
+  They are ordinary `interface` declarations: constraints (`T: INumber`) are checked structurally
+  and built-in numbers satisfy them through their operators, so generic numeric code costs nothing
+  at runtime and needs no special-casing in the compiler.
+  - Split per operator instead of one arithmetic interface: the constraint checker recognises only
+    `+ - * / %` and the comparison operators as built-ins, so a bitwise contract would be
+    unsatisfiable today.
+  - `IEquatable` requires both `==` and `!=` (a user value type must declare both — the language
+    does not derive one from the other); `class` equality stays identity, so a class does not
+    satisfy it.
+- Implicit loading (`src/loader.cpp`) resolves `std.interfaces`; the cursor-form diagnostics in
+  `src/sema_class2.cpp` name `std.interfaces.IIterator`, and a user type may
+  `use std.interfaces;` + `: IIterator<T>` exactly as before.
+- No semantic change to `for-in`: the contracts are still checked structurally (no vtable, no
+  boxing); the interface declarations document them and give the definition site a check.
+- **Fixed along the way — cross-unit generic instantiation** (`src/sema_generic.cpp`,
+  `src/ast_subst.*`, `src/ast.hpp`, `src/sema_types.cpp`): a generic type or function declared in one
+  unit could not be instantiated with a type from another unit — the substituted type argument was
+  re-resolved **in the template's unit**, which cannot see the client's names
+  (`error: unknown type 'C'`). Reproduced with a generic interface in a library and
+  `struct S : E<Counter>` at the use site; it would equally have broken `Array<T>` / `Vec<T>` for
+  user element types. The argument type is now resolved at the **use site** and travels with the
+  substitution (`TypeSpec::resolved`, honoured by `resolve_type`), and an instance name qualifies
+  arguments that come from another unit (`Box<genx.lib.Item>`) so two units that each declare
+  `Item` no longer collapse into one instance — previously the second unit silently got the first
+  unit's type.
+- Docs: SPEC 3.15.5 / new 3.15.9 (table of the predeclared contracts) / 6.4.2 (how `for-in` locates
+  the iterator, and why `IEnumerable<T>` is not expressible) / 6.4.3, `docs/style.md` §6,
+  `agents/task-runtime.md`, backlog U39's implicit-unit list, `agents/TODO.md` and the
+  `cursor_basic` header comment.
+
+Tests: `std_interfaces` (int / double / a user `Money` value type satisfy the arithmetic and ordering
+contracts; a `Counter : IIterator<int>` / `Counts : IEnumerable<Counter>` pair iterates), `generic_xunit`
+(a generic type from another unit instantiated with a client-side type, alongside the library's own
+same-named type), must-fail `std_iface_missing` (a struct without `operator+`) and
+`std_iface_enum_number` (an enum cannot satisfy the arithmetic bundle).
+
+**Tests**: 505/505 (153 pass + 330 must-fail + 19 check + 3 ir)
+
+### 0.0.106 — 2026-11-14
+
+**Static arrays follow C99: array-to-pointer decay, non-assignable array objects, `T[N]` parameters are `T*`.**
+
+- **Decay** (`src/types.cpp:implicitly_convertible`, `src/codegen_expr.cpp:coerce`): an array in value
+  position converts to a pointer to its first element — declaration initializer, assignment, argument,
+  struct field (`int* q = s.v;`) and a row of a static multi-dimensional array (`int* r = m[1];`).
+  The conversion is the address of the lvalue, so the pointer shares storage. `sizeof`/`alignof` never
+  decay (`sizeof(a)` is still the array size). A pointer obtained from a **prvalue** array (a function
+  result) is only valid until the end of the statement (SPEC 8.2).
+- **Arrays are not assignable** (`src/sema_const.cpp:assignable`): `a = b;`, `int[N] b = a;` and
+  `s.v = a;` are errors — "arrays are not assignable (C99); copy the elements or use `memcpy`".
+  Two Mu extensions stay: an array-typed `return` still copies (array returns are a Mu value feature),
+  and an array can be initialized from a **prvalue** array (there is no lvalue to alias).
+- **Parameter adjustment** (C99 6.7.5.3p7, `Sema::decay_param_type`): `int[5] xs` declares `int* xs`
+  — the bound is dropped, `sizeof(xs)` is the pointer size, writes reach the caller, and only the
+  outermost dimension decays (`int[2][3] rows` is a pointer to `int[3]`). Applied to free functions,
+  methods, constructors, interface methods, function types (`(int[3]) => void` is `(int*) => void`),
+  lambdas and generic instantiations, so `int f(int[3])` and `int f(int*)` are the same signature.
+  Arrays whose element is a `class`/`interface` keep value semantics (this language has no pointer to
+  a reference, 3.8): the parameter still copies the handles, retaining per element. `ref T[N]` stays
+  rejected with the existing diagnostic.
+- **Migrated cases**: `arrays` (decay, `sizeof` without decay, write-through parameter), `multidim`
+  (row decay; element-wise copies of static rectangles), `class_array_copy` and `class_iface_array`
+  (element-wise copies with per-element retain/release). New: `array_decay` (run) plus must-fail
+  `array_assign`, `array_copy_init`, `array_field_assign`.
+- **Varargs decay**: an array passed to an `extern` `...` function decays to `T*` before the C default
+  argument promotions (it used to be passed as an aggregate, which the C side could not consume).
+- **Docs**: SPEC 3.3 / 3.6 / 7 / 7.1 / 8.2 / 11 and §12 row 5 rewritten (the old "no decay" decision is
+  superseded); backlog U22 records the change. Variadic arguments decay to `T*` as well
+  (C99 6.3.2.1), so `printf("%p", a)` passes the array address instead of copying the aggregate.
+
+**Tests**: 501/501 (151 pass + 328 must-fail + 19 check + 3 ir)
+
+> **Doc-only change (2026-11-14, no version bump)**: the dynamic-array spelling is settled —
+> `T[]` / `T[,]` / `T[,,]` **stay** and are **syntax sugar for `Array<T>` / `Array2d<T>` /
+> `Array3d<T>`** (this supersedes the earlier "no sugar / consider deleting `T[]`" decision in
+> backlog U38), while `buffer<T>` is the compiler-provided **low-level safe block** the `Array`
+> family is built on, not a user-facing container. Until `Array*` is written both spellings still
+> resolve to the same built-in RC sequence, so no code changes. Written into SPEC §3.3 / §12 #6,
+> `docs/style.md` §1 and backlog U38.
+
 ### 0.0.105 — 2026-11-14
 
 **GitHub issue batch: ODR duplicate, `buffer<T>.ptr`, multi-index `operator[]`, constant axis

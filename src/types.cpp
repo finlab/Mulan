@@ -582,6 +582,15 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         return same_type(src->elem, dst->elem);
     }
 
+    // Array -> pointer (C99 6.3.2.1 decay): the array's first element address; same element type,
+    // const may only be relaxed. `void*` is accepted like any other pointer target.
+    if (src->kind == TypeKind::Array && dst->kind == TypeKind::Ptr) {
+        if (!dst->elem) return false;
+        if (dst->elem->kind == TypeKind::Void) return true;
+        if (src->elem && src->elem->is_const && !dst->elem->is_const) return false;
+        return same_type(src->elem, dst->elem);
+    }
+
     // Array -> slice
     if (src->kind == TypeKind::Array && dst->kind == TypeKind::Slice) {
         return same_type(src->elem, dst->elem);

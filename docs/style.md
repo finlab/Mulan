@@ -20,7 +20,7 @@
 | Local variables | snake_case; loop indices `i` / `j` / `k` | `total`, `found` |
 | Constants | UPPER_SNAKE | `MAX_CARRIERS`, `EOF` |
 | Type parameters | single uppercase letter | `T`, `K`, `V` |
-| Units | lowercase, dot-separated | `std.string`, `core.iter` |
+| Units | lowercase, dot-separated | `std.string`, `std.interfaces` |
 | Files | lowercase snake_case, the path mirrors the unit | `libs/std/string.mu` |
 
 The lowercase rule has a testable boundary: **is it built-in?**
@@ -31,6 +31,11 @@ The lowercase rule has a testable boundary: **is it built-in?**
 
 The canonical type is `String`; `string` is a declared alias (`type string = String;`) kept because it
 is the type name every program types. Aliases may be lowercase; a real type name may not.
+
+The two array-ish names do not overlap (decided 2026-11-14): **`buffer<T>` is the built-in
+low-level safe block** (compiler-provided, lowercase), and **`T[]` / `T[,]` / `T[,,]` are syntax
+sugar for `Array<T>` / `Array2d<T>` / `Array3d<T>`**, i.e. library containers, PascalCase, written
+out in APIs where the sugar would be ambiguous. The sugar never denotes `buffer<T>`.
 
 ## 2. Methods
 

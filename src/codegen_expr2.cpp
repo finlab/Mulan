@@ -155,6 +155,11 @@ using ArgPack = Emitter::ArgPack;
         }
         if (f->is_varargs) {
             for (size_t i = f->pty.size(); i < args.size(); ++i) {
+                // C99 6.3.2.1: an array argument decays to a pointer before the default promotions.
+                if (args[i]->ty && args[i]->ty->kind == TypeKind::Array) {
+                    pack.vals.push_back(addrOf(args[i]));
+                    continue;
+                }
                 pack.vals.push_back(promoteVararg(eval(args[i]), args[i]->ty));
             }
         }

@@ -535,14 +535,23 @@ using ArgPack = Emitter::ArgPack;
             if (mayThrow.mayThrowMethod(s->iter_sig, sty)) emitCheckPending();
             auto* itSlot = entryAlloca(lt(s->it_ty), "it", alignOf(s->it_ty));
             b.CreateStore(itv, itSlot);
+            // an interface cursor is an owned value: release the copy when the statement ends
+            if (s->it_ty->kind == TypeKind::Interface) stmtTemps.emplace_back(itSlot, s->it_ty);
+            // struct cursors are passed by address (static dispatch); a class/interface cursor value is
+            // passed as the receiver value itself.
+            const bool itByValue =
+                s->it_ty->kind == TypeKind::Interface || s->it_ty->kind == TypeKind::Class;
+            auto cursorSelf = [&]() -> Value* {
+                return itByValue ? static_cast<Value*>(b.CreateLoad(lt(s->it_ty), itSlot)) : static_cast<Value*>(itSlot);
+            };
 
             b.CreateBr(condBB);
             b.SetInsertPoint(condBB);
-            Value* more = emitMethodCallVals(s->next_sig, itSlot, s->it_ty, {}, s);
+            Value* more = emitMethodCallVals(s->next_sig, cursorSelf(), s->it_ty, {}, s);
             if (mayThrow.mayThrowMethod(s->next_sig, s->it_ty)) emitCheckPending();
             b.CreateCondBr(more, bodyBB2, endBB);
             b.SetInsertPoint(bodyBB2);
-            Value* ev = emitMethodCallVals(s->cur_sig, itSlot, s->it_ty, {}, s);
+            Value* ev = emitMethodCallVals(s->cur_sig, cursorSelf(), s->it_ty, {}, s);
             if (mayThrow.mayThrowMethod(s->cur_sig, s->it_ty)) emitCheckPending();
             b.CreateStore(ev, varSlot);
             const bool ownCur = needsCleanup(s->elem_ty);

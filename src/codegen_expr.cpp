@@ -308,6 +308,13 @@ static bool is_numeric(const TypePtr& t) {
             }
             return b.CreateLoad(lt(st), tmp);
         }
+        if (e && to && to->kind == TypeKind::Ptr && e->ty &&
+            e->ty->kind == TypeKind::Array) {
+            // Array-to-pointer decay (C99 6.3.2.1): the address of the first element. For a
+            // non-lvalue array (a function result) `addrOf` materializes it; the pointer is then
+            // only valid within the enclosing statement.
+            return addrOf(e);
+        }
         if (e && to && to->kind == TypeKind::Slice && e->ty &&
             e->ty->kind == TypeKind::Array) {
             // fixed-size array -> dynamic array: allocate and copy by nested dimension (no borrowed view is provided anymore)

@@ -442,6 +442,12 @@ namespace muc_detail {
                      t->kind == TypeKind::Interface);
     }
 
+    TypePtr Sema::decay_param_type(const TypePtr& t) {
+        if (!t || t->kind != TypeKind::Array || !t->elem) return t;
+        if (t->elem->kind == TypeKind::Class || t->elem->kind == TypeKind::Interface) return t;
+        return Type::make_ptr(t->elem);
+    }
+
     bool Sema::borrowable_type(const TypePtr& t) {
         if (!t) return false;
         switch (t->kind) {
