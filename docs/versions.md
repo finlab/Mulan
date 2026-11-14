@@ -10,6 +10,55 @@
 
 ## Releases
 
+### 0.0.102 — 2026-11-14
+
+**Unit-level initialization and cleanup (SPEC 9.1).**
+
+- **Runtime initializers**: a unit-level variable may have an arbitrary initializer expression; the
+  non-constant ones are evaluated by a compiler-generated init sequence before the user `main`. The
+  constant path is unchanged: a foldable initializer still lands in the data area and runs no code.
+- **Exit-time destruction**: every unit-level variable whose type needs cleanup (class/interface
+  handle, `String`, managed sequence, struct with reference fields or a user destructor) is released
+  at exit in the exact reverse order. This lifts the three "no exit-time destruction" restrictions:
+  a global `String`, a global struct with reference fields and a global struct with a user destructor
+  are all legal. `const` still requires a compile-time constant, so `const string G = "hi";` stays an
+  error (new diagnostic: a `const` unit-level variable cannot hold a type that needs runtime cleanup).
+- **Deterministic order**: the loader's DFS post-order over `use` edges *is* the initialization
+  order (declaration order inside a unit, implicitly loaded std units first, entry unit last), and
+  cleanup is the exact reverse of the same sequence. Cleanup is registered with `atexit`, so
+  `exit()` also cleans up; an exception escaping an initializer aborts without cleanup.
+- **Ordering rule**: an initializer may observe only its own unit's earlier declarations and
+  upstream units; a direct reference to a variable declared later in the same unit is a compile
+  error. Indirect dependencies (function pointer, interface dispatch, `extern` C symbol, a later
+  variable reached through a function body) are not tracked and are documented as undefined.
+- **Entry wrapper**: the user `main` is emitted as `mu_main`; a generated C `main` runs the init
+  hooks, registers the cleanup hook with `atexit`, then calls `mu_main` and returns its value. Each
+  unit's hook is a separate symbol, so a future split-compilation mode can assemble the same
+  sequence at link time.
+- `S g;` for a struct with a parameterless constructor now calls that constructor from the init
+  sequence (the same lowering as a local `S s;`) instead of leaving a zero-filled object.
+- Implementation: new `src/codegen_unit.cpp`; `sema_types.cpp` (`check_global`,
+  `check_global_init_order`), `ast.hpp` (`GlobalVar::runtime_init`, `FuncDecl::is_entry`),
+  `mangle.cpp` (`unit_init_cname` / `unit_fini_cname`), `codegen_func.cpp` (entry renaming, runtime
+  globals emitted as the zero value).
+
+Tests: `unit_init_order` (A→B→C through `use`, init and reverse cleanup order), `unit_init_string`,
+`unit_init_dtor` (struct with constructor+destructor, struct with a reference field),
+`unit_init_assign` (zero-initialized global assigned in `main` and released at exit),
+`unit_init_exit` (`exit()` still runs the cleanup), `unit_init_catch` (an initializer that catches
+its own exception does not abort); must-fail `unit_init_forward_ref` and
+`unit_init_const_nonconst`; `string_global` updated to the new diagnostic; `struct_dtor_global` and
+`struct_ref_global` removed because both constructs are now legal.
+
+**Tests**: 482/482 (145 pass + 318 must-fail + 19 check)
+
+**Documentation-only follow-up (no build bump)**: design decision recorded — **member promotion
+(Go-style embedding) and mixin-style member injection are explicitly not done** in v1. Vetoed
+variants (stateful trait mixin, offset-thunk interface satisfaction, textual `mixin template`),
+the reopen threshold and the "adding a method to another type silently changes remote code"
+argument are in `agents/design-backlog.md` U40; the normative entry is `docs/SPEC.md` §12 row 127;
+the general criterion gained a row in `agents/agent-era-language-design.md` §2 (criterion 6).
+
 ### 0.0.101 — 2026-11-14
 
 **Sequence surface rework: `len` removed, static arrays become C storage, `String` renamed,

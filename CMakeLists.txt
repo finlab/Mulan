@@ -72,6 +72,7 @@ add_executable(muc
   src/codegen_stmt.cpp
   src/codegen_class.cpp
   src/codegen_func.cpp
+  src/codegen_unit.cpp
 )
 
 separate_arguments(LLVM_DEFS_LIST NATIVE_COMMAND "${LLVM_DEFINITIONS}")

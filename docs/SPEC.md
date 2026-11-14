@@ -19,6 +19,7 @@
 | Type inference | Local variables may use `auto x = expr;`; local only, and an initializer is required; `dynamic`/`any` are reserved names only |
 | Dynamic types | Not done in phase one; heterogeneous values prefer library-level Variant/sum types; `dynamic`/`any` are reserved only |
 | Scope | Declarations do not write `T x(...)`; `Point p` is uninitialized, `= {}` zero-initializes; unit-level variables are declared directly and are `private` by default |
+| Unit initialization | Unit-level variables may be initialized at runtime and are destroyed at exit (9.1, implemented 0.0.102); the order is a DFS post-order over `use` edges from the entry unit, cleanup is its exact reverse, declaration order inside a unit; only `use` dependencies are tracked |
 | Object model | Values and references are separated: `struct` is a value type; `class` is a reference type (single inheritance + interfaces; virtual methods by default; atomic RC + weak; no GC/cycle collector) |
 | Strings | `string` (a value type provided by the std library: an immutable UTF-8 byte sequence; for layout and API see the library documentation) |
 | Generics | **Monomorphization** (one copy of the code per combination of type arguments); `<>` syntax; constraints use `interface` + `&`/`\|`; `Self` refers to the implementor; constraints are matched **structurally**, and built-in types satisfy them at zero cost; see 3.15 for details |
@@ -231,8 +232,10 @@ where  move  typeof
       (value semantics, copies are independent).
   - Size: `sizeof(string)` is defined by the library (currently 24 bytes: `byte* p; usize n; byte[] owner`);
     to pass strings across the ABI use `const char*`.
-  - **A `string` cannot be a unit-level variable** (`const string G = "hi";` is an error): a struct with
-    reference-counted fields has no exit-time destruction. Use `const char* G = "hi";` and convert at the use point.
+  - **A `string` may be a unit-level variable** (9.1): it is a struct with reference-counted fields
+    and is destroyed by the exit sequence. A `const` unit-level `string` is still an error, because a
+    unit-level `const` must be a compile-time constant; write `string G = "hi";` (mutable binding),
+    or use `const char* G = "hi";` and convert at the use point.
   - Construction and operations (`string(const char*)`, `length()`, `at`, `sub`, `concat`, `operator[]`,
     `operator==`, `cstr`, `strlen`, ...) are **library API**, see the library docs; they are not part of the
     language specification. Everything about `string` that used to be compiler magic (`s[i]`, `for-in`,
@@ -284,10 +287,12 @@ struct Point {
   - **Cannot take the address of a struct with reference fields** (`&s`, `&arr[i]`; a scalar field `&s.x` still works): a raw pointer could bypass
     field-by-field retain/release (backlog U24). To modify in place, pass/return by value, or switch to `class`;
     **structs with user destructors are the exception**—they can only be used through pointers anyway (see the "user destructors" item below).
-  - Structs with reference fields cannot yet be global variables (no exit-time destruction);
+  - Structs with reference fields may be unit-level variables (they are destroyed by the exit
+    sequence, 9.1);
   - `extern C` signature recursive check: structs containing class/interface cannot be C parameters/return values;
-  - Structs with **user destructors** still cannot be copied/assigned/passed/returned by value, nor be global variables, array elements,
-    or fields of other structs/classes (the interaction between user destructors and automatic field RC is to be implemented later); pass them through pointers.
+  - Structs with **user destructors** still cannot be copied/assigned/passed/returned by value, nor be array elements
+    or fields of other structs/classes (the interaction between user destructors and automatic field RC is to be implemented later); pass them through pointers in those positions.
+    They may be unit-level variables (9.1);
 - `sizeof(S)` is available; pure-value struct assignment has byte-copy semantics, and copies of structs with reference fields get RC operations inserted by the compiler.
 - Fields also support multiple names sharing a type: `int x, y;`; the type-first fixed-size array form is also allowed, e.g. `char[20] name;`.
 - **Layout modifiers `packed` / `align(N)`** (**implemented, 0.0.42**):
@@ -647,7 +652,7 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
 - `interface`, like `class`/`struct`, is a unit-level type declaration; it has no fields and no constructors, only methods (which may have default implementations).
 - A class may implement multiple interfaces: in the `:` list there is **at most one class, and it must come first**; the rest are interfaces.
 - Interface methods are abstract and virtual by default; write `override` when implementing them.
-- A default method may only call interface methods and cannot access fields; when two interfaces provide default implementations with the same signature, the class must explicitly override them, otherwise it is a compile error.
+- A default method may only call interface methods and cannot access fields; when two interfaces provide default implementations with the same signature, the class must explicitly override them, otherwise it is a compile error (a default declared on a derived interface refines the base interface's default and wins).
 - An interface value is laid out as two machine words `{object pointer, class descriptor pointer}`; it may be `null`.
 - Conversions: `class → interface` is implicit; `interface A → interface B` (A inherits B) is a static conversion;
   `class → derived class` and `interface → class` use `as` for a runtime check (along the desc base class chain), yielding `null` on failure;
@@ -757,6 +762,8 @@ class File {
 
 - At most one destructor per class: `~ClassName() { ... }`; no parameters, no return value, cannot be overloaded.
 - Invocation timing: when the strong reference count reaches zero, the **user destructor runs first**, then the fields are released in reverse order (derived fields → base class fields), and finally the memory is released.
+- A class handle or a struct with a destructor held in a **unit-level variable** is destroyed by the exit
+  sequence (9.1); that sequence is the exact reverse of the initialization sequence.
 - Inheritance: the derived destructor runs first, then the base class destructor (C++ order); the base class destructor is virtually dispatched through the destroy entry of the vtable.
 - Virtual calls inside a destructor are dispatched C++-style to the current destructor layer.
 - It cannot be called manually; setting the handle to null (`c = null;`) only decrements the reference, and it triggers only when the count reaches zero.
@@ -1709,6 +1716,10 @@ extern int fseek(void* stream, c_long offset, c_int origin);
 - Using freed memory, or double-freeing (`free(null)` excepted).
 - Dereferencing `null`, out-of-bounds pointer arithmetic/dereference, dangling pointers.
 - Reading uninitialized memory.
+- Observing a unit-level variable before its unit has been initialized, or after that unit's cleanup has
+  run (9.1): only `use` dependencies are tracked, so an indirect dependency (a function pointer, an
+  interface call, an `extern` C symbol, or a later variable reached through a function body) can produce
+  such an access.
 - Misaligned access: a pointer/field whose dereference location does not satisfy the type's natural alignment (fields of a `packed` struct are such a case; see 3.4).
 - Data races between tasks or between threads (concurrency exists, 3.17, but races are neither prevented
   nor diagnosed; the rule against writing enclosing locals in a `para` region is a narrow syntactic
@@ -1797,6 +1808,53 @@ unit example;
 - A string literal is a NUL-terminated `const char*` and can be passed to C directly.
 - Symbol mangling/naming conflict rules are pending.
 
+### 9.1 Unit-level initialization and cleanup (implemented 0.0.102)
+
+Unit-level variables may have runtime initializers and are destroyed at exit. This section defines
+the order and the rules; it lifts the three "no exit-time destruction" restrictions that used to
+appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user destructors).
+
+- **No new syntax.** `T g = expr;` accepts any runtime expression, and cleanup is the type's `~T()`.
+  A unit-level variable whose type needs cleanup (a class/interface handle, `String`, a managed
+  sequence, a struct with reference fields or a user destructor) is destroyed at exit.
+- **Dependency edges come only from `use`.** Cyclic `use` is already forbidden (9), so the units form
+  a DAG. Implicitly loaded standard-library units are treated as implicit `use`s of the entry unit and
+  come first.
+- **Deterministic order.** Starting at the **entry unit** (the unit that declares `main`), visit `use`
+  declarations in source order, depth-first, and append each unit in **post-order** on first visit.
+  That sequence initializes the units; cleanup runs the **exact reverse** of the same sequence. The
+  order depends only on the source — never on link order, file names or the order units are compiled in.
+- **Within a unit**, variables initialize in declaration order and clean up in reverse declaration
+  order; together with the previous rule, cleanup is the strict reverse of construction.
+- **Who participates.** Compile-time `const`s, `extern` declarations, and variables without an
+  initializer whose type has no constructor stay in the static data area and run no code (a struct
+  with a parameterless constructor is constructed by the sequence, like a local `S s;`). An
+  initializer the constant evaluator can fold (3.7.2) also stays static. A variable whose type needs
+  cleanup is registered for cleanup even when it is zero-initialized, because the program may assign
+  it later.
+- **What an initializer may observe.** Its own unit's earlier declarations and `public` declarations of
+  units it `use`s — which are exactly the units already initialized, because a `use` edge is what makes
+  them nameable. A direct reference to a variable declared **later in the same unit** is a compile
+  error. Dependencies that cannot be written as a `use` edge — a function pointer, an interface call, an
+  `extern` C symbol, or a call that reaches a later variable through a function body — are not tracked;
+  if the order depends on one, the program is undefined. An initializer does not receive `argv`.
+- **Failure.** An exception escaping an initializer aborts the process **without** running cleanup: the
+  object graph is incomplete and destroying part of it is more dangerous than dying. This matches an
+  uncaught exception in `main`.
+- **Entry and exit.** The compiler emits a C `main` wrapper: run the initializer sequence → register
+  the cleanup sequence with `atexit` → call the user `main` (renamed internally) and return its
+  value. `exit()` therefore also runs the cleanup; `_exit`/`abort` do not. An exception escaping
+  cleanup aborts the remaining cleanup.
+- **Order relative to the C runtime** (ABI promise): initialization runs after C/C++ static
+  constructors (`.init_array`) and before the user `main`; cleanup runs after the user `main` returns
+  or `exit()` is called, and before C/C++ static destructors (both paths are `atexit` LIFO).
+- **Threads.** The initializer sequence completes before any thread or task exists; an initializer
+  must not start `para` sections or `thread`s (a rule, not a diagnostic: the callee is an arbitrary
+  function). Cleanup begins after every thread has joined.
+- Each unit's initializer and cleanup are **separate symbols**, so a future split-compilation mode can
+  assemble the same sequence at link time; only the entry unit materializes the call sequence today.
+  A build without an entry unit (a library check) generates no sequence at all.
+
 ---
 
 ## 10. Phase-one non-goals
@@ -1878,7 +1936,7 @@ unit example;
 | 1 | Declaration syntax | Decided: C# style, type first, multiple variables share the type |
 | 2 | Whether condition parentheses are mandatory | Decided: optional, omitted in the spec; C style remains legal |
 | 3 | Fixed-width type naming (C names vs `i32`) | Use C names first |
-| 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are forbidden (RC data, no exit-time destruction) |
+| 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are allowed since 9.1 (a `const` one is still an error: unit-level `const` must be a compile-time constant) |
 | 5 | Whether arrays implicitly decay to pointers | No decay |
 | 6 | Whether dynamic arrays are included in phase one | Decided: included (`T[]` / `T[,]`, RC heap arrays) |
 | 7 | Bounds checking strategy | Managed sequences checked by default (`--bounds=on` / `--bounds=off`), a violation throws `BoundsError`; static arrays and `T*` unchecked |
@@ -2000,6 +2058,8 @@ unit example;
 | 123 | Detached tasks (`nowait`) | **Decided: not provided.** A task with no joiner breaks the frame-lifetime rule that makes capture-by-static-link sound; long-lived work is a service task driven by a channel |
 | 124 | `thread` in `para` | Contextual keyword (2.3): run the section/item on the **bounded compute pool** — a dedicated OS thread, may block, OS stack. It is an intent hint, not a checked property |
 | 125 | Single-task `para` (`s = para f()`) | **Decided: not provided.** In a stackful model the call itself is the suspension, so "start then immediately join" is pure overhead; use the library task group when the join must be deferred |
+| 126 | Unit-level initialization and cleanup | **Implemented (9.1, 0.0.102).** Runtime initializers are allowed; the order is a DFS post-order over `use` edges from the entry unit (declaration order inside `use` lists), cleanup is its exact reverse, declaration order inside a unit. Only `use` dependencies are tracked; indirect dependencies (function pointer, interface dispatch, `extern` C symbol, a later variable reached through a function body) are undefined. An exception escaping an initializer aborts without cleanup; `atexit` makes `exit()` clean up. Lifted the three "no exit-time destruction" restrictions (3.3 `String`, 3.4 reference fields, 3.4 user destructors). Deferred: lazy first-use initialization, explicit `init(N)` priorities, debug-mode lifecycle assertions, link-time sequencing for split compilation |
+| 127 | Member promotion (Go-style embedding) / mixin | **Decided (2026-11-14): explicitly not done.** No `mixin`/`embed` member form: a method call never falls back to a field's type. Rationale: (a) it cannot satisfy an interface without an offset thunk, and after such a thunk `this` is the embedded subobject, so identity comparisons and stored `this` silently change meaning; (b) the set of callable names would depend on another type's evolution across units — adding a method to the embedded type silently turns a remote compile error into legal code, and can silently change overload resolution (violates the "information must be locally expressible" criterion); (c) it saves a few lines of forwarding while adding a resolution hop at every call site, whose verification cost is the expensive one. Reuse instead: `struct S : I` with explicit forwarding methods (3.10, 3.15.7), or field composition. Reopen conditions and rejected variants: `agents/design-backlog.md` U40 |
 
 ---
 
@@ -2036,7 +2096,8 @@ See [`examples/example.mu`](../examples/example.mu) and [`examples/math.mu`](../
 - Declaration parsing: after `Type name` only `=` or `;` follows; a function is `Type name(params) { ... }`, so there is no need to distinguish whether `T x(...)` is a variable or a function.
 - Initialization degradation: `= expr` copies/directly constructs; `= {...}` performs aggregate initialization; `= {}` compiles to the zero value (structs/arrays/slices/`string` are recursively cleared/emptied).
 - prvalue initialization constructs the target directly, avoiding an extra copy.
-- Unit-level variables are zero-initialized by the loader/startup code.
+- Unit-level variables are zero-initialized by the loader/startup code; unit-level initialization and
+  cleanup (9.1) are a compiler-generated call sequence, not a `.init_array`/linker decision.
 - `auto` only takes the expression type directly in the front end; multiple declarators require identical inference results; no runtime overhead.
 - Dynamic typing is not in phase one; in the future, implement a library-level Variant first, then evaluate sum types + `match`; `dynamic` acts as a separate runtime layer rather than a core type.
 - **Concurrency** (3.17): design settled, not implemented. Order: (0) RC memory ordering (release decrement

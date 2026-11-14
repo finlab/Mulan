@@ -52,6 +52,8 @@ build options:
   --os <os>        resolve `platform/<os>/` units for this platform (windows/linux/macos)
   -I <dir>         extra unit search directory (repeatable)
   -v, --verbose    print the resolved file of every unit
+  --export <name>  keep this symbol externally visible (repeatable); by default every definition
+                   except `main` is internalized so unused code is removed
   --run            run the executable after a successful build
 
 check options:
@@ -289,6 +291,7 @@ struct BuildArgs {
     std::string cc = "gcc";
     std::string os;  // platform shadow directory to resolve units against (empty = host)
     std::vector<std::string> dirs;
+    std::vector<std::string> exports;  // --export: keep these symbol names externally visible
     bool run = false;
     bool debug = false;
     bool bounds = true;  // emit subscript bounds checks for managed sequences (--bounds=off disables)
@@ -315,6 +318,7 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "--cc") b.cc = need("--cc");
         else if (a == "--os") b.os = need("--os");
         else if (a == "-I") b.dirs.push_back(need("-I"));
+        else if (a == "--export") b.exports.push_back(need("--export"));
         else if (a == "--run") b.run = true;
         else if (a == "-v" || a == "--verbose") b.verbose = true;
         else if (a == "-g" || a == "--debug") b.debug = true;
@@ -391,10 +395,10 @@ static int cmd_build(const std::vector<std::string>& args) {
     {
         std::ofstream f(ir_path, std::ios::binary);
         if (!f) throw MuError("cannot write " + ir_path.string());
-        f << llvm_emit_text(prog, ba.bounds);
+        f << llvm_emit_text(prog, ba.bounds, ba.exports);
     }
     fs::path obj = build_dir / (base + ".o");
-    llvm_emit_object(prog, obj.string(), ba.debug, ba.bounds);
+    llvm_emit_object(prog, obj.string(), ba.debug, ba.bounds, ba.exports);
     std::string cmd = ba.cc + " -o " + quote(native_path(out.string())) + " " + quote(native_path(obj.string()));
     std::cout << "+ " << cmd << "\n";
     int rc = std::system(cmd.c_str());

@@ -507,6 +507,7 @@ namespace muc_detail {
         }
         UnitInfo& ui = info();
         if (auto g = ui.globals.find(e->ident); g != ui.globals.end()) {
+            check_global_init_order(g->second, e);
             e->kind = "global";
             e->sym = g->second;
             return g->second->rty;

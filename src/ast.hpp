@@ -300,6 +300,9 @@ struct GlobalVar : Decl {    std::string name;
     // sema
     TypePtr rty;
     bool zero = false;
+    // 9.1: the initializer is not a compile-time constant (or the type needs a parameterless
+    // constructor); the variable is initialized by the unit init sequence instead of the data area.
+    bool runtime_init = false;
     std::string cname;
     // the compile-time evaluation result (unit-level const only; it stays false when the evaluation fails and falls back to the constant generation in codegen)
     bool const_evaluated = false;
@@ -570,6 +573,7 @@ struct FuncDecl : Decl {
     std::vector<bool> pty_cref;  // `ref const T`: a read-only borrow
     std::vector<std::unique_ptr<LocalVar>> param_locals;
     std::string cname;
+    bool is_entry = false;    // the entry unit's `main`: renamed to `mu_main` and called by the generated wrapper
     FuncDecl* sym = nullptr;  // self
 };
 

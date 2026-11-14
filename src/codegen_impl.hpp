@@ -22,6 +22,7 @@
 #include <typeinfo>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -123,6 +124,9 @@ struct Emitter {
     Program& prog;
     bool wantDebug = false;
     bool boundsCheck = true;
+    // Symbol names that stay externally visible in the executable target (`--export`). Everything
+    // else defined here is internalized before optimization: an executable has no consumers.
+    std::set<std::string> exports;
     MayThrowInfo mayThrow;
     LLVMContext ctx;
     std::unique_ptr<Module> mod;
@@ -641,6 +645,14 @@ struct Emitter {
     FunctionCallee runtimeFn(const char* unit, const char* name, LType* ret, std::vector<LType*> params);
 
     void emitGlobals();
+
+    // 9.1: one init/fini hook per unit that needs one, the exit hook that runs the fini hooks in
+    // reverse unit order, and the C `main` wrapper (the user entry is emitted as `mu_main`).
+    void emitUnitLifecycle();
+
+    // Executable target: internalize every definition except `main` and the `--export` names so
+    // that the optimizer can drop unreachable functions, classes (desc/vtable/methods) and globals.
+    void internalizeDefinitions();
 
     void initDebug();
 

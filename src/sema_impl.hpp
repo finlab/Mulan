@@ -111,6 +111,10 @@ private:
     int const_depth_ = 0;  // constant evaluation recursion depth (see DepthGuard)
     std::unordered_map<int, TypePtr> auto_groups_;  // inference result shared by auto in one declaration
     Expr* direct_init_expr_ = nullptr;  // direct-initialization expression currently under check (in-place constructor construction)
+    // 9.1: the unit-level variable whose initializer is being checked, and the variables of the
+    // current unit that have already been checked (they are initialized before it).
+    GlobalVar* cur_global_ = nullptr;
+    std::vector<GlobalVar*> unit_globals_so_far_;
 
     // ------------------------------------------------------------ lambdas (3.16)
     // One entry per lambda body currently being checked: the scope depth at entry (locals below it are captures)
@@ -309,6 +313,8 @@ private:
     void check_unit(Unit* u);
 
     void check_global(GlobalVar* g);
+    // 9.1: a unit-level initializer must not observe a variable that is initialized after it.
+    void check_global_init_order(GlobalVar* g, Expr* at);
 
     static bool guarantees_return(Stmt* s);
 

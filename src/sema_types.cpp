@@ -416,8 +416,14 @@ namespace muc_detail {
 
     void Sema::check_unit(Unit* u) {
         cur_ = u;
+        unit_globals_so_far_.clear();
         for (auto& d : u->decls) {
-            if (auto g = dynamic_cast<GlobalVar*>(d.get())) recover([&] { check_global(g); });
+            auto* g = dynamic_cast<GlobalVar*>(d.get());
+            if (!g) continue;
+            cur_global_ = g;
+            recover([&] { check_global(g); });
+            cur_global_ = nullptr;
+            unit_globals_so_far_.push_back(g);
         }
         // Signatures of same-name functions must not be fully identical (overloads must differ in parameters)
         for (auto& entry : infos_.at(u->name).funcs) {
@@ -468,23 +474,38 @@ namespace muc_detail {
     }
 
     void Sema::check_global(GlobalVar* g) {
-        if (!g->rty) err("global variable `" + g->name + "` is missing its type", g);
-        if (noncopyable_struct(g->rty)) {
-            err("struct `" + g->rty->str() +
-                    "` has a destructor and cannot be a global variable (no exit-time destruction)",
-                g);
-        }
-        if (g->rty->kind == TypeKind::Struct && g->rty->needs_cleanup()) {
-            err("struct `" + g->rty->str() +
-                    "` has reference fields and cannot be a global variable (no exit-time destruction)",
-                g);
+        if (!g->rty) {
+            err("global variable `" + g->name + "` is missing its type", g);
+            return;
         }
         if (g->is_extern) {
             if (g->init) err("`extern` variable `" + g->name + "` cannot have an initializer", g);
             return;
         }
         if (!g->init) {
-            if (g->is_const) err("`const` variable `" + g->name + "` must be initialized", g);
+            if (g->is_const) {
+                err("`const` variable `" + g->name + "` must be initialized", g);
+                return;
+            }
+            // A struct with a parameterless constructor is constructed by the unit init sequence,
+            // exactly like a local `S s;`; everything else stays zero-initialized in the data area.
+            if (g->rty->kind == TypeKind::Struct && !g->rty->ctors.empty()) {
+                bool has_default = false;
+                for (auto& cs : g->rty->ctors) {
+                    if (cs.empty()) {
+                        has_default = true;
+                        break;
+                    }
+                }
+                if (!has_default) {
+                    err("struct `" + g->rty->str() +
+                            "` has no parameterless constructor and must be initialized with a constructor",
+                        g);
+                    return;
+                }
+                g->runtime_init = true;
+                return;
+            }
             g->zero = true;
             return;
         }
@@ -494,8 +515,31 @@ namespace muc_detail {
             ConstVal v;
             if (eval_global_const(g, cur_->name, v)) return;
         }
-        if (!is_const_expr(g->init.get())) {
-            bool func_init = false;
+        // A data-area constant can only express what `constValue` knows. Reference-holding types need
+        // runtime work (RC / constructor calls) even when the expression itself folds, e.g.
+        // `String g = "hi";`.
+        bool zero_init = false;
+        if (auto ia = dynamic_cast<InitAggregate*>(g->init.get())) {
+            zero_init = ia->items.empty();
+        } else if (auto ie = dynamic_cast<InitExpr*>(g->init.get())) {
+            if (auto il = dynamic_cast<IntLit*>(ie->expr.get())) {
+                zero_init = il->value == 0;
+            } else if (dynamic_cast<NullLit*>(ie->expr.get())) {
+                zero_init = true;
+            }
+        }
+        const bool needs_runtime =
+            !zero_init && (g->rty->needs_cleanup() ||
+                           (g->rty->kind == TypeKind::Struct && !g->rty->ctors.empty()));
+        if (g->is_const && g->rty->needs_cleanup()) {
+            err("`const` unit-level variable `" + g->name +
+                    "` cannot hold a type that needs runtime cleanup (unit-level `const` must be a "
+                    "compile-time constant)",
+                g);
+        }
+        const bool foldable = is_const_expr(g->init.get());
+        bool func_init = false;
+        if (!foldable && g->rty->kind == TypeKind::Func) {
             if (auto ie = dynamic_cast<InitExpr*>(g->init.get())) {
                 // A function value is an address constant (3.16): it may initialize a unit-level variable.
                 TypePtr t = check_expr(ie->expr.get(), g->rty);
@@ -515,11 +559,36 @@ namespace muc_detail {
                     func_init = true;
                 }
             }
-            if (!func_init) {
-                err("initializer of unit-level variable `" + g->name + "` must be a compile-time constant", g);
+        }
+        if (!func_init && (!foldable || needs_runtime)) {
+            if (g->is_const) {
+                if (!g->rty->needs_cleanup()) {
+                    err("initializer of `const` unit-level variable `" + g->name +
+                            "` must be a compile-time constant",
+                        g);
+                }
+            } else {
+                // 9.1: a runtime initializer; the unit init sequence evaluates it before `main`.
+                g->runtime_init = true;
             }
         }
         check_decl_init(g->zero, g->rty, g->init.get(), "global initialization", g);
+    }
+
+    void Sema::check_global_init_order(GlobalVar* g, Expr* at) {
+        if (!cur_global_ || !g) return;
+        // Compile-time constants and `extern` storage have no runtime position in the sequence.
+        if (g->is_const || g->is_extern) return;
+        if (g == cur_global_) {
+            err("initializer of unit-level variable `" + g->name + "` cannot reference itself", at);
+            return;
+        }
+        for (auto* earlier : unit_globals_so_far_) {
+            if (earlier == g) return;
+        }
+        err("initializer of unit-level variable `" + cur_global_->name + "` cannot reference `" +
+                g->name + "`, which is declared later (it is not initialized yet)",
+            at);
     }
 
     bool Sema::guarantees_return(Stmt* s) {
@@ -679,7 +748,7 @@ namespace muc_detail {
         if (f->body) check_block(f->body.get());
 
         // A non-void function must guarantee a return value; main is exempt (falling off the end is equivalent to return 0)
-        if (!is_void(f->rty) && f->cname != "main" && !guarantees_return(f->body.get())) {
+        if (!is_void(f->rty) && !f->is_entry && !guarantees_return(f->body.get())) {
             err("function `" + f->name + "` may reach the end of its body without returning a value", f);
         }
 

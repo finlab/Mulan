@@ -1,0 +1,9 @@
+init c
+init b
+init a
+init main
+main body
+fini main
+fini a
+fini b
+fini c

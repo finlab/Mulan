@@ -115,3 +115,9 @@ std::string class_desc_name(const std::string& unit, const std::string& owner) {
 std::string class_vtable_name(const std::string& unit, const std::string& owner) {
     return "mu_" + unit + "_vt_" + ident_safe(owner);
 }
+
+std::string unit_init_cname(const std::string& unit) { return "muc$unit$init$" + unit; }
+
+std::string unit_fini_cname(const std::string& unit) { return "muc$unit$fini$" + unit; }
+
+std::string unit_fini_all_cname() { return "muc$unit$fini$all"; }

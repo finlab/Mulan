@@ -825,7 +825,8 @@ namespace muc_detail {
                 }
                 f->cname = f->name;
             } else if (f->name == "main" && u->name == entry_) {
-                f->cname = "main";
+                f->cname = "mu_main";
+                f->is_entry = true;
             } else {
                 f->cname = func_cname(u->name, f);
             }

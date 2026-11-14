@@ -23,7 +23,7 @@ namespace muc_detail {
             ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
         auto* ft = FunctionType::get(lt(f->rty), ptys, false);
         Function* fn = cast<Function>(mod->getOrInsertFunction(f->cname, ft).getCallee());
-        fn->setLinkage((f->is_extern || f->is_public || f->name == "main")
+        fn->setLinkage((f->is_extern || f->is_public || f->is_entry)
                            ? GlobalValue::ExternalLinkage
                            : GlobalValue::InternalLinkage);
         if (f->is_extern) return;
@@ -48,7 +48,7 @@ namespace muc_detail {
         stmtTemps.clear();
         curFn = fn;
         curRetTy = f->rty;
-        curIsEntry = (f->name == "main");
+        curIsEntry = f->is_entry;
         inNothrow = false;
         ehStack.clear();
         finallyStack.clear();
@@ -80,7 +80,7 @@ namespace muc_detail {
         if (!hasTerm(b.GetInsertBlock())) {
             if (is_void(f->rty)) {
                 b.CreateRetVoid();
-            } else if (f->cname == "main") {
+            } else if (f->is_entry) {
                 b.CreateRet(ConstantInt::get(i32(), 0));
             } else {
                 b.CreateUnreachable();
@@ -108,7 +108,10 @@ namespace muc_detail {
                 if (!g || g->is_extern) continue;
                 LType* ty = lt(g->rty);
                 Constant* init = nullptr;
-                if (g->const_func) {
+                if (g->runtime_init) {
+                    // 9.1: the data area only holds the zero value; the unit init sequence does the work.
+                    init = zeroConst(ty, g->rty);
+                } else if (g->const_func) {
                     FuncDecl* f = g->const_func;
                     std::vector<LType*> ptys;
                     for (auto& pt : f->pty) ptys.push_back(lt(pt));
@@ -285,6 +288,10 @@ namespace muc_detail {
             }
         }
 
+        // 9.1: build the per-unit init/fini hooks and the `main` wrapper now that every function
+        // (constructors, destructors, user functions) has been emitted.
+        emitUnitLifecycle();
+
         // The task runtime saves/restores the pending-exception state across a fiber switch, so it
         // needs the address of the thread-local slot: `extern void* muc_eh_slot()` in std.task.
         if (Function* slotFn = mod->getFunction("muc_eh_slot");
@@ -296,6 +303,8 @@ namespace muc_detail {
         }
 
         if (dib) dib->finalize();
+
+        internalizeDefinitions();
 
         std::string errs;
         raw_string_ostream os(errs);
@@ -318,6 +327,23 @@ namespace muc_detail {
             ModulePassManager MPM =
                 PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
             MPM.run(*mod, MAM);
+        }
+    }
+
+    // Executable target: no external consumer exists, so every definition can be internalized.
+    // `main` stays visible for the CRT, `--export` names stay visible for a C shim or a debugger,
+    // and declarations (libc, C shims) are untouched. GlobalDCE then removes whatever the entry
+    // cannot reach — including whole classes (desc + vtable + methods) and unused library units.
+    void Emitter::internalizeDefinitions() {
+        for (auto& f : mod->functions()) {
+            if (f.isDeclaration() || f.getName() == "main") continue;
+            if (exports.count(f.getName().str())) continue;
+            f.setLinkage(GlobalValue::InternalLinkage);
+        }
+        for (auto& g : mod->globals()) {
+            if (!g.hasInitializer() || g.getName() == "main") continue;
+            if (exports.count(g.getName().str())) continue;
+            g.setLinkage(GlobalValue::InternalLinkage);
         }
     }
 

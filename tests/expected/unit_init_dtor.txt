@@ -1,0 +1,3 @@
+tracked ctor
+main done
+tracked dtor

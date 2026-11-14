@@ -34,3 +34,9 @@ std::string dtor_cname(const std::string& unit, const std::string& owner);
 // Global symbols for the class descriptor and vtable
 std::string class_desc_name(const std::string& unit, const std::string& owner);
 std::string class_vtable_name(const std::string& unit, const std::string& owner);
+
+// 9.1: per-unit init/fini hooks and the exit hook that runs them in reverse order. `$` cannot
+// appear in a user identifier, so these names cannot collide with a mangled user symbol.
+std::string unit_init_cname(const std::string& unit);
+std::string unit_fini_cname(const std::string& unit);
+std::string unit_fini_all_cname();
