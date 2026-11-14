@@ -209,6 +209,9 @@ where  move  typeof
     rule below describes that shared representation. When `Array` lands, `T[]` means `Array<T>`
     (a library type over `buffer<T>`) and `buffer<T>` keeps its own spelling.
   - `new T[n]` creates one (`n` is a runtime integer, elements zeroed); `T[] s = {}` means empty (null handle).
+    Every length must be **non-negative** and the resulting byte count must not overflow: a negative
+    constant is a compile error, a negative or overflowing computed length aborts like a failed
+    allocation (6.6). `length()` is therefore always the number of valid indices (6.4.3).
   - Assignment/argument passing copies the **handle** (O(1)), sharing the same array; destroyed when the reference count reaches zero;
     if the element type holds class/interface references, release element by element.
   - Element types: scalars, enums, pointers, structs (including reference fields), class/interface references;
@@ -1281,9 +1284,14 @@ para {
 - **Compile errors inside a section**: writing an enclosing local (including `++`/`--` and compound
   assignment), taking the address of an enclosing local, passing one as a `ref` argument, `return`, and
   `break`/`continue` that would leave the section. Loops declared inside the section are unaffected.
-- The first exception from a section **stops the region**: the remaining sections are asked to cancel,
-  all are joined, and that exception is rethrown in the enclosing scope (`para for` additionally stops
-  producing items). If the region is already unwinding, later exceptions are discarded.
+- Exceptions are classified by **where they are raised**:
+  - An exception raised while `para for` is **producing** an item — a throwing `next()` /
+    `operator[]` or a throwing source expression (3.17.3) — is an ordinary exception of the region:
+    the tasks already started are joined before the enclosing scopes are left, and the exception
+    propagates in the producing scope.
+  - An exception that escapes a **section body** crosses the task boundary and **aborts the process**
+    (the B2 thread-boundary rule; 3.17.7): it is not caught by any enclosing `try`, and the sections
+    that already started may run to completion first.
 - A section is not a function: it has no name, cannot be stored, and cannot escape.
 
 #### 3.17.3 `para for` — concurrent iteration

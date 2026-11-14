@@ -1,0 +1,4 @@
+@ --bounds=off
+in-bounds=5 0
+out-of-bounds=4
+bounds off ok

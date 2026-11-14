@@ -104,6 +104,8 @@ static TypePtr make_sum(const std::string& unit, const std::string& name,
     bool is_bool() const;
     bool is_numeric() const;   // integer / float / enum
     int bits() const;          // integer bit width (usize/isize=64)
+    // Sign of an *integer* type only: floats and non-primitive kinds answer true (prototype parity).
+    // Callers that can see a float must take the float branch first.
     bool is_signed() const;
     bool needs_cleanup() const;  // whether the value contains fields that need RC cleanup (recursive)
     TypePtr field_type(const std::string& fname) const;  // returns nullptr if it does not exist

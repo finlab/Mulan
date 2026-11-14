@@ -54,7 +54,9 @@ static bool is_numeric(const TypePtr& t) {
                 return sizeOf(from) < sizeOf(to) ? b.CreateFPExt(v, tt) : b.CreateFPTrunc(v, tt);
             }
             if (from->kind == TypeKind::Prim && from->is_float()) {
-                return from->is_signed() ? b.CreateFPToSI(v, tt) : b.CreateFPToUI(v, tt);
+                // float -> integer truncates toward zero as a *signed* conversion: a float carries no
+                // sign bit, so this must not be read off `is_signed()` (which reports true for floats).
+                return b.CreateFPToSI(v, tt);
             }
             return to->kind == TypeKind::Prim && to->is_float()
                        ? (from->is_signed() ? b.CreateSIToFP(v, tt) : b.CreateUIToFP(v, tt))

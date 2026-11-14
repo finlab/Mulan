@@ -83,8 +83,15 @@ target_include_directories(muc SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 
 if(MSVC)
   target_compile_options(muc PRIVATE /W4 /WX-)
+  # The parser and the AST walkers recurse; the default 1 MB reserve turns deep (but legitimate)
+  # input into a stack overflow instead of the parser's own "nesting too deep" diagnostic.
+  target_link_options(muc PRIVATE /STACK:8388608)
 else()
   target_compile_options(muc PRIVATE -Wall -Wextra -Wno-unused-parameter)
+  if(WIN32)
+    # Same reason as /STACK above (see kMaxNestDepth in src/parser_impl.hpp).
+    target_link_options(muc PRIVATE -Wl,--stack,8388608)
+  endif()
 endif()
 
 if(TARGET LLVM)

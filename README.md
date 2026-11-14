@@ -102,7 +102,7 @@ and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 | Generics | `<>` syntax with monomorphization; `interface` + `&`/`\|` constraints; `Self`; structural constraint matching (0.0.64–0.0.72) |
 | Exceptions | Unchecked `try` / `catch` / `throw` / `finally`; `Exception` base class; class matching; RC cleanup; B2 TLS-flag lowering with no platform unwind tables; module-local may-throw optimization (0.0.81–0.0.83) |
 | Control flow | `if` / `while` / `for-in` / `switch` (exhaustive over enums) / `break` / `continue` / `?:` |
-| Functions | Recursion, overloading (bounded rules), variadic `extern` calls (0.0.57); function values `(T1, T2) => R` and non-capturing lambdas `(int a) => ...` (0.0.84) |
+| Functions | Recursion, overloading (bounded rules), variadic `extern` calls (0.0.57); function values `(T1, T2) => R` and non-capturing lambdas `(int a) => ...` (0.0.84); explicit capture-list lambdas — `[x]` by value, `[ref x]` by reference, `[this]` (0.0.110–0.0.112) |
 | Modules | `unit` / `use` / `public` / `private`; units are loaded from same-named files |
 | C interop | `extern` declarations, C ABI, controllable `struct` layout (`packed` / `align(N)`) |
 | Toolchain | `check` / `dump` / `build`, `--emit-ir`, DWARF debug info via `-g`, multiple errors reported at once |
@@ -111,7 +111,7 @@ and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 
 - Cross-library may-throw summaries / explicit `nothrow` contracts (module-local may-throw analysis is implemented in 0.0.83)
 - Method-level generics, type-argument deduction, specialization, generic `extern` / generic type aliases (see SPEC 3.15)
-- Capturing closures, method values and `goto`
+- Implicit captures (a lambda that uses an enclosing variable without a capture list), method values and `goto`
 - A full standard library (today: the runtime contracts `std.task`/`std.thread`/`std.string`/`std.exception`/`std.interfaces` plus a minimal C binding layer `std.cstdio`/`std.ctypes`; formatting, IO, containers and the rest of the C bindings are planned — see [`docs/StdLibSPEC.md`](docs/StdLibSPEC.md))
 - Non-Windows targets: the backend is fixed to `x86_64-w64-windows-gnu` and emits COFF
 

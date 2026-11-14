@@ -137,6 +137,7 @@ std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global() {
 // ---------------------------------------------------------------- statements
 
 std::unique_ptr<Block> Parser::parse_block() {
+    NestGuard guard(*this, "block");
     const Token tk = expect_op("{");
     auto block = std::make_unique<Block>();
     block->line = tk.line;
@@ -427,6 +428,7 @@ std::vector<StmtPtr> Parser::parse_local(bool is_const, bool is_auto) {
 }
 
 InitPtr Parser::parse_init() {
+    NestGuard guard(*this, "initializer");
     const Token t = peek();
     if (at_op("{")) {
         advance();
@@ -475,6 +477,7 @@ InitPtr Parser::parse_init() {
 }
 
 std::unique_ptr<Stmt> Parser::parse_if() {
+    NestGuard guard(*this, "statement");
     const Token tk = expect_kw("if");
     ExprPtr cond = parse_expr();
     forbid_inc_expr();

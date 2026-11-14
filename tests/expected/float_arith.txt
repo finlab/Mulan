@@ -1,0 +1,7 @@
+double 3.75 3.75 3.00 3.50
+float 4.0
+promo 1.500 2.250
+trunc 3 -3 2
+prec 0.300000004 0.300000000
+wide 0.100000001
+float arith ok

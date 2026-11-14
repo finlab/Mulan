@@ -285,7 +285,7 @@ def run_abi_case(case: AbiCase, verbose: bool) -> tuple[bool, str]:
         return False, f"timeout (>{RUN_TIMEOUT}s): " + " ".join(cmd)
     except OSError as e:
         return False, f"cannot execute compiler `{cmd[0]}` ({e})"
-    return compare_run_output(case.expected, r, cmd, verbose)
+    return compare_run_output(case.expected, 0, r, cmd, verbose)
 
 
 def compare_run_output(expected: Path, expected_code: int, r, cmd: list[str],

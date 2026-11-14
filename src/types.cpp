@@ -272,10 +272,14 @@ int Type::bits() const {
     return 0;
 }
 
+// Integer-only predicate: reports whether the *integer* type is signed. Floats and non-primitive
+// kinds answer `true` (parity with the Python prototype's INT_SIGNED.get(name, True)), so a caller
+// that may see a float must decide the conversion itself instead of reading a sign off this call —
+// see convertTo's float -> integer path, which is always a signed truncation.
 bool Type::is_signed() const {
     if (kind != TypeKind::Prim) return true;  // consistent with INT_SIGNED.get(name, True)
     if (const IntInfo* p = find_int(name)) return p->is_signed;
-    return true;
+    return true;  // float / double: no sign bit, callers must not rely on this
 }
 
 bool Type::needs_cleanup() const {
@@ -581,10 +585,8 @@ bool widens_int(const TypePtr& src, const TypePtr& dst) {
     const bool ss = src->is_signed();
     const bool ds = dst->is_signed();
 
-    if (ss && ds) return db > sb;
-    if (!ss && !ds) return db > sb;
-    if (!ss && ds) return db > sb;
-    return false;  // signed -> unsigned: never allowed implicitly
+    if (ss && !ds) return false;  // signed -> unsigned: never allowed implicitly
+    return db > sb;               // same sign, wider destination loses nothing
 }
 
 bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {

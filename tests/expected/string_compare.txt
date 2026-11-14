@@ -1,0 +1,15 @@
+eq=1
+eq-copy=1
+ne=1
+neq=0
+lit=1
+lit-left=1
+ne-lit=1
+empty=1
+prefix=1
+case=1
+lt=1
+lt-eq=0
+lt-prefix=1
+lt-case=1
+string compare ok

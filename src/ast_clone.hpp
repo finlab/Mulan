@@ -8,10 +8,19 @@
 #pragma once
 
 #include <memory>
+#include <stdexcept>
+#include <string>
 
 #include "ast.hpp"
 
 namespace muc_detail {
+
+// A node kind the generic instantiator cannot clone. This is a compiler bug (an AST node was
+// added without a clone branch), not a user error: it aborts the compilation instead of silently
+// dropping the node, which would change the meaning of the program.
+struct CloneError : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 TypeSpecPtr clone_type_spec(const TypeSpec& s);
 
@@ -26,7 +35,7 @@ std::unique_ptr<CtorDecl> clone_ctor(const CtorDecl& c);
 std::unique_ptr<DtorDecl> clone_dtor(const DtorDecl& d);
 std::unique_ptr<ConstMember> clone_const_member(const ConstMember& c);
 
-// Clones any declaration by dynamic type; returns nullptr for an unknown type.
+// Clones any declaration by dynamic type; throws CloneError for an unknown type.
 std::unique_ptr<Decl> clone_decl(const Decl& d);
 
 }  // namespace muc_detail

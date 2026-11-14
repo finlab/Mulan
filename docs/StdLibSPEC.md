@@ -108,9 +108,15 @@ declaration uses `std.ctypes` names, the raw layer keeps C semantics, and **comp
 goal** — any symbol a program needs can be declared with `extern` in two lines, so the library's job
 is a calibrated, documented, ABI-correct subset, not an exhaustive copy.
 
-The tier tables, the CRT linking model (system CRT, dynamically linked) and the platform variance list
-(where `printf` / `fopen` / `rand` / `clock` differ between Windows and POSIX) are implementation
-policy and live in the internal record `agents/stdlib/c-bindings.md`.
+**Standard baseline: C99, plus a whitelist of C11/POSIX symbols that exist on every target.** C17 adds
+no library functions; C23 is not a baseline. Consequences: `timespec_get` / `quick_exit` are not
+portable (UCRT only on Windows), `aligned_alloc` and `threads.h` are absent on Windows, and `strdup` is
+C23/POSIX (`_strdup` on Windows) — those live in `std.posix` / `std.win32`, not in `std.c*`.
+
+The tier tables, the CRT linking model (system CRT, dynamically linked), the per-symbol minimum
+standard and the platform variance list (where `printf` / `fopen` / `rand` / `clock` differ between
+Windows and POSIX) are implementation policy and live in the internal record
+`agents/stdlib/c-bindings.md`.
 
 ## 6. Contracts of the implicit units
 

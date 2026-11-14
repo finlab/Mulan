@@ -10,6 +10,53 @@
 
 ## Releases
 
+### 0.0.122 — 2026-11-14
+
+**Correctness sweep from the review of 0.0.120: silent generic miscompiles, a heap out-of-bounds, a
+compiler crash and a duplicated-output abort.**
+
+- **The generic instantiator clones the whole AST** (`src/ast_clone.cpp`, `src/ast_subst.cpp`; issues
+  #7, #8): `ParaStmt` / `ParaForStmt`, `IsExpr`, `SwitchArm::alt`/`binds`, `Lambda::captures` and
+  `Member::type_args` were missing from the clone table, and the substitution pass skipped `IsExpr`,
+  `para` and `Call::type_args`. A `para` inside a generic function **silently disappeared** (the
+  program computed the wrong result and exited 0); `is`, sum-type `switch` and capture-list lambdas
+  inside a generic failed with misleading errors. An unhandled node kind now throws `CloneError`
+  (`error: internal: AST node kind not handled by the generic instantiator (<kind>)`) instead of
+  returning null and having the node dropped.
+- **Negative dynamic-array length** (#6): `new int[-1]` wrapped the byte count (`-1 * 4 + 24 = 20`)
+  while storing `-1` as a huge `usize`, so no bounds check could ever fire and the program got a
+  heap buffer far smaller than its advertised length. A constant negative length is now a compile
+  error; a computed one aborts (SPEC 6.6) after a per-dimension sign check and a wrap check on the
+  final byte count.
+- **Deeply nested input** (#9): the parser had no recursion guard, so ~500 nested parentheses killed
+  the compiler with a stack overflow and no diagnostic. It now counts nesting depth (parentheses,
+  unary chains, blocks, brace initializers, type suffixes, `if`) and chain links, and reports
+  `expression nesting too deep (limit 1024 levels)` or `... is too long (limit 2048 ...)`. `muc`
+  also reserves 8 MB of main-thread stack, so 1000 levels of parentheses still compile; the measured
+  overflow points are ~2000 levels and 5k-10k chain links, leaving ~2x margin.
+- **Duplicated stdout when a `para` region aborts** (#12): the abort path flushed the shared stdio
+  buffer twice, so every buffered line appeared twice. The section / item wrappers now call
+  `std.task.muc_task_abort` (`fflush(null)` then `abort()`): output appears exactly once and the exit
+  code stays 3.
+- **`Type::is_signed()`** (#16): documented as an integer-only predicate (floats and non-primitive
+  kinds answer true, matching the prototype); the float → integer conversion in codegen is now an
+  unconditional `FPToSI` instead of reading a sign off that fallback, and `widens_int`'s three
+  identical branches collapsed to one.
+- **Test runner** (#13): the expected file of a run case may carry `@exit <code>` (default 0, so an
+  `abort()` case can assert 3) and `@ <args>` (extra compiler options, e.g. `--bounds=off`).
+- **New tests**: `generic_para`, `generic_para_for`, `generic_is`, `generic_sum_switch`,
+  `generic_capture_lambda` (each monomorphized with two type arguments), `neg_len_runtime`,
+  `alloc_overflow`, `para_throw_section`, `para_for_throw_body`, `para_catch_inside`, `bounds_off`,
+  `float_arith`, `unsigned_wrap`, `deep_recursion`, `deep_parens`, `string_compare`, must-fail
+  `neg_len`, `deep_nesting`.
+- **Docs**: the README status table lists explicit capture-list lambdas (#10); SPEC 3.17.2 now states
+  the rule the implementation follows (a section / task-body exception aborts the process, a
+  producer-side exception joins the region cleanly) instead of the stale "rethrown in the enclosing
+  scope" (#11); SPEC 6.4 spells out the non-negative / non-overflowing length rule;
+  `tests/README.md` documents all five case kinds and the marker lines (#15).
+
+**Tests**: 559/559 (182 pass + 350 must-fail + 20 check + 4 ir + 3 c abi)
+
 ### 0.0.121 — 2026-11-14
 
 **C ABI for aggregates: `extern` and `export` follow the platform convention (B2).**

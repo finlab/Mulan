@@ -261,6 +261,7 @@ TypeSpecPtr Parser::parse_type() {
 }
 
 TypeSpecPtr Parser::parse_type_base() {
+    NestGuard guard(*this, "type");
     bool base_const = false;
     if (at_kw("const")) {
         advance();
@@ -285,7 +286,9 @@ TypeSpecPtr Parser::parse_type_base() {
     }
     if (at_op("<")) spec->args = parse_type_args();
     if (base_const) spec->is_const = true;
+    int links = 0;
     while (at_op("*")) {
+        note_link(links, "type");
         const Token tok = advance();
         auto ptr = std::make_unique<TypeSpec>();
         ptr->kind = TypeSpec::K::Ptr;
@@ -298,7 +301,9 @@ TypeSpecPtr Parser::parse_type_base() {
 }
 
 TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
+    int links = 0;
     for (;;) {
+        note_link(links, "type");
         if (at_op("*")) {
             const Token tok = advance();
             auto ptr = std::make_unique<TypeSpec>();
@@ -384,6 +389,7 @@ ExprPtr Parser::make_binary(const std::string& op, ExprPtr left, ExprPtr right,
 }
 
 ExprPtr Parser::parse_ternary() {
+    NestGuard guard(*this, "expression");
     ExprPtr cond = parse_or();
     if (!at_op("?")) return cond;
     const Token tok = advance();
@@ -400,7 +406,9 @@ ExprPtr Parser::parse_ternary() {
 
 ExprPtr Parser::parse_or() {
     ExprPtr left = parse_and();
+    int links = 0;
     while (at_kw("or")) {
+        note_link(links, "expression");
         const Token tok = advance();
         ExprPtr right = parse_and();
         left = make_binary("or", std::move(left), std::move(right), tok);
@@ -410,7 +418,9 @@ ExprPtr Parser::parse_or() {
 
 ExprPtr Parser::parse_and() {
     ExprPtr left = parse_not();
+    int links = 0;
     while (at_kw("and")) {
+        note_link(links, "expression");
         const Token tok = advance();
         ExprPtr right = parse_not();
         left = make_binary("and", std::move(left), std::move(right), tok);
@@ -419,6 +429,7 @@ ExprPtr Parser::parse_and() {
 }
 
 ExprPtr Parser::parse_not() {
+    NestGuard guard(*this, "expression");
     if (at_kw("not")) {
         const Token tok = advance();
         ExprPtr operand = parse_not();
@@ -433,7 +444,9 @@ ExprPtr Parser::parse_not() {
 
 ExprPtr Parser::parse_eq() {
     ExprPtr left = parse_rel();
+    int links = 0;
     while (at_op("==", "!=")) {
+        note_link(links, "expression");
         const Token tok = advance();
         ExprPtr right = parse_rel();
         left = make_binary(tok.text, std::move(left), std::move(right), tok);
@@ -443,7 +456,9 @@ ExprPtr Parser::parse_eq() {
 
 ExprPtr Parser::parse_rel() {
     ExprPtr left = parse_bitor();
+    int links = 0;
     for (;;) {
+        note_link(links, "expression");
         if (at_op("<", "<=", ">", ">=")) {
             const Token tok = advance();
             ExprPtr right = parse_bitor();
@@ -495,7 +510,9 @@ ExprPtr Parser::parse_rel() {
 
 ExprPtr Parser::parse_bitor() {
     ExprPtr left = parse_bitxor();
+    int links = 0;
     while (at_op("|")) {
+        note_link(links, "expression");
         const Token tok = advance();
         ExprPtr right = parse_bitxor();
         left = make_binary("|", std::move(left), std::move(right), tok);
@@ -505,7 +522,9 @@ ExprPtr Parser::parse_bitor() {
 
 ExprPtr Parser::parse_bitxor() {
     ExprPtr left = parse_bitand();
+    int links = 0;
     while (at_op("^")) {
+        note_link(links, "expression");
         const Token tok = advance();
         ExprPtr right = parse_bitand();
         left = make_binary("^", std::move(left), std::move(right), tok);
@@ -515,7 +534,9 @@ ExprPtr Parser::parse_bitxor() {
 
 ExprPtr Parser::parse_bitand() {
     ExprPtr left = parse_shift();
+    int links = 0;
     while (at_op("&")) {
+        note_link(links, "expression");
         const Token tok = advance();
         ExprPtr right = parse_shift();
         left = make_binary("&", std::move(left), std::move(right), tok);
@@ -525,7 +546,9 @@ ExprPtr Parser::parse_bitand() {
 
 ExprPtr Parser::parse_shift() {
     ExprPtr left = parse_add();
+    int links = 0;
     while (at_op("<<", ">>")) {
+        note_link(links, "expression");
         const Token tok = advance();
         ExprPtr right = parse_add();
         left = make_binary(tok.text, std::move(left), std::move(right), tok);
@@ -535,7 +558,9 @@ ExprPtr Parser::parse_shift() {
 
 ExprPtr Parser::parse_add() {
     ExprPtr left = parse_mul();
+    int links = 0;
     while (at_op("+", "-")) {
+        note_link(links, "expression");
         const Token tok = advance();
         ExprPtr right = parse_mul();
         left = make_binary(tok.text, std::move(left), std::move(right), tok);
@@ -545,7 +570,9 @@ ExprPtr Parser::parse_add() {
 
 ExprPtr Parser::parse_mul() {
     ExprPtr left = parse_unary();
+    int links = 0;
     while (at_op("*", "/", "%")) {
+        note_link(links, "expression");
         const Token tok = advance();
         ExprPtr right = parse_unary();
         left = make_binary(tok.text, std::move(left), std::move(right), tok);
@@ -554,6 +581,7 @@ ExprPtr Parser::parse_mul() {
 }
 
 ExprPtr Parser::parse_unary() {
+    NestGuard guard(*this, "expression");
     const Token t = peek();
     if (at_kw("new")) {
         advance();
@@ -690,7 +718,9 @@ ExprPtr Parser::parse_postfix() {
 
 ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
     std::vector<TypeSpecPtr> pending_type_args;  // type arguments of `f<int>(...)`
+    int links = 0;
     for (;;) {
+        note_link(links, "expression");
         const Token t = peek();
         // generic call: `name<...>(`. If the trial parse fails, fall back to a comparison expression.
         if (t.is_op("<") && pending_type_args.empty() && dynamic_cast<Name*>(e.get())) {

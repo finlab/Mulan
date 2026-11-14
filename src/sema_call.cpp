@@ -876,6 +876,12 @@ namespace muc_detail {
                 if (!(ct && ct->is_integer())) {
                     err("dynamic array length must be an integer", d.get());
                 }
+                // A constant negative length is caught here rather than at run time (SPEC 4);
+                // the runtime guard in emitSliceAlloc stays as the backstop for computed lengths.
+                long long n = 0;
+                if (eval_const_int(d.get(), n) && n < 0) {
+                    err("dynamic array length must not be negative", d.get());
+                }
             }
             if (t->kind == TypeKind::Struct && t->has_dtor) {
                 err("struct `" + t->str() +

@@ -5,6 +5,8 @@
 
 #include "codegen_impl.hpp"
 
+#include "llvm/IR/Intrinsics.h"
+
 namespace muc_detail {
 
     // ------------------------------------------------------------ dynamic arrays (T[] / T[,])
@@ -136,11 +138,51 @@ namespace muc_detail {
     Value* Emitter::emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem) {
         int rank = static_cast<int>(dims.size());
         uint64_t es = sizeOf(elem);
+        // INVARIANT: every dimension is a non-negative i64 and the byte count does not overflow.
+        // A negative dimension would sign-extend into a huge `usize` length while the wrapped byte
+        // count makes `malloc` hand back a tiny block, so the bounds check (`index < length`) could
+        // never fire; a wrapped byte count would under-allocate for a legitimate length. Both are
+        // "the allocation cannot be satisfied" (SPEC 6.6), so they abort like a failed malloc.
+        Value* bad = b.CreateICmpSLT(dims[0], ConstantInt::get(i64(), 0));
+        for (int i = 1; i < rank; ++i) {
+            bad = b.CreateOr(bad, b.CreateICmpSLT(dims[i], ConstantInt::get(i64(), 0)));
+        }
+        BasicBlock* dimsBadBB = BasicBlock::Create(ctx, "arr.baddims", curFn);
+        BasicBlock* dimsOkBB = BasicBlock::Create(ctx, "arr.dims", curFn);
+        b.CreateCondBr(bad, dimsBadBB, dimsOkBB);
+        b.SetInsertPoint(dimsBadBB);
+        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateUnreachable();
+        b.SetInsertPoint(dimsOkBB);
+
         Value* total = ConstantInt::get(i64(), 1);
-        for (Value* d : dims) total = b.CreateMul(total, d);
-        if (es != 1) total = b.CreateMul(total, ConstantInt::get(i64(), es));
-        Value* bytes = b.CreateAdd(total,
-                                   ConstantInt::get(i64(), sliceDataOffset(rank)));
+        Value* overflow = nullptr;
+        // Exact overflow detection (llvm.umul.with.overflow): a wrapped byte count either
+        // under-allocates a legitimate length or makes the header advertise a length the block
+        // cannot hold. Either way the allocation cannot be satisfied, so it aborts like malloc.
+        auto checkedMul = [&](Value* a, Value* c) {
+            Value* pair = b.CreateIntrinsic(llvm::Intrinsic::umul_with_overflow, {i64()}, {a, c});
+            Value* ov = b.CreateExtractValue(pair, 1);
+            overflow = overflow ? b.CreateOr(overflow, ov) : ov;
+            return b.CreateExtractValue(pair, 0);
+        };
+        for (Value* d : dims) total = checkedMul(total, d);
+        if (es != 1) total = checkedMul(total, ConstantInt::get(i64(), es));
+        Value* bytes = total;
+        {
+            Value* pair = b.CreateIntrinsic(llvm::Intrinsic::uadd_with_overflow, {i64()},
+                                            {total, ConstantInt::get(i64(), sliceDataOffset(rank))});
+            Value* ov = b.CreateExtractValue(pair, 1);
+            overflow = b.CreateOr(overflow, ov);
+            bytes = b.CreateExtractValue(pair, 0);
+        }
+        BasicBlock* sizeBadBB = BasicBlock::Create(ctx, "arr.badsize", curFn);
+        BasicBlock* sizeOkBB = BasicBlock::Create(ctx, "arr.size", curFn);
+        b.CreateCondBr(overflow, sizeBadBB, sizeOkBB);
+        b.SetInsertPoint(sizeBadBB);
+        b.CreateCall(libFn("abort", LType::getVoidTy(ctx), {}), {});
+        b.CreateUnreachable();
+        b.SetInsertPoint(sizeOkBB);
         Value* h = b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {bytes});
         BasicBlock* okBB = BasicBlock::Create(ctx, "arr.ok", curFn);
         BasicBlock* failBB = BasicBlock::Create(ctx, "arr.fail", curFn);

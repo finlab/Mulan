@@ -40,6 +40,9 @@ void subst_type_spec(TypeSpec& s, const TypeBindings& b) {
 void subst_expr(Expr& e, const TypeBindings& b) {
     if (auto p = dynamic_cast<Member*>(&e)) {
         subst_expr(*p->obj, b);
+        for (auto& ta : p->type_args) {
+            if (ta) subst_type_spec(*ta, b);
+        }
         return;
     }
     if (auto p = dynamic_cast<Index*>(&e)) {
@@ -75,6 +78,10 @@ void subst_expr(Expr& e, const TypeBindings& b) {
         subst_expr(*p->callee, b);
         for (auto& a : p->args) subst_expr(*a, b);
         for (auto& n : p->named) subst_expr(*n.second, b);
+        // `f<T>(...)` / `Option<T>.Some(...)`: the explicit type arguments are part of the template body
+        for (auto& ta : p->type_args) {
+            if (ta) subst_type_spec(*ta, b);
+        }
         return;
     }
     if (auto p = dynamic_cast<NewExpr*>(&e)) {
@@ -105,6 +112,10 @@ void subst_expr(Expr& e, const TypeBindings& b) {
         }
         if (p->expr_body) subst_expr(*p->expr_body, b);
         if (p->block_body) subst_block(*p->block_body, b);
+        return;
+    }
+    if (auto p = dynamic_cast<IsExpr*>(&e)) {
+        subst_expr(*p->obj, b);
         return;
     }
 }
@@ -165,6 +176,16 @@ void subst_stmt(Stmt& s, const TypeBindings& b) {
         subst_expr(*p->seq, b);
         if (p->step) subst_expr(*p->step, b);
         subst_block(*p->body, b);
+        return;
+    }
+    if (auto p = dynamic_cast<ParaStmt*>(&s)) {
+        for (auto& sec : p->sections) {
+            if (sec) subst_block(*sec, b);
+        }
+        return;
+    }
+    if (auto p = dynamic_cast<ParaForStmt*>(&s)) {
+        if (p->loop) subst_stmt(*p->loop, b);
         return;
     }
     if (auto p = dynamic_cast<SwitchStmt*>(&s)) {

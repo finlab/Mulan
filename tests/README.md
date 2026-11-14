@@ -1,12 +1,14 @@
 # Mulan regression tests
 
-For each case `run_tests.py` runs:
+For each **run case** `run_tests.py` runs:
 
 ```
 <MUC_CMD> build <case.mu> -o build/tests/<name>.exe --run
 ```
 
-then compares the program's stdout with `tests/expected/<name>.txt` and reports PASS/FAIL.
+then compares the program's stdout and exit code with `tests/expected/<name>.txt` and reports
+PASS/FAIL. The other case kinds (must-fail, check, ir, C ABI) have their own acceptance rules —
+see the *Directory layout* section below.
 Only the Python standard library is used; run it from the **repository root**:
 
 ```powershell
@@ -74,7 +76,43 @@ definition except `main`, so unused functions, classes and library units disappe
 The regexes are matched against the whole IR with `re.MULTILINE`, so anchor with `^`/`$` when the
 position matters. Files starting with `lib_` are dependency units, not cases.
 
+## Directory layout
+
+`run_tests.py` collects five kinds of cases from five directories; nothing is registered by hand, a
+new file in the right directory (with its companion) is picked up automatically. The counts below are
+the files currently in the tree (as of 0.0.122); they grow as cases are added.
+
+| Directory | Kind | Cases (as of 0.0.122) | How a case passes |
+|---|---|---|---|
+| `tests/cases/` | **run** | 180, plus every `examples/*.mu` that defines `main` | built and run; stdout and exit code compared against `tests/expected/<name>.txt` |
+| `tests/errors/` | **must-fail** | 350 | `muc check` must reject it, and every line of `tests/errors/<name>.err` must appear in the diagnostics |
+| `tests/check/` | **check** | 20 | `muc check` must accept it (sema only; the program never runs) |
+| `tests/ir/` | **ir** | 4 | built with `--emit-ir`; the `+ <regex>` / `- <regex>` lines of `tests/ir/<name>.txt` assert on the optimized IR (see the section above) |
+| `tests/abi/` | **c abi** | 3 | built and run like a run case, but the C shim `tests/abi/<name>.c` is first compiled by the C compiler and `--link`ed into the executable (expected file: `tests/expected/<name>.txt`) |
+
+Notes per kind:
+
+- **Must-fail (`tests/errors/`)**: `tests/errors/<name>.mu` plus `tests/errors/<name>.err`; each
+  non-empty, non-`#` line of the `.err` file is a substring that must appear in the diagnostics, so
+  one case can pin several messages. Names starting with `lib_` are dependency **libraries** of
+  multi-unit cases, not cases; helper units with dotted unit names live in subdirectories
+  (`tests/errors/vislib/secret.mu`), which keeps them out of the `*.mu` glob.
+- **Check (`tests/check/`)**: only the semantic checker runs — visibility across units and
+  libraries, `use` import forms, declaration shapes. `main` is written for the checker, not for
+  execution; features that deserve a runtime assertion belong in `tests/cases/`.
+- **Run (`tests/cases/`)**: besides plain output lines, an expected file may contain two marker
+  lines that are stripped before comparison:
+  - `@exit <code>` — the run must end with this exit code (default `0`; a case whose documented
+    behaviour is `abort()` writes `@exit 3`, the Windows abort code);
+  - `@ <args>` — extra options appended to the `muc build` command (for example `@ --bounds=off`).
+- **C ABI (`tests/abi/`)**: both sides are really different compilers' object files, which is what
+  checks the C ABI of `extern` / `export` aggregates (byval / sret) — something no single-language
+  test can observe.
+
 ## What the cases cover
+
+The table below lists the **run cases** (`tests/cases/` plus the runnable examples); must-fail,
+check, ir and C ABI cases are described in the *Directory layout* section.
 
 | Case | Coverage |
 |---|---|

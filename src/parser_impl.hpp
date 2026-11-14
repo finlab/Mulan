@@ -98,6 +98,49 @@ private:
 
     void semicolon() { expect_op(";"); }
 
+    // ------------------------------------------------------ nesting guard
+
+    // Two budgets, because they exhaust the stack for different reasons (measured on this host,
+    // MSYS2/UCRT, with the 8 MB main-thread reserve from CMakeLists.txt):
+    //   * recursive nesting: one guard level = a parenthesised subexpression (3 levels), a unary
+    //     operator, a nested block, a brace initializer, a type argument list or an `if`. ~2.5 KB
+    //     of parser frames per nesting level; 1000 levels of parentheses pass, ~2000 overflow.
+    //   * a chain built in a loop (`a.b.c…`, `1+1+1…`, `int***…`): no parser recursion, one AST
+    //     level per link; the AST walkers (sema, codegen) recurse over it and overflow past 5k.
+    // Both limits keep a ~2x margin below the measured overflow points.
+    static constexpr int kMaxNestDepth = 3072;
+    static constexpr int kMaxChainLinks = 2048;
+
+    // One level of nesting for the lifetime of the guard. Throws before incrementing, so a guard
+    // that is never constructed cannot unbalance the counter.
+    class NestGuard {
+    public:
+        NestGuard(Parser& p, const char* what) : p_(p) {
+            if (p_.nest_depth_ >= kMaxNestDepth) throw p_.nest_too_deep(what);
+            ++p_.nest_depth_;
+        }
+        ~NestGuard() { --p_.nest_depth_; }
+        NestGuard(const NestGuard&) = delete;
+        NestGuard& operator=(const NestGuard&) = delete;
+
+    private:
+        Parser& p_;
+    };
+
+    ParserError nest_too_deep(const char* what) const {
+        return err(std::string(what) + " nesting too deep (limit " + std::to_string(kMaxNestDepth) +
+                   " levels); simplify the construct");
+    }
+
+    // A chain built in a loop adds one tree level per link with no recursion at all; `links` counts
+    // them within the current construct, which bounds the depth handed to sema and codegen.
+    void note_link(int& links, const char* what) {
+        if (++links > kMaxChainLinks) {
+            throw err(std::string(what) + " is too long (limit " + std::to_string(kMaxChainLinks) +
+                      " chained operators or links); split it up");
+        }
+    }
+
     // `++`/`--` have no value: appearing in any expression context is an error
     void forbid_inc_expr() const {
         if (at_op("++", "--")) {
@@ -193,6 +236,8 @@ ExprPtr parse_lambda();
     bool suppress_as_ = false;
     // unit names introduced by `use`, enabling qualified types such as `math.Point`
     std::unordered_set<std::string> module_names_;
+    // Current expression/block/type nesting depth; see NestGuard above.
+    int nest_depth_ = 0;
 };
 
 }  // namespace muc_detail

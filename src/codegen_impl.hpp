@@ -695,6 +695,9 @@ struct Emitter {
     // { frame*, item } — the per-item context type shared by the producer and the task body.
     LStruct* paraCtxTy(const TypePtr& elemTy, bool byRef);
     FunctionCallee runtimeFn(const char* unit, const char* name, LType* ret, std::vector<LType*> params);
+    // Terminates the process when an exception escapes a task body (std.task.muc_task_abort:
+    // flush the shared stdio buffer once, then abort) — SPEC 3.17.4, the B2 boundary rule.
+    FunctionCallee taskAbort();
 
     void emitGlobals();
 

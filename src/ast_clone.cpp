@@ -5,6 +5,7 @@
 #include "ast_clone.hpp"
 
 #include <string>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -19,6 +20,22 @@ std::unique_ptr<T> mk(const Node& n) {
     r->line = n.line;
     r->col = n.col;
     return r;
+}
+
+// The name of a node kind, for the "unhandled node" diagnostic (`muc_detail::IsExpr`).
+std::string node_kind(const Node& n) {
+    std::string name = typeid(n).name();
+    // MSVC prefixes the kind ("class muc_detail::IsExpr"); GCC does not.
+    if (name.rfind("class ", 0) == 0) return name.substr(6);
+    if (name.rfind("struct ", 0) == 0) return name.substr(7);
+    return name;
+}
+
+// A node kind the clone table does not cover. Dropping it silently would change the meaning of the
+// program (the statement disappears, the branch is lost), so the instantiation fails loudly.
+[[noreturn]] void unsupported_kind(const std::string& kind, const char* what) {
+    throw CloneError(std::string("internal: AST node kind not handled by the generic instantiator (") +
+                       what + "): " + kind);
 }
 
 std::vector<std::unique_ptr<MethodDecl>> clone_methods(const std::vector<std::unique_ptr<MethodDecl>>& src);
@@ -89,6 +106,19 @@ std::vector<TypeParam> clone_type_params(const std::vector<TypeParam>& src) {
     return out;
 }
 
+// `for ... in ...`: also the loop of a `para for` statement.
+std::unique_ptr<ForInStmt> clone_for_in(const ForInStmt& f) {
+    auto r = mk<ForInStmt>(f);
+    r->by_ref = f.by_ref;
+    r->var = f.var;
+    r->has_idx = f.has_idx;
+    r->idx_name = f.idx_name;
+    r->seq = clone_expr(*f.seq);
+    r->step = f.step ? clone_expr(*f.step) : nullptr;
+    r->body = clone_block(*f.body);
+    return r;
+}
+
 }  // namespace
 
 TypeSpecPtr clone_type_spec(const TypeSpec& s) {
@@ -150,6 +180,8 @@ ExprPtr clone_expr(const Expr& e) {
         auto r = mk<Member>(e);
         r->obj = clone_expr(*p->obj);
         r->name = p->name;
+        // the type arguments of a generic sum alternative (`Option<int>.None`)
+        for (const auto& ta : p->type_args) r->type_args.push_back(ta ? clone_type_spec(*ta) : nullptr);
         return r;
     }
     if (auto p = dynamic_cast<const Index*>(&e)) {
@@ -230,6 +262,7 @@ ExprPtr clone_expr(const Expr& e) {
     }
     if (auto p = dynamic_cast<const Lambda*>(&e)) {
         auto r = mk<Lambda>(e);
+        for (const auto& cap : p->captures) r->captures.push_back(cap);
         for (const auto& prm : p->params) {
             if (prm) r->params.push_back(clone_param(*prm));
         }
@@ -237,7 +270,18 @@ ExprPtr clone_expr(const Expr& e) {
         r->block_body = p->block_body ? clone_block(*p->block_body) : nullptr;
         return r;
     }
-    return nullptr;
+    if (auto p = dynamic_cast<const IsExpr*>(&e)) {
+        auto r = mk<IsExpr>(e);
+        r->obj = clone_expr(*p->obj);
+        r->name = p->name;
+        r->binds = p->binds;
+        // IsExpr shadows Node::line/col (the parser fills the shadowing ones), so copy them here
+        r->line = p->line;
+        r->col = p->col;
+        // the sema fields (is_sum / sum_ty / alt / test_ty / bind_types) are derived again
+        return r;
+    }
+    unsupported_kind(node_kind(e), "expression");
 }
 
 InitPtr clone_init(const Init& i) {
@@ -262,14 +306,17 @@ InitPtr clone_init(const Init& i) {
         r->hi = clone_expr(*p->hi);
         return r;
     }
-    return nullptr;
+    unsupported_kind(node_kind(i), "initializer");
 }
 
 std::unique_ptr<Block> clone_block(const Block& b) {
     auto r = mk<Block>(b);
     for (const auto& s : b.stmts) {
         auto c = clone_stmt(*s);
-        if (c) r->stmts.push_back(std::move(c));
+        // INVARIANT: clone_stmt never returns null (an unknown kind throws), so a dropped
+        // statement can never be mistaken for a successful clone
+        if (!c) unsupported_kind("<null>", "statement");
+        r->stmts.push_back(std::move(c));
     }
     return r;
 }
@@ -316,14 +363,22 @@ StmtPtr clone_stmt(const Stmt& s) {
         return r;
     }
     if (auto p = dynamic_cast<const ForInStmt*>(&s)) {
-        auto r = mk<ForInStmt>(s);
-        r->by_ref = p->by_ref;
-        r->var = p->var;
-        r->has_idx = p->has_idx;
-        r->idx_name = p->idx_name;
-        r->seq = clone_expr(*p->seq);
-        r->step = p->step ? clone_expr(*p->step) : nullptr;
-        r->body = clone_block(*p->body);
+        return clone_for_in(*p);
+    }
+    if (auto p = dynamic_cast<const ParaStmt*>(&s)) {
+        auto r = mk<ParaStmt>(s);
+        r->sections.reserve(p->sections.size());
+        for (const auto& sec : p->sections) {
+            if (!sec) unsupported_kind("<null>", "statement");
+            r->sections.push_back(clone_block(*sec));
+        }
+        // the captures are a sema field: they are derived again from the cloned sections
+        return r;
+    }
+    if (auto p = dynamic_cast<const ParaForStmt*>(&s)) {
+        auto r = mk<ParaForStmt>(s);
+        if (p->loop) r->loop = clone_for_in(*p->loop);
+        // the captures are a sema field: they are derived again from the cloned loop
         return r;
     }
     if (auto p = dynamic_cast<const SwitchStmt*>(&s)) {
@@ -335,6 +390,9 @@ StmtPtr clone_stmt(const Stmt& s) {
             arm->is_else = a->is_else;
             arm->line = a->line;
             arm->col = a->col;
+            // the alternative of a sum-type arm and its payload bindings
+            arm->alt = a->alt;
+            arm->binds = a->binds;
             for (const auto& pat : a->pats) {
                 SwitchPat q;
                 q.lo = pat.lo ? clone_expr(*pat.lo) : nullptr;
@@ -376,7 +434,7 @@ StmtPtr clone_stmt(const Stmt& s) {
         r->finally_body = p->finally_body ? clone_block(*p->finally_body) : nullptr;
         return r;
     }
-    return nullptr;
+    unsupported_kind(node_kind(s), "statement");
 }
 
 std::unique_ptr<Param> clone_param(const Param& p) {
@@ -393,6 +451,7 @@ std::unique_ptr<MethodDecl> clone_method(const MethodDecl& m) {
     r->name = m.name;
     r->ret = m.ret ? clone_type_spec(*m.ret) : nullptr;
     r->ret_ref = m.ret_ref;
+    r->is_operator = m.is_operator;
     r->params = clone_params(m.params);
     r->body = m.body ? clone_block(*m.body) : nullptr;
     r->is_override = m.is_override;
@@ -530,7 +589,7 @@ std::unique_ptr<Decl> clone_decl(const Decl& d) {
         r->is_public = p->is_public;
         return r;
     }
-    return nullptr;
+    unsupported_kind(node_kind(d), "declaration");
 }
 
 }  // namespace muc_detail

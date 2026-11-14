@@ -1,0 +1,2 @@
+sum=50005000 live=1 peak=10001
+deep recursion ok
