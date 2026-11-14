@@ -486,6 +486,7 @@ struct Emitter {
     Value* addrOf(Expr* e);
 
     Value* compareOp(const std::string& op, Value* l, Value* r, bool is_signed, bool is_float);
+    Value* emitSumEquals(const std::string& op, Value* la, Value* ra, const TypePtr& st);
 
     Value* coerce(Expr* e, const TypePtr& to);
     // Store the captures of a lambda into an environment object (heap or stack).
@@ -569,6 +570,7 @@ struct Emitter {
 
     // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
     void emitSwitch(SwitchStmt* s);
+    Value* evalIs(IsExpr* e);
 
     // ------------------------------------------------------------ interface table
 

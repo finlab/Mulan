@@ -567,6 +567,7 @@ using ArgPack = Emitter::ArgPack;
     }
 
     Value* Emitter::eval(Expr* e) {
+        if (auto ise = dynamic_cast<IsExpr*>(e)) return evalIs(ise);
         if (auto lm = dynamic_cast<Lambda*>(e)) {
             FuncDecl* f = lm->synth;
             if (!f) fail("LLVM backend: lambda without a synthesized function", e->line, e->col);
@@ -606,6 +607,15 @@ using ArgPack = Emitter::ArgPack;
             return Constant::getNullValue(ptrTy());
         }
         if (auto n = dynamic_cast<Name*>(e)) {
+            if (n->kind == "sum_unit") {
+                // contextual unit alternative: `Option<int> o = None;`
+                const TypePtr& st = n->sum_ty;
+                auto* tmp = entryAlloca(lt(st), "sum", alignOf(st));
+                zeroMem(tmp, st);
+                b.CreateStore(ConstantInt::get(i32(), n->sum_alt),
+                              fieldAddr(tmp, st->sum_layout, 0));
+                return b.CreateLoad(lt(st), tmp);
+            }
             if (n->kind == "enum_const") {
                 auto* ec = std::get_if<EnumConst*>(&n->sym);
                 return ConstantInt::get(i32(), static_cast<uint64_t>((*ec)->value),

@@ -820,8 +820,54 @@ namespace muc_detail {
             node);
     }
 
-    TypePtr Sema::check_new(NewExpr* ne) {
-        TypePtr t = resolve_type(ne->type.get(), cur_);
+    // `x is Alt(a, b)` / `x is Cat d` (SPEC 10.1.2): a runtime discrimination test. A sum value tests
+    // the alternative (payload bindings follow the declaration); a class/interface value tests the
+    // dynamic type (an optional binding is the downcast). Anything else has no runtime discrimination.
+    TypePtr Sema::check_is(IsExpr* e) {
+        TypePtr st = check_expr(e->obj.get());
+        if (!st) err("`is` needs a value on the left", e);
+        if (st->kind == TypeKind::Sum) {
+            int idx = -1;
+            for (size_t k = 0; k < st->sum_names.size(); ++k) {
+                if (st->sum_names[k] == e->name) { idx = static_cast<int>(k); break; }
+            }
+            if (idx < 0) err("sum type `" + st->str() + "` has no alternative `" + e->name + "`", e);
+            const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
+            if (!e->binds.empty() && e->binds.size() != fs.size()) {
+                err("alternative `" + e->name + "` carries " + std::to_string(fs.size()) +
+                        " value(s), so `is` must bind " + std::to_string(fs.size()) +
+                        " name(s) (or none)",
+                    e);
+            }
+            e->is_sum = true;
+            e->sum_ty = st;
+            e->alt = idx;
+            e->bind_types = fs;
+            e->ty = t_bool();
+            return e->ty;
+        }
+        if (st->kind == TypeKind::Class || st->kind == TypeKind::Interface) {
+            TypePtr t = find_type_in_expr(e->name, e);
+            if (!t || t->kind != TypeKind::Class) {
+                err("`" + e->name + "` is not a class, so it cannot be tested with `is`", e);
+            }
+            if (!implicitly_convertible(t, st)) {
+                err("class `" + t->str() + "` is not a subtype of `" + st->str() + "`", e);
+            }
+            if (e->binds.size() > 1) {
+                err("`is` binds at most one name when testing a class", e);
+            }
+            e->test_ty = t;
+            if (!e->binds.empty()) e->bind_types = {t};
+            e->ty = t_bool();
+            return e->ty;
+        }
+        err("type `" + st->str() +
+                "` has no runtime discrimination, so `is` would be a constant; test the value directly",
+            e);
+    }
+
+    TypePtr Sema::check_new(NewExpr* ne) {        TypePtr t = resolve_type(ne->type.get(), cur_);
         if (ne->is_array) {
             if (is_void(t)) err("dynamic array element cannot be void", ne);
             if (ne->dims.empty()) err("dynamic array is missing its length", ne);

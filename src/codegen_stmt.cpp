@@ -681,6 +681,40 @@ using ArgPack = Emitter::ArgPack;
         b.SetInsertPoint(endBB);
     }
 
+    // `x is Alt(a, b)` / `x is Cat d`: a runtime test. For a sum value the tag is compared and the
+    // payload is bound (stored into the binding locals declared by the `if` checker); for a
+    // class/interface value the descriptor chain is walked, reusing the `as` machinery.
+    Value* Emitter::evalIs(IsExpr* e) {
+        if (e->is_sum) {
+            const TypePtr& st = e->sum_ty;
+            Value* sv = eval(e->obj.get());
+            auto* slot = entryAlloca(lt(st), "is.sum", alignOf(st));
+            b.CreateStore(sv, slot);
+            if (st->needs_cleanup() && valueOwned(e->obj.get())) stmtTemps.emplace_back(slot, st);
+            Value* tag = loadAt(i32(), fieldAddr(slot, st->sum_layout, 0), false);
+            Value* cond = b.CreateICmpEQ(tag, ConstantInt::get(i32(), e->alt));
+            if (!e->bind_locals.empty()) {
+                const auto& fs = st->sum_fields[static_cast<size_t>(e->alt)];
+                Value* pay = fieldAddr(slot, st->sum_layout, 1);
+                for (size_t k = 0; k < e->bind_locals.size() && k < fs.size(); ++k) {
+                    Value* src = pay;
+                    if (fs.size() > 1) {
+                        src = fieldAddr(pay, st->sum_payload[static_cast<size_t>(e->alt)],
+                                        static_cast<int>(k));
+                    }
+                    b.CreateStore(loadAt(lt(fs[k]), src, false), slotFor(e->bind_locals[k]));
+                }
+            }
+            return cond;
+        }
+        Value* objv = eval(e->obj.get());
+        Value* dp = b.CreateGEP(i8(), objv, ConstantInt::get(i64(), 8));
+        Value* desc = b.CreateLoad(ptrTy(), dp);
+        Value* cond = emitDescMatches(desc, descOf(e->test_ty));
+        if (!e->bind_locals.empty()) b.CreateStore(objv, slotFor(e->bind_locals[0]));
+        return cond;
+    }
+
     // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
     void Emitter::emitSwitch(SwitchStmt* s) {
         Value* sv = eval(s->scrut.get());

@@ -157,6 +157,9 @@ static bool is_numeric(const TypePtr& t) {
 
     Value* Emitter::addrOf(Expr* e) {
         if (auto n = dynamic_cast<Name*>(e)) {
+            if (n->kind == "sum_unit") {
+                fail("LLVM backend: a unit alternative is not addressable", n->line, n->col);
+            }
             if (n->ident == "this") {
                 // `this` is the receiver: for a struct it is the object address, for a class the
                 // handle slot. Inside a `[this]` lambda, emitFunction points `thisSlot` at the
@@ -334,6 +337,59 @@ static bool is_numeric(const TypePtr& t) {
         }
     }
 
+    // `==` / `!=` on a sum value: the tags must match, and when they do the active payload's fields
+    // are compared pairwise (only payload types with value equality reach here; sema checks that).
+    Value* Emitter::emitSumEquals(const std::string& op, Value* la, Value* ra, const TypePtr& st) {
+        Value* ltag = loadAt(i32(), fieldAddr(la, st->sum_layout, 0), false);
+        Value* rtag = loadAt(i32(), fieldAddr(ra, st->sum_layout, 0), false);
+        // payload addresses are computed before the branch: nothing may be inserted into `swBB` after
+        // the switch terminates it
+        Value* lpay = fieldAddr(la, st->sum_layout, 1);
+        Value* rpay = fieldAddr(ra, st->sum_layout, 1);
+        auto* res = entryAlloca(i1(), "sum.eq");
+        Value* tagsEq = b.CreateICmpEQ(ltag, rtag);
+        b.CreateStore(tagsEq, res);
+        BasicBlock* swBB = BasicBlock::Create(ctx, "sum.cmp", curFn);
+        BasicBlock* done = BasicBlock::Create(ctx, "sum.cmp.done", curFn);
+        b.CreateCondBr(tagsEq, swBB, done);
+        b.SetInsertPoint(swBB);
+        auto* sw = b.CreateSwitch(ltag, done, static_cast<unsigned>(st->sum_fields.size()));
+        size_t cases = 0;
+        for (size_t i = 0; i < st->sum_fields.size(); ++i) {
+            const auto& fs = st->sum_fields[i];
+            if (fs.empty()) continue;
+            cases++;
+            BasicBlock* bb = BasicBlock::Create(ctx, "sum.cmp.alt", curFn);
+            sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), static_cast<int>(i))), bb);
+            b.SetInsertPoint(bb);
+            Value* eq = ConstantInt::getTrue(ctx);
+            for (size_t k = 0; k < fs.size(); ++k) {
+                Value* lf = lpay;
+                Value* rf = rpay;
+                if (fs.size() > 1) {
+                    TypePtr pt = st->sum_payload[i];
+                    lf = fieldAddr(lpay, pt, static_cast<int>(k));
+                    rf = fieldAddr(rpay, pt, static_cast<int>(k));
+                }
+                Value* a = loadAt(lt(fs[k]), lf, false);
+                Value* c = loadAt(lt(fs[k]), rf, false);
+                Value* one = nullptr;
+                if (fs[k]->kind == TypeKind::Prim && fs[k]->is_float()) {
+                    one = b.CreateFCmpOEQ(a, c);
+                } else {
+                    one = b.CreateICmpEQ(a, c);
+                }
+                eq = b.CreateAnd(eq, one);
+            }
+            b.CreateStore(eq, res);
+            b.CreateBr(done);
+        }
+        if (cases == 0) b.CreateBr(done);  // every alternative is a unit value: the tags decide
+        b.SetInsertPoint(done);
+        Value* v = b.CreateLoad(i1(), res);
+        return op == "!=" ? b.CreateNot(v) : v;
+    }
+
     Value* Emitter::compareOp(const std::string& op, Value* l, Value* r, bool is_signed, bool is_float) {
         if (is_float) {
             if (op == "==") return b.CreateFCmpOEQ(l, r);
@@ -458,6 +514,15 @@ static bool is_numeric(const TypePtr& t) {
         }
 
         if (op == "==" || op == "!=") {
+            // Sum values: same alternative and equal payload fields (semantics checked in sema).
+            if (lt_->kind == TypeKind::Sum || rt_->kind == TypeKind::Sum) {
+                const TypePtr& st = lt_->kind == TypeKind::Sum ? lt_ : rt_;
+                auto* la = entryAlloca(lt(st), "sum.l", alignOf(st));
+                auto* ra = entryAlloca(lt(st), "sum.r", alignOf(st));
+                b.CreateStore(l, la);
+                b.CreateStore(r, ra);
+                return emitSumEquals(op, la, ra, st);
+            }
             bool lref = isRefKind(lt_) || lt_->kind == TypeKind::Null;
             bool rref = isRefKind(rt_) || rt_->kind == TypeKind::Null;
             if (lref && rref && (isRefKind(lt_) || isRefKind(rt_))) {

@@ -10,6 +10,31 @@
 
 ## Releases
 
+### 0.0.119 — 2026-11-14
+
+**Sum-type ergonomics: `is` tests, contextual construction, value equality (U42 S4).**
+
+- **`is`**: `if o is Some { ... }`, `if o is Some(v) { ... }` (payload binding), and on a class or
+  interface value `if a is Cat c { ... }` (subtype test with the downcast bound). `is` is a contextual
+  keyword (an ordinary identifier elsewhere). The binding is a local of the then-branch only, and it
+  is allowed only when the `is` is the whole condition (so `and`/`or` compose without bindings).
+  A scrutinee with no runtime discrimination (`int`, `struct`, `enum`, pointer, slice) is a compile
+  error — the test would be a constant.
+- **Contextual construction**: with the target type known, the alternative name alone works —
+  `Option<int> o = Some(3);`, `o = None;`, `if o == None { ... }`. A user function of the same name
+  wins over the alternative, so nothing existing changes.
+- **Value equality**: `==` / `!=` on a sum compare the tag, then the active payload field by field
+  (floats with `fcmp oeq`). Only payload types with value equality participate; a class/interface/
+  `String`/slice/struct payload reports "no value equality (read it with `switch`)".
+- Implementation notes: the binding locals come from `FuncDecl::synthetic_locals` (they must outlive
+  Sema); the sum comparison computes the payload addresses **before** creating the switch block — a
+  GEP inserted after the switch left the block unterminated and produced invalid IR until fixed.
+- Tests: `sum_ergonomics` (`is` with and without binding, class test with binding, contextual
+  construction in declarations and comparisons, single- and multi-field equality, `!=`), must-fail
+  `sum_is_static`.
+
+**Tests**: 529/529 (164 pass + 342 must-fail + 20 check + 3 ir)
+
 ### 0.0.118 — 2026-11-14
 
 **`match` merged into `switch`: one dispatch construct.**

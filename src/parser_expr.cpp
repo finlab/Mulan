@@ -443,10 +443,52 @@ ExprPtr Parser::parse_eq() {
 
 ExprPtr Parser::parse_rel() {
     ExprPtr left = parse_bitor();
-    while (at_op("<", "<=", ">", ">=")) {
-        const Token tok = advance();
-        ExprPtr right = parse_bitor();
-        left = make_binary(tok.text, std::move(left), std::move(right), tok);
+    for (;;) {
+        if (at_op("<", "<=", ">", ">=")) {
+            const Token tok = advance();
+            ExprPtr right = parse_bitor();
+            left = make_binary(tok.text, std::move(left), std::move(right), tok);
+            continue;
+        }
+        // `x is Alt(a, b)` / `x is Cat d`: `is` is a contextual keyword (an ordinary identifier
+        // everywhere else, so `int is = 1;` keeps working). A type name after `is` may be a keyword
+        // type (`x is int`), which reaches sema and is rejected there with a clear message.
+        const bool is_op = peek().kind == TokKind::Ident && peek().text == "is" &&
+                           (peek(1).kind == TokKind::Ident ||
+                            (peek(1).kind == TokKind::Kw && prims().count(peek(1).text) != 0));
+        if (is_op) {
+            const Token tok = advance();
+            auto node = std::make_unique<IsExpr>();
+            node->obj = std::move(left);
+            if (peek().kind == TokKind::Kw) {
+                node->name = advance().text;  // a primitive type name: always a static test
+            } else {
+                node->name = expect_ident("alternative or type name").text;
+            }
+            if (at_op("(")) {
+                advance();
+                if (!at_op(")")) {
+                    for (;;) {
+                        node->binds.push_back(expect_ident("bound name").text);
+                        if (at_op(",")) {
+                            advance();
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                expect_op(")");
+            } else if (peek().kind == TokKind::Ident && !peek().text.empty() &&
+                       peek().text != "and" && peek().text != "or" && peek().text != "else") {
+                // class/interface test with a binding: `x is Cat d`
+                node->binds.push_back(advance().text);
+            }
+            node->line = tok.line;
+            node->col = tok.col;
+            left = std::move(node);
+            continue;
+        }
+        break;
     }
     return left;
 }

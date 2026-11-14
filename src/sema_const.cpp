@@ -55,6 +55,55 @@ namespace muc_detail {
                     "` has a destructor and cannot be copied by value (use a pointer or an explicit clone)",
                 e);
         }
+        // Contextual alternative (SPEC 10.1.1): when the target is a sum type, a bare alternative name
+        // means that alternative — `Option<int> o = Some(3);` / `o = None;`. A user function with the
+        // same name wins (the usual call resolution), so this only applies to unknown names.
+        if (dst && dst->kind == TypeKind::Sum) {
+            auto alt_index = [&](const std::string& nm) -> int {
+                for (size_t k = 0; k < dst->sum_names.size(); ++k) {
+                    if (dst->sum_names[k] == nm) return static_cast<int>(k);
+                }
+                return -1;
+            };
+            auto name_is_free = [&](const std::string& nm) {
+                return lookup_local(nm) == nullptr && info().funcs.find(nm) == info().funcs.end();
+            };
+            if (auto call = dynamic_cast<Call*>(e); call && call->callee_kind.empty()) {
+                if (auto nm = dynamic_cast<Name*>(call->callee.get());
+                    nm && name_is_free(nm->ident)) {
+                    const int idx = alt_index(nm->ident);
+                    if (idx >= 0) {
+                        const auto& fs = dst->sum_fields[static_cast<size_t>(idx)];
+                        if (call->args.size() != fs.size()) {
+                            err("alternative `" + nm->ident + "` of `" + dst->str() + "` takes " +
+                                    std::to_string(fs.size()) + " value(s), but " +
+                                    std::to_string(call->args.size()) + " were given",
+                                call);
+                        }
+                        for (size_t k = 0; k < fs.size(); ++k) {
+                            check_assign(call->args[k].get(), fs[k], "sum payload");
+                        }
+                        nm->kind = "type";
+                        nm->ty = dst;
+                        call->callee_kind = "sum_ctor";
+                        call->sum_ty = dst;
+                        call->sum_alt = idx;
+                        call->ty = dst;
+                        return dst;
+                    }
+                }
+            }
+            if (auto nm = dynamic_cast<Name*>(e); nm && nm->kind.empty() && name_is_free(nm->ident)) {
+                const int idx = alt_index(nm->ident);
+                if (idx >= 0 && dst->sum_fields[static_cast<size_t>(idx)].empty()) {
+                    nm->kind = "sum_unit";
+                    nm->sum_ty = dst;
+                    nm->sum_alt = idx;
+                    nm->ty = dst;
+                    return dst;
+                }
+            }
+        }
         TypePtr src = check_expr(e, dst);
         if (assignable(e, src, dst)) return src;
         if (const ImplicitConv* conv = find_implicit_conv(dst, src)) {

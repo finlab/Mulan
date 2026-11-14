@@ -2105,7 +2105,20 @@ Value d = Value.None;        // a unit alternative is a plain value
   the sum owns one reference. Payload types with a **user destructor** are rejected (they cannot be
   copied by value, same rule as array elements).
 - **Construction**: `Type.Alt(values...)` for a payload alternative, `Type.Alt` (no parentheses) for a
-  unit alternative. The argument count and types are checked against the declaration.
+  unit alternative, and — when the target type is already known — the **bare alternative name**:
+  `Option<int> o = Some(3);`, `o = None;`, `if o == None { ... }`. A user function with the same name
+  wins, so existing code is unaffected (0.0.119).
+- **Testing and extracting without a full `switch`**: `is` takes a pattern —
+  `if o is Some { ... }` (tag only) or `if o is Some(v) { ... }` (binds the payload; the name is a
+  local of that branch only; binding is allowed only when the `is` is the **whole** condition, so
+  `if o is Some and flag` composes but `if o is Some(v) and v > 0` must be nested). `is` also tests a
+  **class/interface** value: `if a is Cat c { ... }` (the binding is the downcast; `Cat` must be a
+  subtype of `a`'s type). Any other scrutinee type is rejected — `int`/`struct`/`enum` have no runtime
+  discrimination, so `is` there would be a constant.
+- **Value equality** (0.0.119): `==` / `!=` compare the tag and, when it matches, the payload fields.
+  Only alternatives whose payload types have value equality take part (scalars, enums, pointers,
+  function values); a class/interface/`String`/slice/struct payload is rejected with "no value
+  equality (read it with `switch`)" — reference payloads would need an identity rule.
 - **Not provided yet**: ~~generic sums (`Option<T>`)~~ → **implemented in 0.0.117**, `==` between sums,
   and sums as `extern` signatures.
 - C ABI: the layout is the classic `{ tag, union }` shape, but the type is not passed to C yet.

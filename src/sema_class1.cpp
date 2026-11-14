@@ -692,14 +692,30 @@ namespace muc_detail {
             check_expr(es->expr.get());
         } else if (auto as = dynamic_cast<AssignStmt*>(s)) {
             check_assign_stmt(as);
-        } else if (auto is = dynamic_cast<IfStmt*>(s)) {
-            check_cond(is->cond.get(), "if condition");
-            check_block(is->then.get());
-            if (is->els) {
-                if (auto b = dynamic_cast<Block*>(is->els.get())) {
+        } else if (auto iff = dynamic_cast<IfStmt*>(s)) {
+            check_cond(iff->cond.get(), "if condition");
+            // `if x is P(v) { ... }`: the bound names are locals of the then-branch only (SPEC 10.1.2).
+            IsExpr* ise = dynamic_cast<IsExpr*>(iff->cond.get());
+            push();
+            if (ise && !ise->binds.empty()) {
+                for (size_t k = 0; k < ise->binds.size(); ++k) {
+                    auto lv = std::make_unique<LocalVar>();
+                    lv->name = ise->binds[k];
+                    lv->rty = ise->bind_types[k];
+                    lv->line = ise->line;
+                    lv->col = ise->col;
+                    declare_local(lv.get());
+                    ise->bind_locals.push_back(lv.get());
+                    if (cur_func_) cur_func_->synthetic_locals.push_back(std::move(lv));
+                }
+            }
+            check_block(iff->then.get());
+            pop();
+            if (iff->els) {
+                if (auto b = dynamic_cast<Block*>(iff->els.get())) {
                     check_block(b);
                 } else {
-                    check_stmt(is->els.get());
+                    check_stmt(iff->els.get());
                 }
             }
         } else if (auto ws = dynamic_cast<WhileStmt*>(s)) {

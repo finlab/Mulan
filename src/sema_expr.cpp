@@ -167,6 +167,8 @@ namespace muc_detail {
             return dt;
         }
 
+        if (auto ie = dynamic_cast<IsExpr*>(e)) return check_is(ie);
+
         if (auto ne = dynamic_cast<NewExpr*>(e)) return check_new(ne);
 
         if (auto c = dynamic_cast<Call*>(e)) return check_call(c);
@@ -623,6 +625,8 @@ namespace muc_detail {
     }
 
     TypePtr Sema::check_name(Name* e, const TypePtr& expected) {
+        // A unit alternative resolved from the target type (`Option<int> o = None;`) is memoized.
+        if (e->kind == "sum_unit" && e->ty) return e->ty;
         if (e->ident == "super") {
             err("`super` can only be used as `super(...)` or `super.method(...)`", e);
         }
@@ -1106,6 +1110,23 @@ namespace muc_detail {
         }
 
         TypePtr lt = check_expr(e->left.get());
+        // `v == None`: a bare alternative name on the right of a comparison with a sum value is
+        // resolved from the left side's type (contextual construction, SPEC 10.1.1).
+        if (lt && lt->kind == TypeKind::Sum) {
+            if (auto nm = dynamic_cast<Name*>(e->right.get());
+                nm && nm->kind.empty() && lookup_local(nm->ident) == nullptr &&
+                info().funcs.find(nm->ident) == info().funcs.end()) {
+                for (size_t k = 0; k < lt->sum_names.size(); ++k) {
+                    if (lt->sum_names[k] == nm->ident && lt->sum_fields[k].empty()) {
+                        nm->kind = "sum_unit";
+                        nm->sum_ty = lt;
+                        nm->sum_alt = static_cast<int>(k);
+                        nm->ty = lt;
+                        break;
+                    }
+                }
+            }
+        }
         TypePtr rt = check_expr(e->right.get());
         adapt_lit(e->left.get(), lt, rt);
         adapt_lit(e->right.get(), rt, lt);
@@ -1212,6 +1233,28 @@ namespace muc_detail {
                 }
             }
             if (is_numeric(lt) && is_numeric(rt)) return t_bool();
+            if (lt->kind == TypeKind::Sum || rt->kind == TypeKind::Sum) {
+                // Value equality: same alternative and equal payload fields. Only payload types with
+                // value equality take part; reference payloads would need an identity rule (use `switch`).
+                if (!same_type(lt, rt)) {
+                    err("sum values of different types cannot be compared (`" + lt->str() + "` vs `" +
+                            rt->str() + "`)",
+                        e);
+                }
+                for (auto& fs : lt->sum_fields) {
+                    for (auto& f : fs) {
+                        const bool ok = f && (f->kind == TypeKind::Prim || f->kind == TypeKind::Enum ||
+                                              f->kind == TypeKind::Ptr || f->kind == TypeKind::Func);
+                        if (!ok) {
+                            err("sum `" + lt->str() + "` cannot be compared: payload type `" +
+                                    (f ? f->str() : std::string("void")) +
+                                    "` has no value equality (read it with `switch`)",
+                                e);
+                        }
+                    }
+                }
+                return t_bool();
+            }
             if (lt->kind == TypeKind::Func || rt->kind == TypeKind::Func ||
                 lt->kind == TypeKind::Delegate || rt->kind == TypeKind::Delegate) {
                 if (!same_type(lt, rt)) {

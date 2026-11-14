@@ -104,10 +104,13 @@ struct NullLit : Expr {};
 
 struct Name : Expr {
     std::string ident;
-    std::string kind;  // "local" | "global" | "func" | "enum_const" | "field"
+    std::string kind;  // "local" | "global" | "func" | "enum_const" | "field" | "sum_unit"
     Sym sym;
     int field_index = -1;
     bool implicit_this = false;  // direct field access inside a method
+    // contextual sum construction: `Option<int> o = None;` (the alternative resolved from the target type)
+    TypePtr sum_ty;
+    int sum_alt = -1;
 };
 
 struct Member : Expr {
@@ -116,7 +119,7 @@ struct Member : Expr {
     std::string kind;  // "field" | "global" | "func" | "unit" | "sum_unit"
     Sym sym;
     int field_index = -1;
-    // `Sum.None`: a unit alternative used as a value
+    // `Sum.None`: a unit alternative used as a value (also produced by contextual construction)
     TypePtr sum_ty;
     int sum_alt = -1;
     // a generic sum's alternative: `Option<int>.None` (the type arguments of the base type)
@@ -208,6 +211,25 @@ struct Lambda : Expr {
     TypePtr env_ty;                        // synthesized environment class (null when not capturing)
     std::vector<const LocalVar*> env_src;  // the outer variable copied/made addressable (the creation site)
     std::vector<bool> env_src_ref;         // whether that capture is `[ref x]`
+};
+
+// `x is Alt(a, b)` / `x is Cat d`: a runtime discrimination test (SPEC 10.1.2). For a sum value the
+// pattern is an alternative (optionally binding its payload fields); for a class/interface value it is
+// a subtype test (optionally binding the downcast as that class). Other types have no runtime
+// discrimination and are rejected.
+struct IsExpr : Expr {
+    ExprPtr obj;
+    std::string name;
+    std::vector<std::string> binds;
+    // sema
+    bool is_sum = false;
+    TypePtr sum_ty;
+    int alt = -1;
+    TypePtr test_ty;                      // class/interface test: the class being tested for
+    std::vector<TypePtr> bind_types;
+    std::vector<LocalVar*> bind_locals;   // declared by the `if` checker (then-branch scope)
+    int line = 0;
+    int col = 0;
 };
 
 struct NewExpr : Expr {

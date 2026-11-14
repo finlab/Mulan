@@ -654,6 +654,8 @@ private:
     [[noreturn]] void err_slice_elem_align(const TypePtr& elem, const Node* node) const;
 
     TypePtr check_new(NewExpr* ne);
+    // `x is Alt(a, b)` / `x is Cat d` (SPEC 10.1.2)
+    TypePtr check_is(IsExpr* e);
 
     void check_ctor_args(Call* c, const TypePtr& ty);
 
