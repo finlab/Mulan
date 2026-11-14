@@ -445,7 +445,16 @@ using ArgPack = Emitter::ArgPack;
                 emitFinallyBodies(finallyStack.size());
                 destroyTempsFrom(0);
                 releaseAllScopes();
-                b.CreateRet(rv);
+                // `sret`: the result travels through the hidden pointer and the function returns void.
+                // Otherwise a `Coerce*` result is packed into the register the C ABI asks for.
+                if (curSretSlot) {
+                    b.CreateStore(rv, curSretSlot);
+                    b.CreateRetVoid();
+                } else if (curCoerceRet) {
+                    b.CreateRet(coerceToReg(rv, curRetTy, curCoerceRet));
+                } else {
+                    b.CreateRet(rv);
+                }
             }
             BasicBlock* dead = BasicBlock::Create(ctx, "dead", curFn);
             b.SetInsertPoint(dead);

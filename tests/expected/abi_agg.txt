@@ -1,0 +1,19 @@
+c pair 34
+c pair back 5 6
+c wide 123
+c wide back 7 8 9
+c single 12
+c single back 12
+c trio 123
+c packed pair 1122
+c packed pair back 7 8
+c quad 30
+c bits 42
+mu pair 34
+mu pair back 5 6
+mu wide 123
+mu wide back 7 8 9
+mu quad 30
+checks 0
+direct pair back 9 8
+direct take 123

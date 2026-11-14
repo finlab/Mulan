@@ -49,6 +49,8 @@ build options:
   -g, --debug      emit DWARF debug info (line tables / function scopes)
   --bounds=on|off  subscript bounds checks for managed sequences (default: on)
   --cc <name>      linker driver (default: $CC, else gcc)
+  --link <obj>     extra object file for the link step (repeatable), e.g. a C shim
+                   compiled with the same compiler
   --os <os>        resolve `platform/<os>/` units for this platform (windows/linux/macos)
   -I <dir>         extra unit search directory (repeatable)
   -v, --verbose    print the resolved file of every unit
@@ -294,6 +296,7 @@ struct BuildArgs {
     std::string os;  // platform shadow directory to resolve units against (empty = host)
     std::vector<std::string> dirs;
     std::vector<std::string> exports;  // --export: keep these symbol names externally visible
+    std::vector<std::string> link;     // --link: extra object files handed to the link step
     ExportMode export_mode = ExportMode::ExportOnly;  // --exports=public|export
     bool run = false;
     bool debug = false;
@@ -319,6 +322,7 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "--emit-ir") b.emit_ir = need("--emit-ir");
         else if (a == "--backend") b.backend = need("--backend");
         else if (a == "--cc") b.cc = need("--cc");
+        else if (a == "--link") b.link.push_back(need("--link"));
         else if (a == "--os") b.os = need("--os");
         else if (a == "-I") b.dirs.push_back(need("-I"));
         else if (a == "--export") b.exports.push_back(need("--export"));
@@ -410,6 +414,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     fs::path obj = build_dir / (base + ".o");
     llvm_emit_object(prog, obj.string(), eo);
     std::string cmd = ba.cc + " -o " + quote(native_path(out.string())) + " " + quote(native_path(obj.string()));
+    for (const auto& extra : ba.link) cmd += " " + quote(native_path(extra));
     std::cout << "+ " << cmd << "\n";
     int rc = std::system(cmd.c_str());
     if (rc != 0) {

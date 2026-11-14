@@ -18,11 +18,20 @@ namespace muc_detail {
 
     void Emitter::emitFunction(FuncDecl* f) {
         if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm] emit " << f->name << "\n";
-        std::vector<LType*> ptys;
-        for (size_t i = 0; i < f->pty.size(); ++i)
-            ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
-        auto* ft = FunctionType::get(lt(f->rty), ptys, false);
-        Function* fn = cast<Function>(mod->getOrInsertFunction(f->cname, ft).getCallee());
+        Function* fn = nullptr;
+        if (f->c_abi) {
+            fn = llvm::dyn_cast<Function>(cAbiCallee(f).getCallee());
+        } else {
+            std::vector<LType*> ptys;
+            for (size_t i = 0; i < f->pty.size(); ++i)
+                ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
+            auto* ft = FunctionType::get(lt(f->rty), ptys, false);
+            fn = llvm::dyn_cast<Function>(mod->getOrInsertFunction(f->cname, ft).getCallee());
+        }
+        if (!fn) {
+            throw MuError("LLVM backend: `" + f->cname +
+                          "` is already declared with a different signature (same C symbol, two Mu types?)");
+        }
         fn->setLinkage((f->is_extern || f->is_public || f->is_entry)
                            ? GlobalValue::ExternalLinkage
                            : GlobalValue::InternalLinkage);
@@ -58,17 +67,49 @@ namespace muc_detail {
         bodyBB = BasicBlock::Create(ctx, "entry", fn);
         ab.SetInsertPoint(allocaBB);
 
-        // parameters
+        // parameters. An `sret` function receives a hidden first argument (the address of the
+        // caller's result slot), and a `byval` parameter arrives as a pointer to the caller's copy.
+        curSretSlot = nullptr;
+        curCoerceRet = nullptr;
+        size_t argBase = 0;
+        if (f->c_abi) {
+            if (abi_class(f->rty, /*is_return=*/true, targetTriple) == AbiPass::Sret) {
+                curSretSlot = fn->getArg(0);
+                curSretSlot->setName("sret");
+                argBase = 1;
+            } else {
+                curCoerceRet =
+                    coercedType(abi_class(f->rty, /*is_return=*/true, targetTriple), f->rty);
+            }
+        }
         size_t i = 0;
         for (auto& a : fn->args()) {
-            LocalVar* pl = i < f->param_locals.size() ? f->param_locals[i].get() : nullptr;
+            if (i < argBase) {
+                ++i;
+                continue;
+            }
+            const size_t pi = i - argBase;
+            LocalVar* pl = pi < f->param_locals.size() ? f->param_locals[pi].get() : nullptr;
             if (pl) {
-                const bool iref = i < f->pty_ref.size() && f->pty_ref[i];
+                const TypePtr pt = pi < f->pty.size() ? f->pty[pi] : pl->rty;
+                const bool iref = pi < f->pty_ref.size() && f->pty_ref[pi];
+                const AbiPass apass =
+                    f->c_abi && !iref ? abi_class(pt, /*is_return=*/false, targetTriple)
+                                      : AbiPass::Direct;
                 LType* slotTy = (pl->by_ref || iref) ? ptrTy() : lt(pl->rty);
                 auto* slot = entryAlloca(slotTy, sane(pl->name), alignOf(pl->rty));
                 slots[pl] = slot;
                 b.SetInsertPoint(bodyBB);
-                b.CreateStore(&a, slot);
+                Value* v = nullptr;
+                if (apass == AbiPass::ByVal) {
+                    // the callee receives a pointer to the caller's copy
+                    v = b.CreateLoad(lt(pt), &a);
+                } else if (apass != AbiPass::Direct) {
+                    v = coerceFromReg(&a, pt);  // packed into a register by C
+                } else {
+                    v = &a;
+                }
+                b.CreateStore(v, slot);
                 a.setName(pl->name);
             }
             ++i;
@@ -125,6 +166,8 @@ namespace muc_detail {
             throw MuError("LLVM backend: function `" + f->name + "` produced invalid IR: " + os.str());
         }
         curFn = nullptr;
+        curSretSlot = nullptr;
+        curCoerceRet = nullptr;
         allocaBB = nullptr;
         bodyBB = nullptr;
         slots.clear();
@@ -143,6 +186,7 @@ namespace muc_detail {
                     init = zeroConst(ty, g->rty);
                 } else if (g->const_func) {
                     FuncDecl* f = g->const_func;
+                    checkFnValueAbi(f, g);  // the global stores the Mu function value
                     std::vector<LType*> ptys;
                     for (auto& pt : f->pty) ptys.push_back(lt(pt));
                     init = llvm::cast<Constant>(
@@ -195,6 +239,7 @@ namespace muc_detail {
         collectExportSurface();
         // target
         std::string tripleStr = "x86_64-w64-windows-gnu";
+        targetTriple = tripleStr;
         std::string err;
         llvm::Triple triple(tripleStr);
         const Target* target = TargetRegistry::lookupTarget(triple, err);
@@ -257,20 +302,8 @@ namespace muc_detail {
 
         emitGlobals();
 
-        for (auto& u : prog.units) {
-            curUnit = u->name;
-            for (auto& d : u->decls) {
-                if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
-                    if (f->is_extern) {
-                        std::vector<LType*> ptys;
-                        for (size_t i = 0; i < f->pty.size(); ++i)
-                            ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
-                        mod->getOrInsertFunction(
-                            f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
-                    }
-                }
-            }
-        }
+        // Extern declarations are created by emitFunction as well (it returns right after the
+        // signature is in place), always through cAbiCallee so `byval`/`sret` match the call sites.
         for (auto& u : prog.units) {
             curUnit = u->name;
             for (auto& d : u->decls) {

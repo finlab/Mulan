@@ -69,6 +69,7 @@ using ArgPack = Emitter::ArgPack;
     // User-defined operator[] (free function): the container is passed as a class handle / struct address / struct value
     Value* Emitter::emitOperatorIndexCall(FuncDecl* f, Value* seqAddr, const TypePtr& sty, Value* idxVal,
                                           bool unaligned) {
+        checkFnValueAbi(f, nullptr);  // the argument layout below is fixed by the operator form
         std::vector<LType*> ptys;
         for (size_t i = 0; i < f->pty.size(); ++i)
             ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
@@ -136,12 +137,26 @@ using ArgPack = Emitter::ArgPack;
 
     // Call a free function / operator / method (static dispatch)
     Value* Emitter::emitUserCall(FuncDecl* f, const std::vector<Expr*>& args) {
+        // `extern` and `export` symbols follow the C ABI; everything else keeps the backend's own
+        // (faster) convention. Both sides of a C-ABI call come from cAbiSig/cAbiCallee.
+        CAbiSig sig;
+        FunctionCallee callee;
         std::vector<LType*> ptys;
-        for (size_t i = 0; i < f->pty.size(); ++i)
-            ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
-        FunctionCallee callee =
-            mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
+        if (f->c_abi) {
+            sig = cAbiSig(f->pty, f->pty_ref, f->rty);
+            callee = cAbiCallee(f);
+        } else {
+            for (size_t i = 0; i < f->pty.size(); ++i)
+                ptys.push_back(i < f->pty_ref.size() && f->pty_ref[i] ? ptrTy() : lt(f->pty[i]));
+            callee =
+                mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
+        }
         ArgPack pack;
+        Value* sretSlot = nullptr;
+        if (sig.sret) {
+            sretSlot = entryAlloca(lt(f->rty), "sret", alignOf(f->rty));
+            pack.vals.push_back(sretSlot);  // hidden first argument: the result address
+        }
         for (size_t i = 0; i < args.size() && i < f->pty.size(); ++i) {
             if (i < f->pty_ref.size() && f->pty_ref[i]) {
                 pack.vals.push_back(addrOf(args[i]));  // borrow: the callee does not own it, no cleanup after the call
@@ -150,6 +165,18 @@ using ArgPack = Emitter::ArgPack;
             Value* v = coerce(args[i], f->pty[i]);
             if (needsCleanup(f->pty[i]) && convOwns(args[i], f->pty[i])) {
                 pack.owned.emplace_back(v, f->pty[i]);
+            }
+            if (f->c_abi) {
+                const size_t sigIdx = (sig.sret ? 1u : 0u) + i;
+                if (sig.pass[i] == AbiPass::ByVal) {
+                    // C hands the callee a pointer to a copy it may modify: materialize one (the value
+                    // itself stays owned by the caller and is released with the other temporaries).
+                    auto* tmp = entryAlloca(lt(f->pty[i]), "byval", alignOf(f->pty[i]));
+                    b.CreateStore(v, tmp);
+                    v = tmp;
+                } else if (sig.pass[i] != AbiPass::Direct) {
+                    v = coerceToReg(v, f->pty[i], sig.params[sigIdx]);
+                }
             }
             pack.vals.push_back(v);
         }
@@ -163,12 +190,34 @@ using ArgPack = Emitter::ArgPack;
                 pack.vals.push_back(promoteVararg(eval(args[i]), args[i]->ty));
             }
         }
-        Value* r = b.CreateCall(callee, pack.vals);
+        CallInst* call = b.CreateCall(callee, pack.vals);
+        if (f->c_abi) applyCAbiCallAttrs(call, sig, f->pty, f->pty_ref, f->rty);
         releaseTemps(pack);
         // C functions never throw; a mu_lan function is checked only when the
         // conservative may-throw analysis cannot prove it nothrow.
         if (!f->is_extern && mayThrow.mayThrowFunc(f)) emitCheckPending();
-        return r;
+        if (sretSlot) return b.CreateLoad(lt(f->rty), sretSlot);
+        if (f->c_abi && sig.ret != lt(f->rty)) return coerceFromReg(call, f->rty);
+        return call;
+    }
+
+    // A function value carries only the Mu signature (no `byval`/`sret`, no packed eightbyte), so a
+    // C-ABI function whose aggregates travel differently cannot be taken as one: the call through
+    // the value would use the Mu convention on a symbol emitted with the C one.
+    void Emitter::checkFnValueAbi(FuncDecl* f, Node* at) {
+        if (!f->c_abi) return;
+        bool bad = abi_class(f->rty, /*is_return=*/true, targetTriple) != AbiPass::Direct;
+        for (size_t i = 0; !bad && i < f->pty.size(); ++i) {
+            const bool is_ref = i < f->pty_ref.size() && f->pty_ref[i];
+            if (!is_ref && abi_class(f->pty[i], /*is_return=*/false, targetTriple) != AbiPass::Direct) {
+                bad = true;
+            }
+        }
+        if (bad) {
+            fail("`" + f->name + "` uses the C ABI for a struct parameter or return, which this call "
+                 "form cannot express (call it directly)",
+                 at ? at->line : 0, at ? at->col : 0);
+        }
     }
 
     Value* Emitter::evalNew(NewExpr* ne) {
@@ -629,6 +678,7 @@ using ArgPack = Emitter::ArgPack;
             if (n->kind == "func") {
                 auto* f = std::get_if<FuncDecl*>(&n->sym);
                 if (!f || !*f) fail("LLVM backend: missing function target", e->line, e->col);
+                checkFnValueAbi(*f, e);
                 std::vector<LType*> ptys;
                 for (auto& pt : (*f)->pty) ptys.push_back(lt(pt));
                 return mod->getOrInsertFunction((*f)->cname,
@@ -660,6 +710,7 @@ using ArgPack = Emitter::ArgPack;
             if (m->kind == "func") {
                 auto* f = std::get_if<FuncDecl*>(&m->sym);
                 if (!f || !*f) fail("LLVM backend: missing function target", e->line, e->col);
+                checkFnValueAbi(*f, e);
                 std::vector<LType*> ptys;
                 for (auto& pt : (*f)->pty) ptys.push_back(lt(pt));
                 return mod->getOrInsertFunction((*f)->cname,

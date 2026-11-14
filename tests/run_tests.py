@@ -39,6 +39,7 @@ EXPECTED_DIR = ROOT / "tests" / "expected"
 ERRORS_DIR = ROOT / "tests" / "errors"
 CHECKS_DIR = ROOT / "tests" / "check"
 IR_DIR = ROOT / "tests" / "ir"
+ABI_DIR = ROOT / "tests" / "abi"
 BUILD_DIR = ROOT / "build" / "tests"
 
 # Compiler command: <MUC_CMD> build <case.mu> -o <exe> --run
@@ -190,6 +191,110 @@ def collect_ir_cases() -> list[IrCase]:
             if not s.stem.startswith("lib_")]
 
 
+class AbiCase:
+    """A cross-language case: `tests/abi/<name>.mu` plus a C shim `tests/abi/<name>.c`.
+
+    The shim is compiled by the C compiler and handed to `muc build --link`, so the two sides are
+    really different compilers' objects: this is what checks the C ABI of `extern` / `export`
+    aggregates (byval / sret), which no single-language test can observe.
+    """
+
+    def __init__(self, name: str, src: Path, shim: Path, expected: Path) -> None:
+        self.name = name
+        self.src = src
+        self.shim = shim
+        self.expected = expected
+
+
+def collect_abi_cases() -> list[AbiCase]:
+    if not ABI_DIR.is_dir():
+        return []
+    return [AbiCase(s.stem, s, ABI_DIR / (s.stem + ".c"), EXPECTED_DIR / f"{s.stem}.txt")
+            for s in sorted(ABI_DIR.glob("*.mu"))
+            if not s.stem.startswith("lib_")]
+
+
+def c_compiler_command() -> list[str]:
+    """The C compiler: `$CC` when set (the same variable `muc build` uses for linking), else gcc."""
+    raw = (os.environ.get("CC") or "gcc").strip()
+    return shlex.split(raw) if " " in raw else [raw]
+
+
+def run_abi_case(case: AbiCase, verbose: bool) -> tuple[bool, str]:
+    if not case.shim.is_file():
+        return False, f"missing C shim {case.shim}"
+    if not case.expected.is_file():
+        return False, f"missing expected file {case.expected}"
+    shim_obj = BUILD_DIR / (case.name + "_shim.o")
+    cc = c_compiler_command()
+    ccmd = cc + ["-c", str(case.shim.relative_to(ROOT)), "-o", str(shim_obj.relative_to(ROOT))]
+    try:
+        rc = subprocess.run(ccmd, cwd=ROOT, capture_output=True, text=True,
+                            errors="replace", timeout=RUN_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return False, f"cannot compile the C shim ({e}): " + " ".join(ccmd)
+    if rc.returncode != 0:
+        msg = ["C shim failed to compile", "  command: " + " ".join(ccmd), "  stderr tail:"]
+        msg += ["    " + ln for ln in (rc.stderr.strip().splitlines() or ["<empty>"])[-8:]]
+        return False, "\n".join(msg)
+
+    exe = BUILD_DIR / (case.name + (".exe" if sys.platform == "win32" else ""))
+    cmd = resolve_compiler() + [
+        "build",
+        str(case.src.relative_to(ROOT)),
+        "-o", str(exe.relative_to(ROOT)),
+        "--link", str(shim_obj.relative_to(ROOT)),
+        "--run",
+    ]
+    try:
+        r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                           errors="replace", timeout=RUN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, f"timeout (>{RUN_TIMEOUT}s): " + " ".join(cmd)
+    except OSError as e:
+        return False, f"cannot execute compiler `{cmd[0]}` ({e})"
+    return compare_run_output(case.expected, r, cmd, verbose)
+
+
+def compare_run_output(expected: Path, r, cmd: list[str], verbose: bool) -> tuple[bool, str]:
+    """Compare the run's stdout with the expected file (compiler status lines stripped)."""
+    if r.returncode != 0:
+        msg = [
+            f"build --run failed (exit code {r.returncode})",
+            "  command: " + " ".join(cmd),
+            "  stderr tail:",
+        ]
+        msg += ["    " + ln for ln in (r.stderr.strip().splitlines() or ["<empty>"])[-8:]]
+        return False, "\n".join(msg)
+
+    actual = normalize(r.stdout)
+    with open(expected, "r", encoding="utf-8", newline="") as f:
+        wanted = normalize(f.read())
+
+    if actual == wanted:
+        return True, "ok"
+
+    i = 0
+    while i < len(actual) and i < len(wanted) and actual[i] == wanted[i]:
+        i += 1
+    lines = [
+        f"output mismatch: first difference at line {i + 1} (actual {len(actual)} lines / expected {len(wanted)} lines)",
+        "  context [expected | actual]:",
+    ]
+    lo, hi = max(0, i - 2), max(i + 3, min(len(actual), len(wanted)))
+    for j in range(lo, hi):
+        got = actual[j] if j < len(actual) else "<missing>"
+        exp = wanted[j] if j < len(wanted) else "<missing>"
+        mark = " " if j < len(actual) and j < len(wanted) and actual[j] == wanted[j] else ">"
+        lines.append(f"  {mark} {j + 1:>3} | exp: {exp!r} | act: {got!r}")
+    if verbose:
+        lines.append("  --- full actual output ---")
+        lines += ["  " + ln for ln in r.stdout.splitlines()]
+        if not lines[-1]:
+            lines.pop()
+    return False, "\n".join(lines)
+
+
 def run_ir_case(case: IrCase, verbose: bool) -> tuple[bool, str]:
     if not case.spec.is_file():
         return False, f"missing expectation file {case.spec} (+ / - regex per line)"
@@ -304,42 +409,7 @@ def run_case(case: Case, keep_c: bool, verbose: bool) -> tuple[bool, str]:
     if not case.expected.is_file():
         return False, f"missing expected file {case.expected}"
 
-    if r.returncode != 0:
-        msg = [
-            f"build --run failed (exit code {r.returncode})",
-            "  command: " + " ".join(cmd),
-            "  stderr tail:",
-        ]
-        msg += ["    " + ln for ln in (r.stderr.strip().splitlines() or ["<empty>"])[-8:]]
-        return False, "\n".join(msg)
-
-    actual = normalize(r.stdout)
-    with open(case.expected, "r", encoding="utf-8", newline="") as f:
-        wanted = normalize(f.read())
-
-    if actual == wanted:
-        return True, "ok"
-
-    # Locate the first difference and print some context
-    i = 0
-    while i < len(actual) and i < len(wanted) and actual[i] == wanted[i]:
-        i += 1
-    lines = [
-        f"output mismatch: first difference at line {i + 1} (actual {len(actual)} lines / expected {len(wanted)} lines)",
-        "  context [expected | actual]:",
-    ]
-    lo, hi = max(0, i - 2), max(i + 3, min(len(actual), len(wanted)))
-    for j in range(lo, hi):
-        got = actual[j] if j < len(actual) else "<missing>"
-        exp = wanted[j] if j < len(wanted) else "<missing>"
-        mark = " " if j < len(actual) and j < len(wanted) and actual[j] == wanted[j] else ">"
-        lines.append(f"  {mark} {j + 1:>3} | exp: {exp!r} | act: {got!r}")
-    if verbose:
-        lines.append("  --- full actual output ---")
-        lines += ["  " + ln for ln in r.stdout.splitlines()]
-        if not lines[-1]:
-            lines.pop()
-    return False, "\n".join(lines)
+    return compare_run_output(case.expected, r, cmd, verbose)
 
 
 def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
@@ -387,15 +457,17 @@ def main(argv: list[str] | None = None) -> int:
     err_cases = collect_error_cases()
     check_cases = collect_check_cases()
     ir_cases = collect_ir_cases()
+    abi_cases = collect_abi_cases()
     if args.filter:
         cases = [c for c in cases if args.filter in c.name]
         err_cases = [c for c in err_cases if args.filter in c.name]
         check_cases = [c for c in check_cases if args.filter in c.name]
         ir_cases = [c for c in ir_cases if args.filter in c.name]
-    if not cases and not err_cases and not check_cases and not ir_cases:
+        abi_cases = [c for c in abi_cases if args.filter in c.name]
+    if not cases and not err_cases and not check_cases and not ir_cases and not abi_cases:
         print(f"no cases match `{args.filter}`")
         return 1
-    total = len(cases) + len(err_cases) + len(check_cases) + len(ir_cases)
+    total = len(cases) + len(err_cases) + len(check_cases) + len(ir_cases) + len(abi_cases)
 
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -449,10 +521,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL {case.name} (ir)")
             print(msg)
 
+    for case in abi_cases:
+        artifacts.append(ROOT / "build" / (case.src.stem + ".o"))
+        artifacts.append(BUILD_DIR / (case.name + (".exe" if sys.platform == "win32" else "")))
+        artifacts.append(BUILD_DIR / (case.name + "_shim.o"))
+        ok, msg = run_abi_case(case, args.verbose)
+        if ok:
+            passed.append(case.name)
+            print(f"PASS {case.name} (c abi)")
+        else:
+            failed.append(case.name)
+            print(f"FAIL {case.name} (c abi)")
+            print(msg)
+
     print()
     print(f"passed {len(passed)} / {total}")
     print(f"  ({len(cases)} run cases, {len(err_cases)} must-fail cases, "
-          f"{len(check_cases)} check cases, {len(ir_cases)} ir cases)")
+          f"{len(check_cases)} check cases, {len(ir_cases)} ir cases, "
+          f"{len(abi_cases)} c abi cases)")
     if failed:
         print("failed cases: " + ", ".join(failed))
         code = 1

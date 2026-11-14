@@ -53,6 +53,7 @@ add_executable(muc
   src/ast_subst.cpp
   src/types.cpp
   src/mangle.cpp
+  src/abi.cpp
   src/sema.cpp
   src/sema_decl.cpp
   src/sema_types.cpp
@@ -63,6 +64,7 @@ add_executable(muc
   src/sema_expr.cpp
   src/sema_call.cpp
   src/codegen_llvm.cpp
+  src/codegen_abi.cpp
   src/codegen_support.cpp
   src/codegen_runtime.cpp
   src/codegen_eh.cpp

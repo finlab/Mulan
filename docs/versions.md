@@ -10,6 +10,43 @@
 
 ## Releases
 
+### 0.0.121 — 2026-11-14
+
+**C ABI for aggregates: `extern` and `export` follow the platform convention (B2).**
+
+- **Why**: an `extern` C function taking a 16-byte struct by value crashed — Mu passed it in
+  RCX/RDX while C expects RCX to be *a pointer to a caller-made copy*. `export` had the same problem
+  from the other side, so an exported symbol was not callable from C at all.
+- **Rule**: `extern` **and** `export` use the C ABI; every other (internal) call keeps the backend's
+  own convention, which is faster and unaffected. A symbol has one convention, so the Mu-side call
+  sites of an `export`ed function use the C ABI too (documented: do not `export` hot helpers).
+- **Classifier** (`src/abi.cpp`): Win64 — a 1/2/4/8-byte aggregate is passed and returned *as an
+  integer of the same size* (measured against gcc: `{float,float}`, `{double}` and `{int,int}` all
+  go in integer registers, never XMM), everything else by reference (`byval`) with the result
+  through a hidden pointer (`sret`); over-aligned aggregates always by reference. SysV keeps the
+  16-byte register rule (per-eightbyte SSE classification is still open).
+- **One signature builder** (`src/codegen_abi.cpp`): `cAbiSig`/`cAbiCallee` are used by the
+  declaration *and* every call site, with `byval(%T) align N` / `sret(%T) noalias align N`
+  attributes; the call site carries the same attributes because LLVM only lowers an aggregate per the
+  C ABI when the *call* says so.
+- **Packed eightbytes**: LLVM hands each aggregate field its own register (`{i32,i32}` came back in
+  RAX *and* RDX, while C packs both halves into RAX), so such values are reinterpreted through a
+  stack slot as an `i32`/`i64` (`CoerceInt`). The callee unpacks, the caller repacks.
+- **`export` signature rules**: exported free functions now obey the same restrictions as `extern`
+  (no class/interface handle, `delegate`, `T[]`, sum type — also when nested in a struct or array —
+  and no `ref` parameter), because a DLL consumer is C.
+- **Function values**: a `c_abi` function whose aggregates travel differently cannot be taken as a
+  function value (a value carries only the Mu signature) — reported instead of miscompiled.
+- **`muc build --link <obj>`** (repeatable): extra object files for the link step, so a program can be
+  built against C objects compiled by the same driver.
+- Tests: `tests/abi/{abi_agg,abi_mix,abi_float}` (a C shim compiled by gcc is linked in and calls
+  back into the exported functions: 16/24/8/4/3-byte and packed structs, unions, array fields, nested
+  structs, float-only and mixed aggregates, sret + byval + scalars in one call), `tests/ir/abi_surface`
+  (the exported symbol shapes), must-fail `export_slice`, `export_class_param`, `export_ref_param`,
+  `extern_array_return` (C has no array results).
+
+**Tests**: 540/540 (165 pass + 348 must-fail + 20 check + 4 ir + 3 c abi)
+
 ### 0.0.120 — 2026-11-14
 
 **Sum types never cross into C; `para`/`thread` treat them as ordinary values (U42 S5).**

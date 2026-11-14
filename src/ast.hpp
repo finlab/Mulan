@@ -666,6 +666,9 @@ struct FuncDecl : Decl {
     bool this_capture_ref = false;
     std::string cname;
     bool is_entry = false;    // the entry unit's `main`: renamed to `mu_main` and called by the generated wrapper
+    // The symbol crosses the C boundary in at least one direction (`extern` imports one, `export`
+    // publishes one for DLL consumers), so it uses the C ABI instead of the backend's own convention.
+    bool c_abi = false;
     FuncDecl* sym = nullptr;  // self
 };
 

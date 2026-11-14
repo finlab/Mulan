@@ -51,6 +51,23 @@ namespace muc_detail {
         return false;
     }
 
+    // A delegate owns a reference-counted environment: C can neither copy nor destroy it, so a
+    // nested delegate has the same problem as a nested class handle (SPEC 7).
+    bool Sema::contains_delegate_type(const TypePtr& t) {
+        if (!t) return false;
+        if (t->kind == TypeKind::Delegate) return true;
+        if (t->kind == TypeKind::Array || t->kind == TypeKind::Slice) {
+            return contains_delegate_type(t->elem);
+        }
+        if (t->kind == TypeKind::Struct) {
+            for (const auto& f : t->fields) {
+                if (f.weak) continue;
+                if (contains_delegate_type(f.type)) return true;
+            }
+        }
+        return false;
+    }
+
     bool Sema::is_zeroable(const TypePtr& t) {
         if (!t) return false;
         return t->kind == TypeKind::Struct || t->kind == TypeKind::Array ||

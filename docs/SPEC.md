@@ -1800,6 +1800,28 @@ extern int puts(const char* s);
 ```
 
   Uses the C ABI; `const` does not affect the ABI.
+- **The C ABI applies to `extern` and `export`, and to nothing else** (0.0.121). A purely internal call keeps
+  the backend's own convention (aggregates in registers, no copy), which is faster; the C ABI is paid for
+  only on the boundary. Because a symbol has exactly one convention, the **Mu-side call sites of an `export`ed
+  function also use the C ABI** — so do not mark hot internal helpers `export`.
+- **Aggregates by value** (struct/union parameters and results) follow the platform rule, not the backend's:
+
+  | Target | 1/2/4/8-byte aggregate | other aggregates |
+  |---|---|---|
+  | Windows x64 (MS ABI) | passed and returned **as an integer of the same size** (never XMM, even for `{float, float}` or `{double}`) | parameter: **pointer to a caller-made copy** the callee may modify; result: **hidden pointer** (first argument) |
+  | SysV x64 (Linux/macOS) | ≤ 16 bytes: registers | > 16 bytes: memory + hidden result pointer |
+
+  Consequences that are easy to get wrong: a 16-byte struct is *not* two registers; a 24-byte struct is not
+  three; a `{int, int}` result is one 64-bit value in `RAX`, not `RAX`+`RDX`; and a struct parameter is a
+  **private copy** (writing to it does not reach the caller). Over-aligned aggregates always travel by
+  reference. SysV's per-eightbyte SSE classification is not implemented yet (the target machine is fixed to
+  Windows; recorded in `agents/design-backlog.md`).
+- Which types may cross is checked: a class/interface (reference counted), a `delegate` (owns an environment),
+  a dynamic array `T[]` (RC header), or a sum type (`{tag, union}` is an implementation detail) is a compile
+  error in an `extern`/`export` signature, including when nested in an array element or a struct field.
+  `ref T` parameters are refused too (a language borrow; write `T*`).
+- A `c_abi` function whose aggregates travel differently cannot be used as a **function value** (a function
+  value carries only the Mu signature): call it directly.
 - `main`:
   - `int main()` or `int main(int argc, char** argv)` (**implemented**); the return value becomes the process exit code; reaching the end is equivalent to `return 0;`.
   - The parameterized form is passed in by the C startup code: `argc` is the argument count (`argv[0]` is the program name, so it is always ≥ 1), `argv` is `char**`
@@ -1984,6 +2006,9 @@ unit example;
     class descriptor, vtable and RC destroy entry). Whether an export surface is emitted depends on the
     target and on `--exports=export|public` (default `export` = only `export` declarations;
     `public` = every `public` declaration).
+    Since 0.0.121 an `export`ed **free function** is a DLL entry point and therefore uses the **C ABI**
+    (7.2): its Mu-side call sites use the C ABI too, and its signature obeys the same restrictions as
+    `extern`. Exported *class members* keep the Mu convention — a class handle cannot cross into C anyway.
   - Backend: non-`public` top-level symbols use `internal` linkage (`public` / `extern` / `main` keep external linkage).
   - **Visibility is a compile-time API contract, not a security boundary** (`void*`/`as` can bypass it).
   - `public` does not promise that the symbol appears in the final binary: an **executable** build
@@ -1991,6 +2016,9 @@ unit example;
     can be removed. Library targets keep their exported surface visible (see `agents/toolchain-plan.md` §11).
 - No preprocessor; module-level constants use top-level `const`.
 - `extern` is used for C functions/global variables; C ABI; struct layout is compatible with C. `extern` functions cannot be overloaded.
+- Building against C objects: `muc build <entry.mu> --link <obj> [--link <obj> …]` hands extra object files to
+  the link step (compile them with the same `--cc` driver); `tests/abi/` uses this to check the C ABI of
+  aggregates against a real C compiler in both directions.
 - Class objects cannot be passed to C: the C side does not participate in reference counting; when crossing languages use a struct + `alloc`.
 - A string literal is a NUL-terminated `const char*` and can be passed to C directly.
 - Symbol mangling/naming conflict rules are pending.

@@ -52,7 +52,14 @@ namespace muc_detail {
     }
 
     void Emitter::emitReturnDummy() {
-        if (!curRetTy || is_void(curRetTy)) {
+        if (curSretSlot) {
+            // `sret`: the function returns void, so the caller's slot keeps a defined value only if
+            // we write one; zero it instead of leaving whatever was in the buffer.
+            b.CreateStore(Constant::getNullValue(lt(curRetTy)), curSretSlot);
+            b.CreateRetVoid();
+        } else if (curCoerceRet) {
+            b.CreateRet(Constant::getNullValue(curCoerceRet));
+        } else if (!curRetTy || is_void(curRetTy)) {
             b.CreateRetVoid();
         } else {
             b.CreateRet(Constant::getNullValue(lt(curRetTy)));

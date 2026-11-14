@@ -881,6 +881,11 @@ namespace muc_detail {
             if (noncopyable_struct(referent_of(f->rty))) {
                 err("struct `" + referent_of(f->rty)->str() + "` has a destructor and cannot be returned by value (use a pointer)", f);
             }
+            // `extern` imports a C symbol and `export` publishes one for DLL consumers, so both sides
+            // of the boundary must obey the C ABI; a purely internal function keeps the faster one.
+            const bool c_abi = f->is_extern || f->is_export;
+            const std::string ckw = f->is_extern ? "`extern`" : "`export`";
+            f->c_abi = c_abi;
             f->pty.clear();
             f->pty_ref.clear();
             f->pty_cref.clear();
@@ -894,8 +899,8 @@ namespace muc_detail {
                         p.get());
                 }
                 if (p->by_ref) {
-                    if (f->is_extern) {
-                        err("`extern` functions cannot take `ref` parameters (`&` borrows are a language mechanism)", p.get());
+                    if (c_abi) {
+                        err(ckw + " functions cannot take `ref` parameters (`&` borrows are a language mechanism; write a pointer)", p.get());
                     }
                     if (!borrowable_type(pt)) {
                         if (pt->kind == TypeKind::Struct && pt->is_union) {
@@ -913,29 +918,35 @@ namespace muc_detail {
                 f->pty_ref.push_back(p->by_ref);
                 f->pty_cref.push_back(p->by_ref && p->is_const);
             }
-            if (f->is_extern) {
+            if (c_abi) {
+                // C has no array results: a C header returns a pointer (or fills a struct).
+                if (f->rty && f->rty->kind == TypeKind::Array) {
+                    err(ckw + " function `" + f->name + "` cannot return a fixed-size array `" +
+                            f->rty->str() + "`: C has no array result (return a pointer or wrap it in a struct)",
+                        f);
+                }
                 // A delegate owns an environment: C has no such ABI (and no way to release it).
-                if (f->rty && f->rty->kind == TypeKind::Delegate) {
-                    err("`extern` function `" + f->name +
+                if (contains_delegate_type(f->rty)) {
+                    err(ckw + " function `" + f->name +
                             "` cannot return a `delegate` (the environment is reference counted; pass "
                             "`.code`/`.env` explicitly as `void*`)",
                         f);
                 }
                 for (auto& pt : f->pty) {
-                    if (pt && pt->kind == TypeKind::Delegate) {
-                        err("`extern` function `" + f->name +
+                    if (contains_delegate_type(pt)) {
+                        err(ckw + " function `" + f->name +
                                 "` cannot take a `delegate` parameter (pass `.code`/`.env` explicitly as "
                                 "`void*`)",
                             f);
                     }
                 }
                 if (contains_reference_type(f->rty)) {
-                    err("`extern` function `" + f->name + "` cannot return a class or interface (C code does not participate in reference counting)",
+                    err(ckw + " function `" + f->name + "` cannot return a class or interface (C code does not participate in reference counting)",
                         f);
                 }
                 for (auto& pt : f->pty) {
                     if (contains_reference_type(pt)) {
-                        err("parameter of `extern` function `" + f->name + "` cannot be a class or interface", f);
+                        err("parameter of " + ckw + " function `" + f->name + "` cannot be a class or interface", f);
                     }
                 }
                 if (contains_slice_type(f->rty) || [&] {
@@ -943,7 +954,7 @@ namespace muc_detail {
                             if (contains_slice_type(pt)) return true;
                         return false;
                     }()) {
-                    err("`extern` function `" + f->name +
+                    err(ckw + " function `" + f->name +
                             "` cannot use dynamic arrays `T[]` (they carry an RC header and are not C layout)",
                         f);
                 }
@@ -954,17 +965,20 @@ namespace muc_detail {
                             if (contains_sum_type(pt)) return true;
                         return false;
                     }()) {
-                    err("`extern` function `" + f->name +
+                    err(ckw + " function `" + f->name +
                             "` cannot use a sum type: its tag+payload layout is an implementation detail, "
                             "not a public interface (pass a plain `struct { tag; union }` and convert)",
                         f);
                 }
-                f->cname = f->name;
-            } else if (f->name == "main" && u->name == entry_) {
-                f->cname = "mu_main";
-                f->is_entry = true;
-            } else {
-                f->cname = func_cname(u->name, f);
+                if (f->is_extern) f->cname = f->name;  // the C symbol itself
+            }
+            if (!f->is_extern) {
+                if (f->name == "main" && u->name == entry_) {
+                    f->cname = "mu_main";
+                    f->is_entry = true;
+                } else {
+                    f->cname = func_cname(u->name, f);
+                }
             }
         }
     }

@@ -9,6 +9,7 @@
 
 #include "codegen_llvm.hpp"
 
+#include "abi.hpp"
 #include "common.hpp"
 #include "mangle.hpp"
 #include "may_throw.hpp"
@@ -62,6 +63,7 @@ using llvm::DILocation;
 using llvm::DINode;
 using llvm::DISourceLanguageName;
 using llvm::DISubprogram;
+using llvm::CallInst;
 using llvm::Constant;
 using llvm::ConstantAggregateZero;
 using llvm::ConstantArray;
@@ -210,6 +212,39 @@ struct Emitter {
     std::vector<size_t> loopScopeDepth;
     // owned struct/array temporaries materialized by taking their address inside a statement, released together at the end of the statement
     std::vector<std::pair<Value*, TypePtr>> stmtTemps;
+
+    // ------------------------------------------------------------ C ABI (extern / export)
+    // Set once from the target machine; only the OS part matters to the classifier.
+    std::string targetTriple;
+    // Inside an `sret` function: the hidden result pointer; `return e` stores through it.
+    Value* curSretSlot = nullptr;
+    // Inside a `Coerce*`-return function: the register type the result travels as.
+    LType* curCoerceRet = nullptr;
+    // The shape a Mu signature takes at the C boundary. An aggregate the C ABI passes by reference
+    // (`byval`) or returns through a hidden pointer (`sret`) is spelled as a pointer here. The
+    // declaration and every call site must be built from this one helper, or the two sides disagree
+    // about where the bits are.
+    struct CAbiSig {
+        LType* ret = nullptr;
+        std::vector<LType*> params;
+        std::vector<AbiPass> pass;  // per logical parameter (a `ref` parameter is a plain pointer)
+        bool sret = false;
+        TypePtr sret_ty;
+    };
+    CAbiSig cAbiSig(const std::vector<TypePtr>& ptys, const std::vector<bool>& refs,
+                    const TypePtr& rty);
+    // The LLVM type an aggregate travels as when C packs it into a register (null for Direct).
+    LType* coercedType(AbiPass pass, const TypePtr& t);
+    // Reinterpret the bits between the aggregate and that register type (both go through a stack
+    // slot of the aggregate's size, which is exactly what the ABI does).
+    Value* coerceToReg(Value* v, const TypePtr& t, LType* reg);
+    Value* coerceFromReg(Value* v, const TypePtr& t);
+    // Declaration (and callee) for a `c_abi` function, with `byval`/`sret`/`align` attributes applied.
+    FunctionCallee cAbiCallee(FuncDecl* f);
+    // Same attributes on a call site: LLVM only lowers a first-class aggregate as C expects when the
+    // attributes are present on the call too.
+    void applyCAbiCallAttrs(CallInst* ci, const CAbiSig& sig, const std::vector<TypePtr>& ptys,
+                            const std::vector<bool>& refs, const TypePtr& rty);
 
     // ------------------------------------------------------------ exceptions (B2: TLS pending slot + call-site checks)
     struct EHContext {
@@ -571,6 +606,8 @@ struct Emitter {
     // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
     void emitSwitch(SwitchStmt* s);
     Value* evalIs(IsExpr* e);
+    // A `c_abi` function whose aggregates travel byval/sret/packed cannot be a function value.
+    void checkFnValueAbi(FuncDecl* f, Node* at);
 
     // ------------------------------------------------------------ interface table
 
