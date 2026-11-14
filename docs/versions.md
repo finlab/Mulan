@@ -10,6 +10,27 @@
 
 ## Releases
 
+### 0.0.113 — 2026-11-14
+
+**Closure optimisation step (U41 D5): an immediately-invoked lambda keeps its environment on the stack.**
+
+- `([x] (int a) => a + x)(3)` no longer allocates: the environment is a stack object (header + zeroed
+  fields), the captures are stored into it, the call passes its address as `env`, and the generated
+  destructor runs right after the call to release the captured RC fields — so no allocation, no
+  reference count traffic, and no leak. The capture-store loop is shared with the escaping path
+  (`Emitter::emitCaptureInit`).
+- **Fixed along the way**: a capture list could name a variable of an *outer function* (skipping the
+  enclosing lambda). The name resolved, but codegen read a freshly allocated slot in the inner lambda,
+  i.e. zero — `[x, y] () => ([y] …)()` silently lost `y`. A capture must now name a variable of the
+  immediately enclosing function; deeper ones have to be captured by that lambda first.
+- Still deferred (documented in U41 D5): stack allocation for a *stored* delegate whose only uses are
+  calls (needs a scope-exit mechanism that destroys the stack environment's fields without freeing),
+  and single-field environment specialisation.
+- Tests: `delegate_inline` (scalar, RC string, class reference released after the call, two captures,
+  nested immediate invocation), must-fail `delegate_capture_outer_fn`.
+
+**Tests**: 520/520 (159 pass + 338 must-fail + 20 check + 3 ir)
+
 ### 0.0.112 — 2026-11-14
 
 **Closure finishing touches (U41 D4): per-iteration captures, `delegate == null`, `para` boundaries.**

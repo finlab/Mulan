@@ -301,6 +301,39 @@ static bool is_numeric(const TypePtr& t) {
         return thunk;
     }
 
+    // Store a lambda's captures into its environment object (U41). Shared by the heap path (a delegate
+    // value) and the stack path (an immediately-invoked lambda, where the environment never escapes).
+    void Emitter::emitCaptureInit(const Lambda* lm, Value* env) {
+        FuncDecl* f = lm->synth;
+        for (size_t i = 0; i < lm->env_src.size(); ++i) {
+            const LocalVar* src = lm->env_src[i];
+            Value* dst = fieldAddr(env, lm->env_ty, static_cast<int>(i));
+            if (!src) {
+                // `[this]`: the receiver of the enclosing method. `load(thisSlot)` is the class handle
+                // for a class method and the object address for a struct method.
+                Value* objp = b.CreateLoad(ptrTy(), thisSlot);
+                if (lm->env_src_ref[i]) {
+                    b.CreateStore(objp, dst);  // `[ref this]` on a struct: writes reach the object
+                } else if (f->this_capture_ty && f->this_capture_ty->kind == TypeKind::Struct) {
+                    b.CreateStore(b.CreateLoad(lt(f->this_capture_ty), objp), dst);
+                    if (needsCleanup(f->this_capture_ty)) emitRetainValue(dst, f->this_capture_ty);
+                } else {
+                    b.CreateStore(objp, dst);  // the handle; the environment keeps the object alive
+                    emitRetain(objp);
+                }
+                continue;
+            }
+            Value* sslot = slotFor(src);
+            if (lm->env_src_ref[i]) {
+                Value* addr = src->by_ref ? b.CreateLoad(ptrTy(), sslot) : sslot;
+                b.CreateStore(addr, dst);
+            } else {
+                b.CreateStore(loadAt(lt(src->rty), sslot, false), dst);
+                if (needsCleanup(src->rty)) emitRetainValue(dst, src->rty);
+            }
+        }
+    }
+
     Value* Emitter::compareOp(const std::string& op, Value* l, Value* r, bool is_signed, bool is_float) {
         if (is_float) {
             if (op == "==") return b.CreateFCmpOEQ(l, r);

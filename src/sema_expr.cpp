@@ -363,6 +363,22 @@ namespace muc_detail {
                 }
                 LocalVar* lv = lookup_local(cap.name);
                 if (!lv) err("`" + cap.name + "` is not a local variable, so it cannot be captured", e);
+                // A capture may only name a variable of the *immediately* enclosing function: a variable
+                // belonging to an outer function would not survive (or would silently read a fresh
+                // slot), so it must be captured by the enclosing lambda first.
+                if (!lambda_stack_.empty()) {
+                    const std::size_t base = lambda_stack_.back().scope_base;
+                    std::size_t owner = scopes_.size();
+                    for (std::size_t i = 0; i < scopes_.size(); ++i) {
+                        auto it = scopes_[i].find(cap.name);
+                        if (it != scopes_[i].end() && it->second == lv) { owner = i; break; }
+                    }
+                    if (owner < base) {
+                        err("`" + cap.name + "` belongs to an outer function: capture it in the enclosing "
+                                "lambda first (`[" + cap.name + "]` there), then capture the copy here",
+                            e);
+                    }
+                }
                 for (auto* prev : cap_src) {
                     if (prev == lv) err("`" + cap.name + "` is captured more than once", e);
                 }

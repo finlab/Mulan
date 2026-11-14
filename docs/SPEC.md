@@ -1130,6 +1130,11 @@ type Op = delegate (int, int) => int;
   - **`para` regions** (3.17.2): a section may **call** a delegate captured by value before the
     region, but `[ref …]` and `[this]` inside a section are rejected — a section must not write
     enclosing locals.
+  - **Immediately-invoked lambdas allocate nothing** (0.0.113): `([x] (…) => …)(args)` keeps its
+    environment on the stack and destroys the captured RC fields right after the call.
+  - A capture may only name a variable of the **immediately enclosing function**; a deeper one must be
+    captured by the enclosing lambda first (`[y]` there, then `[y]` here), otherwise the inner lambda
+    would silently read a fresh slot.
   - Statically rejected: capturing the same name twice, capturing a name that is not a local,
     `[ref ...]` of a reference-containing type, by-value capture of a struct with a destructor, and
     **returning a `[ref ...]` lambda** of frame-owned storage (the variable always dies with the

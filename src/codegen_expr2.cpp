@@ -421,6 +421,41 @@ using ArgPack = Emitter::ArgPack;
             for (auto& a : c->args) rawArgs.push_back(a.get());
             ArgPack pack = prepareArgs(rawArgs, ft->fparams);
             if (ft->kind == TypeKind::Delegate) {
+                // Immediately-invoked capturing lambda: `([x] (…) => …)(args)`. The environment cannot
+                // escape this expression, so it lives on the stack — no allocation, and its RC fields
+                // are destroyed right after the call (U41 D5).
+                if (auto lm = dynamic_cast<Lambda*>(c->callee.get()); lm && lm->env_ty) {
+                    LStruct* objTy = objStruct(lm->env_ty);
+                    Value* obj = entryAlloca(objTy, "env", objectAlign(lm->env_ty));
+                    b.CreateMemSet(obj, ConstantInt::get(i8(), 0),
+                                   ConstantInt::get(i64(), objectSize(lm->env_ty)),
+                                   MaybeAlign(objectAlign(lm->env_ty)));
+                    b.CreateStore(ConstantInt::get(i64(), 1),
+                                  b.CreateGEP(i8(), obj, ConstantInt::get(i64(), 0)));
+                    b.CreateStore(descOf(lm->env_ty),
+                                  b.CreateGEP(i8(), obj, ConstantInt::get(i64(), 8)));
+                    emitCaptureInit(lm, obj);
+                    FuncDecl* sf = lm->synth;
+                    std::vector<LType*> sptys;
+                    for (auto& pt : sf->pty) sptys.push_back(lt(pt));
+                    Value* code = mod->getOrInsertFunction(
+                                         sf->cname, FunctionType::get(lt(sf->rty), sptys, false))
+                                      .getCallee();
+                    std::vector<LType*> ptys{ptrTy()};
+                    for (auto& pt : ft->fparams) ptys.push_back(lt(pt));
+                    std::vector<Value*> vals{obj};
+                    for (auto* v : pack.vals) vals.push_back(v);
+                    Value* r = b.CreateCall(FunctionType::get(lt(ft->fret), ptys, false), code, vals);
+                    releaseTemps(pack);
+                    // destroy the captured RC fields (the object storage itself is stack memory)
+                    b.CreateCall(
+                        mod->getOrInsertFunction(
+                            dtor_cname(lm->env_ty->unit, lm->env_ty->name),
+                            FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false)),
+                        {obj});
+                    emitCheckPending();
+                    return r;
+                }
                 // delegate calling convention: `code(env, args...)`
                 Value* dv = eval(c->callee.get());
                 Value* code = b.CreateExtractValue(dv, {0});
@@ -510,33 +545,7 @@ using ArgPack = Emitter::ArgPack;
             // each captured variable. `[x]` stores a copy and takes its own reference; `[ref x]` stores
             // the address, so writes from the body reach the original variable.
             Value* env = emitClassAlloc(lm->env_ty);
-            for (size_t i = 0; i < lm->env_src.size(); ++i) {
-                const LocalVar* src = lm->env_src[i];
-                Value* dst = fieldAddr(env, lm->env_ty, static_cast<int>(i));
-                if (!src) {
-                    // `[this]`: the receiver of the enclosing method. `load(thisSlot)` is the class
-                    // handle for a class method and the object address for a struct method.
-                    Value* objp = b.CreateLoad(ptrTy(), thisSlot);
-                    if (lm->env_src_ref[i]) {
-                        b.CreateStore(objp, dst);  // `[ref this]` on a struct: writes reach the object
-                    } else if (f->this_capture_ty && f->this_capture_ty->kind == TypeKind::Struct) {
-                        b.CreateStore(b.CreateLoad(lt(f->this_capture_ty), objp), dst);
-                        if (needsCleanup(f->this_capture_ty)) emitRetainValue(dst, f->this_capture_ty);
-                    } else {
-                        b.CreateStore(objp, dst);  // the handle; the environment keeps the object alive
-                        emitRetain(objp);
-                    }
-                    continue;
-                }
-                Value* sslot = slotFor(src);
-                if (lm->env_src_ref[i]) {
-                    Value* addr = src->by_ref ? b.CreateLoad(ptrTy(), sslot) : sslot;
-                    b.CreateStore(addr, dst);
-                } else {
-                    b.CreateStore(loadAt(lt(src->rty), sslot, false), dst);
-                    if (needsCleanup(src->rty)) emitRetainValue(dst, src->rty);
-                }
-            }
+            emitCaptureInit(lm, env);
             Value* dv = UndefValue::get(lt(e->ty));
             dv = b.CreateInsertValue(dv, callee, {0});
             dv = b.CreateInsertValue(dv, env, {1});

@@ -488,6 +488,8 @@ struct Emitter {
     Value* compareOp(const std::string& op, Value* l, Value* r, bool is_signed, bool is_float);
 
     Value* coerce(Expr* e, const TypePtr& to);
+    // Store the captures of a lambda into an environment object (heap or stack).
+    void emitCaptureInit(const Lambda* lm, Value* env);
     // `ret(void* env, params...)` wrapper that calls a plain `fn` value and ignores the env;
     // cached per (function value name, function type).
     Value* emitDelegateThunk(Value* fp, const TypePtr& ft);
