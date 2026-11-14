@@ -164,6 +164,9 @@ namespace muc_detail {
                 } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
                     if (ui.interfaces.count(i->name)) err("duplicate definition of interface `" + i->name + "`", i);
                     ui.interfaces[i->name] = i;
+                } else if (auto sm = dynamic_cast<SumDecl*>(d.get())) {
+                    if (ui.sums.count(sm->name)) err("duplicate definition of sum type `" + sm->name + "`", sm);
+                    ui.sums[sm->name] = sm;
                 } else if (auto a = dynamic_cast<TypeAliasDecl*>(d.get())) {
                     if (ui.aliases.count(a->name)) err("duplicate definition of type alias `" + a->name + "`", a);
                     ui.aliases[a->name] = a;
@@ -189,6 +192,8 @@ namespace muc_detail {
                     nm = c->name;
                 } else if (auto i = dynamic_cast<InterfaceDecl*>(node)) {
                     nm = i->name;
+                } else if (auto sm = dynamic_cast<SumDecl*>(node)) {
+                    nm = sm->name;
                 } else if (auto a = dynamic_cast<TypeAliasDecl*>(node)) {
                     nm = a->name;
                 } else if (auto g = dynamic_cast<GlobalVar*>(node)) {
@@ -313,13 +318,93 @@ namespace muc_detail {
                     c->ty = Type::make_class(u->name, c->name);
                 } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
                     i->ty = Type::make_interface(u->name, i->name);
+                } else if (auto sm = dynamic_cast<SumDecl*>(d.get())) {
+                    // The payload/layout types are filled in by `resolve_sum` (they need the alternatives'
+                    // field types resolved).
+                    sm->ty = Type::make_sum(u->name, sm->name, {}, {}, {}, nullptr);
                 }
             }
         }
     }
 
-    void Sema::resolve_class_fields(ClassDecl* c, Unit* u) {
-        std::vector<Field> fields;
+    // Sum type (SPEC 10.1): resolve the alternatives' payload types and synthesize the layout type
+    // `struct { i32 tag; union { payload... } }`. The sum `Type` was registered in `place_structs`, so it
+    // is filled in place and every earlier reference keeps pointing at the same object.
+    void Sema::resolve_sum(SumDecl* sd, Unit* u) {
+        if (sd->alts.size() < 2) {
+            err("sum type `" + sd->name + "` needs at least two alternatives", sd);
+        }
+        std::vector<std::string> names;
+        std::vector<std::vector<TypePtr>> fields;
+        std::vector<TypePtr> payload;
+        std::unordered_set<std::string> seen;
+        for (auto& alt : sd->alts) {
+            if (!seen.insert(alt.name).second) {
+                err("duplicate alternative `" + alt.name + "` in sum type `" + sd->name + "`", sd);
+            }
+            std::vector<TypePtr> fts;
+            for (auto& fs : alt.fields) {
+                TypePtr ft = resolve_type(fs.get(), u);
+                if (is_void(ft)) err("payload of alternative `" + alt.name + "` cannot be `void`", sd);
+                if (noncopyable_struct(ft)) {
+                    err("payload of alternative `" + alt.name + "` is struct `" + ft->str() +
+                            "`, which has a destructor and cannot be stored by value in a sum (use a "
+                            "pointer or a class)",
+                        sd);
+                }
+                fts.push_back(ft);
+            }
+            TypePtr pt;
+            if (fts.size() == 1) {
+                pt = fts[0];
+            } else if (fts.size() > 1) {
+                // several payload fields: an anonymous struct laid out like a tuple
+                pt = Type::make_struct(u->name, "$alt$" + sd->name + "$" + alt.name);
+                for (size_t i = 0; i < fts.size(); ++i) {
+                    Field f;
+                    f.name = "f" + std::to_string(i);
+                    f.type = fts[i];
+                    pt->fields.push_back(std::move(f));
+                }
+            }
+            names.push_back(alt.name);
+            payload.push_back(pt);
+            fields.push_back(std::move(fts));
+        }
+        // payload area = a union of the alternatives (all at offset 0, like `union`)
+        TypePtr uni = Type::make_struct(u->name, "$payload$" + sd->name);
+        uni->is_union = true;
+        for (size_t i = 0; i < payload.size(); ++i) {
+            if (!payload[i]) continue;
+            Field f;
+            f.name = "a" + std::to_string(i);
+            f.type = payload[i];
+            uni->fields.push_back(std::move(f));
+        }
+        if (uni->fields.empty()) {  // all alternatives are unit values: keep the union non-empty
+            Field f;
+            f.name = "none";
+            f.type = Type::make_prim("byte");
+            uni->fields.push_back(std::move(f));
+        }
+        TypePtr layout = Type::make_struct(u->name, "$sum$" + sd->name);
+        {
+            Field tag;
+            tag.name = "tag";
+            tag.type = Type::make_prim("int");
+            layout->fields.push_back(std::move(tag));
+            Field pay;
+            pay.name = "payload";
+            pay.type = uni;
+            layout->fields.push_back(std::move(pay));
+        }
+        sd->ty->sum_names = std::move(names);
+        sd->ty->sum_fields = std::move(fields);
+        sd->ty->sum_payload = std::move(payload);
+        sd->ty->sum_layout = std::move(layout);
+    }
+
+    void Sema::resolve_class_fields(ClassDecl* c, Unit* u) {        std::vector<Field> fields;
         if (c->ty->base) fields = c->ty->base->fields;
         std::unordered_set<std::string> fnames;
         for (auto& f : fields) fnames.insert(f.name);
@@ -705,6 +790,11 @@ namespace muc_detail {
             for (auto& d : u->decls) {
                 if (auto c = dynamic_cast<ClassDecl*>(d.get())) resolve_fields(c);
             }
+        }
+
+        // sum types: payload + layout (after the struct/class fields they may mention)
+        for (auto& d : u->decls) {
+            if (auto sm = dynamic_cast<SumDecl*>(d.get())) resolve_sum(sm, u);
         }
 
         // interface: base interfaces and method signatures

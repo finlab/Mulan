@@ -12,7 +12,7 @@
 
 // Ref: a borrow (`ref T` / `ref const T`). It appears only in the return type position of a function/method,
 // and in parameter patterns (the parameter side is still recorded with the pty_ref boolean, see FuncDecl). It cannot be used as a variable/field/element type.
-enum class TypeKind { Void, Prim, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref, Func, Delegate };
+enum class TypeKind { Void, Prim, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref, Func, Delegate, Sum };
 
 struct Type;
 using TypePtr = std::shared_ptr<Type>;
@@ -65,6 +65,14 @@ struct Type {
     // Func (`(T1, T2) => R`): a one-word function value (C function pointer compatible)
     std::vector<TypePtr> fparams;
     TypePtr fret;
+    // Sum type (`type Value = Int(int) | Text(string) | None;`): tag + one active payload.
+    // `sum_layout` is the synthesized `struct { i32 tag; union payload }` that owns the real layout, so
+    // `type_size` / `type_align` / `lt` delegate to it; `sum_payload[i]` is alternative i's payload type
+    // (the union member: the field itself, an anonymous struct for several fields, or none).
+    std::vector<std::string> sum_names;
+    std::vector<std::vector<TypePtr>> sum_fields;
+    std::vector<TypePtr> sum_payload;
+    TypePtr sum_layout;
 
     static TypePtr make_void();
     static TypePtr make_prim(const std::string& name);
@@ -82,6 +90,13 @@ struct Type {
     static TypePtr make_func(const std::vector<TypePtr>& params, const TypePtr& ret);
 // `delegate (T1, T2) => R`: a two-word value `{code, env}` whose environment is an RC object (3.16).
 static TypePtr make_delegate(const std::vector<TypePtr>& params, const TypePtr& ret);
+// Sum type: `type Value = Int(int) | Text(string) | None;` (SPEC 10.1). `payload[i]` is the union
+// member type of alternative i (null for a unit alternative); `layout` is the synthesized
+// `struct { i32 tag; union { ... } }` that owns the layout.
+static TypePtr make_sum(const std::string& unit, const std::string& name,
+                        const std::vector<std::string>& names,
+                        const std::vector<std::vector<TypePtr>>& fields,
+                        const std::vector<TypePtr>& payload, const TypePtr& layout);
 
     std::string str() const;
     bool is_integer() const;   // integer or enum

@@ -285,6 +285,35 @@ using ArgPack = Emitter::ArgPack;
                 return nullptr;
             }
         }
+        if (c->callee_kind == "sum_ctor") {
+            const TypePtr& st = c->sum_ty;
+            const int alt = c->sum_alt;
+            const auto& fs = st->sum_fields[static_cast<size_t>(alt)];
+            auto* tmp = entryAlloca(lt(st), "sum", alignOf(st));
+            zeroMem(tmp, st);
+            // tag
+            Value* tagp = fieldAddr(tmp, st->sum_layout, 0);
+            b.CreateStore(ConstantInt::get(i32(), alt), tagp);
+            // payload: the union member for this alternative (all members sit at offset 0)
+            if (!fs.empty()) {
+                // a union's members all start at the union's own address, so the payload slot is `pay`
+                Value* p = fieldAddr(tmp, st->sum_layout, 1);
+                if (fs.size() == 1) {
+                    Value* av = coerce(c->args[0].get(), fs[0]);
+                    b.CreateStore(av, p);
+                    if (fs[0]->needs_cleanup()) emitRetainValue(p, fs[0]);
+                } else {
+                    TypePtr pt = st->sum_payload[static_cast<size_t>(alt)];
+                    for (size_t k = 0; k < fs.size(); ++k) {
+                        Value* fp = fieldAddr(p, pt, static_cast<int>(k));
+                        Value* av = coerce(c->args[k].get(), fs[k]);
+                        b.CreateStore(av, fp);
+                        if (fs[k]->needs_cleanup()) emitRetainValue(fp, fs[k]);
+                    }
+                }
+            }
+            return b.CreateLoad(lt(st), tmp);
+        }
         if (c->callee_kind == "ctor") {
             LStruct* st = cast<LStruct>(lt(c->ctor));
             if (c->field_order.empty() && c->args.empty() && c->named.empty())
@@ -594,6 +623,15 @@ using ArgPack = Emitter::ArgPack;
             return loadAt(lt(e->ty), addrOf(e), unalignedExpr(e));
         }
         if (auto m = dynamic_cast<Member*>(e)) {
+            if (m->kind == "sum_unit") {
+                // `Value.None`: tag = the alternative, payload zeroed
+                const TypePtr& st = m->sum_ty;
+                auto* tmp = entryAlloca(lt(st), "sum", alignOf(st));
+                zeroMem(tmp, st);
+                b.CreateStore(ConstantInt::get(i32(), m->sum_alt),
+                              fieldAddr(tmp, st->sum_layout, 0));
+                return b.CreateLoad(lt(st), tmp);
+            }
             if (m->kind == "enum_const") {
                 auto* ec = std::get_if<EnumConst*>(&m->sym);
                 if (!ec) fail("LLVM backend: missing enum constant", e->line, e->col);

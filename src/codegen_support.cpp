@@ -309,6 +309,10 @@ bool is_zero_literal(Init* init) {
             case TypeKind::Struct: return structOf(t);
             case TypeKind::Interface: return ifaceTy ? ifaceTy : ptrTy();
             case TypeKind::Delegate: return delegateTy ? delegateTy : structOf(t);
+            case TypeKind::Sum:
+                // the synthesized `{ i32 tag; union payload }` owns the layout
+                if (t->sum_layout) return lt(t->sum_layout);
+                return ptrTy();
             case TypeKind::Enum: return i32();
             default: return ptrTy();
         }

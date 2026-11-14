@@ -354,6 +354,37 @@ namespace muc_detail {
             emitReleaseRef(loadAt(lt(ty), addr, unaligned), ty);
             return;
         }
+        if (ty->kind == TypeKind::Sum) {
+            // release the active alternative's payload: dispatch on the tag
+            const TypePtr& st = ty;
+            Value* tag = loadAt(i32(), fieldAddr(addr, st->sum_layout, 0), unaligned);
+            Value* pay = fieldAddr(addr, st->sum_layout, 1);
+            BasicBlock* done = BasicBlock::Create(ctx, "sum.rel.end", curFn);
+            BasicBlock* cur = b.GetInsertBlock();
+            auto* sw = b.CreateSwitch(tag, done, static_cast<unsigned>(st->sum_fields.size()));
+            for (size_t i = 0; i < st->sum_fields.size(); ++i) {
+                const auto& fs = st->sum_fields[i];
+                if (fs.empty()) continue;
+                bool any = false;
+                for (auto& f : fs) any = any || f->needs_cleanup();
+                if (!any) continue;
+                BasicBlock* bb = BasicBlock::Create(ctx, "sum.rel", curFn);
+                sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), static_cast<int>(i))), bb);
+                b.SetInsertPoint(bb);
+                if (fs.size() == 1) {
+                    emitReleaseValue(pay, fs[0], unaligned);
+                } else {
+                    TypePtr pt = st->sum_payload[i];
+                    for (size_t k = 0; k < fs.size(); ++k) {
+                        emitReleaseValue(fieldAddr(pay, pt, static_cast<int>(k)), fs[k], unaligned);
+                    }
+                }
+                b.CreateBr(done);
+            }
+            b.SetInsertPoint(done);
+            (void)cur;
+            return;
+        }
         if (ty->kind == TypeKind::Struct) {
             if (ty->has_dtor) {
                 FunctionCallee dtor = mod->getOrInsertFunction(
@@ -394,6 +425,34 @@ namespace muc_detail {
         }
         if (ty->kind == TypeKind::Delegate) {
             emitRetainRef(loadAt(lt(ty), addr, unaligned), ty);
+            return;
+        }
+        if (ty->kind == TypeKind::Sum) {
+            const TypePtr& st = ty;
+            Value* tag = loadAt(i32(), fieldAddr(addr, st->sum_layout, 0), unaligned);
+            Value* pay = fieldAddr(addr, st->sum_layout, 1);
+            BasicBlock* done = BasicBlock::Create(ctx, "sum.ret.end", curFn);
+            auto* sw = b.CreateSwitch(tag, done, static_cast<unsigned>(st->sum_fields.size()));
+            for (size_t i = 0; i < st->sum_fields.size(); ++i) {
+                const auto& fs = st->sum_fields[i];
+                if (fs.empty()) continue;
+                bool any = false;
+                for (auto& f : fs) any = any || f->needs_cleanup();
+                if (!any) continue;
+                BasicBlock* bb = BasicBlock::Create(ctx, "sum.ret", curFn);
+                sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), static_cast<int>(i))), bb);
+                b.SetInsertPoint(bb);
+                if (fs.size() == 1) {
+                    emitRetainValue(pay, fs[0], unaligned);
+                } else {
+                    TypePtr pt = st->sum_payload[i];
+                    for (size_t k = 0; k < fs.size(); ++k) {
+                        emitRetainValue(fieldAddr(pay, pt, static_cast<int>(k)), fs[k], unaligned);
+                    }
+                }
+                b.CreateBr(done);
+            }
+            b.SetInsertPoint(done);
             return;
         }
         if (ty->kind == TypeKind::Struct) {

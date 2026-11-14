@@ -125,12 +125,74 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                              layout_tok);
             }
             advance();  // type
-            auto d = std::make_unique<TypeAliasDecl>();
             const Token name_tok = expect_ident("type alias name");
+            expect_op("=");
+            // `type X = A | B(T) | C;` declares a **sum type** (SPEC 10.1); everything else stays a
+            // transparent alias.
+            bool is_sum = false;
+            {
+                const std::size_t save = pos_;
+                if (peek().kind == TokKind::Ident) {
+                    advance();
+                    if (at_op("(")) {  // skip the payload list
+                        int depth = 0;
+                        while (pos_ < toks_.size()) {
+                            if (toks_[pos_].kind == TokKind::Op && toks_[pos_].text == "(") depth++;
+                            if (toks_[pos_].kind == TokKind::Op && toks_[pos_].text == ")") {
+                                depth--;
+                                if (depth == 0) { advance(); break; }
+                            }
+                            if (toks_[pos_].is_op(";")) break;
+                            advance();
+                        }
+                    }
+                    is_sum = at_op("|");
+                }
+                pos_ = save;
+            }
+            if (is_sum) {
+                auto sd = std::make_unique<SumDecl>();
+                sd->name = name_tok.text;
+                sd->line = name_tok.line;
+                sd->col = name_tok.col;
+                for (;;) {
+                    SumAlt alt;
+                    const Token at = expect_ident("alternative name");
+                    alt.name = at.text;
+                    alt.line = at.line;
+                    alt.col = at.col;
+                    if (at_op("(")) {
+                        advance();
+                        if (!at_op(")")) {
+                            for (;;) {
+                                alt.fields.push_back(parse_type());
+                                if (at_op(",")) {
+                                    advance();
+                                    continue;
+                                }
+                                break;
+                            }
+                        }
+                        expect_op(")");
+                    }
+                    sd->alts.push_back(std::move(alt));
+                    if (at_op("|")) {
+                        advance();
+                        continue;
+                    }
+                    break;
+                }
+                semicolon();
+                sd->is_public = is_pub;
+                sd->is_export = is_export;
+                type_names_.insert(sd->name);
+                unit->decls.push_back(std::move(sd));
+                continue;
+            }
+            auto d = std::make_unique<TypeAliasDecl>();
             d->name = name_tok.text;
             d->line = name_tok.line;
             d->col = name_tok.col;
-            expect_op("=");
             d->spec = parse_type();
             if (at_op(",")) {
                 throw err_at("`type` declares exactly one alias; write a separate `type` declaration for each", name_tok);

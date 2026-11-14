@@ -172,6 +172,21 @@ TypePtr Type::make_delegate(const std::vector<TypePtr>& params, const TypePtr& r
     return t;
 }
 
+TypePtr Type::make_sum(const std::string& unit, const std::string& name,
+                       const std::vector<std::string>& names,
+                       const std::vector<std::vector<TypePtr>>& fields,
+                       const std::vector<TypePtr>& payload, const TypePtr& layout) {
+    auto t = std::make_shared<Type>();
+    t->kind = TypeKind::Sum;
+    t->unit = unit;
+    t->name = name;
+    t->sum_names = names;
+    t->sum_fields = fields;
+    t->sum_payload = payload;
+    t->sum_layout = layout;
+    return t;
+}
+
 // ---------------------------------------------------------------- Textual form
 
 std::string Type::str() const {
@@ -213,6 +228,7 @@ std::string Type::str() const {
         case TypeKind::Enum:
         case TypeKind::Class:
         case TypeKind::Interface:
+        case TypeKind::Sum:
             return unit.empty() ? name : unit + "." + name;
         case TypeKind::Module:
             return unit;
@@ -277,6 +293,14 @@ bool Type::needs_cleanup() const {
             return elem && elem->needs_cleanup();
         case TypeKind::Slice: return true;  // dynamic array: the handle holds an RC
         case TypeKind::Delegate: return true;  // the environment is an RC object
+        case TypeKind::Sum:
+            // a sum owns its active payload: cleanup is needed when any alternative needs it
+            for (const auto& f : sum_fields) {
+                for (const auto& ft : f) {
+                    if (ft && ft->needs_cleanup()) return true;
+                }
+            }
+            return false;
         default: return false;
     }
 }
@@ -320,6 +344,9 @@ size_t align_impl(const TypePtr& t, int depth) {
         case TypeKind::Ptr:
         case TypeKind::Slice: return 8;
         case TypeKind::Enum: return 4;
+        case TypeKind::Sum:
+            // tag + payload: the synthesized layout type owns the real rules
+            return t->sum_layout ? align_impl(t->sum_layout, depth + 1) : 8;
         case TypeKind::Array: return align_impl(t->elem, depth + 1);
         case TypeKind::Struct: {
             if (t->is_packed) return t->align_req > 0 ? static_cast<size_t>(t->align_req) : 1;
@@ -348,6 +375,8 @@ size_t size_impl(const TypePtr& t, int depth) {
         case TypeKind::Slice: return 8;
         case TypeKind::Interface: return 16;
         case TypeKind::Delegate: return 16;   // {code, env}
+        case TypeKind::Sum:
+            return t->sum_layout ? size_impl(t->sum_layout, depth + 1) : 0;
         case TypeKind::Enum: return 4;
         case TypeKind::Array: return size_impl(t->elem, depth + 1) * t->array_size;
         case TypeKind::Struct: {
@@ -480,7 +509,8 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
         case TypeKind::Enum:
         case TypeKind::Class:
         case TypeKind::Interface:
-            // struct/enum/class/interface are compared by (unit, name)
+        case TypeKind::Sum:
+            // struct/enum/class/interface/sum are compared by (unit, name)
             return a->unit == b->unit && a->name == b->name;
         case TypeKind::Module:
             return a->unit == b->unit;

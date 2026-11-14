@@ -10,6 +10,32 @@
 
 ## Releases
 
+### 0.0.115 — 2026-11-14
+
+**Sum types, stage 1 (SPEC 10.1.1): declaration, layout, construction, value semantics.**
+
+- **Declaration**: `type Value = Int(int) | Pair(int, int) | Text(const char*) | None;` — a `type`
+  declaration whose right-hand side is two or more `|`-separated alternatives. Every other
+  `type X = ...` stays a transparent alias, so nothing existing changes. `|` is the same operator
+  the constraint syntax uses (`T: int | long`), so a sum's alternatives are literally the value set.
+- **Layout**: the payload? The sum is `{ i32 tag; union payload }`: the payload area behaves like a
+  `union` (all alternatives at the same offset, size = the largest, alignment = the largest), so
+  `sizeof` is `align_up(8 + payload, align)`. A multi-field alternative gets an anonymous struct
+  payload with fields `f0..fN`; an all-unit sum keeps a one-byte payload so the union stays non-empty.
+- **Construction**: `Value.Int(3)` (payload alternative) and `Value.None` (unit alternative); the
+  argument count and types are checked against the declaration, unknown/duplicate alternatives are
+  errors, and a payload that is `void` or a struct with a user destructor is rejected.
+- **Value semantics**: assignment/copy copies; the active payload is retained on copy and released on
+  overwrite or scope exit — `emitRetainValue`/`emitReleaseValue` gained a `Sum` case that dispatches on
+  the tag, so `Holder h = Holder.Obj(box)` keeps the object alive and releases it exactly once.
+- **Not yet**: `match`/pattern dispatch (a sum can be built, stored, copied and destroyed but not
+  inspected), `==` between sums, sums in `extern` signatures, and generic sums (`Option<T>`) — the
+  next step builds on this layout.
+- Tests: `sum_basic` (btw-alternative construction, `sizeof`, copy, retain/release on a class payload,
+  overwrite, scope exit).
+
+**Tests**: 522/522 (161 pass + 338 must-fail + 20 check + 3 ir)
+
 ### 0.0.114 — 2026-11-14
 
 **`sizeof` / `alignof` accept generic instantiations and anonymous delegate types.**

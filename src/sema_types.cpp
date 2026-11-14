@@ -118,6 +118,9 @@ namespace muc_detail {
         if (auto i = ui.interfaces.find(name); i != ui.interfaces.end()) {
             return ok(i->second->is_public) ? i->second->ty : nullptr;
         }
+        if (auto s = ui.sums.find(name); s != ui.sums.end()) {
+            return ok(s->second->is_public) ? s->second->ty : nullptr;
+        }
         if (auto a = ui.aliases.find(name); a != ui.aliases.end()) {
             return ok(a->second->is_public) ? resolve_alias(a->second, ui.unit) : nullptr;
         }
@@ -176,6 +179,10 @@ namespace muc_detail {
                 if (auto i = ui.interfaces.find(tn); i != ui.interfaces.end()) {
                     need_pub(i->second->is_public);
                     return i->second->ty;
+                }
+                if (auto sm = ui.sums.find(tn); sm != ui.sums.end()) {
+                    need_pub(sm->second->is_public);
+                    return sm->second->ty;
                 }
                 if (auto a = ui.aliases.find(tn); a != ui.aliases.end()) {
                     need_pub(a->second->is_public);

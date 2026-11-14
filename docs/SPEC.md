@@ -2068,10 +2068,43 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 ### 10.1 Recommended route for heterogeneous values
 
 - **Phase one**: `void*` + manual tag (a low-level escape hatch).
-- **Near term**: library-level `Variant` / `Any` structs (tag + union/byte buffer, manual memory, C ABI compatible).
-- **Later**: language-level sum types (enum with payload) + `match`, for heterogeneous data in closed sets.
+- **Near term**: ~~library-level `Variant` / `Any` structs~~ → **language-level sum types landed in
+  0.0.115** (declaration, layout, construction, value semantics; `match` is the next step). A library
+  `Option<T>` / `Result<T,E>` becomes ordinary code once `match` exists.
 - `dynamic` is only reserved as the name for future "runtime dynamic typing" and does not enter phase one; even if needed later, it should be an independent runtime layer rather than a core language feature.
 - `any` is reserved as a static top type/library type, distinct from `dynamic`.
+
+#### 10.1.1 Sum types (§12 row 55)
+
+```c
+type Value = Int(int) | Pair(int, int) | Text(const char*) | None;
+
+Value a = Value.Int(3);
+Value b = Value.Pair(4, 5);
+Value c = Value.Text("hi");
+Value d = Value.None;        // a unit alternative is a plain value
+```
+
+- **Declaration** is a `type` declaration whose right-hand side is two or more alternatives separated
+  by `|`: `type Name = Alt | Alt(T1, ...) | ...;`. Anything else after `type X =` remains a
+  transparent alias (4.5), so existing code is unaffected. `|` is the same operator the constraint
+  syntax uses (`T: int | long`): the alternatives are the value set.
+- **Alternatives** have 0..n payload types (types only, no names, as with any anonymous function
+  type). Duplicate alternative names and a single alternative are errors.
+- **Layout**: `{ i32 tag; union payload }` — the payload area behaves like a `union` (every
+  alternative starts at the same offset, `sizeof` is the largest, alignment is the largest), so
+  `sizeof(Value)` above is 16 (tag padded to 8 + an 8-byte payload).
+- **Value semantics**: assignment and argument passing copy the value; the active payload is
+  retained, overwriting or leaving scope releases it. A payload whose type needs cleanup
+  (class/interface handle, `String`, slice, struct with reference fields) is therefore safe to store:
+  the sum owns one reference. Payload types with a **user destructor** are rejected (they cannot be
+  copied by value, same rule as array elements).
+- **Construction**: `Type.Alt(values...)` for a payload alternative, `Type.Alt` (no parentheses) for a
+  unit alternative. The argument count and types are checked against the declaration.
+- **Not provided yet**: `match`/pattern dispatch (`Value` can be built, copied, stored and destroyed,
+  but not inspected), `==` between sums, sums as `extern` signatures, and generic sums
+  (`Option<T>`) — generic instantiation of sums is part of the `match` step.
+- C ABI: the layout is the classic `{ tag, union }` shape, but the type is not passed to C yet.
 
 ---
 
@@ -2173,7 +2206,7 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 | 49 | `0` in expressions vs zero-value initialization in declarations | In an expression it is an int; in a declaration, aggregates use `{}` and scalars use constants |
 | 50 | Language-level dynamic typing | Not a goal of phase one; `dynamic` is only reserved |
 | 51 | The purpose of `any` | Reserved as a static top-level type/library type; distinguished from `dynamic` |
-| 55 | Heterogeneous value scheme | A library-level Variant first; sum types + `match` later |
+| 55 | Heterogeneous value scheme | **Sum types landed in 0.0.115** (SPEC 10.1.1): `type Value = Int(int) \| Text(const char*) \| None;` with a `{ i32 tag; union payload }` layout, payload-aware value semantics (retain/release) and argument-checked construction. `match`/pattern dispatch is the next step; `Option<T>`/`Result<T,E>` follow it. `any`/`dynamic` stay reserved |
 | 56 | The relationship between `any` and `dynamic` | `any` is for static top-level/library types; `dynamic` is for runtime dynamism; they are not mixed |
 | 52 | `auto` and `const` | Decided (implemented): `const auto` is allowed |
 | 53 | Multiple declarators with `auto` | All variables must have the same inferred type |

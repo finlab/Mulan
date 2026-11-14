@@ -113,9 +113,12 @@ struct Name : Expr {
 struct Member : Expr {
     ExprPtr obj;
     std::string name;
-    std::string kind;  // "field" | "global" | "func" | "unit"
+    std::string kind;  // "field" | "global" | "func" | "unit" | "sum_unit"
     Sym sym;
     int field_index = -1;
+    // `Sum.None`: a unit alternative used as a value
+    TypePtr sum_ty;
+    int sum_alt = -1;
 };
 
 struct Index : Expr {
@@ -171,6 +174,8 @@ struct Call : Expr {
     FuncDecl* func = nullptr;
     TypePtr fn_ty;            // callee_kind == "fnptr": the function type being called
     TypePtr ctor;             // the target type of the struct construction
+    TypePtr sum_ty;           // callee_kind == "sum_ctor": the sum type being constructed
+    int sum_alt = -1;         // callee_kind == "sum_ctor": which alternative
     std::string builtin;      // alloc / realloc / free
     std::vector<int> field_order;
     const MethodSig* method = nullptr;      // the selected method / interface default method
@@ -374,6 +379,23 @@ struct EnumDecl : Decl {
     std::string name;
     std::vector<std::pair<std::string, std::optional<long long>>> members;
     TypePtr ty;  // sema: the enum type
+};
+
+// Sum type (SPEC 10.1, "language-level sum types"): `type Value = Int(int) | Text(string) | None;`
+// A value carries a tag plus one active payload. Alternatives may have 0..n payload fields; the
+// payload area is laid out like a `union` (all alternatives start at the same offset).
+struct SumAlt {
+    std::string name;
+    std::vector<TypeSpecPtr> fields;  // payload types (empty: a unit alternative)
+    int line = 0;
+    int col = 0;
+};
+
+struct SumDecl : Decl {
+    std::string name;
+    std::vector<SumAlt> alts;
+    // sema
+    TypePtr ty;  // the sum type
 };
 
 // ---------------------------------------------------------------- Statements

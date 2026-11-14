@@ -28,6 +28,7 @@ struct UnitInfo {
     std::unordered_map<std::string, EnumDecl*> enums;
     std::unordered_map<std::string, ClassDecl*> classes;
     std::unordered_map<std::string, InterfaceDecl*> interfaces;
+    std::unordered_map<std::string, SumDecl*> sums;  // sum type (`type X = A | B(T);`)
     std::unordered_map<std::string, TypeAliasDecl*> aliases;  // type alias (type A = B;)
 };
 

@@ -831,6 +831,26 @@ namespace muc_detail {
                 }
             }
             if (et) {
+                if (et->kind == TypeKind::Sum) {
+                    // `Value.None`: a unit alternative is a value; alternatives with a payload are
+                    // constructed as `Value.Int(3)` (handled in check_call).
+                    int idx = -1;
+                    for (size_t k = 0; k < et->sum_names.size(); ++k) {
+                        if (et->sum_names[k] == e->name) { idx = static_cast<int>(k); break; }
+                    }
+                    if (idx < 0) err("sum type `" + et->str() + "` has no alternative `" + e->name + "`", e);
+                    if (!et->sum_fields[static_cast<size_t>(idx)].empty()) {
+                        err("alternative `" + e->name + "` of `" + et->str() +
+                                "` carries a payload: construct it with `" + et->str() + "." + e->name +
+                                "(...)`",
+                            e);
+                    }
+                    e->kind = "sum_unit";
+                    e->sum_ty = et;
+                    e->sum_alt = idx;
+                    obj->ty = et;
+                    return et;
+                }
                 if (et->kind == TypeKind::Enum) {
                     EnumConst* ec = find_enum_member(et, e->name);
                     if (!ec) err("enum `" + et->str() + "` has no member `" + e->name + "`", e);

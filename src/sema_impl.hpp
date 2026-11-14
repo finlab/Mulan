@@ -226,6 +226,8 @@ private:
     void place_structs();
 
     void resolve_class_fields(ClassDecl* c, Unit* u);
+    // Sum types: payload types + the synthesized `{ i32 tag; union payload }` layout.
+    void resolve_sum(SumDecl* sd, Unit* u);
 
     // ------------------------------------------------------------ layout modifiers
     //

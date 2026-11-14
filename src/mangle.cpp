@@ -33,6 +33,7 @@ std::string type_code(const TypePtr& t) {
         case TypeKind::Enum: return "E_" + t->unit + "_" + ident_safe(t->name);
         case TypeKind::Class: return "C_" + t->unit + "_" + ident_safe(t->name);
         case TypeKind::Interface: return "I_" + t->unit + "_" + ident_safe(t->name);
+        case TypeKind::Sum: return "U_" + t->unit + "_" + ident_safe(t->name);
         case TypeKind::Module: return "m_" + t->unit;
         case TypeKind::Null: return "null";
         case TypeKind::Range: return "rng";

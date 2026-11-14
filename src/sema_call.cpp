@@ -218,6 +218,43 @@ namespace muc_detail {
                 }
             }
             if (uname.empty()) {
+                // sum-type construction: `Value.Int(3)` — the callee is `Sum.Alternative(args)`.
+                // Checked before `check_expr(obj)`, because a type name is not an expression.
+                if (auto nm = dynamic_cast<Name*>(obj); nm && lookup_local(nm->ident) == nullptr) {
+                    TypePtr st = find_type_named(cur_->name, nm->ident, false);
+                    if (!st) {
+                        for (auto& use : cur_->uses) {
+                            if (!unit_visible(use->unit_name)) continue;
+                            if (TypePtr t = find_type_named(use->unit_name, nm->ident, true)) { st = t; break; }
+                        }
+                    }
+                    if (st && st->kind == TypeKind::Sum) {
+                        int idx = -1;
+                        for (size_t k = 0; k < st->sum_names.size(); ++k) {
+                            if (st->sum_names[k] == m->name) { idx = static_cast<int>(k); break; }
+                        }
+                        if (idx < 0) {
+                            err("sum type `" + st->str() + "` has no alternative `" + m->name + "`", c);
+                        }
+                        const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
+                        if (c->args.size() != fs.size()) {
+                            err("alternative `" + m->name + "` of `" + st->str() + "` takes " +
+                                    std::to_string(fs.size()) + " value(s), but " +
+                                    std::to_string(c->args.size()) + " were given",
+                                c);
+                        }
+                        for (size_t k = 0; k < fs.size(); ++k) {
+                            check_assign(c->args[k].get(), fs[k], "sum payload");
+                        }
+                        nm->kind = "type";
+                        nm->ty = st;
+                        m->kind = "sum_alt";
+                        c->callee_kind = "sum_ctor";
+                        c->sum_ty = st;
+                        c->sum_alt = idx;
+                        return st;
+                    }
+                }
                 TypePtr ot = check_expr(obj);
                 if (is_reference_type(ot)) {
                     std::vector<const MethodSig*> ms;
