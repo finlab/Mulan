@@ -588,7 +588,23 @@ ExprPtr Parser::parse_unary() {
             advance();
             // `sizeof(T)` vs `sizeof(expr)`: a type starts with a type keyword, a known type name or an
             // imported unit prefix; anything else is an expression (`sizeof(a[0])`, `sizeof(p->x)`).
-            if (is_type_start(peek())) {
+            // A generic instantiation from another unit (`sizeof(IIterator<int>)`) is not in the parser's
+            // name table, so probe the `Name<args>` / `(T) => R` shapes speculatively and backtrack.
+            const bool probe_type_shape =
+                (peek().kind == TokKind::Ident && peek(1).is_op("<")) ||
+                (peek().kind == TokKind::Op && peek().text == "(");
+            bool as_type = is_type_start(peek());
+            if (!as_type && probe_type_shape) {
+                const std::size_t save = pos_;
+                try {
+                    parse_type();
+                    as_type = at_op(")");
+                } catch (const MuError&) {
+                    as_type = false;
+                }
+                pos_ = save;
+            }
+            if (as_type) {
                 node->spec = parse_type();
             } else {
                 node->expr = parse_expr();

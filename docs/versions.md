@@ -10,6 +10,21 @@
 
 ## Releases
 
+### 0.0.114 — 2026-11-14
+
+**`sizeof` / `alignof` accept generic instantiations and anonymous delegate types.**
+
+- `sizeof(IIterator<int>)`, `sizeof(Box<int>)` and `sizeof(delegate (int) => int)` now parse. An
+  instantiation imported from another unit is not in the parser's name table, so the parenthesized
+  operand is probed as a type shape (`Name<args>` or `(T) => R`) and backtracked on failure — the same
+  speculative-parse trick the declaration lookahead uses.
+- Expression operands are unchanged: `sizeof(a[0])`, `sizeof(arr)` and `sizeof(x < y)` still parse as
+  values (`sizeof(x < y)` is 1: the probe fails on the missing `>`, so it stays an expression).
+- Tests: `sizeof_generic` (imported generic interface, local generic, anonymous delegate, function-type
+  alias, array element, array, comparison).
+
+**Tests**: 521/521 (160 pass + 338 must-fail + 20 check + 3 ir)
+
 ### 0.0.113 — 2026-11-14
 
 **Closure optimisation step (U41 D5): an immediately-invoked lambda keeps its environment on the stack.**

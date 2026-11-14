@@ -1875,9 +1875,9 @@ extern int fseek(void* stream, c_long offset, c_int origin);
 | `alloc(bytes: usize) -> void*` | Allocates uninitialized memory; returns `null` on failure |
 | `realloc(p: void*, bytes: usize) -> void*` | Resizes; returns `null` on failure, leaving the original block unchanged |
 | `free(p: void*)` | Frees; `free(null)` is a no-op |
-| `sizeof(T) -> usize` | Size of a type | 
+| `sizeof(T) -> usize` | Size of a type, **including an instantiated generic** (`sizeof(IIterator<int>)`, `sizeof(Box<int>)`) and an anonymous delegate/function type | 
 | `sizeof expr -> usize` | Size of the operand's type; the operand is **not evaluated** (`sizeof *p`, `sizeof a[i]`, `sizeof(a)`) |
-| `alignof(T) -> usize` / `alignof expr` | Alignment of a type / of the operand's type (not evaluated) |
+| `alignof(T) -> usize` / `alignof expr` | Alignment of a type / of the operand's type (not evaluated); generic instantiations as above |
 | `offsetof(T, field) -> usize` | Byte offset of a struct member (0 for every `union` member; compile-time constant) |
 | `x.length() -> usize` | Length of a managed sequence (`T[]` / `buffer<T>` / `String` / user containers); `x.length(axis)` for a multidimensional sequence; static arrays use `sizeof(a) / sizeof(a[0])` |
 
