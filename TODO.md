@@ -26,3 +26,7 @@
   `undefined symbol: g_arr`。要做：① `tests/abi/` 增加 C 变量 shim 用例；② 讨论 external global 是否发
   `dllimport`（需要开关，编译器无法区分"来自 DLL"还是"静态对象"）；③ 导出方向（Mu 生成 DLL、变量
   `dllexport`/`.def`）随 `agents/toolchain-plan.md` P11-4 一起做。
+  另：**`errno` / `stdin` / `stdout` / `stderr` 不是数据符号**（CRT 头里是宏 → `_errno()` /
+  `__acrt_iob_func()`），`extern` 声明会 `undefined reference`；`dllimport` 解决不了，必须绑访问器函数。
+  真正的数据符号（`_iob` / `_environ` / `_fmode`）在 msvcrt 导出表里、今天能链上，但属 Windows 私有，
+  归 `std.win32`。详见 `agents/stdlib/c-bindings.md` §3.2。
