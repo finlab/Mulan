@@ -4,6 +4,8 @@
 // This file holds class / interface checking (part 1) (definitions of Sema members).
 #include "sema_impl.hpp"
 
+#include "ast_clone.hpp"
+
 namespace muc_detail {
 
     void Sema::begin_member(const TypePtr& cls, const TypePtr& ret, const std::string& name, int line,
@@ -247,58 +249,222 @@ namespace muc_detail {
         }
     }
 
-    void Sema::check_struct(StructDecl* sd) {
-        // U33 S1: `struct S : I1, I2` — only interfaces may be listed; satisfaction is static and no value type is produced.
+    // `d` is `b` itself or inherits from it (used so that a refining default wins, as it does for classes)
+    static bool iface_extends(const TypePtr& d, const TypePtr& b, int depth = 0) {
+        if (!d || !b || depth > 64) return false;
+        if (same_type(d, b)) return true;
+        for (const auto& p : d->interfaces) {
+            if (iface_extends(p, b, depth + 1)) return true;
+        }
+        return false;
+    }
+
+    // U34 M4: the default implementation of `sig` on `itf`, walking the interface inheritance chain
+    // (most derived first, so a refining default wins). `id->methods[i]` and `itf->methods[i]` are
+    // parallel: sema_decl.cpp builds both in one pass, in declaration order. Generic interface
+    // instances register their cloned decl under the display name, so `ISeq<int>` works too.
+    MethodDecl* Sema::find_iface_default_decl(const TypePtr& itf, const MethodSig& sig, TypePtr* owner,
+                                              int depth) {
+        if (!itf || depth > 64) return nullptr;
+        auto info = infos_.find(itf->unit);
+        if (info != infos_.end()) {
+            auto found = info->second.interfaces.find(itf->name);
+            if (found != info->second.interfaces.end()) {
+                InterfaceDecl* id = found->second;
+                for (size_t i = 0; i < id->methods.size() && i < itf->methods.size(); ++i) {
+                    if (!same_sig(itf->methods[i], sig)) continue;
+                    if (!itf->methods[i].is_abstract && id->methods[i]->body) {
+                        if (owner) *owner = itf;
+                        return id->methods[i].get();
+                    }
+                    break;  // declared here without a body: nothing to inherit from this interface
+                }
+            }
+        }
+        for (const auto& b : itf->interfaces) {
+            if (MethodDecl* d = find_iface_default_decl(b, sig, owner, depth + 1)) return d;
+        }
+        return nullptr;
+    }
+
+    // Monomorphization, not inheritance: S gains no layout, no vtable slot and no `super`; the result is
+    // an ordinary method that the normal passes check and emit.
+    void Sema::materialize_iface_default(StructDecl* sd, const TypePtr& itf, const MethodSig& sig) {
+        MethodDecl* def = find_iface_default_decl(itf, sig);
+        if (!def) return;
+        auto gen = clone_method(*def);
+        gen->is_override = true;
+        gen->is_public = true;
+        gen->from_iface_default = true;
+        gen->iface_unit = itf->unit;
+        // The signature is the interface's, already resolved in the interface's unit: a default written
+        // in another unit may name types that S's unit does not see, so it must not be re-resolved here.
+        gen->rty = sig.ret;
+        gen->ret_ref = is_borrow_type(sig.ret);
+        gen->pty = sig.params;
+        gen->cname = method_cname(sd->ty->unit, sd->name, gen->name, gen->pty);
+        MethodSig ms;
+        ms.name = gen->name;
+        ms.ret = sig.ret;
+        ms.params = sig.params;
+        ms.is_override = true;
+        ms.is_public = true;
+        ms.owner = sd->ty;
+        sd->ty->methods.push_back(std::move(ms));
+        sd->methods.push_back(std::move(gen));
+    }
+
+    // U33 S1 / U34 M4: `struct S : I1, I2` — only interfaces may be listed. Every interface method is
+    // satisfied either by one of S's own methods or, when the interface supplies a default, by an
+    // instance of that default materialized with `this` = S (static dispatch).
+    //
+    // Runs as its own pass, before any function body is checked: a call `s.m()` in another unit's body
+    // must already see the materialized signature. Layout, vtable and `super` are untouched.
+    void Sema::apply_struct_iface_defaults(StructDecl* sd) {
+        // The interfaces in the `:` list (each one a chain), and the (signature, declaring interface)
+        // pairs they require, so that two interfaces contributing the same signature are seen together.
+        std::vector<TypePtr> chains;
+        std::vector<std::pair<const MethodSig*, TypePtr>> reqs;
         for (size_t i = 0; i < sd->base_specs.size(); ++i) {
             if (!sd->base_specs[i]) continue;
             TypePtr bt = resolve_type(sd->base_specs[i].get(), cur_);
             if (!bt) continue;
             if (bt->kind != TypeKind::Interface) {
                 err("`" + sd->bases[i] + "`: only interfaces are allowed after `:` on a struct", sd);
+                continue;
             }
-            // Interface methods (including the interface inheritance chain; default methods also require an explicit implementation, see backlog U33)
-            std::vector<const MethodSig*> reqs;
+            bool dup = false;
+            for (const auto& c : chains) dup = dup || same_type(c, bt);
+            if (dup) continue;
+            chains.push_back(bt);
             std::function<void(const TypePtr&, int)> collect = [&](const TypePtr& itf, int depth) {
                 if (!itf || depth > 64) return;
-                for (const auto& m : itf->methods) reqs.push_back(&m);
+                for (const auto& m : itf->methods) reqs.push_back({&m, itf});
                 for (const auto& p : itf->interfaces) collect(p, depth + 1);
             };
             collect(bt, 0);
-            for (const MethodSig* req : reqs) {
-                if (req->is_operator) continue;  // operators do not go into the vtable and require no member implementation
-                const MethodSig* impl = nullptr;
-                for (const auto& m : sd->ty->methods) {
-                    if (same_sig(m, *req)) {
-                        impl = &m;
+        }
+        for (size_t r = 0; r < reqs.size(); ++r) {
+            const MethodSig* req = reqs[r].first;
+            if (req->is_operator) continue;  // operators are resolved at compile time and need no member
+            bool seen_sig = false;
+            for (size_t k = 0; k < r && !seen_sig; ++k) seen_sig = same_sig(*reqs[k].first, *req);
+            if (seen_sig) continue;
+            const std::string itf_name = reqs[r].second->name;
+            const MethodSig* impl = nullptr;
+            for (const auto& m : sd->ty->methods) {
+                if (same_sig(m, *req)) {
+                    impl = &m;
+                    break;
+                }
+            }
+            if (impl) {
+                // `same_sig` deliberately ignores the return type (overloading never uses it), so the
+                // "satisfies" check must compare it explicitly; otherwise `int f()` would be satisfied
+                // by `long f()`.
+                if (!same_type(impl->ret, req->ret)) {
+                    err("override return type does not match the declaration in `" + itf_name + "`", sd);
+                } else if (!impl->is_override) {
+                    err("method `" + req->name + "` of struct `" + sd->name + "` implements `" +
+                            itf_name + "." + req->name + "` and must be marked `override`",
+                        sd);
+                }
+                continue;
+            }
+            if (impl) {
+                if (!impl->is_override) {
+                    err("method `" + req->name + "` of struct `" + sd->name + "` implements `" +
+                            itf_name + "." + req->name + "` and must be marked `override`",
+                        sd);
+                }
+                continue;
+            }
+            // `Self` denotes the implementor type; a value type cannot spell itself in that position
+            // (no interface value exists for a struct), so such a signature still needs an explicit
+            // implementation — and a default returning `this` would not typecheck anyway.
+            bool has_self = req->ret_self;
+            for (bool s : req->params_self) has_self = has_self || s;
+            if (has_self) {
+                err("struct `" + sd->name + "` must implement `" + req->name + "` of interface `" +
+                        itf_name + "`",
+                    sd);
+                continue;
+            }
+            // One provider per chain, most derived first; a chain whose default refines another chain's
+            // replaces it (same rule as for classes). Two unrelated providers must be resolved
+            // explicitly: picking one silently would make the program depend on declaration order.
+            std::vector<TypePtr> providers;
+            for (const auto& chain : chains) {
+                TypePtr owner;
+                if (!find_iface_default_decl(chain, *req, &owner)) continue;
+                bool dominated = false;
+                for (auto& p : providers) {
+                    if (iface_extends(p, owner)) {
+                        dominated = true;
+                        break;
+                    }
+                    if (iface_extends(owner, p)) {
+                        p = owner;
+                        dominated = true;
                         break;
                     }
                 }
-                if (!impl) {
-                    err("struct `" + sd->name + "` must implement `" + req->name + "` of interface `" +
-                            bt->name + "`",
-                        sd);
-                    continue;
-                }
-                if (!impl->is_override) {
-                    err("method `" + req->name + "` of struct `" + sd->name + "` implements `" + bt->name +
-                            "." + req->name + "` and must be marked `override`",
-                        sd);
-                }
+                if (!dominated) providers.push_back(owner);
             }
+            if (providers.empty()) {
+                err("struct `" + sd->name + "` must implement `" + req->name + "` of interface `" +
+                        itf_name + "`",
+                    sd);
+                continue;
+            }
+            if (providers.size() > 1) {
+                err("struct `" + sd->name + "` must implement `" + req->name + "`: interfaces `" +
+                        providers[0]->name + "` and `" + providers[1]->name +
+                        "` provide different default implementations",
+                    sd);
+                continue;
+            }
+            materialize_iface_default(sd, providers[0], *req);
         }
+    }
 
+    void Sema::check_struct(StructDecl* sd) {
         check_const_members(sd->const_members, sd->ty, sd->is_union ? "union" : "struct", sd->name);
         std::unordered_set<std::string> seen;
         for (auto& m : sd->methods) {
+            // A materialized default points its diagnostics at the struct, not at the interface body
+            // (the body's line/col would name a declaration the user cannot change here).
+            Node* where = m->from_iface_default ? static_cast<Node*>(sd) : static_cast<Node*>(m.get());
             std::string key = m->name + "(";
             for (auto& p : m->pty) key += p->str() + ",";
             key += ")";
             if (!seen.insert(key).second) {
-                err("duplicate method `" + key + "` in struct `" + sd->name + "`", m.get());
+                err("duplicate method `" + key + "` in struct `" + sd->name + "`", where);
             }
             if (sd->ty->field_type(m->name)) {
-                err("method `" + m->name + "` in struct `" + sd->name + "` has the same name as a field", m.get());
+                err("method `" + m->name + "` in struct `" + sd->name + "` has the same name as a field", where);
             }
+            if (!m->from_iface_default) {
+                check_struct_method(sd, m.get());
+                continue;
+            }
+            // The body text belongs to the interface's unit, so its type names resolve there; S's own
+            // members stay reachable (a default may call any interface method, private or not). The same
+            // body is also checked strictly in its declaring unit (check_interface), so a resolution this
+            // relaxation would wave through cannot go unreported.
+            // RAII: a diagnostic thrown from the body must not leave the context switched.
+            struct CtxGuard {
+                Sema* sema;
+                Unit* unit;
+                std::string visible;
+                ~CtxGuard() {
+                    sema->cur_ = unit;
+                    sema->extra_visible_unit_ = visible;
+                }
+            } guard{this, cur_, extra_visible_unit_};
+            auto info = infos_.find(m->iface_unit);
+            if (info != infos_.end()) cur_ = info->second.unit;
+            extra_visible_unit_ = sd->ty->unit;
             check_struct_method(sd, m.get());
         }
         std::unordered_set<std::string> ctor_keys;

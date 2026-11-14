@@ -75,6 +75,7 @@ namespace muc_detail {
 
     bool Sema::decl_visible(const std::string& owner_unit, bool is_public) const {
         if (!cur_ || owner_unit == cur_->name) return true;
+        if (!extra_visible_unit_.empty() && owner_unit == extra_visible_unit_) return true;
         if (!unit_visible(owner_unit)) return false;
         return is_public;
     }
@@ -843,6 +844,16 @@ Program Sema::run() {
     check_hierarchy_cycles();
     compute_abstract_all();
     check_public_signatures();
+    // Before any body is checked: `struct S : I` gains the interface's default implementations as
+    // ordinary methods, so a call `s.m()` in another unit's function body already resolves.
+    for (auto& u : units_) {
+        cur_ = u.get();
+        for (auto& d : u->decls) {
+            if (auto sd = dynamic_cast<StructDecl*>(d.get())) {
+                recover([&] { apply_struct_iface_defaults(sd); });
+            }
+        }
+    }
     for (auto& u : units_) check_unit(u.get());
     if (!errors_.empty()) throw MuErrorList(std::move(errors_));
     check_entry();

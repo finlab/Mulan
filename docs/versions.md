@@ -10,6 +10,43 @@
 
 ## Releases
 
+### 0.0.103 — 2026-11-14
+
+**`struct` implements interfaces fully: the interface default implementation is materialized as an
+ordinary method (backlog U33 / U34 M4).**
+
+- **What changes**: `struct S : I` no longer requires `S` to re-declare every interface method. When
+  `I` (or a base interface of `I`) supplies a body, the compiler clones that body, re-checks it with
+  `this` = `S`, and adds it to `S` as an ordinary method. It is **monomorphization, not
+  inheritance**: no layout change, no vtable slot, no `itable`, no `super`, no extra allocation.
+  Codegen is untouched — `emitStructMethod` emits the new `MethodDecl` like a hand-written one.
+- **Resolution context**: the cloned body is checked in the unit that declares the default (its type
+  names, including unit-private ones, resolve there), while `S`'s own members stay reachable — a
+  default may call any interface method `S` implements, private or not. The strict check of the same
+  body already ran in `check_interface`, so this relaxation opens no new access.
+- **Conflicts**: each interface in the `:` list contributes at most one provider, most derived first
+  (a default on a derived interface refines the base one and wins, matching class behavior). Two
+  unrelated interfaces providing defaults for the same signature is a compile error — the struct
+  must implement it explicitly.
+- **Not materialized**: methods whose signature mentions `Self` (a value type cannot spell itself in
+  that position); they still require an explicit implementation. Operators are compile-time only and
+  never materialize.
+- **Fixed along the way**: the satisfaction check compared signatures with `same_sig`, which
+  deliberately ignores the return type, so `int f()` was silently satisfied by `long f()`. The
+  return type is now compared explicitly (same wording as the class diagnostic: "override return
+  type does not match the declaration in `I`").
+- **New pass**: `Sema::apply_struct_iface_defaults` runs after `resolve_unit_types` and before
+  `check_unit`, because function bodies are checked first; a call `s.m()` in another unit must already
+  see the materialized signature. `MethodDecl` gained `from_iface_default` / `iface_unit`;
+  `decl_visible` honors `extra_visible_unit_` during that re-check.
+
+Tests: `struct_iface_default` (default calls the struct's implementation, default chains, explicit
+override wins), `struct_iface_default_xunit` (cross-unit: the body uses a unit-private struct of the
+interface's unit and calls a private implementation of the struct); must-fail
+`struct_iface_default_conflict` and `struct_iface_ret_mismatch`.
+
+**Tests**: 486/486 (147 pass + 320 must-fail + 19 check)
+
 ### 0.0.102 — 2026-11-14
 
 **Unit-level initialization and cleanup (SPEC 9.1).**
@@ -51,6 +88,20 @@ its own exception does not abort); must-fail `unit_init_forward_ref` and
 `struct_ref_global` removed because both constructs are now legal.
 
 **Tests**: 482/482 (145 pass + 318 must-fail + 19 check)
+
+**Target policy — executable builds prune dead code (same release).** An executable has no external
+consumers, so the backend now **internalizes every definition except `main`** before the `-O2`
+pipeline; GlobalDCE then removes whatever the entry cannot reach — unused functions, whole unused
+classes (descriptor + vtable + methods), unused library units and the runtime helpers they need.
+`--export <name>` (repeatable) keeps a symbol externally visible for a C shim or a debugger. Measured
+`.text`: hello world 8 115 B → 35 B, `arith` 8 572 → 487, `class_basic` 8 938 → 683,
+`exception_basic` 8 604 → 956, `para_basic` 8 716 → 3 690, `strings` 9 052 → 1 839. The test runner
+gained a fourth category, `tests/ir/*.mu` + `.txt` (`+ regex` must appear in the emitted IR,
+`- regex` must not), so the pruning policy itself is regression-tested (`dead_code`). The design of
+the other two targets (static library, shared library) and their different pruning rules is recorded
+in `agents/toolchain-plan.md` §11; only the executable policy is implemented.
+**Tests**: 487/487 (147 pass + 320 must-fail + 19 check + 1 ir) — the working tree also carries an
+in-flight struct-interface-default change with its own 5 cases.
 
 **Documentation-only follow-up (no build bump)**: design decision recorded — **member promotion
 (Go-style embedding) and mixin-style member injection are explicitly not done** in v1. Vetoed

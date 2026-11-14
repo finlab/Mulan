@@ -262,7 +262,7 @@ struct Point {
 - Do not write `Point p(1, 2)` in a declaration; non-declaration positions use neither `{...}` nor `{}`/`= 0` construction.
 - `Point(...)` is value construction, not heap allocation; `new` is not introduced (reserved for future heap allocation).
 - Resolved during semantic analysis: if the called name is a type it is a struct construction, if it is a function it is a function call; a type name must not conflict with a function/variable name in the same scope.
-- Can declare **methods** (`ret name(params) { ... }`): static dispatch, no vtable, no inheritance/virtual functions;
+- Can declare **methods** (`ret name(params) { ... }`): static dispatch, no vtable, no inheritance/virtual functions (an interface default can be inherited, see 3.10 — it is materialized as an ordinary method of `S`, not inherited);
   `this` is a reference to the current object (not a pointer), available implicitly, or written explicitly as `this` to access fields/call methods;
   methods can be overloaded, and cannot share a name with a field.
   Methods do not change the C layout (field order/alignment still match C).
@@ -660,8 +660,18 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
 - Interface references are strong references: copying is +1, overwriting is -1; `weak` is only supported for class fields, and **interfaces do not support `weak` (not done in phase one)**.
 - An interface cannot be used as a parameter of an `extern` C function.
 - Generic interfaces (`interface ISeq<T>`) are supported (see 3.15), but are **currently only usable as constraints** and cannot be value types.
-- A `struct` may also implement interfaces (`struct S : I1, I2`): after `:` you may **only list interfaces**, and all methods must be implemented explicitly with
-  `override`; this is **static satisfaction**, which produces no value type and generates no vtable (see 3.15.7 and backlog U33).
+- A `struct` may also implement interfaces (`struct S : I1, I2`): after `:` you may **only list interfaces**; this is
+  **static satisfaction**, which produces no value type and generates no vtable (see 3.15.7 and backlog U33).
+  - An interface method with a default implementation is **materialized as an ordinary method of `S`** when `S` does not
+    declare it: the body is instantiated with `this` = `S`, so its calls resolve statically (monomorphization, not
+    inheritance — no layout change, no vtable slot, no `super`). A default written in another unit is resolved in that
+    unit, while `S`'s own members stay reachable.
+  - Everything else must be implemented explicitly and marked `override`; a missing implementation is a compile error
+    (naming the interface and the full signature).
+  - Two unrelated interfaces providing defaults with the same signature must be resolved explicitly, exactly as for a
+    class; a default on a derived interface refines the base interface's default and wins.
+  - Methods whose signature mentions `Self` are never materialized: a value type cannot spell itself in that position,
+    so such a method must be implemented explicitly.
 - `for-in` does not depend on interfaces: it follows the **iteration form** of 6.4 (structural recognition, static, zero allocation).
   Interface-driven traversal requires "interfaces as value types" (M5b), see backlog U30.
 
@@ -1802,6 +1812,9 @@ unit example;
   - A `public` declaration must not leak a non-`public` type (recursive checks on signatures, field types, base classes, and interfaces).
   - Backend: non-`public` top-level symbols use `internal` linkage (`public` / `extern` / `main` keep external linkage).
   - **Visibility is a compile-time API contract, not a security boundary** (`void*`/`as` can bypass it).
+  - `public` does not promise that the symbol appears in the final binary: an **executable** build
+    internalizes every definition except `main` (and the `--export` names) so that dead code can be
+    removed. Library targets keep their exported surface visible (see `agents/toolchain-plan.md` §11).
 - No preprocessor; module-level constants use top-level `const`.
 - `extern` is used for C functions/global variables; C ABI; struct layout is compatible with C. `extern` functions cannot be overloaded.
 - Class objects cannot be passed to C: the C side does not participate in reference counting; when crossing languages use a struct + `alloc`.
@@ -2011,7 +2024,7 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 | 76 | Inheritance model | Decided: single inheritance + multiple interface implementations; no multiple inheritance (see 3.9/3.10) |
 | 77 | Virtual methods | Decided: virtual by default; overrides/implementations are written `override` |
 | 78 | Abstract classes | Decided: having unimplemented methods makes a class implicitly abstract and it cannot be `new`ed |
-| 79 | Interface default methods | Decided: allowed; on conflict the class must explicitly override |
+| 79 | Interface default methods | Decided: allowed; on conflict the class must explicitly override (a default on a derived interface refines the base default); a `struct` implementing an interface materializes the default as an ordinary method (`this` = the struct), see 3.10 |
 | 80 | Constructors | Decided: overloading is allowed; `super(args)` comes first; C++-style dispatch; fields are cleared to zero first |
 | 81 | Overload resolution | Decided: exact > implicit widening; base-class overloads are merged; ambiguity is an error (see 3.11) |
 | 82 | Operator overloading | Decided: free functions only; arithmetic/unary `-`/comparison/bitwise; a class's `==` is fixed as identity comparison |

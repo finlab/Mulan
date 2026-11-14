@@ -115,6 +115,10 @@ private:
     // current unit that have already been checked (they are initialized before it).
     GlobalVar* cur_global_ = nullptr;
     std::vector<GlobalVar*> unit_globals_so_far_;
+    // While an interface default body is re-checked for a struct, that struct's unit: the body may
+    // call any interface method S implements, including a private one. The same body is also checked
+    // strictly in its declaring unit (check_interface), so this relaxation opens no new access.
+    std::string extra_visible_unit_;
 
     // ------------------------------------------------------------ lambdas (3.16)
     // One entry per lambda body currently being checked: the scope depth at entry (locals below it are captures)
@@ -361,6 +365,20 @@ private:
                              const std::string& kw, const std::string& type_name);
 
     void check_struct(StructDecl* sd);
+
+    // U34 M4: the default implementation of `sig` declared by interface `itf` (walking the interface
+    // inheritance chain, most derived first); `owner` receives the declaring interface. nullptr when
+    // every declaration on the chain is abstract.
+    MethodDecl* find_iface_default_decl(const TypePtr& itf, const MethodSig& sig,
+                                        TypePtr* owner = nullptr, int depth = 0);
+
+    // Materialize that default as an ordinary method of `sd`: the body is cloned and re-checked with
+    // `this` = S, so its calls resolve statically. Layout, vtable and `super` are unaffected.
+    void materialize_iface_default(StructDecl* sd, const TypePtr& itf, const MethodSig& sig);
+
+    // U33/U34: check `struct S : I...` and materialize the missed defaults. Own pass, before any body
+    // is checked, so that call sites elsewhere already see the materialized signatures.
+    void apply_struct_iface_defaults(StructDecl* sd);
 
     void check_class(ClassDecl* c);
 

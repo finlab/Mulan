@@ -512,6 +512,10 @@ struct MethodDecl : Node {
     std::unique_ptr<Block> body;  // nullptr = an abstract method
     bool is_override = false;
     bool is_public = false;  // visible only inside the unit by default
+    // sema: materialized from an interface default implementation (U34 M4); the body text belongs to
+    // `iface_unit`, so it is re-checked with that unit as the resolution context
+    bool from_iface_default = false;
+    std::string iface_unit;
     // sema
     TypePtr rty;
     std::vector<TypePtr> pty;
