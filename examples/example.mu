@@ -150,26 +150,26 @@ int main() {
         puts("multi-declarator ok");
     }
 
-    // Fixed-length arrays are value types; for-in binds by value by default, ref binding can mutate elements.
+    // Fixed-length arrays are value types; iterate them with an index loop (no `for-in` on C storage).
     int[5] arr = {1, 2, 3, 4, 5};
     int total = 0;
-    for v in arr {
-        total += v;
+    for i in 0..sizeof(arr) / sizeof(arr[0]) {
+        total += arr[i];
     }
-    for ref v in arr {
-        v *= 2;
+    for i in 0..sizeof(arr) / sizeof(arr[0]) {
+        arr[i] *= 2;
     }
     print_int(total); putchar('\n');
 
-    // Iterate by index: len(arr) returns usize; 0..len(arr) is a half-open range.
-    for i in 0..len(arr) {
+    // Iterate by index: sizeof(arr) / sizeof(arr[0]) returns usize; 0..sizeof(arr) / sizeof(arr[0]) is a half-open range.
+    for i in 0..sizeof(arr) / sizeof(arr[0]) {
         print_int(arr[i]); putchar(' ');
     }
     putchar('\n');
 
     // auto: locals only, must have an initializer; multiple declarators must infer the same type.
     auto inferred_point = Point(11, 12);
-    auto inferred_len = len(arr);
+    auto inferred_len = sizeof(arr) / sizeof(arr[0]);
     auto inferred_sum = inferred_point.x + inferred_point.y;
     auto i2 = 0, j2 = 1;
     if inferred_len == 5 and inferred_sum == 23 and i2 + j2 == 1 {
@@ -177,7 +177,7 @@ int main() {
     }
 
     // const view: arr is passed in as a read-only pointer.
-    print_int(sum_ptr(&arr[0], len(arr)));
+    print_int(sum_ptr(&arr[0], sizeof(arr) / sizeof(arr[0])));
     putchar('\n');
 
     // break / continue: continue moves to the next iteration, break exits the current loop.
@@ -193,15 +193,15 @@ int main() {
     putchar('\n');
 
     // Manual memory management: alloc/free are builtins backed by the C runtime allocator.
-    int* buf = alloc(len(arr) * sizeof(int)) as int*;
+    int* buf = alloc(sizeof(arr) / sizeof(arr[0]) * sizeof(int)) as int*;
     if buf == null {
         return 1;
     }
-    for i in 0..len(arr) {
+    for i in 0..sizeof(arr) / sizeof(arr[0]) {
         buf[i] = arr[i];
     }
     int acc = 0;
-    for i in 0..len(arr) {
+    for i in 0..sizeof(arr) / sizeof(arr[0]) {
         acc += buf[i];
     }
     free(buf as void*);
@@ -215,7 +215,7 @@ int main() {
 
     // Slice literal: braces in a declaration create an anonymous array in the current scope and bind a slice view.
     double[] nums = {1.0, 2.0, 3.0, 4.0, 5.0};
-    if len(nums) == 5 {
+    if nums.length() == 5 {
         puts("slice literal ok");
     }
 

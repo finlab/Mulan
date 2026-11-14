@@ -231,44 +231,29 @@ namespace muc_detail {
         if (auto ix = dynamic_cast<Index*>(s->target.get())) {
             TypePtr bt = check_expr(ix->base.get());
             if (is_user_type(bt)) {
-                if (ix->indices.size() != 1)
-                    err("user-defined `operator[]=` takes exactly one index", s->target.get());
-                TypePtr it = check_expr(ix->indices[0].get());
-                if (!is_integer(it)) err("index must be an integer", s->target.get());
-                // Resolve `[]` first: if it returns a borrow (`ref T`), that subscript is a writable lvalue and the generic assignment path is taken directly
-                const bool has_member_read =
-                    find_member_operator(bt, "operator[]", {ix->indices[0].get()}, s->target.get()) != nullptr;
-                if (has_member_read || !collect_operators("[]", {bt, it}).empty()) check_expr(ix);
-                if (ix->by_ref) {
-                    if (ix->ref_const)
-                        err("cannot assign through a readonly (`ref const`) subscript", s->target.get());
-                    check_writable(s->target.get());
-                    // no return: falls through to the generic assignment/compound-assignment check below
-                } else {
-                    if (s->op != "=") err("user-defined subscript assignment only supports `=`", s);
-                    if (const MethodSig* sm =
-                            find_member_operator(bt, "operator[]=", {ix->indices[0].get(), s->value.get()},
-                                                 s->target.get())) {
-                        check_writable(s->target.get());
-                        s->set_method = sm;
-                        check_expr(s->value.get());
-                        return;
-                    }
-                    auto cands = collect_operators("[]=", {bt, it});
-                    if (cands.empty()) {
-                        err("type `" + bt->str() + "` does not support subscript assignment (no `operator[]=`)", s);
-                    }
-                    check_writable(s->target.get());
-                    s->set_func = choose_overload(cands,
-                                                  {ix->base.get(), ix->indices[0].get(),
-                                                   s->value.get()},
-                                                  "operator[]=", s);
-                    return;
+                for (auto& ie : ix->indices) {
+                    TypePtr it = check_expr(ie.get());
+                    if (!is_integer(it)) err("index must be an integer", ie.get());
                 }
+                // Only a borrow-returning subscript is writable (`operator[]=` was removed).
+                check_expr(ix);
+                if (!ix->by_ref) {
+                    err("cannot assign through a subscript: `operator[]` must return `ref T`",
+                        s->target.get());
+                }
+                if (ix->ref_const)
+                    err("cannot assign through a readonly (`ref const`) subscript", s->target.get());
+                check_writable(s->target.get());
+                // no return: falls through to the generic assignment/compound-assignment check below
             }
         }
 
         TypePtr tt = check_expr(s->target.get());
+        if (roots_at_outer_value_local(s->target.get())) {
+            err("cannot assign to an enclosing local inside a `para` section: pass the result through a "
+                "shared object (a class field or a channel)",
+                s->target.get());
+        }
         if (auto m = dynamic_cast<Member*>(s->target.get()); m && m->kind == "enum_const") {
             err("enum members are constants and cannot be assigned", s);
         }
@@ -308,6 +293,9 @@ namespace muc_detail {
     }
 
     void Sema::check_return(ReturnStmt* s) {
+        if (!para_stack_.empty() && lambda_stack_.size() == para_stack_.back().lambda_base) {
+            err("`return` cannot leave a `para` section", s);
+        }
         if (in_dtor_) err("`return` is not allowed in a destructor (fields and the base class are destroyed at the end of the function)", s);
         // Inside a lambda the return type is inferred (3.16): collect the types and unify after the body.
         if (!lambda_stack_.empty()) {
@@ -586,6 +574,46 @@ namespace muc_detail {
         }
     }
 
+    // Cursor form (6.4.2): the contract is declared in `libs/core/iter.mu` (core.iter.IIterator<T>);
+    // the compiler checks it structurally (no vtable, no boxing).
+    void Sema::resolve_cursor_shape(ForInStmt* s, const TypePtr& st) {
+        const MethodSig* it = nullptr;
+        for (auto& m : st->methods) {
+            if (m.name == "iterator" && m.params.empty()) {
+                it = &m;
+                break;
+            }
+        }
+        if (!it) err("`iterator()` must take no parameters", s->seq.get());
+        TypePtr cursor = it->ret;
+        if (!cursor || cursor->kind != TypeKind::Struct) {
+            err("`iterator()` must return a struct cursor (got " +
+                    (cursor ? cursor->str() : std::string("void")) + "); see core.iter.IIterator",
+                s->seq.get());
+        }
+        const MethodSig* nxt = nullptr;
+        const MethodSig* cur = nullptr;
+        for (auto& m : cursor->methods) {
+            if (m.name == "next" && m.params.empty()) nxt = &m;
+            if (m.name == "current" && m.params.empty()) cur = &m;
+        }
+        if (!nxt || !(is_prim(nxt->ret) && nxt->ret->name == "bool")) {
+            err("the cursor type `" + cursor->str() + "` must provide `bool next()` (core.iter.IIterator)",
+                s->seq.get());
+        }
+        if (!cur) {
+            err("the cursor type `" + cursor->str() + "` must provide `current()` (core.iter.IIterator)",
+                s->seq.get());
+        }
+        if (s->by_ref) err("`for ref` is not supported for cursor sources (SPEC 6.4.2)", s);
+        s->loop_kind = "cursor";
+        s->it_ty = cursor;
+        s->iter_sig = it;
+        s->next_sig = nxt;
+        s->cur_sig = cur;
+        s->elem_ty = cur->ret;
+    }
+
     void Sema::resolve_index_shape(ForInStmt* s, const TypePtr& st) {
         TypePtr us = Type::make_prim("usize");
         const MethodSig* len = find_method(st, "length", 0);
@@ -688,13 +716,9 @@ namespace muc_detail {
             TypePtr st = check_expr(s->seq.get());
             if (!st) err("`for-in` is missing a sequence", s);
             if (st->kind == TypeKind::Array) {
-                if (st->elem && st->elem->kind == TypeKind::Array) {
-                    err("`for-in` does not support multidimensional arrays `" + st->str() +
-                            "`: use an index loop, or take one row first and iterate over it",
-                        s->seq.get());
-                }
-                s->loop_kind = "array";
-                s->elem_ty = st->elem;
+                err("a static array is C storage and does not support `for-in`: use an index loop "
+                    "(`sizeof(a) / sizeof(a[0])` gives the count), or copy it into a managed sequence",
+                    s->seq.get());
             } else if (st->kind == TypeKind::Slice) {
                 if (st->rank > 1) {
                     err("`for-in` does not support multidimensional arrays `" + st->str() +
@@ -704,7 +728,11 @@ namespace muc_detail {
                 s->loop_kind = "slice";
                 s->elem_ty = st->elem;
             } else if (st->kind == TypeKind::Struct || st->kind == TypeKind::Class) {
-                resolve_index_shape(s, st);
+                if (has_method_named(st, "iterator")) {
+                    resolve_cursor_shape(s, st);
+                } else {
+                    resolve_index_shape(s, st);
+                }
             } else {
                 err("`for-in` cannot iterate " + st->str() +
                         " (supported: range, array, slice; user types must provide `length() -> usize` and "
@@ -768,7 +796,15 @@ namespace muc_detail {
         }
 
         ++loop_depth_;
+        const bool saved_pf_body = in_para_for_body_;
+        const int saved_pf_depth = para_for_body_depth_;
+        if (pending_para_for_) {
+            in_para_for_body_ = true;
+            para_for_body_depth_ = loop_depth_;
+        }
         check_block(s->body.get());
+        in_para_for_body_ = saved_pf_body;
+        para_for_body_depth_ = saved_pf_depth;
         --loop_depth_;
     }
 }  // namespace muc_detail

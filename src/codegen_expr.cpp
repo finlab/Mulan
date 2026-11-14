@@ -169,7 +169,7 @@ static bool is_numeric(const TypePtr& t) {
                 return fieldAddr(b.CreateLoad(ptrTy(), thisSlot), curClassTy, n->field_index);
             }
             if (auto lv = std::get_if<LocalVar*>(&n->sym)) {
-                AllocaInst* a = slotFor(*lv);
+                Value* a = slotFor(*lv);
                 if ((*lv)->by_ref) return b.CreateLoad(ptrTy(), a);
                 return a;
             }
@@ -197,13 +197,15 @@ static bool is_numeric(const TypePtr& t) {
         if (auto ix = dynamic_cast<Index*>(e)) {
             if (ix->by_ref) {
                 // `operator[]` returns a borrow: the call result is the element address
+                std::vector<Value*> idxVals;
+                for (auto& ie : ix->indices)
+                    idxVals.push_back(convertTo(eval(ie.get()), ie->ty, Type::make_prim("usize")));
                 if (ix->get_method) {
-                    Value* r = emitMemberIndex(ix->get_method, addrOf(ix->base.get()),
-                                               convertTo(eval(ix->indices[0].get()), ix->indices[0]->ty,
-                                                         Type::make_prim("usize")));
-                    return r;
+                    return emitMemberIndex(ix->get_method, addrOf(ix->base.get()), idxVals);
                 }
-                return emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
+                std::vector<Expr*> callArgs{ix->base.get()};
+                for (auto& ie : ix->indices) callArgs.push_back(ie.get());
+                return emitUserCall(ix->get_func, callArgs);
             }
             TypePtr bt = ix->base->ty;
             std::vector<Value*> idxs;
@@ -225,10 +227,15 @@ static bool is_numeric(const TypePtr& t) {
             if (bt->kind == TypeKind::Slice) {
                 Value* h = eval(ix->base.get());
                 trackOwnedSliceTemp(ix->base.get(), h, bt);
-                Value* lin = idxs.empty() ? ConstantInt::get(i64(), 0) : idxs[0];
-                for (size_t k = 1; k < idxs.size(); ++k) {
-                    Value* dk = sliceDimField(h, static_cast<int>(k));
-                    lin = b.CreateAdd(b.CreateMul(lin, dk), idxs[k]);
+                Value* lin;
+                if (boundsCheck) {
+                    lin = emitSliceIndexChecked(h, idxs, bt);
+                } else {
+                    lin = idxs.empty() ? ConstantInt::get(i64(), 0) : idxs[0];
+                    for (size_t k = 1; k < idxs.size(); ++k) {
+                        Value* dk = sliceDimField(h, static_cast<int>(k));
+                        lin = b.CreateAdd(b.CreateMul(lin, dk), idxs[k]);
+                    }
                 }
                 Value* data = sliceDataPtr(h, bt->rank);
                 return b.CreateGEP(lt(bt->elem), data, lin);

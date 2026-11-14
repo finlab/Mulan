@@ -556,9 +556,17 @@ namespace muc_detail {
             check_switch(sw);
         } else if (dynamic_cast<BreakStmt*>(s)) {
             if (in_finally_) err("`break` is not allowed inside `finally`", s);
+            if (!para_stack_.empty() && loop_depth_ == para_stack_.back().loop_base)
+                err("`break` cannot leave a `para` section", s);
+            if (in_para_for_body_ && loop_depth_ == para_for_body_depth_)
+                err("`break` cannot leave a `para for` loop", s);
             if (loop_depth_ == 0) err("`break` can only appear in a loop", s);
         } else if (dynamic_cast<ContinueStmt*>(s)) {
             if (in_finally_) err("`continue` is not allowed inside `finally`", s);
+            if (!para_stack_.empty() && loop_depth_ == para_stack_.back().loop_base)
+                err("`continue` cannot leave a `para` section", s);
+            if (in_para_for_body_ && loop_depth_ == para_for_body_depth_)
+                err("`continue` cannot leave a `para for` loop", s);
             if (loop_depth_ == 0) err("`continue` can only appear in a loop", s);
         } else if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
             if (in_finally_) err("`return` is not allowed inside `finally`", rs);
@@ -605,9 +613,91 @@ namespace muc_detail {
             }
         } else if (auto b = dynamic_cast<Block*>(s)) {
             check_block(b);
+        } else if (auto pp = dynamic_cast<ParaStmt*>(s)) {
+            check_para(pp);
+        } else if (auto pf = dynamic_cast<ParaForStmt*>(s)) {
+            check_para_for(pf);
         } else {
             err("unknown statement", s);
         }
+    }
+
+    void Sema::check_para(ParaStmt* p) {
+        p->captures.clear();
+        for (auto& sec : p->sections) {
+            ParaCtx ctx;
+            ctx.scope_base = scopes_.size();
+            ctx.loop_base = loop_depth_;
+            ctx.lambda_base = lambda_stack_.size();
+            para_stack_.push_back(std::move(ctx));
+            push();
+            check_block(sec.get());
+            pop();
+            ParaCtx done = std::move(para_stack_.back());
+            para_stack_.pop_back();
+            std::vector<LocalVar*> caps;
+            for (LocalVar* lv : done.seen) {
+                if (!done.declared.count(lv)) caps.push_back(lv);
+            }
+            p->captures.push_back(std::move(caps));
+        }
+    }
+
+    void Sema::check_para_for(ParaForStmt* p) {
+        ForInStmt* f = p->loop.get();
+        if (!f) return;
+        if (f->has_idx) {
+            err("`para for i, x` is not supported yet: iterate values and index explicitly", f);
+        }
+        ParaCtx ctx;
+        ctx.scope_base = scopes_.size();
+        ctx.loop_base = loop_depth_;
+        ctx.lambda_base = lambda_stack_.size();
+        para_stack_.push_back(std::move(ctx));
+        pending_para_for_ = true;
+        check_for(f);
+        pending_para_for_ = false;
+        ParaCtx done = std::move(para_stack_.back());
+        para_stack_.pop_back();
+        p->captures.clear();
+        for (LocalVar* lv : done.seen) {
+            if (!done.declared.count(lv)) p->captures.push_back(lv);
+        }
+    }
+
+    bool Sema::roots_at_outer_value_local(Expr* e) const {
+        if (!e || para_stack_.empty()) return false;
+        LocalVar* root = nullptr;
+        Expr* cur = e;
+        while (cur) {
+            if (auto n = dynamic_cast<Name*>(cur)) {
+                if (auto lv = std::get_if<LocalVar*>(&n->sym)) root = *lv;
+                break;
+            }
+            if (auto m = dynamic_cast<Member*>(cur)) {
+                TypePtr ot = m->obj->ty;
+                if (ot && (ot->kind == TypeKind::Class || ot->kind == TypeKind::Interface ||
+                           ot->kind == TypeKind::Ptr))
+                    return false;  // storage belongs to an object / pointed-to memory, not the caller's frame
+                cur = m->obj.get();
+                continue;
+            }
+            if (auto ix = dynamic_cast<Index*>(cur)) {
+                TypePtr bt = ix->base->ty;
+                if (bt && (bt->kind == TypeKind::Class || bt->kind == TypeKind::Interface ||
+                           bt->kind == TypeKind::Ptr || bt->kind == TypeKind::Slice))
+                    return false;  // heap buffer or explicitly shared memory
+                cur = ix->base.get();
+                continue;
+            }
+            return false;
+        }
+        if (!root) return false;
+        if (para_stack_.back().declared.count(root)) return false;
+        if (root->by_ref) return false;  // explicit borrow
+        if (root->rty && (root->rty->kind == TypeKind::Class || root->rty->kind == TypeKind::Interface))
+            return false;  // the handle is a value, but the object it points at is shared explicitly
+        return true;
     }
 
     void Sema::check_local(LocalVar* lv) {

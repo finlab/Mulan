@@ -155,6 +155,26 @@ namespace muc_detail {
             }
         } else if (auto m = dynamic_cast<Member*>(callee)) {
             Expr* obj = m->obj.get();
+            // `.length()` on a built-in managed sequence (`T[]` / `buffer<T>`): the compiler reads the header.
+            // Static arrays are C storage and have no `length()`.
+            if (m->name == "length") {
+                TypePtr ot = check_expr(obj);
+                if (ot && (ot->kind == TypeKind::Array || ot->kind == TypeKind::Slice)) {
+                    if (ot->kind == TypeKind::Array) {
+                        err("a static array has no `length()`: use `sizeof(a) / sizeof(a[0])`", c);
+                    }
+                    if (c->args.size() > 1) err("`length()` takes at most one argument (the axis)", c);
+                    if (ot->rank == 1 && !c->args.empty())
+                        err("a one-dimensional sequence has no axis: write `x.length()`", c);
+                    if (!c->args.empty()) {
+                        TypePtr at = check_expr(c->args[0].get());
+                        if (!is_integer(at))
+                            err("the axis of `length(axis)` must be an integer", c->args[0].get());
+                    }
+                    c->callee_kind = "slice_length";
+                    return Type::make_prim("usize");
+                }
+            }
             // super.method(...)
             if (auto on = dynamic_cast<Name*>(obj);
                 on && on->ident == "super" && lookup_local("super") == nullptr) {
@@ -323,6 +343,9 @@ namespace muc_detail {
             if (is_ref) {
                 Expr* a = c->args[i].get();
                 TypePtr at = check_expr(a);
+                if (roots_at_outer_value_local(a)) {
+                    err("cannot pass an enclosing local by `ref` inside a `para` section", a);
+                }
                 if (!is_lvalue(a) && !is_borrow_expr(a)) {
                     err("argument " + std::to_string(i + 1) + " of `" + target->name +
                             "` must be an addressable variable: a `ref` parameter borrows the caller's storage",

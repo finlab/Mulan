@@ -381,6 +381,20 @@ size_t size_impl(const TypePtr& t, int depth) {
 size_t type_align(const TypePtr& t) { return align_impl(t, 0); }
 size_t type_size(const TypePtr& t) { return size_impl(t, 0); }
 
+uint64_t type_member_offset(const TypePtr& t, size_t idx) {
+    if (!t) return 0;
+    if (t->is_union) return 0;
+    uint64_t off = 0;
+    for (size_t i = 0; i <= idx && i < t->fields.size(); ++i) {
+        const TypePtr& ft = t->fields[i].type;
+        const uint64_t fa = type_align(ft);
+        if (!t->is_packed) off = (off + fa - 1) / fa * fa;
+        if (i == idx) return off;
+        off += type_size(ft);
+    }
+    return 0;
+}
+
 // ---------------------------------------------------------------- Singletons
 
 TypePtr t_void() {

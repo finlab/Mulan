@@ -6,7 +6,7 @@ extern int puts(const char* s);
 struct Vec<T> {
     T[] data;
 
-    usize length() { return len(data); }
+    usize length() { return data.length(); }
 
     T at(usize i) { return data[i]; }
 

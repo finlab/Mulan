@@ -83,6 +83,7 @@ void subst_expr(Expr& e, const TypeBindings& b) {
     }
     if (auto p = dynamic_cast<SizeofExpr*>(&e)) {
         if (p->spec) subst_type_spec(*p->spec, b);
+        if (p->expr) subst_expr(*p->expr, b);
         return;
     }
     if (auto p = dynamic_cast<Len*>(&e)) {

@@ -31,6 +31,42 @@ namespace muc_detail {
         return total;
     }
 
+    // Cold path of the bounds check: call std.exception.bounds_fail(index, length, axis), which throws.
+    void Emitter::emitBoundsFail(Value* index, Value* length, Value* axis) {
+        FunctionCallee callee = mod->getOrInsertFunction(
+            mangle_unit("std.exception", "bounds_fail") + "__usize__usize__usize",
+            FunctionType::get(LType::getVoidTy(ctx), {i64(), i64(), i64()}, false));
+        b.CreateCall(callee, {index, length, axis});
+        // `bounds_fail` always throws: unwind through the current handler on the cold path.
+        ensureEHSlot();
+        BasicBlock* unwind = BasicBlock::Create(ctx, "bf.unwind", curFn);
+        BasicBlock* dead = BasicBlock::Create(ctx, "bf.dead", curFn);
+        b.CreateCondBr(b.CreateICmpNE(loadPendingFlag(), ConstantInt::get(i32(), 0)), unwind, dead);
+        b.SetInsertPoint(unwind);
+        emitUnwindCurrent();
+        b.SetInsertPoint(dead);
+        b.CreateUnreachable();
+    }
+
+    // Per-axis bounds checks for `s[i]` / `s[i,j]`; returns the linear index.
+    Value* Emitter::emitSliceIndexChecked(Value* h, const std::vector<Value*>& idxs, const TypePtr& bt) {
+        for (size_t k = 0; k < idxs.size(); ++k) {
+            Value* dim = emitSliceDim(h, static_cast<int>(k));
+            BasicBlock* ok = BasicBlock::Create(ctx, "idx.ok", curFn);
+            BasicBlock* bad = BasicBlock::Create(ctx, "idx.bad", curFn);
+            b.CreateCondBr(b.CreateICmpUGE(idxs[k], dim), bad, ok);
+            b.SetInsertPoint(bad);
+            emitBoundsFail(idxs[k], dim, ConstantInt::get(i64(), static_cast<int64_t>(k)));
+            b.SetInsertPoint(ok);
+        }
+        Value* lin = idxs.empty() ? ConstantInt::get(i64(), 0) : idxs[0];
+        for (size_t k = 1; k < idxs.size(); ++k) {
+            Value* dk = sliceDimField(h, static_cast<int>(k));
+            lin = b.CreateAdd(b.CreateMul(lin, dk), idxs[k]);
+        }
+        return lin;
+    }
+
     // len(a, k): a null handle yields 0; k is a compile-time constant
     Value* Emitter::emitSliceDim(Value* h, int axis) {
         BasicBlock* nullBB = BasicBlock::Create(ctx, "alen.null", curFn);
@@ -187,11 +223,14 @@ namespace muc_detail {
         b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), doneBB, bodyBB);
         b.SetInsertPoint(bodyBB);
         Value* rcp = b.CreateGEP(i8(), h, ConstantInt::get(i64(), kArrRc));
+        // Release decrement + acquire fence before freeing: same rule as class objects (the array
+        // header can be shared across tasks/threads just like a class handle).
         Value* old = b.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, rcp,
                                        ConstantInt::get(i64(), 1), MaybeAlign(8),
-                                       llvm::AtomicOrdering::Monotonic);
+                                       llvm::AtomicOrdering::Release);
         b.CreateCondBr(b.CreateICmpEQ(old, ConstantInt::get(i64(), 1)), destroyBB, doneBB);
         b.SetInsertPoint(destroyBB);
+        b.CreateFence(llvm::AtomicOrdering::Acquire);
         b.CreateCall(ensureSliceFree(sliceTy->elem, sliceTy->rank), {h});
         b.CreateBr(doneBB);
         b.SetInsertPoint(doneBB);
@@ -238,9 +277,11 @@ namespace muc_detail {
         auto* got = BasicBlock::Create(ctx, "weak.got", fn);
         hb.CreateBr(spin);
         hb.SetInsertPoint(spin);
+        // Acquire on lock, Release on unlock: the registry must not be read while another thread
+        // is in the middle of modifying it (this used to be relaxed, which only worked on x86-TSO).
         auto* old = hb.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, weakLockGlobal(),
                                        ConstantInt::get(i32(), 1), MaybeAlign(4),
-                                       llvm::AtomicOrdering::Monotonic);
+                                       llvm::AtomicOrdering::Acquire);
         hb.CreateCondBr(hb.CreateICmpEQ(old, ConstantInt::get(i32(), 0)), got, spin);
         hb.SetInsertPoint(got);
     }
@@ -248,7 +289,7 @@ namespace muc_detail {
     void Emitter::emitWeakUnlock(IRBuilder<>& hb) {
         hb.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, weakLockGlobal(),
                            ConstantInt::get(i32(), 0), MaybeAlign(4),
-                           llvm::AtomicOrdering::Monotonic);
+                           llvm::AtomicOrdering::Release);
     }
 
     Function* Emitter::ensureWeakReg() {

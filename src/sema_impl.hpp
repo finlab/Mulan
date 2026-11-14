@@ -123,6 +123,30 @@ private:
     std::vector<LambdaCtx> lambda_stack_;
     int lambda_seq_ = 0;
 
+    // ------------------------------------------------------------ para sections (3.17.2)
+    // One entry per section currently being checked. `seen` collects the enclosing locals the section
+    // reads; `declared` is the set of locals it declares itself (they are not captures).
+    struct ParaCtx {
+        std::size_t scope_base = 0;
+        int loop_base = 0;
+        std::size_t lambda_base = 0;
+        std::vector<LocalVar*> seen;
+        std::unordered_set<LocalVar*> declared;
+    };
+    std::vector<ParaCtx> para_stack_;
+
+    void check_para(ParaStmt* p);
+    void check_para_for(ParaForStmt* p);
+    // Set while a `para for` body is being checked: `break`/`continue` at the body level are errors
+    // (a region ends when its source ends, or by cancellation; the body is one task per item).
+    bool pending_para_for_ = false;
+    bool in_para_for_body_ = false;
+    int para_for_body_depth_ = 0;
+
+    // True when the expression is rooted at an enclosing value-typed local: a `para` section may not
+    // write it, take its address or pass it by `ref` (the storage is the suspended caller's frame).
+    bool roots_at_outer_value_local(Expr* e) const;
+
     // ------------------------------------------------------------ generics (U34)
     std::unordered_map<std::string, Decl*> generic_templates_;  // "unit.Name" → template declaration
     std::unordered_map<std::string, TypePtr> generic_insts_;    // "unit.Vec<int>" → instantiated type
@@ -390,6 +414,7 @@ private:
 
     // Index shape (SPEC 6.4.1): length() -> usize  +  operator[](C, usize) -> T
     void resolve_index_shape(ForInStmt* s, const TypePtr& st);
+    void resolve_cursor_shape(ForInStmt* s, const TypePtr& st);
 
     void check_for(ForInStmt* s);
     // ------------------------------------------------------------ assignment compatibility

@@ -106,11 +106,15 @@ using ArgPack = Emitter::ArgPack;
         return emitStructMethodCall(sig, addrOf(recv), args);
     }
 
-    Value* Emitter::emitMemberIndex(const MethodSig* sig, Value* recvAddr, Value* idxVal) {
+    Value* Emitter::emitMemberIndex(const MethodSig* sig, Value* recvAddr, const std::vector<Value*>& idxVals) {
+        std::vector<LType*> pty{ptrTy()};
+        for (const auto& p : sig->params) pty.push_back(lt(p));
         FunctionCallee callee = mod->getOrInsertFunction(
             method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
-            FunctionType::get(lt(sig->ret), {ptrTy(), lt(sig->params[0])}, false));
-        Value* r = b.CreateCall(callee, {recvAddr, idxVal});
+            FunctionType::get(lt(sig->ret), pty, false));
+        std::vector<Value*> args{recvAddr};
+        for (auto* v : idxVals) args.push_back(v);
+        Value* r = b.CreateCall(callee, args);
         if (mayThrow.mayThrowMethod(sig, sig->owner)) emitCheckPending();
         return r;
     }
@@ -244,6 +248,20 @@ using ArgPack = Emitter::ArgPack;
     }
 
     Value* Emitter::evalCall(Call* c) {
+        if (c->callee_kind == "slice_length") {
+            auto* m = dynamic_cast<Member*>(c->callee.get());
+            Expr* base = m->obj.get();
+            TypePtr st = base->ty;
+            Value* h = eval(base);
+            trackOwnedSliceTemp(base, h, st);
+            if (c->args.empty()) return emitSliceDim(h, 0);
+            if (auto il = dynamic_cast<IntLit*>(c->args[0].get())) {
+                return emitSliceDim(h, static_cast<int>(il->value));
+            }
+            Value* axisV = convertTo(eval(c->args[0].get()), c->args[0]->ty,
+                                     Type::make_prim("usize"));
+            return emitSliceDimDynamic(h, axisV, st->rank);
+        }
         if (c->callee_kind == "builtin") {
             if (c->builtin == "alloc") {
                 Value* n = convertTo(eval(c->args[0].get()), c->args[0]->ty,
@@ -540,14 +558,17 @@ using ArgPack = Emitter::ArgPack;
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
             if (ix->get_method) {
-                Value* r = emitMemberIndex(ix->get_method, addrOf(ix->base.get()),
-                                           convertTo(eval(ix->indices[0].get()), ix->indices[0]->ty,
-                                                     Type::make_prim("usize")));
+                std::vector<Value*> idxVals;
+                for (auto& ie : ix->indices)
+                    idxVals.push_back(convertTo(eval(ie.get()), ie->ty, Type::make_prim("usize")));
+                Value* r = emitMemberIndex(ix->get_method, addrOf(ix->base.get()), idxVals);
                 if (ix->by_ref) return loadAt(lt(e->ty), r, unalignedExpr(e));
                 return r;
             }
             if (ix->get_func) {
-                Value* r = emitUserCall(ix->get_func, {ix->base.get(), ix->indices[0].get()});
+                std::vector<Expr*> callArgs{ix->base.get()};
+                for (auto& ie : ix->indices) callArgs.push_back(ie.get());
+                Value* r = emitUserCall(ix->get_func, callArgs);
                 if (ix->by_ref) return loadAt(lt(e->ty), r, unalignedExpr(e));
                 return r;
             }
@@ -589,11 +610,8 @@ using ArgPack = Emitter::ArgPack;
         }
         if (auto v = dynamic_cast<NewExpr*>(e)) return evalNew(v);
         if (auto v = dynamic_cast<SizeofExpr*>(e)) {
-            // sema resolved the type and stored it on the node; the backend never re-resolves type syntax
-            TypePtr t = v->spec_ty;
-            if (!t) fail("LLVM backend: sizeof/alignof without a resolved type", e->line, e->col);
-            uint64_t n = v->which == "alignof" ? alignOf(t) : sizeOf(t);
-            return ConstantInt::get(i64(), n);
+            // sema folded the value (type form, expression form and `offsetof` alike); emit the constant
+            return ConstantInt::get(i64(), v->cval);
         }
         if (auto v = dynamic_cast<Len*>(e)) {
             TypePtr st = v->seq->ty;

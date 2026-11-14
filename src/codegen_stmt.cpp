@@ -215,6 +215,14 @@ using ArgPack = Emitter::ArgPack;
             emitThrow(th->value.get());
             return;
         }
+        if (auto pp = dynamic_cast<ParaStmt*>(s)) {
+            emitPara(pp);
+            return;
+        }
+        if (auto pf = dynamic_cast<ParaForStmt*>(s)) {
+            emitParaFor(pf);
+            return;
+        }
         if (auto tr = dynamic_cast<TryStmt*>(s)) {
             emitTry(tr);
             return;
@@ -224,7 +232,7 @@ using ArgPack = Emitter::ArgPack;
             return;
         }
         if (auto lv = dynamic_cast<LocalVar*>(s)) {
-            AllocaInst* slot = slotFor(lv);
+            Value* slot = slotFor(lv);
             if (lv->init) {
                 initInto(slot, lv->rty, lv->init.get());
                 // The local is not in refScopes yet. If initialization threw (a struct
@@ -453,8 +461,8 @@ using ArgPack = Emitter::ArgPack;
         BasicBlock* incBB = BasicBlock::Create(ctx, "for.inc", curFn);
         BasicBlock* endBB = BasicBlock::Create(ctx, "for.end", curFn);
 
-        AllocaInst* varSlot = slotFor(s->lvar.get());
-        AllocaInst* idxSlot = (s->has_idx && s->idx_lvar) ? slotFor(s->idx_lvar.get()) : nullptr;
+        Value* varSlot = slotFor(s->lvar.get());
+        Value* idxSlot = (s->has_idx && s->idx_lvar) ? slotFor(s->idx_lvar.get()) : nullptr;
 
         if (s->loop_kind == "range") {
             auto* re = dynamic_cast<RangeExpr*>(s->seq.get());
@@ -478,7 +486,7 @@ using ArgPack = Emitter::ArgPack;
             b.SetInsertPoint(bodyBB2);
             loops.push_back({incBB, endBB});
             loopScopeDepth.push_back(refScopes.size());
-            block(s->body.get());
+            if (paraSpawn) emitParaForSpawnItem(varSlot); else block(s->body.get());
             loopScopeDepth.pop_back();
             loops.pop_back();
             if (!hasTerm(b.GetInsertBlock())) b.CreateBr(incBB);
@@ -520,6 +528,41 @@ using ArgPack = Emitter::ArgPack;
                 stmtTemps.emplace_back(seqAddr, sty);
         }
 
+        // cursor form (SPEC 6.4.2): auto it = seq.iterator(); while it.next() { v = it.current(); ... }
+        if (s->loop_kind == "cursor") {
+            Value* recv = (sty->kind == TypeKind::Class) ? b.CreateLoad(lt(sty), seqAddr) : seqAddr;
+            Value* itv = emitMethodCallVals(s->iter_sig, recv, sty, {}, s);
+            if (mayThrow.mayThrowMethod(s->iter_sig, sty)) emitCheckPending();
+            auto* itSlot = entryAlloca(lt(s->it_ty), "it", alignOf(s->it_ty));
+            b.CreateStore(itv, itSlot);
+
+            b.CreateBr(condBB);
+            b.SetInsertPoint(condBB);
+            Value* more = emitMethodCallVals(s->next_sig, itSlot, s->it_ty, {}, s);
+            if (mayThrow.mayThrowMethod(s->next_sig, s->it_ty)) emitCheckPending();
+            b.CreateCondBr(more, bodyBB2, endBB);
+            b.SetInsertPoint(bodyBB2);
+            Value* ev = emitMethodCallVals(s->cur_sig, itSlot, s->it_ty, {}, s);
+            if (mayThrow.mayThrowMethod(s->cur_sig, s->it_ty)) emitCheckPending();
+            b.CreateStore(ev, varSlot);
+            const bool ownCur = needsCleanup(s->elem_ty);
+            if (ownCur) emitRetainValue(varSlot, s->elem_ty);
+            const size_t curDepth = refScopes.size();
+            loops.push_back({incBB, endBB});
+            pushRefScope();
+            if (ownCur) refScopes.back().push_back(s->lvar.get());
+            loopScopeDepth.push_back(curDepth);
+            if (paraSpawn) emitParaForSpawnItem(varSlot); else block(s->body.get());
+            loopScopeDepth.pop_back();
+            loops.pop_back();
+            popRefScope();
+            if (!hasTerm(b.GetInsertBlock())) b.CreateBr(incBB);
+            b.SetInsertPoint(incBB);
+            b.CreateBr(condBB);
+            b.SetInsertPoint(endBB);
+            return;
+        }
+
         // index form (SPEC 6.4.1): length() once + operator[](C, usize) each iteration
         if (s->loop_kind == "index") {
             TypePtr us = Type::make_prim("usize");
@@ -538,7 +581,7 @@ using ArgPack = Emitter::ArgPack;
             b.SetInsertPoint(bodyBB2);
             Value* ci2 = b.CreateLoad(i64(), idx);
             if (idxSlot) b.CreateStore(ci2, idxSlot);
-            Value* ev = s->idx_method ? emitMemberIndex(s->idx_method, seqAddr, ci2)
+            Value* ev = s->idx_method ? emitMemberIndex(s->idx_method, seqAddr, {ci2})
                                       : emitOperatorIndexCall(s->idx_fn, seqAddr, sty, ci2, seqUnaligned);
             if ((s->idx_method && is_borrow_type(s->idx_method->ret)) ||
                 (s->idx_fn && is_borrow_type(s->idx_fn->rty))) {
@@ -555,7 +598,7 @@ using ArgPack = Emitter::ArgPack;
             pushRefScope();
             if (ownVar) refScopes.back().push_back(s->lvar.get());
             loopScopeDepth.push_back(outerDepth);
-            block(s->body.get());
+            if (paraSpawn) emitParaForSpawnItem(varSlot); else block(s->body.get());
             loopScopeDepth.pop_back();
             loops.pop_back();
             popRefScope();
@@ -617,7 +660,7 @@ using ArgPack = Emitter::ArgPack;
         pushRefScope();
         if (ownVar) refScopes.back().push_back(s->lvar.get());
         loopScopeDepth.push_back(outerDepth);
-        block(s->body.get());
+        if (paraSpawn) emitParaForSpawnItem(varSlot); else block(s->body.get());
         loopScopeDepth.pop_back();
         loops.pop_back();
         popRefScope();
@@ -690,6 +733,337 @@ using ArgPack = Emitter::ArgPack;
             if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
         }
         b.SetInsertPoint(endBB);
+    }
+
+    // ---------------------------------------------------------------- para (3.17.2)
+
+    FunctionCallee Emitter::runtimeFn(const char* unit, const char* name, LType* ret,
+                                      std::vector<LType*> params) {
+        for (auto& u : prog.units) {
+            if (u->name != unit) continue;
+            for (auto& d : u->decls) {
+                auto* f = dynamic_cast<FuncDecl*>(d.get());
+                if (f && f->name == name) {
+                    return mod->getOrInsertFunction(f->cname, FunctionType::get(ret, params, false));
+                }
+            }
+        }
+        fail(std::string("LLVM backend: runtime function `") + unit + "." + name +
+                 "` is missing (std.task is required for `para`)",
+             0, 0);
+    }
+
+    void Emitter::emitPara(ParaStmt* p) {
+        FunctionCallee join = runtimeFn("std.task", "muc_para_join", LType::getVoidTy(ctx), {ptrTy()});
+        std::vector<Value*> handles;
+        for (size_t si = 0; si < p->sections.size(); ++si) {
+            static const std::vector<LocalVar*> kNoCaps;
+            const std::vector<LocalVar*>& caps = si < p->captures.size() ? p->captures[si] : kNoCaps;
+
+            // One frame per section: one pointer-sized field per captured local, holding the address
+            // of the caller's slot. The caller is suspended at the join below, so those slots live
+            // for as long as any section can read them.
+            std::vector<LType*> fields(caps.size(), ptrTy());
+            auto* ft = LStruct::get(ctx, fields);
+            auto* frame = entryAlloca(ft, "para.frame", 8);
+            for (size_t j = 0; j < caps.size(); ++j) {
+                Value* slot = slotFor(caps[j]);
+                b.CreateStore(b.CreateBitCast(slot, ptrTy()),
+                              b.CreateStructGEP(cast<LStruct>(ft), frame, static_cast<unsigned>(j)));
+            }
+
+            PendingPara pp;
+            pp.body = p->sections[si].get();
+            pp.captures = caps;
+            pp.frameTy = ft;
+            const std::string base = "mu_para_" + std::to_string(paraSeq++);
+            auto* sig = FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false);
+            pp.bodyFn = Function::Create(sig, GlobalValue::InternalLinkage, base + "_body", *mod);
+            pp.wrapFn = Function::Create(sig, GlobalValue::InternalLinkage, base + "_sec", *mod);
+            pendingParas.push_back(pp);
+
+            FunctionCallee start =
+                runtimeFn("std.task", "muc_para_start", ptrTy(), {ptrTy(), ptrTy()});
+            Value* h = b.CreateCall(start, {pp.wrapFn, b.CreateBitCast(frame, ptrTy())});
+            handles.push_back(h);
+            // Starting a section can fail (the runtime caps live execution units); that is an
+            // ordinary exception, so join the sections that did start before the region unwinds.
+            std::vector<Value*> started(handles.begin(), handles.end() - 1);
+            emitCheckPendingWith([&] {
+                for (Value* prev : started) b.CreateCall(join, {prev});
+            });
+        }
+        // Structured join: every section finishes before the statement completes.
+        for (Value* h : handles) b.CreateCall(join, {h});
+    }
+
+    LStruct* Emitter::paraCtxTy(const TypePtr& elemTy, bool byRef) {
+        return LStruct::get(ctx, {ptrTy(), byRef ? ptrTy() : lt(elemTy)});
+    }
+
+    void Emitter::emitParaFor(ParaForStmt* p) {
+        ForInStmt* f = p->loop.get();
+        if (!f) return;
+
+        // Captures: one frame of pointers, shared by every item task (they are read-only). The
+        // producer is suspended at the join below, so the caller's slots outlive every task.
+        std::vector<LType*> fields(p->captures.size(), ptrTy());
+        auto* ft = LStruct::get(ctx, fields);
+        auto* frame = entryAlloca(ft, "para.frame", 8);
+        for (size_t j = 0; j < p->captures.size(); ++j) {
+            Value* slot = slotFor(p->captures[j]);
+            b.CreateStore(b.CreateBitCast(slot, ptrTy()),
+                          b.CreateStructGEP(cast<LStruct>(ft), frame, static_cast<unsigned>(j)));
+        }
+
+        const std::string base = "mu_para_for_" + std::to_string(paraSeq++);
+        auto* sig = FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false);
+        Function* bodyFn = Function::Create(sig, GlobalValue::InternalLinkage, base + "_body", *mod);
+        Function* wrapFn = Function::Create(sig, GlobalValue::InternalLinkage, base + "_sec", *mod);
+
+        // The region's task list: every item task is recorded so the source end can join them all.
+        FunctionCallee groupNew = runtimeFn("std.task", "muc_para_group_new", ptrTy(), {});
+        auto* groupSlot = entryAlloca(ptrTy(), "para.group", 8);
+        b.CreateStore(b.CreateCall(groupNew, {}), groupSlot);
+
+        PendingParaFor q;
+        q.p = p;
+        q.bodyFn = bodyFn;
+        q.wrapFn = wrapFn;
+        q.frameTy = ft;
+        q.ctxTy = paraCtxTy(f->elem_ty, f->by_ref);
+        q.elemTy = f->elem_ty;
+        q.byRef = f->by_ref;
+        pendingParaFors.push_back(q);
+
+        // The ordinary for-in lowering produces the items (one pull per iteration); its body is
+        // replaced by "start one task for the current item" (SPEC 3.17.3: one task per item).
+        ParaForSpawn sp;
+        sp.wrapFn = wrapFn;
+        sp.frame = b.CreateBitCast(frame, ptrTy());
+        sp.groupSlot = groupSlot;
+        sp.elemTy = f->elem_ty;
+        sp.byRef = f->by_ref;
+        paraSpawn = &sp;
+        // Unwinding out of the source (a throwing `next()` / `operator[]` / source expression) must
+        // join what already started; the callback runs before any scope release.
+        paraUnwindCleanup.push_back([this, groupSlot] {
+            FunctionCallee jf = runtimeFn("std.task", "muc_para_group_join_free",
+                                          LType::getVoidTy(ctx), {ptrTy()});
+            b.CreateCall(jf, {b.CreateLoad(ptrTy(), groupSlot)});
+        });
+        emitFor(f);
+        paraUnwindCleanup.pop_back();
+        paraSpawn = nullptr;
+
+        // Structured: the region ends when the source ends, and every task is joined here.
+        FunctionCallee joinFree =
+            runtimeFn("std.task", "muc_para_group_join_free", LType::getVoidTy(ctx), {ptrTy()});
+        b.CreateCall(joinFree, {b.CreateLoad(ptrTy(), groupSlot)});
+    }
+
+    // One item: the producer has already pulled the item into the loop variable's slot. Copy it into
+    // a heap context `{ frame*, item }`, start the task and record the handle in the task list.
+    void Emitter::emitParaForSpawnItem(Value* slot) {
+        ParaForSpawn* sp = paraSpawn;
+        const TypePtr et = sp->elemTy;
+        auto* ct = cast<LStruct>(paraCtxTy(et, sp->byRef));
+        const uint64_t bytes = mod->getDataLayout().getTypeAllocSize(ct);
+        Value* mem =
+            b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {ConstantInt::get(i64(), bytes)});
+        b.CreateStore(sp->frame, b.CreateStructGEP(ct, mem, 0));
+        Value* fld = b.CreateStructGEP(ct, mem, 1);
+        if (sp->byRef) {
+            // `for ref`: the context holds the element address. The container outlives the region
+            // (no capture escapes), so nothing is retained and no borrow is stored.
+            b.CreateStore(b.CreateLoad(ptrTy(), slot), fld);
+        } else {
+            b.CreateStore(b.CreateLoad(lt(et), slot), fld);
+            // The task owns its copy; the producer still releases its own iteration value below.
+            if (needsCleanup(et)) {
+                if (isRefKind(et)) emitRetainRef(b.CreateLoad(lt(et), fld), et);
+                else emitRetainValue(fld, et);
+            }
+        }
+
+        FunctionCallee startFn =
+            runtimeFn("std.task", "muc_para_start", ptrTy(), {ptrTy(), ptrTy()});
+        Value* h = b.CreateCall(startFn, {sp->wrapFn, mem});
+
+        // A failed spawn is an ordinary exception (SPEC 3.17.7): release this item's resources and
+        // then unwind like any other failed call (the region's unwind cleanup joins the tasks that
+        // already started, see `paraUnwindCleanup`). The check comes *before* the handle is recorded:
+        // a refused start returns no handle, so nothing undefined may enter the task list.
+        const bool ownCopy = !sp->byRef && needsCleanup(et);
+        emitCheckPendingWith([&] {
+            if (ownCopy) {
+                // same release shape as a local variable (releaseLocal)
+                if (isRefKind(et)) {
+                    emitReleaseRef(b.CreateLoad(lt(et), fld), et);
+                } else if (et->kind == TypeKind::Struct && et->has_dtor) {
+                    FunctionCallee dtor = mod->getOrInsertFunction(
+                        dtor_cname(et->unit, et->name),
+                        FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+                    b.CreateCall(dtor, {fld});
+                } else {
+                    emitReleaseValue(fld, et);
+                }
+            }
+            b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {mem});
+        });
+
+        FunctionCallee addFn =
+            runtimeFn("std.task", "muc_para_group_add", LType::getVoidTy(ctx), {ptrTy(), ptrTy()});
+        b.CreateCall(addFn, {b.CreateLoad(ptrTy(), sp->groupSlot), h});
+    }
+
+    // One item body: `void(ctx)` with ctx = { frame*, item }. The loop variable is bound from the
+    // context (by value, or as the element address for `for ref`); the body is otherwise unchanged.
+    // Emitted after the enclosing function, like a `para` section body.
+    void Emitter::emitParaForBody(PendingParaFor q) {
+        ParaForStmt* p = q.p;
+        ForInStmt* f = p->loop.get();
+        LType* ft = q.frameTy;
+        auto* ct = cast<LStruct>(q.ctxTy);
+        Function* bodyFn = q.bodyFn;
+        Function* wrapFn = q.wrapFn;
+
+        resetDebugScope();
+        diSub = nullptr;
+        curClassTy = nullptr;
+        curThis = nullptr;
+        thisSlot = nullptr;
+        refScopes.clear();
+        loopScopeDepth.clear();
+        stmtTemps.clear();
+        ehStack.clear();
+        finallyStack.clear();
+        abortBases.clear();
+        ehLocals.clear();
+        slots.clear();
+        paraUnwindCleanup.clear();
+        curFn = bodyFn;
+        curRetTy = Type::make_void();
+        curIsEntry = false;
+        inNothrow = false;
+        allocaBB = BasicBlock::Create(ctx, "allocas", bodyFn);
+        bodyBB = BasicBlock::Create(ctx, "entry", bodyFn);
+        ab.SetInsertPoint(allocaBB);
+        b.SetInsertPoint(bodyBB);
+
+        // Unpack the context.
+        Value* arg = bodyFn->getArg(0);
+        frameArg = b.CreateLoad(ptrTy(), b.CreateStructGEP(ct, arg, 0));
+        frameTy = ft;
+        captureIndex.clear();
+        for (size_t i = 0; i < p->captures.size(); ++i)
+            captureIndex[p->captures[i]] = static_cast<int>(i);
+
+        // Bind the loop variable to the item.
+        Value* fld = b.CreateStructGEP(ct, arg, 1);
+        Value* varSlot = slotFor(f->lvar.get());
+        if (q.byRef) b.CreateStore(b.CreateLoad(ptrTy(), fld), varSlot);
+        else b.CreateStore(b.CreateLoad(lt(q.elemTy), fld), varSlot);
+
+        // The item copy is an owning local of the body (SPEC §4); a borrowed element is not released.
+        const bool own = !q.byRef && needsCleanup(q.elemTy);
+        pushRefScope();
+        if (own) refScopes.back().push_back(f->lvar.get());
+        block(f->body.get());
+        popRefScope();
+        if (!hasTerm(b.GetInsertBlock())) b.CreateRetVoid();
+        ab.SetInsertPoint(allocaBB);
+        ab.CreateBr(bodyBB);
+
+        captureIndex.clear();
+        frameArg = nullptr;
+        frameTy = nullptr;
+        slots.clear();
+
+        // Wrapper: call the body, free the per-item context, abort if an exception escaped it
+        // (same v1 thread-boundary rule as `para`).
+        BasicBlock* we = BasicBlock::Create(ctx, "entry", wrapFn);
+        b.SetInsertPoint(we);
+        b.CreateCall(bodyFn, {wrapFn->getArg(0)});
+        b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {wrapFn->getArg(0)});
+        Value* flag = loadPendingFlag();
+        BasicBlock* aborted = BasicBlock::Create(ctx, "pf.abort", wrapFn);
+        BasicBlock* done = BasicBlock::Create(ctx, "pf.done", wrapFn);
+        b.CreateCondBr(b.CreateICmpNE(flag, ConstantInt::get(i32(), 0)), aborted, done);
+        b.SetInsertPoint(aborted);
+        b.CreateCall(mod->getOrInsertFunction("abort",
+                                              FunctionType::get(LType::getVoidTy(ctx), {}, false)));
+        b.CreateUnreachable();
+        b.SetInsertPoint(done);
+        b.CreateRetVoid();
+
+        curFn = nullptr;
+        allocaBB = nullptr;
+        bodyBB = nullptr;
+    }
+
+    void Emitter::emitParaSection(PendingPara p) {
+        // ---- the section body: void(ptr frame); captured locals resolve through the frame
+        Function* fn = p.bodyFn;
+        resetDebugScope();
+        diSub = nullptr;
+        curClassTy = nullptr;
+        curThis = nullptr;
+        thisSlot = nullptr;
+        refScopes.clear();
+        loopScopeDepth.clear();
+        stmtTemps.clear();
+        ehStack.clear();
+        finallyStack.clear();
+        abortBases.clear();
+        ehLocals.clear();
+        slots.clear();
+        paraUnwindCleanup.clear();
+        curFn = fn;
+        curRetTy = Type::make_void();
+        curIsEntry = false;
+        inNothrow = false;
+        allocaBB = BasicBlock::Create(ctx, "allocas", fn);
+        bodyBB = BasicBlock::Create(ctx, "entry", fn);
+        ab.SetInsertPoint(allocaBB);
+        b.SetInsertPoint(bodyBB);
+        frameArg = fn->getArg(0);
+        frameTy = p.frameTy;
+        captureIndex.clear();
+        for (size_t i = 0; i < p.captures.size(); ++i)
+            captureIndex[p.captures[i]] = static_cast<int>(i);
+
+        block(p.body);
+        if (!hasTerm(b.GetInsertBlock())) b.CreateRetVoid();
+        ab.SetInsertPoint(allocaBB);
+        ab.CreateBr(bodyBB);
+
+        captureIndex.clear();
+        frameArg = nullptr;
+        frameTy = nullptr;
+        slots.clear();
+
+        // ---- the thread entry: call the body, then abort if an exception escaped it.
+        // v1 has no cross-thread exception transfer (SPEC 3.17 note), so this is the B2
+        // "uncaught at a thread boundary" rule.
+        Function* wf = p.wrapFn;
+        BasicBlock* we = BasicBlock::Create(ctx, "entry", wf);
+        b.SetInsertPoint(we);
+        b.CreateCall(fn, {wf->getArg(0)});
+        Value* flag = loadPendingFlag();
+        BasicBlock* aborted = BasicBlock::Create(ctx, "para.abort", wf);
+        BasicBlock* done = BasicBlock::Create(ctx, "para.done", wf);
+        b.CreateCondBr(b.CreateICmpNE(flag, ConstantInt::get(i32(), 0)), aborted, done);
+        b.SetInsertPoint(aborted);
+        b.CreateCall(mod->getOrInsertFunction("abort",
+                                              FunctionType::get(LType::getVoidTy(ctx), {}, false)));
+        b.CreateUnreachable();
+        b.SetInsertPoint(done);
+        b.CreateRetVoid();
+
+        curFn = nullptr;
+        allocaBB = nullptr;
+        bodyBB = nullptr;
     }
 
 }  // namespace muc_detail

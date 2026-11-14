@@ -1,1 +1,1 @@
-cannot assign std.string.string to const char*
+cannot assign std.string.String to const char*

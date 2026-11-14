@@ -20,7 +20,7 @@ int main() {
     if m[0,1] != 0 or m[1,1] != 0 { puts("bad multidim"); return 3; }
 
     int[] d = {};
-    if len(d) != 0 { puts("bad dynarray"); return 4; }
+    if d.length() != 0 { puts("bad dynarray"); return 4; }
 
     string s = {};
     if s.length() != 0 or not (s == "") { puts("bad string"); return 5; }

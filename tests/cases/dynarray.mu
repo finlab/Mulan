@@ -12,7 +12,7 @@ class C {
 struct S { byte[] b; }
 struct Box2 { int[] b; }
 
-int addlen(byte[] b, int x) { return (len(b) as int) + x; }
+int addlen(byte[] b, int x) { return (b.length() as int) + x; }
 S mk(int n) {
     S s = {new byte[n]};
     return s;
@@ -26,21 +26,21 @@ int main() {
     byte[] b = new byte[4];
     b[0] = 7;
     b[1] = 9;
-    if len(b) != 4 { puts("len failed"); return 1; }
+    if b.length() != 4 { puts("len failed"); return 1; }
     if b[0] != 7 or b[1] != 9 { puts("index failed"); return 2; }
-    if len(new byte[5]) != 5 { puts("temp len failed"); return 3; }
+    if (new byte[5]).length() != 5 { puts("temp len failed"); return 3; }
     if (new byte[2])[0] != 0 { puts("temp index failed"); return 4; }
 
     // zero value
     int[] z = {};
-    if len(z) != 0 { puts("zero slice failed"); return 5; }
+    if z.length() != 0 { puts("zero slice failed"); return 5; }
     int n = 0;
     for v in z { n += 1; }
     if n != 0 { puts("empty for failed"); return 6; }
 
     // aggregate initialization
     int[] q = {1, 2, 3};
-    if len(q) != 3 or q[2] != 3 { puts("aggregate failed"); return 7; }
+    if q.length() != 3 or q[2] != 3 { puts("aggregate failed"); return 7; }
 
     // fixed-size array -> dynamic array: copied, not shared
     int[3] a = {1, 2, 3};
@@ -57,7 +57,7 @@ int main() {
     self = self;
     if self[1] != 5 { puts("self assign failed"); return 11; }
     if addlen(b, 1) != 5 { puts("param failed"); return 12; }
-    if G[2] != 30 or len(G) != 3 { puts("global failed"); return 13; }
+    if G[2] != 30 or G.length() != 3 { puts("global failed"); return 13; }
 
     // elements are class references: the array owns the element lifetime
     {
@@ -89,7 +89,7 @@ int main() {
     // struct field / copy / return
     {
         S st = mk(3);
-        if len(st.b) != 3 { puts("struct field failed"); return 22; }
+        if st.b.length() != 3 { puts("struct field failed"); return 22; }
         S st2 = st;
         st2.b[0] = 4;
         if st.b[0] != 4 { puts("struct share failed"); return 23; }
@@ -98,7 +98,7 @@ int main() {
     // borrowed parameter stored into a field -> retain; the temporary array argument is released after the call
     {
         Box2 box = keep(a);
-        if len(box.b) != 3 or box.b[1] != 2 { puts("borrow store failed"); return 24; }
+        if box.b.length() != 3 or box.b[1] != 2 { puts("borrow store failed"); return 24; }
         box.b[0] = 33;
         if a[0] != 1 { puts("stored copy failed"); return 25; }
     }

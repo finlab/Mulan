@@ -13,7 +13,7 @@
 | Topic | Conclusion |
 |---|---|
 | Loops | Only `while` and `for-in` are kept; C-style `for` and `do-while` are not kept |
-| Iteration | `for x in seq { }` (parentheses optional); ranges `a..b` / `a..=b` (optionally `step n`), fixed-size arrays, and dynamic arrays are supported; `continue` proceeds to the next iteration |
+| Iteration | `for x in seq { }` (parentheses optional); ranges `a..b` / `a..=b` (optionally `step n`) and managed sequences (`T[]` / `buffer<T>` / `String`) are supported; static arrays are C storage and are not iterable; `continue` proceeds to the next iteration |
 | Mutability | C#-style: the type is declared before use; mutable by default; `const` is a C-model prefix qualifier: on named types it is a read-only binding marker, on pointers/slices it makes the pointee read-only |
 | Declaration initialization | Declarations use only `=`: `Point p = {1, 2}`, `Point p = {}`, `Point p = Point(1, 2)`; in non-declaration positions use `Point(...)` |
 | Type inference | Local variables may use `auto x = expr;`; local only, and an initializer is required; `dynamic`/`any` are reserved names only |
@@ -40,6 +40,7 @@
 4. **Small and predictable**: generics only do monomorphization (no erasure, no runtime generics), no capturing closures, no hidden allocations; overloading is limited to the bounded rules in 3.11; errors that can be caught at compile time are not deferred to runtime.
 5. **Leave room for optimization without sacrificing semantics**: single assignment for `const`, a structured `for-in`, and future alias annotations.
 6. **Separate values from references**: `struct` has value semantics and `class` has reference semantics, and the two are never confused; heap objects are managed with reference counting, and cycles are broken manually with `weak`.
+7. **No `unsafe` mechanism**: every facility (raw pointers and arithmetic, `alloc`/`free`, `union`, uninitialized locals, `extern`, future intrinsics) is available to every programmer. There is no safe subset to protect, so a marker would be decoration; what is unsafe stays **documented UB** (8.2), and the compiler's job is to make it *findable* (explicit intrinsics with fixed names) and *debuggable* (optional runtime checks), not to fence it off.
 
 ---
 
@@ -50,6 +51,18 @@
 - UTF-8 encoding, extension `.mu`.
 - Comments: `//` line comments; `/* ... */` block comments, **nesting is supported** (implemented).
 - Statements end with `;`; semicolons are not inserted automatically.
+- **Unit discovery** (a loader convention, not a language feature): `unit a.b.c;` is looked up as
+  `<root>/a.b.c.mu` or `<root>/a/b/c.mu` under each search root (in `-I` order), so both the flat
+  dotted name and the slashed path are accepted everywhere.
+- **Platform shadows**: a directory `platform/<os>/` (`<os>` = `windows`, `linux`, `macos`) shadows
+  the units below its parent, nearest directory first. For `a.b.c` the loader tries
+  `<root>/a/b/platform/<os>/…`, `<root>/a/platform/<os>/…`, `<root>/platform/<os>/…`, and only then
+  the portable unit. Inside a shadow directory the file keeps the **full** unit name, so a library
+  ships its own per-OS implementations next to its code and stays vendorable as one directory:
+  `libs/std/platform/windows/std.thread.backend.mu`, `ms/xxlib/platform/linux/ms.xxlib.io.mu`.
+  `platform` is reserved for this: a unit name may not start with it, and a `platform.<os>` segment
+  pair is rejected. Two files for the same unit in one directory is an error (ambiguous unit).
+  `muc check --os <os>` resolves the program against another platform's units, on any host.
 
 ### 2.2 Identifiers
 
@@ -60,7 +73,8 @@
 ```
 unit use public private const auto struct enum extern class interface new weak packed union
 if else while for in switch ref break continue return
-true false null as sizeof alignof len alloc realloc free
+try catch throw finally
+true false null as sizeof alignof offsetof alloc realloc free
 void bool byte char short ushort int uint long ulong
 float double usize isize
 and or not override operator super this
@@ -69,8 +83,8 @@ and or not override operator super this
 > `del` was removed in 0.0.47 (it is kept as a keyword only to give a migration diagnostic): to release a reference, write `x = null;`.
 
 > `goto/typedef/fn` are not included for now (function types are written `(T1, T2) => R` with no keyword, and no
-> `typedef`-style declarator is introduced; see 3.16). `len/sizeof/alloc/realloc/free/alignof` and the like are built-in identifiers,
-> **and must not be shadowed by user declarations** (implemented: using them as a variable/parameter/field name is a hard error).
+> `typedef`-style declarator is introduced; see 3.16). `sizeof/alloc/realloc/free/alignof` and the like are built-in identifiers,
+> **and must not be shadowed by user declarations** (implemented: using them as a variable/parameter/field name is a hard error). **`len` was removed (0.0.101); it stays reserved only to report the migration.**
 > `dynamic` / `any` are reserved for future dynamic types / top types and are not keywords in phase one.
 > `packed` is a **hard keyword** (a layout modifier, see 3.4, implemented); `align` is a **contextual keyword** — it is parsed as a modifier only when it appears at the start of a type declaration
 > and is immediately followed by `(` (`align(8) struct S {...}`); in other positions it may still be used as an identifier (`int align = 4;` is legal).
@@ -79,6 +93,7 @@ and or not override operator super this
 > in other positions it is still an ordinary identifier (so `type` fields in C interop structs are unaffected).
 > **`step` is a contextual keyword**: it is parsed as a step size only after the range sequence of a `for` (`for i in 0..10 step 2`); in other positions it is an ordinary identifier.
 > **`Self` is a contextual keyword** (0.0.67): it is parsed as the "implementor type" only when it appears in type position inside an `interface` body (see 3.15.6); in other positions it is still an ordinary identifier.
+> **`para` is a hard keyword** (implemented 0.0.92, 3.17.2). **`thread` is reserved as a contextual keyword** for the compute-pool modifier (3.17.4, not implemented yet): until it lands it remains usable as an identifier. `spawn` is **not** a keyword and is not used by the concurrency design (deferred join is library-only). `any` stays reserved for the future top type (10.1).
 
 ### 2.4 Literals
 
@@ -89,7 +104,7 @@ and or not override operator super this
   - Literals are interpreted by **bit pattern**: `'\xE4'` is by default the `byte` value 228; assigned to a `char` its value is −28. Use `byte` (or `x as byte`) when an unsigned byte is needed.
   - A character literal denotes a **single byte**, not a Unicode code point: `'a'` is `0x61`; multi-byte characters such as `'中'` are a **compile error** (non-ASCII raw characters are not supported for now).
     `'\u{...}'` only accepts `U+00`–`U+FF` (a single byte); larger code points use the string literal `"\u{4E2D}"` (see below).
-  - Unicode text uses `string` (a UTF-8 byte sequence, see 3.3); both `len(s)` and `s[i]` operate on bytes; the element type of `s[i]` and of string for-in is `byte`.
+  - Unicode text uses `string` (a UTF-8 byte sequence, see 3.3); both `s.length()` and `s[i]` operate on bytes; the element type of `s[i]` and of string for-in is `byte`.
 - **`\u{...}` escape** (shared by character and string literals):
   - The form is `\u{` + 1–6 hexadecimal digits + `}` (either case is allowed, leading zeros are allowed, e.g. `\u{4E2D}`, `\u{1f600}`); the four-digit `\uXXXX` form is not supported.
   - The value range is `U+0000`–`U+10FFFF`; **the surrogate range `U+D800`–`U+DFFF` and values outside the range are compile errors**.
@@ -106,15 +121,13 @@ and or not override operator super this
 The following identifiers are reserved for future features; the compiler should reject their use as variable/function/type names:
 
 ```
-where  try  catch  throw  finally
-async  await  spawn  shared  atomic
-move  unsafe  typeof
+where  move  typeof
 ```
 
-- Generics: `where`;
-- Exceptions: `try/catch/throw/finally`;
-- Concurrency: `async/await/spawn/shared/atomic`;
-- Others: `move/unsafe/typeof`.
+- Generics: `where` (reserved; constraint syntax currently uses `<T: I>`, see 3.15).
+- Others: `move` / `typeof`.
+- **Released from the reserved list**: `async` / `await` are decided **not** to be provided (see 10); `shared` / `atomic` are not language features (sharing is explicit and atomics are a library intrinsic, see 3.17.1); `spawn` is released as well — deferred join is a library facility (`TaskGroup` + a one-slot `Channel<T>`), not syntax; `para` became a **keyword** in 0.0.92 (3.17.2); **`unsafe` is released**: there is **no unsafe mechanism** (principle 7 in 1) — every facility is available to every programmer, so the marker has nothing to protect and would only be decoration; the C-level surface stays documented UB (8.2).
+- `try` / `catch` / `throw` / `finally` (exceptions) are **implemented keywords** listed in 2.3.
   > `match` is no longer a reserved word: the only dispatch construct kept is `switch` (see 6.6). **Pattern-matching style extensions are decided not to be done**
   > (expression form / guards / bindings / or-patterns / type branches / destructuring, see 6.6); if sum types later need dispatch, a separate construct will be discussed then.
 
@@ -144,7 +157,9 @@ move  unsafe  typeof
 ### 3.2 Pointers
 
 - Types: `T*`; `void*` is the untyped pointer; `T**` is legal.
-- Operations: `&expr`, `*p`, `p[i]`, `p + n`, `p - n`, pointer comparison, pointer subtraction.
+- Operations: `&expr`, `*p`, `p[i]`, `p + n`, `p - n`, pointer comparison, pointer subtraction, and the
+  member shorthand `p->f`, which is exactly `(*p).f` (one dereference level; `p->f` and `p->f[i]` chain like
+  postfix operators). `p.f` on a pointer is an error — write `p->f`, or `(*p).f` explicitly.
 - `null` can only be assigned to a pointer or a class reference (see 3.8); `p == null` is legal.
 - `T*` implicitly converts to `void*`; `void*` to `T*` requires an explicit `as`.
 - `T*` implicitly converts to `const T*`; the reverse requires an explicit `as` (unsafe).
@@ -155,6 +170,7 @@ move  unsafe  typeof
 ### 3.3 Arrays and dynamic arrays
 
 - Fixed-size arrays: `T[N]`, where `N` is a compile-time integer constant; a **value type**, copied on assignment/argument passing.
+  - **C storage**: no `length()` and no `for-in`; use `sizeof(a) / sizeof(a[0])` for the count and an index loop for iteration.
 - Dynamic arrays: `T[]`, a **reference-counted heap array**; the handle is a pointer to an internal header
   `{ i64 rc; i64 len; i64 cap; data... }` (`cap` is reserved for future growth).
   - `new T[n]` creates one (`n` is a runtime integer, elements zeroed); `T[] s = {}` means empty (null handle).
@@ -162,26 +178,28 @@ move  unsafe  typeof
     if the element type holds class/interface references, release element by element.
   - Element types: scalars, enums, pointers, structs (including reference fields), class/interface references;
     structs with user destructors are not yet allowed as elements (element construction/destruction rules are undecided).
-  - `len(s)`: 0 for a null handle; `s[i]` indexing; `for x in s` iterates over the elements.
+  - `s.length()`: 0 for a null handle; `s[i]` indexing (bounds-checked, see below); `for x in s` iterates over the elements.
   - `for ref x in s` can write to a shared array; **not allowed when the element is a class/interface** (the element is a handle, iterate with value binding);
     `string` also cannot use `for ref` (immutable).
   - Null value: `T[] s = null;` and `T[] s = {};` are equivalent (both null handles); but **a slice cannot be compared with `null`**
-    (use `len(s) == 0`).
+    (use `s.length() == 0`).
   - Releasing a dynamic array: setting the handle to empty (`s = {}` / `s = null`) releases it once; `del` was removed (0.0.47).
   - `sizeof(T[])` / `sizeof(T[,])` = 8 (handle size); the size of library types is defined by the library (for `string` see the library docs).
   - Aggregate initialization `T[] s = {1, 2, 3};` allocates a new array and initializes the elements.
   - `T[N]` → `T[]` implicit conversion: **allocates and copies** (dynamic arrays no longer provide a borrowed view).
   - Sub-slicing/borrowed-view syntax (`s[1..]` etc.) is not provided yet.
+- **`buffer<T>` is the same type as `T[]`** - the public safe memory block (zero-initialized, RC-shared, element-wise RC for class/interface elements, `b.ptr` for C interop).
+- **`String` is the canonical name** of the library string type; `string` is a `type` alias (0.0.101).
 - **Static rectangular multi-dimensional arrays**: `T[m,n,...]` (`m,n` compile-time constants), contiguous memory, value type.
   - `int[2,3] a = {{1, 2, 3}, {4, 5, 6}};` (nested braces, missing elements filled with zero).
   - Indexing `a[i,j]`, equivalent to the chained form `a[i][j]`; `a[i]` yields a row value of type `T[n]`.
-  - `len(a)` = dimension 0, `len(a,k)` = dimension k (k must be a literal).
+  - The dimensions are derived with `sizeof`: `sizeof(a)/sizeof(a[0])` is dimension 0, `sizeof(a[0])/sizeof(a[0][0])` is dimension 1, and so on.
   - May contain class/interface/struct reference elements (RC element by element); `sizeof` is the total byte count.
 - **Dynamic rectangular multi-dimensional arrays**: `T[,]` (only the rank is written; the size is determined by `new`).
   - `int[,] a = new int[m,n];`; any `new T[d0,d1,...]`.
   - Indexing `a[i,j]` (all dimensions must be given; taking a "row view" is not supported).
-  - `len(a)` = dimension 0, `len(a,k)` = dimension k (k may be a runtime expression; dynamic arrays are bounds-checked).
-  - **`for-in` is not supported** (iterate multi-dimensional arrays with index loops; use `len(a, k)` for each dimension's length, see 6.4).
+  - `a.length()` = dimension 0, `a.length(k)` = dimension k (k may be a runtime expression; subscripts are bounds-checked).
+  - **`for-in` is not supported** (iterate multi-dimensional arrays with index loops; use `a.length(k)` for each dimension's length, see 6.4).
   - Conversion: `T[m,n,...] → T[,]` allocates and copies.
 - **Jagged arrays**: `T[][]` (the element is itself a dynamic array); rows may have different lengths.
   - `new T[m][]` creates `m` empty row slots (elements are null `T[]`), then loop
@@ -191,18 +209,18 @@ move  unsafe  typeof
 - All-zero: `int[5] c = {};`; empty dynamic/rectangular arrays: `int[] d = {};`, `int[,] e = {};`.
 - Arrays do **not implicitly decay to pointers**; take the first address with `&arr[0]`.
 - Indexing `x[i]` / `x[i,j]`; the index type is an integer, `usize` recommended.
-- `len(x)`: fixed-size arrays return a compile-time constant, dynamic arrays return the runtime length, both `usize`.
-- Bounds checking: TBD (recommended in debug builds, configurable off in release; dynamic arrays checked by default).
+- Managed sequences answer `x.length()` (`usize`); **static arrays are C storage and have no `length()`** - derive the count with `sizeof(a) / sizeof(a[0])`.
+- **Bounds checking**: managed sequences (`T[]` / `buffer<T>`) are checked at the subscript; `--bounds=on|off` (default on) controls it, and a violation throws `std.exception.BoundsError { index, length, axis }`. Static arrays and `T*` are unchecked (C semantics).
 - All-zero/null values use `{}`: `int[5] a = {};`, `int[] s = {};`, `string s = {};` (aggregate types no longer support `= 0`).
-- **`string` is a value type provided by the std library** (not a language built-in type; for layout, buffer management, and the full API see
+- **`String` is a value type provided by the std library** (`string` is a lowercase `type` alias; not a language built-in type; for layout, buffer management, and the full API see
   `lib-std-string.md`). **The compiler knows nothing about its layout** (0.0.89):
   - **A string literal is a static, NUL-terminated UTF-8 byte buffer; its type is `const char*`** (as in C).
     `string s = "abc";` and `string s = cstr;` go through the library's `implicit string(const char*)`
     (a copy, one allocation, see 3.6); `"abc"` on its own stays `const char*` and is passed to C as is.
   - **Language-visible contract** (the part SPEC guarantees):
     - `string s = {}` is the empty string (zero value); `s.length()` is the **byte length**
-      (`len` serves built-in sequences only, 6.4.3, so a string uses `length()`).
-    - **Immutable**: no `operator[]=`, so `s[i] = ...` is a compile error; `for ref` is not supported.
+      (`length()` is the uniform accessor, 6.4.3).
+    - **Immutable**: `s[i] = ...` is a compile error (the subscript does not return `ref`); `for ref` is not supported.
     - `s[i]` yields `byte` (the library's member `operator[]`); `for c in s` iterates by byte through the
       index form (`length()` + `operator[]`, 6.4.1).
     - `==` / `!=` compare by **byte value** (library `operator==`); a string can be compared with a literal
@@ -217,7 +235,7 @@ move  unsafe  typeof
     reference-counted fields has no exit-time destruction. Use `const char* G = "hi";` and convert at the use point.
   - Construction and operations (`string(const char*)`, `length()`, `at`, `sub`, `concat`, `operator[]`,
     `operator==`, `cstr`, `strlen`, ...) are **library API**, see the library docs; they are not part of the
-    language specification. Everything about `string` that used to be compiler magic (`len`, `s[i]`, `for-in`,
+    language specification. Everything about `string` that used to be compiler magic (`s[i]`, `for-in`,
     `==`, the literal→string conversion) is now ordinary library code (member operators, 3.11).
 - Initializing a fixed-size `char[N]` from a string literal performs a byte copy: copies the content and appends NUL and zeros
   (a literal that does not fit, including the terminating NUL, is a compile error).
@@ -575,7 +593,7 @@ class Cat {
     `S tmp = c.s; api(&tmp); c.s = tmp;`. Taking the address of a pure-value struct / fixed-size array element / pointer variable is unaffected.
   - `weak` on local variables, parameters, or return values;
   - `const` **methods / deep read-only views** (decided not to do, see 3.11 and 12 table 98).
-- Memory: atomic reference counting (relaxed); fields are released in reverse declaration order; weak references are not counted.
+- Memory: atomic reference counting (relaxed increments, release decrement + acquire fence before destruction); fields are released in reverse declaration order; weak references are not counted.
 - Threads: objects may be shared across threads; the destructor runs on the thread that releases the last reference and must be thread-safe.
 
 ### 3.9 Inheritance (single inheritance)
@@ -685,7 +703,7 @@ struct Vec {
 | Unary `-` | Yes | |
 | `< <= > >=` | Yes | Must return `bool` |
 | `& \| ^ << >>` | Yes | Bitwise operations |
-| `[]` / `[]=` | Yes | **Explicit read/write**: `T operator[](C c, I i)` reads; `void operator[]=(C c, I i, T v)` writes. `c[i]` calls the former, `c[i] = v` calls the latter, `c[i] += v` reads first and then writes. **Recommended**: `ref T operator[](ref C c, I i)` returns a borrow, so `c[i]` is directly a writable lvalue (in which case `[]=` is no longer needed, and `+=`/passing a `ref` parameter/`for ref` all work as well) |
+| `[]` | Yes | **Read and write through one operator**: `T operator[](C c, I i)` reads; `ref T operator[](C c, I i)` returns a borrow, so `c[i]` is a writable lvalue (`c[i] = v`, `c[i] += v`, `for ref` all work). **`operator[]=` was removed (0.0.101)**: a computed setter with no storage to borrow is no longer expressible |
 | `== !=` | struct only | A class's `==` is fixed as identity comparison and cannot be overloaded; a struct that does not define `==` is not comparable |
 | `()` `=` `&& \|\|` `as/new` | No | Conflicts with the built-in semantics |
 
@@ -1058,6 +1076,159 @@ Not implemented: capturing closures (a future `delegate`), method values, generi
 (`max2<int>` as a value), and anonymous function types in declaration positions (a unit-level variable, a local
 declaration and a return type must name the type with `type` first).
 
+### 3.17 Concurrency: `para`, `thread`
+
+> **Status: `para` and `para for` are implemented over every source form, including the cursor form
+> (0.0.92–0.0.97), and run on the M:N task runtime since 0.0.98 (SPEC 3.17.7); `thread` is not.**
+> The runtime layer (scheduler, task stacks, pollers, channels) is a **library**; this section fixes
+> only the language surface. The decision record, invariants and phasing live in
+> `agents/task-runtime.md`; the library contract is in `docs/lib-std-task.md`.
+
+#### 3.17.1 Model
+
+- Concurrency is **structured**: every concurrent region has a join point. There is **no detached task**
+  and no fire-and-forget. Work that must outlive a call is a long-lived service task driven by a channel.
+- Execution units are **tasks** scheduled onto a bounded set of **carrier** OS threads (M:N, stackful
+  fibers). `para` lowers to runtime primitives that are themselves public library API; the syntax adds
+  no scheduler semantics that the library cannot express.
+- **No function coloring**: any function may be called from a task or from a plain thread. A blocking
+  primitive parks the task when a task context exists and blocks the thread otherwise, so the same
+  `std.net` / `std.file` code works in both worlds.
+- **No implicit sharing of stack variables**: a region may read enclosing locals, but may not write
+  them, take their address, or pass them by `ref`. Sharing is expressed through `class` objects,
+  `Channel<T>`, or atomics.
+- **Deferred join (a future) is a library facility**, not syntax: `TaskGroup` plus a one-slot
+  `Channel<T>` already expresses "start now, join later". The language adds no `spawn` / `await`
+  keyword, so no part of the language surface depends on a `Task` type.
+- Tasks are not bound to threads (a task may resume on another carrier). Code must not rely on thread
+  identity, and a C library that keeps `thread_local` state across calls must run in a `thread` section.
+
+#### 3.17.2 `para` — fork/join
+
+```c
+para {
+    { a(); }
+    { b(); }
+}
+```
+
+- Each brace-delimited section is a task. All sections start concurrently and `para` joins them all
+  before it completes.
+- A section may declare its own locals, read enclosing locals, and call functions that themselves
+  contain `para`. Nesting is allowed, but the task count multiplies with the nesting width and depth,
+  so keep the depth bounded.
+- **Compile errors inside a section**: writing an enclosing local (including `++`/`--` and compound
+  assignment), taking the address of an enclosing local, passing one as a `ref` argument, `return`, and
+  `break`/`continue` that would leave the section. Loops declared inside the section are unaffected.
+- The first exception from a section **stops the region**: the remaining sections are asked to cancel,
+  all are joined, and that exception is rethrown in the enclosing scope (`para for` additionally stops
+  producing items). If the region is already unwinding, later exceptions are discarded.
+- A section is not a function: it has no name, cannot be stored, and cannot escape.
+
+#### 3.17.3 `para for` — concurrent iteration
+
+```c
+para for i in 0..n { out[i] = f(in[i]); }
+para for ref v in a { v = norm(v); }
+para for req in server.requests() { handle(req); }
+```
+
+- **One task per item**, started as the item is produced; the region joins when the source ends. For a
+  finite source that means "all items produced"; for a cursor source (6.4.2) it may run indefinitely
+  (an accept loop is written this way).
+- The producer is a **single puller**: the source expression is evaluated once, and `next()` is called
+  between item starts, so a blocking `next()` is where backpressure and the end condition live. The
+  source, not the syntax, decides when the iteration ends.
+- Sources: the built-in sequences of 6.4.1 (ranges and managed sequences `T[]` / `buffer<T>` / `String`) and user types
+  satisfying the **cursor form** of 6.4.2 (`iterator()`, `next() -> bool`, `current() -> T`). A
+  blocking `next()` is where backpressure and the end condition live; the source, not the syntax,
+  decides when the iteration ends.
+- Iteration order is unspecified. `for ref` follows 6.4.1 (distinct elements only).
+- The body obeys the same restrictions as a `para` section; in addition `break`, `continue` and
+  `return` are errors — a region ends when its source ends, or by cancellation.
+- One task per item is the semantics. A chunked view (`a.chunks(k)`, library) is how a large finite
+  source reduces per-item overhead; it does not change the semantics.
+
+#### 3.17.4 `thread` — compute pool
+
+```c
+para {
+    { conn.flush(); }
+    thread { solve(matrix); }
+}
+para thread for i in 0..n { heavy(i); }
+```
+
+- `thread` is a **contextual keyword** in a `para` header or body. It selects the **bounded compute
+  pool** instead of the task scheduler: the section/item runs on a dedicated OS thread, may block, and
+  uses the OS thread stack instead of a small task stack.
+- The pool size defaults to the number of cores and is a **runtime setting**, not a per-region
+  parameter. A tighter per-region limit is expressed with a semaphore, not with syntax.
+- It declares intent, it does not check it: a `thread` block that only waits wastes a pool thread, and
+  a default section that burns CPU cannot be preempted.
+
+#### 3.17.5 Cancellation and preemption
+
+- Cancellation is **cooperative** and inherited: a cancelled region stops producing, asks its tasks to
+  cancel, joins them, and propagates. Park points (IO, channel, sleep, join) are cancellation points;
+  long CPU loops must call `task.yield()` / `task.cancelled()` (library).
+- There is **no preemption** and **no timeout syntax**. A deadline belongs to the IO operation
+  (`conn.read(buf, ms)`), which is the only place where cancellation can be enforced; `para`
+  deliberately provides no `timeout` clause, because it could not honour it.
+
+#### 3.17.6 Stacks and threads
+
+- A task runs on a **fixed-size stack** (a small runtime default, tens of KiB); it does not grow. Deep
+  recursion and large locals belong in a `thread` section, which uses the OS stack.
+- Exceeding a task stack overflows it and aborts the process; this is not recoverable.
+- Data races between tasks or between threads are undefined behaviour (8.2). The compile-time rule
+  against writing enclosing locals is a narrow, syntactic guard, not a race checker.
+
+#### 3.17.7 Implementation status
+
+`para` (0.0.92) and `para for` over every source form (0.0.93–0.0.97) run on the **M:N task runtime**
+(0.0.98); `thread` is not implemented. Current behaviour and limitations:
+
+- **Tasks, carriers, stacks**: one task per concurrent unit, each with its own **fixed-size fiber stack**
+  (default 64 KiB commit / 256 KiB reserve, `std.task.set_task_stack`); carriers are OS threads (one per
+  core, plus handoff ones, capped at 4x cores) that run one task at a time and switch stacks in O(1).
+  A parked task releases its carrier; a finished task's stack goes back to a pool and is reused.
+- **Joining**: a task that joins parks (its carrier runs other work, including nested `para` children);
+  `main`, a `std.thread` thread or a C thread that joins waits on a condition variable. A region joins
+  its own tasks in start order.
+- **Blocking calls pin a carrier**: `thread_sleep`, a blocking mutex/condvar or a blocking C call is not
+  a park point in this version (park points arrive with the IO poller). A monitor thread watches carrier
+  heartbeats and adds a carrier when work is queued and every carrier is stalled (handoff, design 6.4),
+  so blocking does not starve the queue; the runtime cannot distinguish blocking from CPU work.
+- **Exception state travels with the task**: the pending-exception slot is saved on switch-out and
+  loaded on switch-in, so a task may resume on another carrier without leaking pending state.
+- Still no cancellation: a started task always runs to completion; an exception that escapes a task body
+  **aborts the process** (the B2 thread-boundary rule), while exceptions caught inside it behave normally.
+- `this` and implicit field access inside a section are **compile errors** in v1 (pass the object as an
+  explicit argument). Writing, taking the address of, or passing by `ref` an enclosing local are
+  compile errors as specified in 3.17.2.
+- `para for` has **one task per item; chunking is never automatic** — a user or library splits the work
+  (`chunks(k)` or an explicit index loop). The producer is a single puller: it evaluates the source once
+  (so any expression is allowed as the source), calls `next()` between item starts (a blocking `next()`
+  is where backpressure lives) and stops at the end of the source. The loop variable keeps its ordinary
+  binding (value or `ref`, with element retain/release for reference-counted elements).
+  `break`/`continue` at the body level are errors and `for i, x` is not supported yet.
+- The scheduler enforces a **maximum number of live tasks** (default 10000, `std.task.set_max_live_tasks`)
+  and throws `std.task.TaskLimitError` when a start is refused. A failed start is an ordinary exception:
+  the region releases the failed item, joins the tasks that already started, and propagates.
+- An exception raised while **producing** an item (the source expression, `iterator()`, `next()`,
+  `current()`, `length()`, `operator[]`) is an ordinary exception of the region: the tasks that already
+  started are joined before the enclosing scopes are left, so no task ever outlives the producer's frame.
+- Carriers live for the whole process and are never shut down; `thread` (the compute pool) is not
+  implemented yet, and there are no park points for IO, so the poller/channel/server layers (P4) are
+  still missing.
+
+The section body is a hidden function that receives a frame of pointers to the caller's captured
+locals; the caller is suspended at the join, so those slots outlive every section. An item body is the
+same hidden function with a per-item context `{ frame, item }` (the element address for `for ref`).
+The lowering calls `std.task.muc_para_start` / `muc_para_join`, so the language surface does not depend
+on the execution engine.
+
 ## 4. Declarations and scopes
 
 - Declaration syntax: `Type name1 [= init1], name2 [= init2];`
@@ -1156,8 +1327,8 @@ type PP = P;          // alias of an alias
 
 | Level | Operators | Associativity |
 |---|---|---|
-| 1 | `()` `[]` `.` `as` | left |
-| 2 | `-` `+` `&` `*` `~` `sizeof` `alignof` `len` | unary (prefix) |
+| 1 | `()` `[]` `.` `->` `as` | left |
+| 2 | `-` `+` `&` `*` `~` `sizeof` `alignof` | unary (prefix) |
 | 3 | `*` `/` `%` | left |
 | 4 | `+` `-` | left |
 | 5 | `<<` `>>` | left |
@@ -1197,7 +1368,7 @@ type PP = P;          // alias of an alias
   - Therefore `x = i++`, `f(i++)`, and `*(p++)` are all errors (even inside parentheses); `*p++` parses as `(*p)++`, i.e. incrementing the dereferenced result.
 - No comma operator is provided.
 - `sizeof(T)` / `alignof(T)` operate on types; `sizeof(expr)` is pending.
-- `len(seq)` operates on arrays/slices.
+- `length()` is the accessor for managed sequences.
 - Built-in functions: `alloc(bytes: usize) -> void*`, `realloc(p: void*, bytes: usize) -> void*`, `free(p: void*)`.
 - Struct construction expression: `Point(1, 2)`, `Point(x = 1, y = 2)`, `Point()` (zero value); brace initialization is not an expression.
 - `new T(...)` is an expression (`T` must be a class) and returns a class reference; there is no corresponding release statement (`del` has been removed; just set it to null).
@@ -1278,7 +1449,7 @@ for i, x in seq { ... }    // with index/ordinal (see 6.4.4)
 ```
 
 - The parenthesized forms `for (x in seq)` / `for (i, x in seq)` / `for (ref x in seq)` are also accepted; canonical style omits the parentheses.
-- Built-in sequences: half-open range `a..b`, fixed-size arrays, slices. A `string` is iterated through the
+- Built-in sequences: half-open range `a..b` and managed sequences (`T[]` / `buffer<T>`). **Static arrays `T[N]` are C storage and are not iterable** (use an index loop). A `String` is iterated through the
   index form of 6.4.1 (`length()` + the library's member `operator[]`, byte by byte) — the compiler has no
   built-in knowledge of it.
 - **`for-in` is not supported for multidimensional arrays** (both `T[m,n,...]` and `T[,]` count): use an index loop; for a static multidimensional array you can take a row first and then iterate.
@@ -1322,7 +1493,7 @@ int operator[](Vec v, usize i) { return v.data[i]; }   // free-function operator
   `ref C` or, better, define the operator as a **member** (`T operator[](usize i)`), whose borrowed `this` makes every iteration a plain indexed load.
 - A temporary container (`for x in makeVec()`) is constructed only once and cleaned up at loop exit according to U24.
 
-#### 6.4.2 Cursor form (sequential access; not implemented yet)
+#### 6.4.2 Cursor form (sequential access; implemented 0.0.96)
 
 ```c
 struct Iter {
@@ -1333,6 +1504,11 @@ class List { Iter iterator() { ... } }
 ```
 
 - Conditions: a method `iterator() -> It`, and `It` has the methods `next() -> bool` and `current() -> T`.
+  The contract is declared explicitly in `libs/core/iter.mu` as `core.iter.IIterator<T>` (loaded
+  implicitly); the compiler checks it structurally, and a cursor may also declare `: IIterator<T>` to
+  have the definition site checked. `next()` may block (a stream: an accept loop), in which case it is
+  a park/cancellation point inside a task; a cursor is consumed by one loop at a time and need not be
+  thread-safe.
 - Lowering: `auto it = c.iterator(); while it.next() { T x = it.current(); ... }`; `iterator()` is evaluated only once.
 - The element type is the return type of `current()`.
 - The cursor is a struct returned by value: zero allocation, static dispatch, inlinable; with class/interface fields it does per-field RC according to U24,
@@ -1342,12 +1518,14 @@ class List { Iter iterator() { ... } }
 #### 6.4.3 Resolution order and diagnostics
 
 1. Built-in sequence → built-in lowering (see the start of this section); it does not participate in form matching;
-2. Satisfies the index form → index lowering (**implemented**);
-3. Otherwise satisfies the cursor form → cursor lowering (not implemented yet);
-4. Both are satisfied → the **index** form is used and a warning is emitted (the semantics are determined by `[]`; this lands together with the cursor form);
-5. Neither is satisfied → a compile error listing the missing members of both sets (currently only the missing items of the index form are reported).
+2. A user type with an `iterator()` method → **cursor** lowering (implemented 0.0.96; a type opts into
+   streaming by providing `iterator()`, and the cursor contract is `core.iter.IIterator<T>`);
+3. Otherwise satisfies the index form → index lowering (**implemented**);
+4. Both could be satisfied → the **cursor** form wins (providing `iterator()` is an explicit choice);
+5. Neither is satisfied → a compile error that names `core.iter.IIterator<T>` and the index-form
+   members (`length()` + a subscript).
 
-- `len(e)` serves **only** built-in types (fixed-size arrays/slices/multidimensional arrays/`string`) and does **not** dispatch to user types;
+- `length()` is a normal method for user types and a compiler-lowered accessor for `T[]` / `buffer<T>`; static arrays have no `length()`;
   user containers write `e.length()`.
 
 #### 6.4.4 Index variable `i`
@@ -1477,6 +1655,33 @@ extern int printf(const char* fmt, ...);
 - `va_list` / `va_start` / `va_arg` / `va_copy` are not provided: forwarding C's `vprintf` family or exposing variadic functions to C
   is a different class of feature; see backlog U31.
 
+### 7.2 C ABI types (`std.ctypes`)
+
+Mulan's integer widths are fixed: `long` is **always 64-bit**, while C's `long` is 32-bit on Windows (LLP64)
+and 64-bit on POSIX (LP64). Declaring an `extern` with Mulan's names therefore silently changes the ABI.
+`std.ctypes` provides the C-side names, implemented per platform (`libs/std/platform/<os>/std/ctypes.mu`),
+so the same source declares the same C function everywhere:
+
+```mu
+use std.ctypes;
+
+extern c_long ftell(void* stream);                  // 32-bit on Windows, 64-bit on POSIX
+extern c_size fread(void* buf, c_size size, c_size n, void* stream);
+extern int fseek(void* stream, c_long offset, c_int origin);
+```
+
+| Names | Width |
+|---|---|
+| `c_char` `c_schar` `c_uchar` `c_short` `c_ushort` `c_int` `c_uint` `c_float` `c_double` | fixed on every target |
+| `c_long` `c_ulong` | **platform-dependent** (32-bit on Windows, 64-bit on POSIX) |
+| `c_longlong` `c_ulonglong` | 64-bit |
+| `c_size` `c_ssize` `c_intptr` `c_uintptr` `c_voidp` | pointer-sized |
+| `c_wchar` | **platform-dependent** (16-bit on Windows, 32-bit elsewhere) |
+
+- Rule: **every `extern` declaration uses these names**, never Mulan's `long`/`usize` directly; the aliases are
+  transparent (`c_long` *is* `int` on Windows), so no conversion or cost is introduced.
+- `c_voidp` is `void*`; struct by value, unions and function pointers interoperate as in C (3.16).
+
 ---
 
 ## 8. Memory management
@@ -1488,9 +1693,11 @@ extern int printf(const char* fmt, ...);
 | `alloc(bytes: usize) -> void*` | Allocates uninitialized memory; returns `null` on failure |
 | `realloc(p: void*, bytes: usize) -> void*` | Resizes; returns `null` on failure, leaving the original block unchanged |
 | `free(p: void*)` | Frees; `free(null)` is a no-op |
-| `sizeof(T) -> usize` | Type size |
-| `alignof(T) -> usize` | Type alignment |
-| `len(seq) -> usize` | Length of an array/slice/string (**built-in types only**; it does not dispatch to user types; user containers use `length()`, see 6.4.3) |
+| `sizeof(T) -> usize` | Size of a type | 
+| `sizeof expr -> usize` | Size of the operand's type; the operand is **not evaluated** (`sizeof *p`, `sizeof a[i]`, `sizeof(a)`) |
+| `alignof(T) -> usize` / `alignof expr` | Alignment of a type / of the operand's type (not evaluated) |
+| `offsetof(T, field) -> usize` | Byte offset of a struct member (0 for every `union` member; compile-time constant) |
+| `x.length() -> usize` | Length of a managed sequence (`T[]` / `buffer<T>` / `String` / user containers); `x.length(axis)` for a multidimensional sequence; static arrays use `sizeof(a) / sizeof(a[0])` |
 
 - `alloc` returns memory aligned to at least 16 bytes (consistent with common malloc); this is a **lower-bound guarantee**, not an upper bound.
   For heap restrictions on over-aligned types see 3.4 (class objects are allocated by the compiler with the required alignment; dynamic array elements have `align ≤ 8`;
@@ -1503,13 +1710,15 @@ extern int printf(const char* fmt, ...);
 - Dereferencing `null`, out-of-bounds pointer arithmetic/dereference, dangling pointers.
 - Reading uninitialized memory.
 - Misaligned access: a pointer/field whose dereference location does not satisfy the type's natural alignment (fields of a `packed` struct are such a case; see 3.4).
-- Data races (phase one has no language-level concurrency).
+- Data races between tasks or between threads (concurrency exists, 3.17, but races are neither prevented
+  nor diagnosed; the rule against writing enclosing locals in a `para` region is a narrow syntactic
+  guard, not a race checker).
 - Division by zero; **signed division/remainder overflow** (`MIN / -1`, `MIN % -1`); a shift count ≥ the bit width
   (pending: UB or defined).
 - Signed integer overflow of `+` `-` `*`: **settled: defined as two's-complement wraparound** (avoids UB and simplifies
   optimization; the backend does not emit `nsw`/`nuw`). **Division is the one exception**: the CPU traps on `MIN / -1`,
   so it is UB exactly like division by zero; write `-x` (which wraps) when that value must be produced.
-- Array/slice out of bounds: pending (suggested: checked in debug builds, may be disabled in release; or always checked).
+- Managed-sequence out of bounds: checked by default and throws `BoundsError`; `--bounds=off` removes the check (then it is UB). Static arrays and `T*` are unchecked.
 - Accessing a class reference that is `null`; continuing to use a handle after it has been set to null (equivalent to a null reference).
 - Using `alloc/free` on a class object, or assigning memory obtained from `alloc` as a class handle (the two memory management schemes must not cross).
 
@@ -1529,7 +1738,11 @@ dynamic array T[,]:  { i64 rc, i64 d0, i64 d1, ..., data... }
 
 - `vtable`: the array of method slots, ordered so that "slots already present in the base class come first, and new methods of the derived class are appended"; `override` reuses the base-class slot.
 - `itable`: the global interface method slot table (deduplicated and numbered by whole-program interface method signature); the value is a thunk (the class implementation or the interface default implementation).
-- Every class object carries an **atomic** strong reference count (relaxed); after `new` creates it the count is 1.
+- Every class object carries an **atomic** strong reference count; after `new` creates it the count is 1.
+  Increments are **relaxed**, decrements are **release**, and the thread that observes the count reaching zero
+  executes an **acquire fence** before running the destructor (the standard Arc pattern). This is what makes
+  "the destructor runs on the thread that releases the last reference" see every write published by the other
+  threads.
 - **+1**: copying a handle (initialization, assignment rebinding, storing into a field, storing by the caller after a return, storing into an interface value).
   Parameter passing: the callee retains one reference on entry (parameters are owning local variables) and releases it on exit; the caller passes by value.
 - **-1**: the handle is overwritten, leaves scope, the field is destroyed with its object, the interface value is overwritten, or the handle is set to null.
@@ -1597,7 +1810,11 @@ unit example;
 - Exponentiation operator (`^` is reserved for bitwise xor; use the `pow` function for exponentiation)
 - Preprocessor/macros
 - RTTI/reflection
-- Language-level concurrency
+- **Most of language-level concurrency.** What *is* provided is 3.17 (`para` / `para for` / `thread`).
+  Explicitly not provided: detached tasks / fire-and-forget; `async` / `await` and colored async
+  functions; `spawn` syntax (deferred join is a library task group); preemptive scheduling of CPU-bound
+  tasks; timeouts or concurrency caps in `para` syntax; engine tags (`io{}`, `fiber`); actor runtimes /
+  supervision trees, STM, reactive streams; a `shared` type qualifier or data-race checking.
 - Language-level dynamic typing (`dynamic`)
 - A complete standard library (only built-in functions + libc)
 
@@ -1664,7 +1881,7 @@ unit example;
 | 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are forbidden (RC data, no exit-time destruction) |
 | 5 | Whether arrays implicitly decay to pointers | No decay |
 | 6 | Whether dynamic arrays are included in phase one | Decided: included (`T[]` / `T[,]`, RC heap arrays) |
-| 7 | Bounds checking strategy | Checked in debug; configurable in release |
+| 7 | Bounds checking strategy | Managed sequences checked by default (`--bounds=on` / `--bounds=off`), a violation throws `BoundsError`; static arrays and `T*` unchecked |
 | 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, and a constant expression reports it |
 | 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
 | 10 | `goto`/`typedef`/function pointers/varargs | `goto` is not done (phase one); function pointers and lambdas are implemented in 3.16 (0.0.84); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
@@ -1731,7 +1948,7 @@ unit example;
 | 71 | Interop between class and C | Passing to `extern` is forbidden; use a struct + alloc across languages |
 | 72 | Arrays of class | Decided: both static `Cat[N]` and dynamic `Cat[]` are supported (RC per element) |
 | 73 | `sizeof`/`alignof` on a class | Decided (implemented): a class takes the handle size (8), an interface takes the interface value size (16); the object size is not exposed |
-| 74 | Multithreaded reference counting | Decided (see 94): atomic RC (relaxed), objects may be shared across threads; the `--single-thread` non-atomic fast path is still undecided |
+| 74 | Multithreaded reference counting | Decided (see 94): atomic RC (relaxed increments, release decrement + acquire fence), objects may be shared across threads; the `--single-thread` non-atomic fast path is still undecided |
 | 75 | User destructor `deinit` | Not provided under that name: user destructors are written `~T()` and are implemented (see 3.13 / #92); fields are released in reverse declaration order |
 | 76 | Inheritance model | Decided: single inheritance + multiple interface implementations; no multiple inheritance (see 3.9/3.10) |
 | 77 | Virtual methods | Decided: virtual by default; overrides/implementations are written `override` |
@@ -1744,14 +1961,14 @@ unit example;
 | 84 | Interface value layout | Decided: `{obj*, class_desc*}`, two words; `null` is supported |
 | 85 | Arrays/dynamic arrays of class | Supported; the Widget tree still recommends `first_child/next_sibling` |
 | 86 | `sizeof`/`alignof` on a class | Decided (implemented): same as #73 (class=8, interface=16) |
-| 87 | Multithreaded RC | Decided (same as 94): atomic RC (relaxed); the thread-local heap scheme has been rejected |
+| 87 | Multithreaded RC | Decided (same as 94): atomic RC (relaxed increments, release decrement + acquire fence); the thread-local heap scheme has been rejected |
 | 88 | Name mangling | Decided: parameter types are included; `extern` keeps the original name; `main` is special |
 | 89 | Unary `~` overloading | Allowed (`operator~`, 1 parameter) |
 | 90 | Static arrays of class | Decided: allowed (forbidden for structs); retain/release per element |
-| 91 | `[]` overloading | Decided: `operator[]` reads, `operator[]=` writes; explicitly distinguished, no `&`/`const` |
+| 91 | `[]` overloading | Decided: only `operator[]`; return `ref T` for a writable subscript (`operator[]=` was removed in 0.0.101) |
 | 92 | User destructors | Decided: `~T()`, executed when the RC reaches zero; derived runs before base |
 | 93 | Exception model | Implemented (0.0.81–0.0.83): unchecked, `Exception` base class, class catch, `finally`, module-local may-throw optimization; see 3.14 |
-| 94 | RC thread model | Decided: atomic RC (relaxed), objects may be shared across threads |
+| 94 | RC thread model | Decided: atomic RC (relaxed increments, release decrement + acquire fence), objects may be shared across threads |
 | 95 | Generics roadmap | Decided + implemented (0.0.64–0.0.72): monomorphization, `<>` syntax, structural constraints, `Self`; see 3.15 for details |
 | 96 | Reserved words | Decided: see 2.5 |
 | 97 | Exception unwinding ABI | Resolved by B2 (0.0.81): no platform unwinding ABI; a thread-local pending slot + call-site checks; no `.eh_frame`/`.pdata`/personality dependency |
@@ -1777,6 +1994,12 @@ unit example;
 | 117 | Lambdas | Decided and implemented (3.16, 0.0.84): `(int a) => expr` or `(int a) => { ... }`; parameter types are always written; the return type is inferred from the body (all `return` types must be identical; no `return expr` means `void`); **no captures**; each lambda is a hidden `private` function (C ABI, no allocation); stateful callbacks use `class` + single-method `interface` |
 | 118 | Free function / method values | Decided and implemented (3.16, 0.0.84): a free function name is already a function value (no `&`, and `&f` is an error); overloaded names need a target type; generic function names cannot be used as values; `u.f` and `extern` functions are values; **methods are not values** |
 | 119 | Capturing closures | Decided: phase-one non-goal; if added later, a separate two-word `delegate` type (`{code, env}`), never a fatter `fn` |
+| 120 | Concurrency model | Decided (design only, 3.17): **structured** — M:N tasks on carrier threads, stackful fibers, fixed task stacks, cooperative cancellation, no preemption, no detached tasks. Language surface: `para` / `para for` / `thread`; deferred join is library-only |
+| 121 | `async` / `await` | **Decided: not provided.** Colored async functions are rejected; a blocking call parks the task, so no call-site marker is needed. Deferred join is a library task group plus a one-slot `Channel<T>` |
+| 122 | Timeouts / concurrency caps in `para` | **Decided: not provided.** A timeout can only be enforced at a cancellable IO operation (`conn.read(buf, ms)`); a concurrency cap is an engine resource (pool size) or a semaphore, never a per-region syntax parameter |
+| 123 | Detached tasks (`nowait`) | **Decided: not provided.** A task with no joiner breaks the frame-lifetime rule that makes capture-by-static-link sound; long-lived work is a service task driven by a channel |
+| 124 | `thread` in `para` | Contextual keyword (2.3): run the section/item on the **bounded compute pool** — a dedicated OS thread, may block, OS stack. It is an intent hint, not a checked property |
+| 125 | Single-task `para` (`s = para f()`) | **Decided: not provided.** In a stackful model the call itself is the suspension, so "start then immediately join" is pure overhead; use the library task group when the join must be deferred |
 
 ---
 
@@ -1816,6 +2039,12 @@ See [`examples/example.mu`](../examples/example.mu) and [`examples/math.mu`](../
 - Unit-level variables are zero-initialized by the loader/startup code.
 - `auto` only takes the expression type directly in the front end; multiple declarators require identical inference results; no runtime overhead.
 - Dynamic typing is not in phase one; in the future, implement a library-level Variant first, then evaluate sum types + `match`; `dynamic` acts as a separate runtime layer rather than a core type.
+- **Concurrency** (3.17): design settled, not implemented. Order: (0) RC memory ordering (release decrement
+  + acquire fence before destruction) and the weak-registry lock ordering; (1) runtime primitives (threads,
+  mutex/condvar, monotonic clock); (2) `para` / `para for` with one OS thread per section first, plus the
+  cursor form of `for-in`; (3) the M:N task runtime (carriers, park/unpark, handoff);
+  (4) pollers (IOCP / epoll / kqueue) and the server library. The `para` lowering targets runtime
+  primitives, so switching from OS threads to M:N does not change the source.
 
 
 

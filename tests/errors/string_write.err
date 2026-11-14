@@ -1,1 +1,1 @@
-does not support subscript assignment
+cannot assign through a subscript: `operator[]` must return `ref T`

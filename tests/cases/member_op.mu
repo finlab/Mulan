@@ -39,11 +39,10 @@ struct Bag {
     int operator[](usize i) { return data[i]; }
 }
 
-// write form: `[]=` is a member too
+// write form: `operator[]` returns `ref T`, so `acc[i] = v` writes through the borrow
 struct Acc {
-    int total;
-    int operator[](usize i) { return total; }
-    void operator[]=(usize i, int v) { total += v; }
+    int[2] data;
+    ref int operator[](usize i) { return data[i]; }
 }
 
 Vec2 make(int x, int y) { Vec2 v = {x, y}; return v; }
@@ -74,6 +73,6 @@ int main() {
     Acc acc = {};
     acc[0] = 5;
     acc[1] = 7;
-    print_int(acc[0]); putchar('\n');                               // 12
+    print_int(acc[0] + acc[1]); putchar('\n');                      // 12
     return 0;
 }

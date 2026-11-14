@@ -9,6 +9,8 @@
 
 public unit std.cstdio;
 
+use std.ctypes;
+
 // ---------------------------------------------------------------- constants
 public const int EOF = -1;
 public const int BUFSIZ = 512;
@@ -25,6 +27,9 @@ extern int fflush(void* stream);
 extern int remove(const char* path);
 extern int rename(const char* old_path, const char* new_path);
 extern void* tmpfile();
+// Binary I/O: `size` is C's `size_t`, the count is `size_t` too (SPEC 7.2)
+extern c_size fread(void* buf, c_size size, c_size n, void* stream);
+extern c_size fwrite(const void* buf, c_size size, c_size n, void* stream);
 
 // ---------------------------------------------------------------- formatted output
 extern int printf(const char* fmt, ...);
@@ -48,8 +53,8 @@ extern int fscanf(void* stream, const char* fmt, ...);
 extern int sscanf(const char* s, const char* fmt, ...);
 
 // ---------------------------------------------------------------- positioning
-extern int fseek(void* stream, long offset, int origin);
-extern long ftell(void* stream);
+extern int fseek(void* stream, c_long offset, int origin);
+extern c_long ftell(void* stream);
 extern void rewind(void* stream);
 
 // ---------------------------------------------------------------- status and errors

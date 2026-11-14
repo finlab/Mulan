@@ -1,1 +1,1 @@
-user-defined subscript assignment only supports `=`
+`operator[]=` was removed

@@ -1,1 +1,1 @@
-`for-in` does not support multidimensional arrays `int[3,2]`:
+a static array is C storage and does not support `for-in`

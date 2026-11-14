@@ -91,6 +91,9 @@ namespace muc_detail {
         Value* saved = loadPendingObj();
         clearPending();
         if (onThrow) onThrow();
+        // Leave every `para for` region this point sits in: its tasks read the producer's slots, so
+        // they are joined before the scopes below are released (innermost region first).
+        for (size_t i = paraUnwindCleanup.size(); i > 0; --i) paraUnwindCleanup[i - 1]();
 
         // Run the finally bodies that are being left, before releasing the scopes they may
         // still observe.  `finallyDepth` is the stack size after pushing the target try's own

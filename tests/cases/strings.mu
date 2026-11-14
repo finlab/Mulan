@@ -57,8 +57,8 @@ int main() {
     char[20] buf = "Mulan";
     puts(&buf[0]);                       // Mulan
 
-    // len(buf) is the array capacity N, not the string length
-    auto cap = len(buf);
+    // sizeof(buf) / sizeof(buf[0]) is the array capacity N, not the string length
+    auto cap = sizeof(buf) / sizeof(buf[0]);
     if cap == 20 {
         puts("capacity is 20");
     }

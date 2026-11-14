@@ -9,7 +9,7 @@
 
 public unit std.string;
 
-public struct string {
+public struct String {
 private:
     byte* p;
     usize n;
@@ -18,7 +18,7 @@ private:
 public:
     // construct from a NUL-terminated C string (copies it, does not hold c).
     // `implicit`: `string s = "literal";` and `string s = cstr;` (3.6)
-    implicit string(const char* c) {
+    implicit String(const char* c) {
         usize count = 0;
         while c[count] != 0 {
             count += 1;
@@ -69,7 +69,7 @@ public:
         return p[i];
     }
 
-    bool operator==(string o) {
+    bool operator==(String o) {
         if n != o.n {
             return false;
         }
@@ -97,25 +97,25 @@ public:
 
     // `s + "literal"`: the literal is a `const char*` (3.6 implicit conversion is not used inside
     // expressions, so the overload is explicit here)
-    string operator+(const char* c) {
-        return concat(string(c));
+    String operator+(const char* c) {
+        return concat(String(c));
     }
 
-    string operator+(string o) {
+    String operator+(String o) {
         return concat(o);
     }
 
     // ---------------------------------------------------------------- slicing and concatenation
 
-    string sub(usize start, usize count) {
-        string r = {};
+    String sub(usize start, usize count) {
+        String r = {};
         r.p = p + start;
         r.n = count;
         r.owner = owner;
         return r;
     }
 
-    string concat(string other) {
+    String concat(String other) {
         usize total = n + other.n;
         byte[] buf = new byte[total + 1];
         usize i = 0;
@@ -129,7 +129,7 @@ public:
             j += 1;
         }
         buf[total] = 0;
-        string r = {};
+        String r = {};
         r.p = &buf[0];
         r.n = total;
         r.owner = buf;
@@ -139,7 +139,7 @@ public:
     // ---------------------------------------------------------------- search and match
 
     // returns the byte offset of the first occurrence, or -1 if not found
-    int find(string needle) {
+    int find(String needle) {
         if needle.n == 0 {
             return 0;
         }
@@ -165,7 +165,7 @@ public:
         return -1;
     }
 
-    bool starts_with(string prefix) {
+    bool starts_with(String prefix) {
         if prefix.n > n {
             return false;
         }
@@ -179,7 +179,7 @@ public:
         return true;
     }
 
-    bool ends_with(string suffix) {
+    bool ends_with(String suffix) {
         if suffix.n > n {
             return false;
         }
@@ -196,7 +196,7 @@ public:
 
     // ---------------------------------------------------------------- trimming
 
-    string trim() {
+    String trim() {
         usize start = 0;
         while start < n and is_space_byte(p[start]) {
             start += 1;
@@ -214,13 +214,16 @@ private:
     }
 }
 
+// Lowercase alias kept for input convenience (docs/style.md: aliases may be lowercase).
+public type string = String;
+
 // A C string on the left (`"abc" == s`): a free function because a member needs the receiver on the left.
-public bool operator==(const char* c, string s) {
+public bool operator==(const char* c, String s) {
     return s == c;
 }
 
-public string operator+(const char* c, string s) {
-    return string(c) + s;
+public String operator+(const char* c, String s) {
+    return String(c) + s;
 }
 
 // Byte length of a NUL-terminated C string: the compiler has no builtin `len` for pointers,

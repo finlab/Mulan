@@ -62,11 +62,11 @@ int main() {
     // i for builtins: real index for arrays, offset from lo for ranges
     int[3] a = {5, 6, 7};
     int bi = 0;
-    for (i, x in a) { bi += (i as int) * x; }
+    for i in 0..sizeof(a) / sizeof(a[0]) { bi += (i as int) * a[i]; }
     if bi != 20 { puts("array index failed"); return 1; }
 
-    // `for i, ref x`: index + reference binding
-    for i, ref x in a { x += i as int; }
+    // `for i, ref x`: index + reference binding (static arrays use an index loop)
+    for i in 0..sizeof(a) / sizeof(a[0]) { a[i] += i as int; }
     if a[0] != 5 or a[1] != 7 or a[2] != 9 { puts("array ref index failed"); return 1; }
 
     int ri = 0;

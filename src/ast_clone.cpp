@@ -209,6 +209,8 @@ ExprPtr clone_expr(const Expr& e) {
     if (auto p = dynamic_cast<const SizeofExpr*>(&e)) {
         auto r = mk<SizeofExpr>(e);
         r->spec = p->spec ? clone_type_spec(*p->spec) : nullptr;
+        r->expr = p->expr ? clone_expr(*p->expr) : nullptr;
+        r->field = p->field;
         r->which = p->which;
         return r;
     }

@@ -1,6 +1,6 @@
 unit check_objmodel;
 
-// object model basics: struct operators, class construction/destruction, methods, operator[]/[]=, function overloading
+// object model basics: struct operators, class construction/destruction, methods, operator[], function overloading
 
 struct Point { int x, y; }
 
@@ -8,14 +8,13 @@ Point operator+(Point a, Point b) { return Point(a.x + b.x, a.y + b.y); }
 bool operator==(Point a, Point b) { return a.x == b.x and a.y == b.y; }
 
 class Vec {
-    int[3] data;
-    Vec() { data[0] = 0; data[1] = 0; data[2] = 0; }
+    int[] data;
+    Vec() { data = new int[3]; data[0] = 0; data[1] = 0; data[2] = 0; }
     ~Vec() { }
     int get(int i) { return data[i]; }
 }
 
-int operator[](Vec v, int i) { return v.get(i); }
-void operator[]=(Vec v, int i, int x) { v.data[i] = x; }
+ref int operator[](Vec v, int i) { return v.data[i]; }
 
 int f(int a) { return 1; }
 int f(long a) { return 2; }

@@ -118,10 +118,11 @@ bool is_void(const TypePtr& t);
 // ------------------------------------------------------------ Emitter
 
 struct Emitter {
-    explicit Emitter(Program& p, bool dbg = false);
+    explicit Emitter(Program& p, bool dbg = false, bool bounds = true);
 
     Program& prog;
     bool wantDebug = false;
+    bool boundsCheck = true;
     MayThrowInfo mayThrow;
     LLVMContext ctx;
     std::unique_ptr<Module> mod;
@@ -148,6 +149,48 @@ struct Emitter {
     Function* curFn = nullptr;
     std::string curUnit;
     std::map<const LocalVar*, AllocaInst*> slots;
+
+    // `para` capture support: while a section body is being emitted, a captured local resolves to
+    // `load(frame->field)` (the suspended caller's storage) instead of an alloca of the section.
+    std::map<const LocalVar*, int> captureIndex;
+    Value* frameArg = nullptr;
+    LType* frameTy = nullptr;
+    struct PendingPara {
+        Block* body = nullptr;
+        std::vector<LocalVar*> captures;  // index i -> frame field i
+        Function* bodyFn = nullptr;             // void(ptr): the section body
+        Function* wrapFn = nullptr;             // void(ptr): calls the body, aborts on an escaped throw
+        LType* frameTy = nullptr;
+    };
+    std::vector<PendingPara> pendingParas;
+    // `para for` (SPEC 3.17.3): one task per item. The item body is a hidden function `void(void*)`
+    // that receives a per-item context `{ frame*, item }` (the item is the element address for
+    // `for ref`); the context is heap-allocated by the producer and freed by the task wrapper.
+    struct PendingParaFor {
+        ParaForStmt* p = nullptr;
+        Function* bodyFn = nullptr;
+        Function* wrapFn = nullptr;
+        LType* frameTy = nullptr;
+        LType* ctxTy = nullptr;
+        TypePtr elemTy;
+        bool byRef = false;
+    };
+    std::vector<PendingParaFor> pendingParaFors;
+    // While a `para for` source is being lowered in the producer: the ordinary for-in lowering runs
+    // the loop control, and its body is replaced by "start one task for the current item".
+    struct ParaForSpawn {
+        Function* wrapFn = nullptr;
+        Value* frame = nullptr;   // void*: the capture frame (points at the producer's slots)
+        Value* groupSlot = nullptr;  // alloca holding the region's task-list handle
+        TypePtr elemTy;
+        bool byRef = false;
+    };
+    ParaForSpawn* paraSpawn = nullptr;
+    // Every `para for` region whose producer is being emitted, innermost last. An unwind out of the
+    // producer (a throwing `next()`/`current()`/`operator[]`/source expression) must join the tasks
+    // that already started before the unwinding scope releases the slots they read.
+    std::vector<std::function<void()>> paraUnwindCleanup;
+    int paraSeq = 0;
     std::vector<std::pair<BasicBlock*, BasicBlock*>> loops;  // (continue, break)
     TypePtr curClassTy;   // class the current method/constructor/destructor belongs to
     Value* curThis = nullptr;  // current this pointer (the first parameter at method entry)
@@ -299,6 +342,11 @@ struct Emitter {
 
     Value* sliceDimField(Value* h, int axis);
 
+    // Bounds check for a managed sequence subscript: per-axis checks, then the linear index.
+    // Emits a call to std.exception.bounds_fail on the cold path.
+    Value* emitSliceIndexChecked(Value* h, const std::vector<Value*>& idxs, const TypePtr& bt);
+    void emitBoundsFail(Value* index, Value* length, Value* axis);
+
     // total element count (rank 1 uses len, rank >= 2 uses the product of the dimensions)
     Value* sliceTotalCount(Value* h, int rank);
 
@@ -398,7 +446,7 @@ struct Emitter {
     // pointers only recurse into the element type for "scalar / enum", everything else is shown as void* (to avoid unbounded recursion for self-references).
     DIType* diType(const TypePtr& t, int depth = 0);
 
-    AllocaInst* slotFor(const LocalVar* lv);
+    Value* slotFor(const LocalVar* lv);
 
     // ------------------------------------------------------------ constants
     // type-level / unit-level compile-time constants: emit literal constants from the cached evaluation result (bit width and signedness follow the declared type)
@@ -460,7 +508,7 @@ struct Emitter {
     // `s[i]` / `s == t` cost no copy and no RC.
     Value* emitStructMethodCall(const MethodSig* sig, Value* recvAddr, const std::vector<Expr*>& args);
     Value* emitMemberOp(const MethodSig* sig, Expr* recv, const std::vector<Expr*>& args);
-    Value* emitMemberIndex(const MethodSig* sig, Value* recvAddr, Value* idxVal);
+    Value* emitMemberIndex(const MethodSig* sig, Value* recvAddr, const std::vector<Value*>& idxVals);
     Value* emitMemberIndexSet(const MethodSig* sig, Value* recvAddr, Value* idxVal, Expr* value);
 
     Value* evalNew(NewExpr* ne);
@@ -578,6 +626,19 @@ struct Emitter {
     void resetDebugScope();
 
     void emitFunction(FuncDecl* f);
+
+    // `para` (SPEC 3.17.2): sections run on OS threads, capture the caller's locals through a frame
+    // of pointers, and join before the statement completes.
+    void emitPara(ParaStmt* p);
+    void emitParaFor(ParaForStmt* p);
+    void emitParaSection(PendingPara p);
+    void emitParaForBody(PendingParaFor q);
+    // One item of a `para for` source: allocate the context, retain the item copy (it is owned by
+    // the task body), start the task and record its handle in the region's task list.
+    void emitParaForSpawnItem(Value* slot);
+    // { frame*, item } — the per-item context type shared by the producer and the task body.
+    LStruct* paraCtxTy(const TypePtr& elemTy, bool byRef);
+    FunctionCallee runtimeFn(const char* unit, const char* name, LType* ret, std::vector<LType*> params);
 
     void emitGlobals();
 

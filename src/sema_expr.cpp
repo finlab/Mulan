@@ -41,7 +41,14 @@ namespace muc_detail {
         }
         // A string literal is a static, NUL-terminated UTF-8 byte buffer: its type is `const char*`,
         // like C. Converting it to the library `string` goes through `implicit string(const char*)` (3.6).
-        if (dynamic_cast<StringLit*>(e)) return Type::make_ptr(Type::make_prim("char"), /*is_const=*/true);
+        // The const sits on the *referent* (elem level), exactly like a written `const char*`
+        // (sema_types.cpp); a pointer-level const would be `char* const` and would let `char*` bind
+        // to a literal, since the const-relaxation checks look at the elem.
+        if (dynamic_cast<StringLit*>(e)) {
+            auto ch = std::make_shared<Type>(*Type::make_prim("char"));
+            ch->is_const = true;
+            return Type::make_ptr(ch);
+        }
         if (dynamic_cast<BoolLit*>(e)) return t_bool();
 
         if (dynamic_cast<NullLit*>(e)) {
@@ -105,19 +112,27 @@ namespace muc_detail {
                 return bt->elem;
             }
             if (is_user_type(bt)) {
-                if (n != 1) err("user-defined `operator[]` takes exactly one subscript", e);
-                if (const MethodSig* mm = find_member_operator(bt, "operator[]", {ix->indices[0].get()}, e)) {
+                std::vector<Expr*> idx_args;
+                idx_args.reserve(n);
+                for (auto& ie : ix->indices) idx_args.push_back(ie.get());
+                if (const MethodSig* mm = find_member_operator(bt, "operator[]", idx_args, e)) {
                     ix->get_method = mm;
                     ix->by_ref = is_borrow_type(mm->ret);
                     ix->ref_const = ix->by_ref && mm->ret->is_const;
                     return referent_of(mm->ret);
                 }
-                auto cands = collect_operators("[]", {bt, its[0]});
+                std::vector<TypePtr> opnds{bt};
+                for (auto& it : its) opnds.push_back(it);
+                auto cands = collect_operators("[]", opnds);
                 if (cands.empty()) {
-                    err("type `" + bt->str() + "` does not support subscripting (no `operator[]`)", e);
+                    err("type `" + bt->str() + "` does not support subscripting with " +
+                            std::to_string(n) + " index" + (n == 1 ? "" : "es") +
+                            " (no matching `operator[]`)",
+                        e);
                 }
-                auto f = choose_overload(cands, {ix->base.get(), ix->indices[0].get()},
-                                         "operator[]", e);
+                std::vector<Expr*> call_args{ix->base.get()};
+                for (auto& ie : ix->indices) call_args.push_back(ie.get());
+                auto f = choose_overload(cands, call_args, "operator[]", e);
                 ix->get_func = f;
                 ix->by_ref = is_borrow_type(f->rty);
                 ix->ref_const = ix->by_ref && f->rty->is_const;
@@ -155,9 +170,41 @@ namespace muc_detail {
         if (auto c = dynamic_cast<Call*>(e)) return check_call(c);
 
         if (auto sz = dynamic_cast<SizeofExpr*>(e)) {
-            TypePtr t = resolve_type(sz->spec.get(), cur_);
-            if (is_void(t)) err("`" + sz->which + "(void)` is invalid", e);
-            sz->spec_ty = t;  // codegen uses the resolved type (no re-resolution, see 3.16/string)
+            TypePtr t;
+            if (sz->expr) {
+                // `sizeof expr`: only the operand's type matters; the operand is never evaluated.
+                // A lone name may be a type (an alias imported from another unit, which the parser cannot
+                // recognize in this position): values win, then the type, then a normal value check.
+                if (auto nm = dynamic_cast<Name*>(sz->expr.get());
+                    nm && lookup_local(nm->ident) == nullptr &&
+                    info().globals.find(nm->ident) == info().globals.end()) {
+                    t = find_type_in_expr(nm->ident, nm);
+                }
+                if (!t) t = check_expr(sz->expr.get());
+                if (t && (is_void(t) || t->kind == TypeKind::Func || t->kind == TypeKind::Null ||
+                          t->kind == TypeKind::Range)) {
+                    err("`" + sz->which + "` cannot be applied to " + t->str(), sz->expr.get());
+                }
+            } else {
+                t = resolve_type(sz->spec.get(), cur_);
+                if (is_void(t)) err("`" + sz->which + "(void)` is invalid", e);
+            }
+            sz->spec_ty = t;  // codegen uses the folded value / resolved type, never the syntax again
+            if (sz->which == "offsetof") {
+                if (!t || (t->kind != TypeKind::Struct)) {
+                    err("`offsetof` requires a struct type, found " + (t ? t->str() : "void"), e);
+                }
+                int idx = -1;
+                for (size_t i = 0; i < t->fields.size(); ++i) {
+                    if (t->fields[i].name == sz->field) idx = static_cast<int>(i);
+                }
+                if (idx < 0) {
+                    err("`offsetof`: " + t->str() + " has no field `" + sz->field + "`", e);
+                }
+                sz->cval = type_member_offset(t, static_cast<size_t>(idx));
+            } else {
+                sz->cval = sz->which == "alignof" ? type_align(t) : type_size(t);
+            }
             e->ty = Type::make_prim("usize");
             return e->ty;
         }
@@ -401,7 +448,22 @@ namespace muc_detail {
         if (e->ident == "this" && lookup_local("this") == nullptr) {
             err("`this` can only appear inside a class or struct method, constructor, or destructor", e);
         }
+        if (e->ident == "this" && !para_stack_.empty()) {
+            err("`this` cannot be used inside a `para` section in v1: pass the object as an explicit argument",
+                e);
+        }
         if (LocalVar* lv = lookup_local(e->ident)) {
+            // `para` sections capture enclosing locals by reference to the (suspended) caller frame;
+            // every enclosing section must record the capture so each level's frame can forward it.
+            if (!para_stack_.empty()) {
+                for (auto& ctx : para_stack_) {
+                    bool has = false;
+                    for (LocalVar* x : ctx.seen) {
+                        if (x == lv) { has = true; break; }
+                    }
+                    if (!has) ctx.seen.push_back(lv);
+                }
+            }
             // A lambda has no captures (3.16): a local of an enclosing scope is off limits.
             if (!lambda_stack_.empty()) {
                 const std::size_t base = lambda_stack_.back().scope_base;
@@ -421,6 +483,11 @@ namespace muc_detail {
         }
         if (cur_class_) {
             if (TypePtr ft = cur_class_->field_type(e->ident)) {
+                if (!para_stack_.empty()) {
+                    err("field `" + e->ident +
+                            "` cannot be accessed implicitly inside a `para` section: use an explicit object",
+                        e);
+                }
                 e->kind = "field";
                 e->implicit_this = true;
                 e->field_index = cur_class_->field_index(e->ident);
@@ -651,6 +718,9 @@ namespace muc_detail {
             }
             if (!is_lvalue(e->operand.get())) err("`&` requires an addressable object", e);
             TypePtr t = check_expr(e->operand.get());
+            if (roots_at_outer_value_local(e->operand.get())) {
+                err("cannot take the address of an enclosing local inside a `para` section", e);
+            }
             if (t && t->kind == TypeKind::Func) {
                 if (auto n = dynamic_cast<Name*>(e->operand.get()); n && n->kind == "func") {
                     err("`" + n->ident + "` is already a function value: write `" + n->ident + "` without `&`", e);
@@ -698,6 +768,11 @@ namespace muc_detail {
 
         if (e->op == "*") {
             if (t && t->kind == TypeKind::Ptr) return t->elem;
+            if (t && (t->kind == TypeKind::Class || t->kind == TypeKind::Interface)) {
+                err("`*`/`->` requires a pointer, found " + t->str() +
+                        " (a class handle is already a reference: use `.`)",
+                    e);
+            }
             err("`*` requires a pointer, found " + (t ? t->str() : "void"), e);
         }
         if (e->op == "~") {
@@ -884,7 +959,7 @@ namespace muc_detail {
             if (lt->kind == TypeKind::Null || rt->kind == TypeKind::Null) {
                 const TypePtr& other = (lt->kind == TypeKind::Null) ? rt : lt;
                 if (other->kind == TypeKind::Slice) {
-                    err("slice cannot be compared with `null` (use `len(s) == 0`)", e);
+                    err("slice cannot be compared with `null` (use `s.length() == 0`)", e);
                 }
                 if (other->kind == TypeKind::Struct) {
                     err("a struct value (`" + other->str() +

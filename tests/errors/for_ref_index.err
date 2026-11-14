@@ -1,1 +1,1 @@
-the sequence of `for ref` must be a variable or member access (an lvalue)
+a static array is C storage and does not support `for-in`

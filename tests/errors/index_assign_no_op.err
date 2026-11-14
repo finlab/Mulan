@@ -1,1 +1,1 @@
-type `index_assign_no_op.V` does not support subscript assignment
+does not support subscripting with 1 index

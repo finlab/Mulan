@@ -123,6 +123,9 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             semicolon();
             d->is_public = is_pub;
+            // The name is a type from here on: `is_type_start` must recognize it so that `sizeof(Op)` and
+            // `Op x;` parse as a type rather than as an expression.
+            type_names_.insert(d->name);
             unit->decls.push_back(std::move(d));
             continue;
         }

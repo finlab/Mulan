@@ -266,6 +266,35 @@ namespace muc_detail {
             }
         }
 
+        // `para` / `para for` bodies are queued during function emission; emit them last (and
+        // repeatedly, because a body may itself contain a `para`) so every enclosing function's
+        // state has already been torn down.
+        for (bool more = true; more;) {
+            more = false;
+            if (!pendingParas.empty()) {
+                std::vector<PendingPara> batch = std::move(pendingParas);
+                pendingParas.clear();
+                for (auto& q : batch) emitParaSection(q);
+                more = true;
+            }
+            if (!pendingParaFors.empty()) {
+                std::vector<PendingParaFor> batch = std::move(pendingParaFors);
+                pendingParaFors.clear();
+                for (auto& q : batch) emitParaForBody(q);
+                more = true;
+            }
+        }
+
+        // The task runtime saves/restores the pending-exception state across a fiber switch, so it
+        // needs the address of the thread-local slot: `extern void* muc_eh_slot()` in std.task.
+        if (Function* slotFn = mod->getFunction("muc_eh_slot");
+            slotFn && slotFn->isDeclaration()) {
+            ensureEHSlot();
+            BasicBlock* bb = BasicBlock::Create(ctx, "entry", slotFn);
+            b.SetInsertPoint(bb);
+            b.CreateRet(b.CreateBitCast(ehSlot, ptrTy()));
+        }
+
         if (dib) dib->finalize();
 
         std::string errs;

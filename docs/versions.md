@@ -10,11 +10,292 @@
 
 ## Releases
 
+### 0.0.101 — 2026-11-14
+
+**Sequence surface rework: `len` removed, static arrays become C storage, `String` renamed,
+`operator[]=` removed, subscript bounds checks.**
+
+- **`len` is gone** (`lexer` keeps the word only to give a migration diagnostic). Managed sequences
+  answer `x.length()` (multidimensional: `x.length(axis)`, axis 0 when omitted); the compiler lowers
+  it to the slice header for `T[]` / `buffer<T>` and to the library method for user types.
+- **Static arrays `T[N]` / `T[m,n]` are C storage**: no `length()`, no `for-in`, no `len`. The element
+  count is `sizeof(a) / sizeof(a[0])`; iteration is an index loop. `for-in` on a static array now
+  reports the fix instead of silently iterating.
+- **`buffer<T>` is the public safe memory block**: same representation as `T[]`
+  (`{rc, len, cap, data}`), `buffer<T>` accepted as a type name, zero-initialized, RC-shared,
+  element-wise RC for class/interface elements, `b.ptr` for C interop.
+- **`operator[]=` is removed**: `ref T operator[]` covers reads, writes and compound assignment
+  (`c[i] = v`, `c[i] += v`). Side-effecting computed setters are no longer expressible.
+- **Multi-index `operator[]`** on user types (`operator[](usize, usize)`), so a future `Array2d`
+  can be a library type; the AST already carried the index list, the sema arity check was relaxed.
+- **`String` is the canonical type name**, `string` is a `type string = String;` alias kept for
+  input convenience (existing sources compile unchanged). Diagnostics now print `std.string.String`.
+- **Subscript bounds checks** for managed sequences: emitted once at the `T[]` / `buffer<T>`
+  subscript, controlled by `--bounds=on|off` (default `on`). A violation calls
+  `std.exception.bounds_fail`, which throws `BoundsError { index, length, axis }` — more debug
+  information than an abort, and catchable. Static arrays and `T*` stay unchecked (C semantics).
+- **Deferred**: the `Array<T>` / `Array2d<T>` / `Array3d<T>` library containers and their struct-vs-class
+  choice are queued in `agents/design-backlog.md` (U38); `T[]` / `T[,]` / `T[,,]` remain the builtin
+  managed-sequence syntax until then.
+
+Tests: `bounds_error` (1-D and 2-D `BoundsError` with index/length/axis), plus the migrated
+`arrays`, `multidim`, `dynarray`, `forin_*`, `member_op`, `objmodel_basic` and the
+`std.string.String` error messages. `--bounds=off` is exercised by the same case.
+
+**Tests**: 476/476 (139 pass + 318 must-fail + 19 check)
+
+### 0.0.100 — 2026-11-13
+
+**C-style gaps closed: `->`, value `sizeof`, `offsetof`, literal const, C ABI types.** A probe of ~30
+C idioms drove this batch (`muc check` / `build --run` on each); the remaining gaps (array argument
+decay, `va_list`, user TLS, static locals) are recorded in `agents/TODO.md` and
+`agents/toolchain-plan.md` §7.
+
+- **`p->f`** is exactly `(*p).f` (SPEC 3.2, precedence 5.1). Implemented as **parser sugar** — no new AST
+  node, no sema/codegen path to keep in sync; it chains (`n.next->v`, `p->arr[i]`) and one level only, as
+  in C. `s->x` on a value reports "`*` requires a pointer".
+- **`sizeof` / `alignof` take a value as well as a type** (SPEC 8.1): `sizeof x`, `sizeof *p`,
+  `sizeof(a[0])`, `sizeof(p->x)` work and the operand is **never evaluated**; `sizeof(T)` still parses as a
+  type first. A trailing `as` binds to the result (`sizeof *p as int` = `(sizeof *p) as int`). A lone name
+  that is not a value falls back to a type, so `sizeof(c_long)` (an alias from another unit) resolves.
+  The parser now also registers `type` alias names, so `sizeof(Alias)` and `Alias x;` parse as types.
+- **`offsetof(T, field)`** (new builtin keyword) folds to a compile-time constant from
+  `type_member_offset()` — a single layout definition now shared by codegen and the constant folder, so
+  field addressing and `offsetof` cannot drift.
+- **String literals are `const char*` for real** (`src/sema_expr.cpp`): the const now sits on the
+  *referent* (elem level) like a written `const char*`, instead of on the pointer. Previously `char* p =
+  "abc";` compiled and `p[0] = 'x'` wrote into `.rdata` (silently dropped as UB by the optimizer). Writing
+  through a literal now needs an explicit `as char*`. Test `cstr_literal_const`.
+- **`std.ctypes`** (`libs/std/platform/<os>/std/ctypes.mu`, SPEC 7.2): `c_char`/`c_int`/`c_size`/
+  `c_long`/`c_wchar`… as transparent aliases, so an `extern` declaration is ABI-correct on every target.
+  `c_long` is 32-bit on Windows (LLP64) and 64-bit elsewhere; `c_wchar` is 16-bit on Windows. `std.cstdio`
+  now uses them: **`fseek`/`ftell` were passing a 64-bit `long` for C's 32-bit Windows `long`** (a real
+  Win64 ABI bug, portability-plan #11) — fixed — and `fread`/`fwrite` are bound.
+
+Tests: `arrow_basic`, `sizeof_expr`, `ctypes_aliases` (check) plus must-fail `arrow_nonptr`,
+`cstr_literal_const`.
+
+**Tests**: 475/475 (138 pass + 318 must-fail + 19 check)
+
+> **Doc-only change (2026-11-14, no version bump)**: the standard-library naming conventions are
+> fixed in `docs/style.md`. Decisions: built-in types are lowercase (`buffer<T>`) and library types
+> are PascalCase (`Array<T>`, `Array2d<T>`, `Array3d<T>`, `Thread`); `String` is the canonical type
+> name and `string` is a lowercase `type` alias kept for input convenience. Methods are snake_case
+> with `length()` as the only element-count name and `is_empty()` as the only emptiness name;
+> parameters are snake_case with full words (`dst` / `src` are the only abbreviations, destination
+> first); constants are UPPER_SNAKE, enum members PascalCase, interfaces `I`-prefixed. `at()` is
+> dropped — `operator[]` is the only element access, so out-of-range has exactly one behaviour;
+> `find()` returns `isize` with `-1` for "not found". The built-in `len` is removed: managed
+> sequences answer `length()`, while static arrays are C storage with no `length()` and no `for-in`
+> (count with `sizeof(a) / sizeof(a[0])`). `buffer<T>` becomes the public safe memory block under
+> the `Array` family; the `Array` family is written explicitly (no `T[]` → `Array<T>` sugar), and
+> whether `T[]` survives at all as a `buffer<T>` shorthand is still open. `operator[]=` is removed:
+> `ref T operator[]` covers reads, writes and compound assignment. Bounds checking is a compiler
+> option (`--bounds=on|off`, default on), emitted once in `buffer<T>[]` so upper layers do not
+> repeat it, and a violation throws `BoundsError` with the index and length. Whether `Array` is a
+> struct or a class is deferred until the other containers are designed. The language-mechanism
+> work is queued as U38, the existing `std.string` / `std.thread` deviations as U37 in
+> `agents/design-backlog.md`.
+
+### 0.0.99 — 2026-11-13
+
+**Per-library platform directories + cross-platform check (portability stage 0)**: units are no longer
+selected by a global `platform/<os>` search root. The loader now resolves every unit **relative to
+itself**: for `a.b.c` it tries `<root>/a/b/platform/<os>/`, `<root>/a/platform/<os>/`,
+`<root>/platform/<os>/` (nearest shadow first) and finally the portable unit (`src/loader.cpp`). That
+makes a platform implementation **belong to the library that owns it** —
+`ms/xxlib/platform/linux/ms.xxlib.io.mu` travels with the library, so a third-party tree can be vendored
+as one directory instead of merging into a shared `platform/` tree; `libs/std/platform/windows/…` keeps
+the std backends and needed no file moves.
+
+- **Both file names are accepted everywhere**: the flat dotted name (`std.thread.backend.mu`, which the
+  loader already tried before the slashed form) and the slashed path. Inside a shadow directory the file
+  keeps the full unit name, so one `ls` lists every OS-specific unit of that tree.
+- **`platform` is reserved**: a unit name may not start with `platform`, and a `platform.<os>` segment
+  pair is rejected; two files for the same unit in one directory is an **ambiguity error** (it used to
+  silently pick the flat one).
+- **`--os windows|linux|macos`** on `check` (and on `build` for the host platform only) resolves the
+  program against another platform's units, on any host: this is the substitute for `#ifdef`'s
+  ability to compile "the other branch", and it is stronger, because the other branch is fully
+  type-checked. `-v` prints the file every unit resolved to. The missing-unit diagnostic lists every
+  candidate path, platform shadows first.
+- The loader also stopped adding `libs/std` as a search root (nothing resolved through it; it only
+  produced noise in the diagnostics).
+
+Tests: `shadow_platform` (each OS ships its own `shadowlib.probe`, the portable fallback returns 0 and
+must lose — the three platform files exercise both accepted file names), `unit_platform_reserved`
+(`unit platform.foo;` rejected) and `unit_ambiguous` (both file forms in one directory). Docs: SPEC
+§2.1 now specifies unit discovery + platform shadows; `agents/portability-plan.md` gained stage 0 and
+its status moved to "implementing".
+
+**Tests**: 470/470 (136 pass + 316 must-fail + 18 check)
+
+> **Doc-only change (2026-11-13, no version bump)**: decided **no `unsafe` mechanism, permanently**
+> (`docs/SPEC.md` principle 7; `agents/toolchain-plan.md` D13/§10). Every facility — raw pointers and
+> arithmetic, `alloc`/`free`, `union`, uninitialized locals, `extern`, future intrinsics — stays
+> available to every programmer, and `unsafe` is **released from the reserved-word list**. Rationale: a
+> marker only means "break a guarantee the compiler enforces elsewhere"; mu's memory layer has no such
+> guarantee (no borrow checker), so the marker would have to cover the whole language and lose its grep
+> signal. The three jobs it would have done are carried instead by explicit, greppable intrinsic names
+> (`atomic_*`, future `mmio_*`), optional runtime checks (bounds / null / div-zero / RC underflow; TODO
+> entry added) and the documented UB list (SPEC 8.2). No compiler code changed; the test baseline is
+> unchanged.
+
+### 0.0.98 — 2026-11-13
+
+**M:N task runtime for `para` / `para for` (concurrency P3)**: the OS-thread-per-unit implementation is
+gone. The new `libs/std/task.mu` scheduler runs **one task per concurrent unit on its own fiber**, and a
+bounded set of **carriers** (OS threads, one per core) executes them:
+
+- **Task = fiber**: a parked task keeps its stack; switching is `SwitchToFiber` (Win32 backend:
+  `ConvertThreadToFiberEx` / `CreateFiberEx` / `SwitchToFiber` / `DeleteFiber`). Stacks are fixed
+  (default 64 KiB commit / 256 KiB reserve, `set_task_stack`) and recycled through a pool, so
+  `para for` over thousands of items costs thousands of small records instead of thousands of threads.
+- **Carrier loop**: pop from the global run queue → record the task in carrier-local TLS → switch into
+  the task's fiber → on return save the exception slot. An idle carrier sleeps on a condition variable;
+  every `push_run` signals it (the lost wakeup that made the first version hang at ~1500 tasks).
+- **Join**: a task parks (its carrier keeps running, so nested `para` cannot starve); `main`, a
+  `std.thread` thread or a C thread waits on a condition variable. `finish_locked` wakes the waiters,
+  recycles the fiber and publishes `T_DONE` — the fiber only sets an `exited` flag, because publishing
+  the state itself let a joiner free the task while its carrier was still saving state
+  (write-after-free, found with the CRT heap validator).
+- **Handoff (design 6.4)**: a monitor thread adds a carrier (up to 4x cores) when the queue is
+  non-empty and every busy carrier has missed its heartbeat for 10 ms. Blocking calls pin a carrier in
+  this version; `para_handoff` checks the carrier count grows.
+- **Exception slot migration (design 6.2)**: the compiler now emits `muc_eh_slot()` when the runtime
+  references it (`src/codegen_func.cpp`), and the runtime saves/loads the 16-byte pending slot around
+  every switch, so a task may resume on a different carrier.
+- **Cap and settings**: `std.task.TaskLimitError` with `set_max_live_tasks` (default 10000 tasks),
+  `set_task_stack`, `set_carrier_limit`, `live_task_count`, `carrier_count`; the lowering entry points
+  moved from `std.thread` to `std.task` (`src/codegen_stmt.cpp:runtimeFn`), and `std.task` is loaded
+  implicitly.
+
+Two bugs found by the review pass and fixed before this entry shipped: (1) a failed `muc_para_start`
+recorded its (undefined) handle in the region's task list before the pending check — the cleanup then
+joined a garbage pointer; the check now comes before `muc_para_group_add`; (2) the fiber published
+`T_DONE` before switching back, so a joiner could free the task under the carrier.
+
+Two more fixed after the second review pass: (3) `started` was published in a different critical
+section than the TLS keys, so a concurrent `muc_para_join` could read `tls_next == 0` and take the task
+path on a plain thread (wild waiter write + `SwitchToFiber` on garbage); the keys, the failure check and
+`started` are now one critical section, and `join` also guards on `started`. (4) `CreateFiberEx` /
+`ConvertThreadToFiberEx` were called without `FIBER_FLAG_FLOAT_SWITCH`, so the FP state had no
+guarantee across a switch even though task bodies may use `float`/`double`; both now pass the flag.
+Also added `set_carrier_limit` (a test/embedder knob: it caps the initial carrier set and handoff
+growth), a null-handle guard in `muc_para_join`, and an abort on `TLS_OUT_OF_INDEXES`.
+
+**Docs**: SPEC 3.17.1/3.17.6/3.17.7 rewritten for the M:N runtime (fiber stacks, join parking, handoff,
+cap settings), `agents/task-runtime.md` P3 marked done, and the library contract documented in
+`docs/lib-std-task.md`. Tests: `para_many_tasks` (2000 items through the scheduler → 1999000),
+`para_handoff` (the carrier set grows while tasks block → `grew`), `para_join_chain` (a nested fan-out
+that parks on every level with **one** carrier → `8 1`), `para_limit_sections` (a failed section start
+joins what already started → `limit 0`) and `para_task_fp_eh` (a task catches, parks and resumes with
+`double` work → `5.50 0.25`), plus the existing `para_*` suite (including the cursor, `for ref`, cap and
+mid-stream-throw cases) on the new runtime.
+
+**Tests**: 467/467 (135 pass + 314 must-fail + 18 check)
+
+### 0.0.97 — 2026-11-13
+
+**`para for` is one task per item, streamed from a single puller (concurrency P2b-4)**: the automatic
+8-way chunking is gone. The producer is now the ordinary for-in lowering itself — the source expression
+is evaluated **once** (so the old "must be a variable or member access" restriction is lifted), a
+`next()`/`operator[]` pull happens between item starts (a blocking `next()` is where backpressure
+lives), and the loop body is replaced by "start one task for the current item"
+(`src/codegen_stmt.cpp:emitParaFor`, `emitParaForSpawnItem`, `emitParaForBody`). Each item gets a heap
+context `{ frame*, item }` (the element address for `for ref`) that is retained on the producer side and
+released by the task body, then freed by the task wrapper; the region records every handle in a task
+list (`std.thread.muc_para_group_new/add/join_free`) and joins them when the source ends. The cursor
+form of `for-in` is now a valid `para for` source (`sema` no longer rejects it), and `emitFor` lost the
+`forChunkStart`/`forChunkStride` overrides.
+
+**Task cap**: `std.thread.muc_para_start` now accounts live execution units (1000, a dedicated SRWLOCK
+in the Win32 backend) and **throws `std.thread.TaskLimitError`** when a start is refused, as §3.17.7
+requires. A refused spawn is an ordinary exception: the region releases the failed item's context
+(including its retained element copy), joins the tasks that already started (the same rule for a failed
+`para` section start), and propagates at the region's join point. `emitPara`/`emitParaFor` emit the
+pending check because the runtime entry can now throw.
+
+**Unwinding out of the source joins the region**: every check emitted while the producer runs (source
+expression, range bounds, `iterator()`/`next()`/`current()`, `length()`, `operator[]`) now runs the
+region's cleanup (`codegen_impl.hpp:paraUnwindCleanup`, invoked from `emitUnwindCurrent` *before* the
+scopes are released), so a cursor that throws mid-stream cannot leave tasks running against freed
+captured slots. `backend_thread_start` returns null instead of aborting when `CreateThread` fails, so
+the refusal surfaces as a `TaskLimitError` (`std.thread.thread_start` still aborts, as before).
+
+**Docs**: SPEC 3.17.3/3.17.7 rewritten (single puller, cursor sources, one task per item with its real
+cost, `TaskLimitError`, source-throw join), `agents/task-runtime.md` P2b-4 marked done. Tests:
+`para_for_cursor` (cursor source → 91), `para_for_ref` (`for ref` over a local array → 56),
+`para_for_limit` (4000 sleeping items → the cap throws and is caught → `limit`), `para_for_throw` (a
+throwing `next()` mid-stream: 30 rounds × 44 started tasks, no join means the cap is exhausted inside
+the test → `30 0`), `para_for_throw_index` (a throwing `operator[]` mid-stream, index form → `20`), and
+the existing `para_for_basic`/`para_for_array` keep passing with per-item tasks.
+
+**Tests**: 462/462 (130 pass + 314 must-fail + 18 check)
+
+### 0.0.96 — 2026-11-13
+
+**Cursor form of `for-in` (concurrency P2b-3)**: a user type that provides `iterator() -> It` is now
+iterated through the cursor lowering — `auto it = seq.iterator(); while it.next() { v = it.current(); … }`
+(`src/sema_class2.cpp:resolve_cursor_shape`, `src/codegen_stmt.cpp:emitFor`). `It` must be a struct
+returned by value (no allocation, static dispatch) and satisfy the contract declared in
+`libs/core/iter.mu` (`core.iter.IIterator<T>`: `bool next()`, `T current()`); the compiler checks it
+structurally and the diagnostics name the interface. Form resolution changed accordingly (SPEC 6.4.3):
+a type with `iterator()` uses the cursor form, otherwise the index form. `for ref` is rejected for
+cursor sources, elements are bound by value (retain/release for class elements), and `next()` may block
+(a stream). `para for` over a cursor is explicitly rejected for now (it would give each chunk its own
+iterator and consume the stream 8×), so a plain `for` is the only cursor consumer until the stream
+lowering lands. Test: `cursor_basic` (cursor over 3 elements → 60).
+
+**Tests**: 457/457 (125 pass + 314 must-fail + 18 check)
+
+### 0.0.95 — 2026-11-13
+
+**Compiler-facing contracts are explicit interfaces (`libs/core`)**: a new `core.iter` unit (`libs/core/iter.mu`, loaded implicitly like `std.thread`) declares the `for-in` contracts as real interfaces — `IIterator<T>` (`bool next()`, `T current()`) and `IIndexable<T>` (`usize length()`; the subscript half stays structural because an interface cannot declare `operator[]`). Nothing changes semantically: the compiler keeps checking the protocol structurally (no vtable, no boxing), but the contract now has a definition site, so an implementer can `use core.iter;` and declare `: IIterator<T>` to have their cursor checked against the interface. SPEC 6.4.2 now names the contract and records the stream clauses (`next()` may block, it is a park/cancellation point in a task, one consumer per cursor, value elements).
+
+**Tests**: 456/456 (124 pass + 314 must-fail + 18 check)
+
+### 0.0.94 — 2026-11-13
+
+**`para for` over arrays/slices/strings (concurrency P2b, part 2)**: non-range sources now work by reusing the ordinary `for-in` lowering once per chunk with a **stride override** (two new Emitter fields, `forChunkStart`/`forChunkStride`): chunk k visits indices `k, k+8, …`, so fixed arrays, slices, strings and user types that satisfy the index form all work without a second code path, and the loop variable keeps the ordinary per-iteration binding (value or `ref`, with element retain/release). The sequence must be a simple variable or member access, because each chunk evaluates it (explicit diagnostic otherwise); `for i, x` is still rejected, and the cursor form of `for-in` remains unimplemented, so a blocking stream cannot be a `para for` source yet. Tests: `para_for_array` (Σ 3·0..7 = 84); the range test and the `break` must-fail case are unchanged.
+
+**Tests**: 456/456 (124 pass + 314 must-fail + 18 check)
+
+### 0.0.93 — 2026-11-13
+
+**`para for` over ranges (concurrency P2b, part 1)**: `para for i in a..b { ... }` (including `..=` and `step`) is implemented by splitting the range into a fixed number of **strided chunks (8)** and running one OS thread per chunk; each chunk is a normal loop over a private copy of the loop variable, so the body keeps the same capture rules as `para` (captures travel through the shared read-only frame) and `break`/`continue` at the body level are compile errors (`para_for_break`). The chunk body and its exception wrapper are queued like `para` sections and emitted after the enclosing function; the queue is drained until empty because a body may itself contain a parallel region. Not yet: the non-range sources (arrays/slices/strings) and the cursor form of `for-in`, so `para for` currently rejects anything that is not a range (`para_for_array`). Tests: `para_for_basic` (sum of squares 0..15 = 1240) plus two must-fail cases.
+
+**Tests**: 456/456 (123 pass + 315 must-fail + 18 check)
+
+### 0.0.92 — 2026-11-13
+
+**`para` (concurrency P2a)**: `para { { ... } { ... } }` is implemented with one OS thread per section (`src/parser_stmt.cpp`, `src/sema_class1.cpp`, `src/codegen_stmt.cpp`). Each section becomes a hidden function that receives a frame of **pointers to the caller's captured locals** — the caller is suspended at the join, so nothing is copied and no reference count is touched; a nested `para` forwards captures through every enclosing frame (a capture is recorded in all active sections, so the inner frame can reach the outer function's slot through the outer frame). The compile-time rules of SPEC 3.17.2 are enforced: writing an enclosing local, taking its address, passing it by `ref`, `return`, and `break`/`continue` that would leave the section are errors, while writes through a class handle, a slice buffer or a pointer are allowed (explicit sharing). v1 limitations are recorded in SPEC 3.17.7: sections are joined in source order with no cancellation, an exception that escapes a section aborts the process (the B2 thread-boundary rule) instead of being rethrown, and `this` / implicit field access inside a section is a compile error. `std.thread` is now loaded implicitly because it provides the two lowering entry points (`muc_para_start` / `muc_para_join`); a program without `para` never starts the runtime. Tests: `para_basic` (two sections, captured local, results through a class), `para_nested` (nested sections) and five must-fail cases (`para_write_outer`, `para_return`, `para_addr_outer`, `para_ref_outer`, `para_this`).
+
+**Tests**: 453/453 (122 pass + 313 must-fail + 18 check)
+
+### 0.0.91 — 2026-11-13
+
+**Thread primitives: `std.thread` + platform search path (concurrency P1)**: the loader now puts `libs/std/platform/<os>` ahead of `libs` (`src/loader.cpp`), so a unit can have a platform-specific implementation chosen at load time without a preprocessor. The first user is `libs/std/thread.mu` — a platform-neutral API (`Thread`, `thread_start/join/detach/sleep`, `monotonic_ms`, `Mutex`, `CondVar`, `WAIT_INFINITE`) — with the Win32 implementation isolated in `libs/std/platform/windows/std/thread/backend.mu`: `CreateThread` with a `(void*) => uint` trampoline over a heap context, `WaitForSingleObject`, `Sleep`, `GetTickCount64`, and SRWLOCK / CONDITION_VARIABLE (both pointer-sized and zero-initialized, so a zeroed `Mutex`/`CondVar` is immediately usable — no init/destroy call). The API is deliberately C-shaped (function values plus `void*` userdata, no captures) and is the layer the task runtime will be built on; the front-end only knows the portable names. Two new tests: `thread_smoke` (4 threads × 1000 mutex-protected increments, deterministic 4000) and `rc_stress` (50k producer/consumer handoffs through a size-1 slot: every object is created on the producer and destroyed on the consumer, count 50000, which is exactly the cross-thread RC path the 0.0.90 ordering fix addresses). Both tests use only the portable API, so they keep working once a POSIX/macOS backend exists; Win32 is the only backend today.
+
+**Tests**: 446/446 (120 pass + 308 must-fail + 18 check)
+
+### 0.0.90 — 2026-11-13
+
+**RC memory ordering corrected for cross-thread sharing (concurrency P0)**: the strong reference count used `monotonic` for both the increment and the decrement and destroyed the object as soon as the decrement observed 1 — the classic relaxed-RC bug: the thread that releases the last reference need not see what the other threads wrote before dropping theirs. The count now follows the Arc pattern: increments stay **relaxed**, the decrement is **release**, and the destroy path executes an **acquire fence** before loading the class descriptor (`src/codegen_support.cpp:ensureRelease`). The dynamic-array/slice header release got the same treatment (`src/codegen_runtime.cpp:emitSliceRelease`), and the global weak-registry spin lock now uses **acquire** on lock and **release** on unlock instead of a relaxed exchange (harmless on x86-TSO, wrong on ARM). Verified by inspecting the emitted IR: `atomicrmw sub ... release` + `fence acquire` inside the destroy block, `atomicrmw add ... monotonic` for retains, `atomicrmw xchg ... acquire/release` for the weak lock. SPEC 3.8/8.3 and questions 74/87/94 updated from "relaxed" to the precise ordering. The test count does not change: a single-threaded program cannot observe the difference, and the cross-thread stress test arrives with the task runtime (P1), because the language has no thread or mutex primitives yet.
+
+**Tests**: 444/444 (118 pass + 308 must-fail + 18 check)
+
 ### 0.0.89 — 2026-11-13
 
 **`string` is now a pure library type (no compiler knowledge at all)**: a string literal is a static, NUL-terminated UTF-8 buffer whose type is **`const char*`** (as in C), and `string s = "abc";` goes through the library's `implicit string(const char*)` (0.0.88). Every operation moved into `libs/std/string.mu` as ordinary code: byte length is `s.length()`, indexing is the **member** `operator[]` (borrowed receiver: no copy, no RC, 0.0.87), `for c in s` uses the index form, `==`/`!=` are library operators with overloads for `string` and `const char*` (`"abc" == s` works too), `+` is a member operator, and `s.cstr()` replaces the implicit `string → const char*` conversion. `TypeKind::String` was deleted, so codegen no longer knows the `{p, n, owner}` layout: `sizeof(string)` now comes from the resolved type (it used to answer 8 in expressions and 24 in constants) and `stringConst` only emits a `const char*` to the literal bytes. Consequences, all documented in SPEC 3.3: `string` cannot be a unit-level variable any more (reference-counted data has no exit-time destruction — use `const char*`), `printf("%s", s)` needs `s.cstr()`, and `len(s)` is a compile error (`len` serves built-in sequences only). A `char[N]` may still be initialized from a literal (byte copy + NUL padding, now with a length check). Added 2 run cases (`string_library` plus the migrated string cases), 2 must-fail cases (`string_global`, `string_no_implicit_cstr`).
 
 **Tests**: 444/444 (118 pass + 308 must-fail + 18 check)
+
+> **Doc-only change (2026-11-13, no version bump)**: added SPEC 3.17 (concurrency: `para` / `para for` /
+> `thread`) together with the keyword table (2.3) and reserved-word list (2.5) updates, the UB
+> entry for data races (8.2), the concurrency non-goals (10), open questions #120–125 (12) and a roadmap
+> note (14). The decision record, invariants, library contracts and phasing live in
+> `agents/task-runtime.md`. No compiler code changed and the test baseline is unchanged.
 
 ### 0.0.88 — 2026-11-13
 

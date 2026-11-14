@@ -589,9 +589,20 @@ namespace muc_detail {
         if (auto nm = dynamic_cast<Name*>(e)) return eval_const_name(nm, self_ty, out);
         if (auto m = dynamic_cast<Member*>(e)) return eval_const_member_expr(m, out);
         if (auto sz = dynamic_cast<SizeofExpr*>(e)) {
+            if (!sz->spec) return false;  // `sizeof expr`: a value expression is not a compile-time constant
             TypePtr t = resolve_type(sz->spec.get(), cur_);
             if (!t || is_void(t)) return false;
             out.ty = Type::make_prim("usize");
+            if (sz->which == "offsetof") {
+                int idx = -1;
+                if (t->kind != TypeKind::Struct) return false;
+                for (size_t i = 0; i < t->fields.size(); ++i) {
+                    if (t->fields[i].name == sz->field) idx = static_cast<int>(i);
+                }
+                if (idx < 0) return false;
+                out.i = static_cast<long long>(type_member_offset(t, static_cast<size_t>(idx)));
+                return true;
+            }
             out.i = static_cast<long long>(sz->which == "alignof" ? type_align(t) : type_size(t));
             return true;
         }

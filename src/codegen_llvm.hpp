@@ -9,7 +9,8 @@
 #include "sema.hpp"
 
 // Emit textual IR (debug / --emit-ir)
-std::string llvm_emit_text(Program& prog);
+std::string llvm_emit_text(Program& prog, bool bounds = true);
 
 // Emit a COFF object file; when debug_info is true, DWARF is attached (-g)
-void llvm_emit_object(Program& prog, const std::string& obj_path, bool debug_info = false);
+void llvm_emit_object(Program& prog, const std::string& obj_path, bool debug_info = false,
+                      bool bounds = true);

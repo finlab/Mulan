@@ -14,8 +14,8 @@ struct S { int[] b; }
 int main() {
     // static rectangular T[m,n]
     int[2,3] a = {{1, 2, 3}, {4, 5, 6}};
-    if len(a) != 2 { puts("static dim0"); return 1; }
-    if len(a, 1) != 3 { puts("static dim1"); return 2; }
+    if sizeof(a) / sizeof(a[0]) != 2 { puts("static dim0"); return 1; }
+    if sizeof(a[0]) / sizeof(a[0][0]) != 3 { puts("static dim1"); return 2; }
     if a[0,1] != 2 { puts("static idx 0,1"); return 3; }
     if a[1,2] != 6 { puts("static idx 1,2"); return 4; }
     if a[1][0] != 4 { puts("static idx [1][0]"); return 5; }
@@ -29,21 +29,21 @@ int main() {
     int[2,2,2] c3 = {};
     c3[1,0,1] = 9;
     if c3[1,0,1] != 9 { puts("static 3d"); return 9; }
-    if len(c3, 2) != 2 { puts("static 3d dim"); return 10; }
+    if sizeof(c3[0][0]) / sizeof(c3[0][0][0]) != 2 { puts("static 3d dim"); return 10; }
 
     // dynamic rectangular T[,]
     int m = 2;
     int n = 3;
     int[,] b = new int[m,n];
-    if len(b) != 2 { puts("dyn dim0"); return 11; }
-    if len(b, 1) != 3 { puts("dyn dim1"); return 12; }
+    if b.length() != 2 { puts("dyn dim0"); return 11; }
+    if b.length(1) != 3 { puts("dyn dim1"); return 12; }
     if b[1,2] != 0 { puts("dyn zero"); return 13; }
     int i = 1;
     int j = 2;
     b[i,j] = 7;
     if b[1,2] != 7 { puts("dyn write"); return 14; }
     int k = 1;
-    if len(b, k) != 3 { puts("dyn runtime dim"); return 15; }
+    if b.length(k) != 3 { puts("dyn runtime dim"); return 15; }
     int[,] b2 = b;
     b2[0,0] = 5;
     if b[0,0] != 5 { puts("dyn share"); return 16; }
@@ -63,7 +63,7 @@ int main() {
     int[,,] d3 = new int[2,2,2];
     d3[1,1,1] = 7;
     if d3[1,1,1] != 7 { puts("dyn 3d"); return 18; }
-    if len(d3, 2) != 2 { puts("dyn 3d dim"); return 19; }
+    if d3.length(2) != 2 { puts("dyn 3d dim"); return 19; }
 
     // class references in a static rectangle: per-element RC
     {
@@ -104,13 +104,13 @@ int main() {
 
     // jagged array: allocate the outer 1-D once, then fill rows in a loop
     int[][] jg = new int[3][];
-    if len(jg) != 3 { puts("jagged outer"); return 32; }
-    if len(jg[0]) != 0 { puts("jagged null row"); return 33; }
+    if jg.length() != 3 { puts("jagged outer"); return 32; }
+    if jg[0].length() != 0 { puts("jagged null row"); return 33; }
     for r in 0..3 {
         jg[r] = new int[r + 1];
         jg[r][0] = r;
     }
-    if len(jg[2]) != 3 { puts("jagged row len"); return 34; }
+    if jg[2].length() != 3 { puts("jagged row len"); return 34; }
     if jg[2][0] != 2 { puts("jagged row value"); return 35; }
     if jg[2][2] != 0 { puts("jagged row zero"); return 36; }
 
@@ -120,7 +120,7 @@ int main() {
     js[1] = new int[3];
     js[1][2] = 8;
     if js[1][2] != 8 { puts("fixed jagged"); return 37; }
-    if len(js[0]) != 2 { puts("fixed jagged len"); return 38; }
+    if js[0].length() != 2 { puts("fixed jagged len"); return 38; }
 
     // static rectangle -> dynamic rectangle: elements are deep-copied
     int[,] conv = a;
@@ -130,7 +130,7 @@ int main() {
 
     // fixed row slots -> jagged: copy the outer and retain rows (rows are shared)
     int[][] jconv = js;
-    if len(jconv[1]) != 3 { puts("jagged convert len"); return 41; }
+    if jconv[1].length() != 3 { puts("jagged convert len"); return 41; }
     jconv[1][2] = 8;
     if js[1][2] != 8 { puts("jagged convert share"); return 42; }
 

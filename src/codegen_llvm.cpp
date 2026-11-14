@@ -14,10 +14,10 @@
 
 using namespace llvm;
 
-std::string llvm_emit_text(Program& prog) {
+std::string llvm_emit_text(Program& prog, bool bounds) {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
-    muc_detail::Emitter em{prog};
+    muc_detail::Emitter em{prog, false, bounds};
     em.run();
     std::string out;
     raw_string_ostream os(out);
@@ -26,10 +26,10 @@ std::string llvm_emit_text(Program& prog) {
     return out;
 }
 
-void llvm_emit_object(Program& prog, const std::string& obj_path, bool debug_info) {
+void llvm_emit_object(Program& prog, const std::string& obj_path, bool debug_info, bool bounds) {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
-    muc_detail::Emitter em{prog, debug_info};
+    muc_detail::Emitter em{prog, debug_info, bounds};
     em.run();
     std::error_code ec;
     raw_fd_ostream dest(obj_path, ec, llvm::sys::fs::OF_None);

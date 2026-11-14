@@ -11,7 +11,7 @@ interface ISeq<T> {
 struct Vec {
     int[] data;
 
-    usize length() { return len(data); }
+    usize length() { return data.length(); }
 
     int at(usize i) { return data[i]; }
 }

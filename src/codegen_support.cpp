@@ -7,7 +7,7 @@
 
 namespace muc_detail {
 
-Emitter::Emitter(Program& p, bool dbg) : prog(p), wantDebug(dbg) {}
+Emitter::Emitter(Program& p, bool dbg, bool bounds) : prog(p), wantDebug(dbg), boundsCheck(bounds) {}
 
 std::string sane(std::string s) {
     for (char& c : s) {
@@ -334,6 +334,8 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         hb.CreateCondBr(hb.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), done, inc);
         hb.SetInsertPoint(inc);
         auto* rc = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 0));
+        // Relaxed is correct for increments: they only have to be atomic. Ordering is provided by
+        // the release decrement plus the acquire fence on the final release (see ensureRelease).
         hb.CreateAtomicRMW(llvm::AtomicRMWInst::Add, rc, ConstantInt::get(i64(), 1),
                            MaybeAlign(8), llvm::AtomicOrdering::Monotonic);
         hb.CreateBr(done);
@@ -358,10 +360,15 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         hb.CreateCondBr(hb.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), done, body);
         hb.SetInsertPoint(body);
         auto* rc = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 0));
+        // Release: every write this thread made before dropping the reference must be visible to
+        // the thread that performs the final release (SPEC 3.17 / 8.3, the Arc pattern).
         auto* old = hb.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, rc, ConstantInt::get(i64(), 1),
-                                       MaybeAlign(8), llvm::AtomicOrdering::Monotonic);
+                                       MaybeAlign(8), llvm::AtomicOrdering::Release);
         hb.CreateCondBr(hb.CreateICmpEQ(old, ConstantInt::get(i64(), 1)), destroy, done);
         hb.SetInsertPoint(destroy);
+        // Acquire fence: pairs with the other threads' release decrements, so the destructor sees
+        // everything they wrote before dropping their references.
+        hb.CreateFence(llvm::AtomicOrdering::Acquire);
         auto* descp = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 8));
         auto* desc = hb.CreateLoad(ptrTy(), descp);
         auto* dfnp = hb.CreateGEP(i8(), desc, ConstantInt::get(i64(), 8));
@@ -395,18 +402,9 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return a;
     }
 
-    // byte offset of a struct member (consistent with the layout rules in types.cpp; 0 for all union members)
+    // byte offset of a struct member (single layout definition in types.cpp; 0 for all union members)
     uint64_t Emitter::memberOffset(const TypePtr& t, size_t idx) {
-        if (t->is_union) return 0;
-        uint64_t off = 0;
-        for (size_t i = 0; i <= idx && i < t->fields.size(); ++i) {
-            const TypePtr& ft = t->fields[i].type;
-            const uint64_t fa = alignOf(ft);
-            if (!t->is_packed) off = (off + fa - 1) / fa * fa;
-            if (i == idx) return off;
-            off += sizeOf(ft);
-        }
-        return 0;
+        return type_member_offset(t, idx);
     }
 
     // Mulan type -> DWARF type. Structs expand their members (going down layer by layer, depth limit 2);
@@ -464,7 +462,15 @@ bool is_void(const TypePtr& t) { return t && t->kind == TypeKind::Void; }
         return dib->createBasicType(t->str(), bits, llvm::dwarf::DW_ATE_unsigned);
     }
 
-    AllocaInst* Emitter::slotFor(const LocalVar* lv) {
+    Value* Emitter::slotFor(const LocalVar* lv) {
+        // `para` capture: the slot lives in the enclosing function's frame; the frame holds its address.
+        auto cap = captureIndex.find(lv);
+        if (cap != captureIndex.end()) {
+            return b.CreateLoad(ptrTy(),
+                                b.CreateGEP(frameTy, frameArg,
+                                            {ConstantInt::get(i32(), 0),
+                                             ConstantInt::get(i32(), cap->second)}));
+        }
         auto it = slots.find(lv);
         if (it != slots.end()) return it->second;
         LType* ty = lt(lv->rty);

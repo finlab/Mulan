@@ -47,7 +47,7 @@ int main() {
     if sizeof(int32) == 4 {
         puts("width ok");
     }
-    if len(xs) == 3 {
+    if xs.length() == 3 {
         puts("slice ok");
     }
 

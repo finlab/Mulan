@@ -551,32 +551,46 @@ ExprPtr Parser::parse_unary() {
     }
     if (at_kw("sizeof", "alignof")) {
         std::string which = advance().text;
-        expect_op("(");
-        TypeSpecPtr spec = parse_type();
-        expect_op(")");
         auto node = std::make_unique<SizeofExpr>();
-        node->spec = std::move(spec);
         node->which = std::move(which);
+        if (at_op("(")) {
+            advance();
+            // `sizeof(T)` vs `sizeof(expr)`: a type starts with a type keyword, a known type name or an
+            // imported unit prefix; anything else is an expression (`sizeof(a[0])`, `sizeof(p->x)`).
+            if (is_type_start(peek())) {
+                node->spec = parse_type();
+            } else {
+                node->expr = parse_expr();
+            }
+            expect_op(")");
+        } else {
+            // C's paren-free form: `sizeof *p`, `sizeof a`, `sizeof a[i]`; a trailing `as` applies to the
+            // result, not to the operand
+            const bool saved = suppress_as_;
+            suppress_as_ = true;
+            node->expr = parse_unary();
+            suppress_as_ = saved;
+        }
+        node->line = t.line;
+        node->col = t.col;
+        return parse_postfix_tail(std::move(node));
+    }
+    if (at_kw("offsetof")) {
+        advance();
+        expect_op("(");
+        auto node = std::make_unique<SizeofExpr>();
+        node->which = "offsetof";
+        node->spec = parse_type();
+        expect_op(",");
+        node->field = expect_ident("field name").text;
+        expect_op(")");
         node->line = t.line;
         node->col = t.col;
         return parse_postfix_tail(std::move(node));
     }
     if (at_kw("len")) {
-        advance();
-        expect_op("(");
-        ExprPtr seq = parse_expr();
-        ExprPtr dim;
-        if (at_op(",")) {
-            advance();
-            dim = parse_expr();
-        }
-        expect_op(")");
-        auto node = std::make_unique<Len>();
-        node->seq = std::move(seq);
-        node->dim = std::move(dim);
-        node->line = t.line;
-        node->col = t.col;
-        return parse_postfix_tail(std::move(node));
+        throw err("`len` was removed: use `x.length()` for a managed sequence, or "
+                  "`sizeof(a) / sizeof(a[0])` for a static array");
     }
     return parse_postfix();
 }
@@ -632,6 +646,25 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
             e = std::move(node);
             continue;
         }
+        if (t.is_op("->")) {
+            // `p->f` is exactly `(*p).f`: the postfix chain after a one-level dereference. Keeping it
+            // parser sugar means sema/codegen have no second code path to keep in sync.
+            advance();
+            const Token nameTok = peek();
+            std::string nm = expect_ident("member name").text;
+            auto deref = std::make_unique<Unary>();
+            deref->op = "*";
+            deref->operand = std::move(e);
+            deref->line = t.line;
+            deref->col = t.col;
+            auto node = std::make_unique<Member>();
+            node->obj = std::move(deref);
+            node->name = std::move(nm);
+            node->line = nameTok.line;
+            node->col = nameTok.col;
+            e = std::move(node);
+            continue;
+        }
         if (t.is_op(".")) {
             // multi-segment unit name: in `lib.a.b.f`, `lib.a.b` is the unit; merge them into a single Name
             // so it is not split into three nested member accesses. Match by longest imported prefix.
@@ -656,6 +689,7 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
             continue;
         }
         if (t.is_kw("as")) {
+            if (suppress_as_) break;  // the `as` belongs to the enclosing `sizeof` result
             advance();
             TypeSpecPtr spec = parse_type();
             auto node = std::make_unique<Cast>();

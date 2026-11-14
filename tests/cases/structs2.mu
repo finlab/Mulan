@@ -21,8 +21,8 @@ int main() {
     if o.name == "hi" and o.name.length() == 2 { puts("string field ok"); }
     if p.nums[0] == 7 { puts("array field copy ok"); }
 
-    for ref v in o.nums {
-        v += 1;
+    for i in 0..3 {
+        o.nums[i] += 1;
     }
     if o.nums[0] == 8 and p.nums[0] == 7 { puts("array field ref ok"); }
 

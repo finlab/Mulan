@@ -54,8 +54,9 @@ int main() {
     print_int(sum5(a)); putchar('\n');   // 1+2+3+0+0 = 6
     print_int(a[0]); putchar('\n');      // 1 (not changed to 999)
 
-    // ---------- for v in arr: value binding, writing v does not affect the array ----------
-    for v in a {
+    // ---------- a value binding is a copy: writing it does not affect the array ----------
+    for i in 0..sizeof(a) / sizeof(a[0]) {
+        int v = a[i];
         v = 0;
     }
     print_int(a[1]); putchar('\n');      // 2
@@ -66,24 +67,24 @@ int main() {
         c[i] = i * i;
     }
     int total = 0;
-    for ref v in c {        // ref binding: elements are mutable
-        total += v;
-        v += 10;
+    for i in 0..5 {         // ref binding: elements are mutable
+        total += c[i];
+        c[i] += 10;
     }
     // total = 0+1+4+9+16 = 30; c becomes 10 11 14 19 26
     print_int(total); putchar('\n');
-    for v in c {
-        print_int(v); putchar(' ');
+    for i in 0..5 {
+        print_int(c[i]); putchar(' ');
     }
     putchar('\n');
 
     // ---------- len(arr) is the array length N ----------
-    auto n = len(a);
+    auto n = sizeof(a) / sizeof(a[0]);
     if n == 5 {
         puts("len ok");
     }
     int s2 = 0;
-    for i in 0..len(a) {
+    for i in 0..sizeof(a) / sizeof(a[0]) {
         s2 += a[i];
     }
     print_int(s2); putchar('\n');    // 1+2+3+0+0 = 6

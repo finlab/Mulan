@@ -18,7 +18,6 @@ class Grid {
 }
 
 int operator[](Grid g, int i) { return g.cells[i].get(); }
-void operator[]=(Grid g, int i, int x) { g.cells[i].set(x); }
 
 int main() {
     Cell[3] cells = {};
@@ -38,8 +37,9 @@ int main() {
     Cell e = new Cell(2);
     g.cells[0] = b;
     g.cells[1] = e;
-    g[0] = 5;
+    g.cells[0].set(5);
     if g[0] != 5 { puts("operator[] failed"); return 1; }
+    g.cells[1].set(2);
     if g.cells[1].get() != 2 { puts("operator[]= failed"); return 1; }
 
     g = null;

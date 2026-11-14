@@ -16,6 +16,18 @@ namespace muc_detail {
                     }
                     return cur_class_;
                 }
+                if (spec->name == "buffer") {
+                    if (spec->args.size() != 1)
+                        err_ts("`buffer<T>` takes exactly one type argument", spec);
+                    TypePtr elem = resolve_type(spec->args[0].get(), u);
+                    if (is_void(elem)) err_ts("buffer element cannot be void", spec);
+                    if (noncopyable_struct(elem)) {
+                        err_ts("struct `" + elem->str() +
+                                   "` has a destructor and cannot be a buffer element",
+                               spec);
+                    }
+                    return Type::make_slice(elem, spec->is_const, 1);
+                }
                 if (!spec->args.empty()) {
                     return instantiate_generic(spec, u);
                 }
@@ -368,6 +380,7 @@ namespace muc_detail {
         Scope& sc = scopes_.back();
         if (sc.count(lv->name)) err("duplicate declaration of `" + lv->name + "`", lv);
         sc[lv->name] = lv;
+        if (!para_stack_.empty()) para_stack_.back().declared.insert(lv);
     }
 
     EnumConst* Sema::lookup_enum_const_in(const std::string& unit_name, const std::string& name,
@@ -552,8 +565,8 @@ namespace muc_detail {
         } else if (sym == "[]") {
             if (n != 2) err("`operator[]` takes 2 parameters (container, index)", f);
         } else if (sym == "[]=") {
-            if (n != 3) err("`operator[]=` takes 3 parameters (container, index, value)", f);
-            if (!is_void(f->rty)) err("`operator[]=` must return void", f);
+            err("`operator[]=` was removed: return `ref T` from `operator[]` so that `c[i] = v` writes through the borrow",
+                f);
         } else if (unary_or_binary) {
             if (n != 1 && n != 2) err("`operator" + sym + "` takes 1 or 2 parameters", f);
         } else {
@@ -604,9 +617,7 @@ namespace muc_detail {
             if (n != 1) bad("`operator[]` takes 1 parameter (the index); the receiver is `this`");
             if (!is_integer(m->pty[0])) bad("index of `operator[]` must be an integer");
         } else if (sym == "[]=") {
-            if (n != 2) bad("`operator[]=` takes 2 parameters (index, value); the receiver is `this`");
-            if (!is_void(m->rty)) bad("`operator[]=` must return void");
-            if (!is_integer(m->pty[0])) bad("index of `operator[]=` must be an integer");
+            bad("`operator[]=` was removed: return `ref T` from `operator[]` so that `c[i] = v` writes through the borrow");
         } else if (sym == "~") {
             if (n != 0) bad("`operator~` takes no parameter (the receiver is `this`)");
         } else if (sym == "-" || sym == "+") {

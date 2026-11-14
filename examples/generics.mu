@@ -38,7 +38,7 @@ T bar<T: int| long |string>(T a, T b) {
 struct Vec<T> {
     T[] data;
 
-    usize length() { return len(data); }
+    usize length() { return data.length(); }
 
     T at(usize i) { return data[i]; }
 }
@@ -93,3 +93,4 @@ int main() {
     }
     return 0;
 }
+

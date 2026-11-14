@@ -152,6 +152,7 @@ private:
     std::unique_ptr<Stmt> parse_if();
     std::unique_ptr<Stmt> parse_while();
     std::unique_ptr<Stmt> parse_for();
+    std::unique_ptr<Stmt> parse_para();
     std::unique_ptr<Stmt> parse_switch();
     std::unique_ptr<Stmt> parse_try();
 
@@ -187,6 +188,9 @@ ExprPtr parse_lambda();
     int group_counter_ = 0;  // declaration statement group counter (for the auto multi-declarator consistency check)
     // known local type names (struct / enum), used to disambiguate `T x` from an expression
     std::unordered_set<std::string> type_names_;
+    // while parsing the paren-free operand of `sizeof`/`alignof`: `as` belongs to the result, not the
+    // operand (`sizeof *p as int` is `(sizeof *p) as int`, as in C)
+    bool suppress_as_ = false;
     // unit names introduced by `use`, enabling qualified types such as `math.Point`
     std::unordered_set<std::string> module_names_;
 };

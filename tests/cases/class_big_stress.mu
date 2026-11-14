@@ -35,7 +35,7 @@ int main() {
     if live != 2 { puts("live after set fail"); return 1; }
 
     int sum = 0;
-    for it in b.items { sum += it.area(); }
+    for i in 0..2 { sum += b.items[i].area(); }
     if sum != 15 { puts("for-in iface array fail"); return 1; }
     if live != 2 { puts("for-in leak"); return 1; }
 

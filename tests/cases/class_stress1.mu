@@ -38,7 +38,7 @@ int main() {
     arr[0] = new K(5);
     arr[1] = new K(6);
     int sum = 0;
-    for it in arr { sum += it.a(); }
+    for i in 0..2 { sum += arr[i].a(); }
     if sum != 11 { puts("for-in class array fail"); return 1; }
     outer = null;
     puts("stress1 ok");

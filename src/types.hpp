@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -107,6 +108,9 @@ bool same_type(const TypePtr& a, const TypePtr& b);
 // Layout (a Struct's packed / align(N) is implemented only here; codegen delegates to it so that the two layouts cannot drift apart)
 size_t type_align(const TypePtr& t);
 size_t type_size(const TypePtr& t);
+// Byte offset of struct/union member `idx` (0 for every union member). The single layout definition: the
+// codegen Emitter and the constant folder both call this, so `offsetof` and field addressing cannot drift.
+uint64_t type_member_offset(const TypePtr& t, size_t idx);
 bool is_class_type(const TypePtr& t);
 bool is_interface_type(const TypePtr& t);
 bool is_reference_type(const TypePtr& t);  // class / interface

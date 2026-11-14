@@ -42,8 +42,8 @@ const std::unordered_set<std::string>& keywords() {
         "unit",     "use",      "public",  "private", "const",   "auto",    "struct",   "enum",
         "extern",   "if",       "else",    "elif",    "while",    "for",      "in",
         "switch",
-        "ref",      "break",    "continue", "return", "true",     "false",    "null",
-        "as",       "sizeof",   "alignof", "len",     "alloc",    "realloc",  "free",
+        "para",     "ref",      "break",    "continue", "return", "true",     "false",    "null",
+        "as",       "sizeof",   "alignof", "offsetof", "len",     "alloc",    "realloc",  "free",
         "void",     "bool",     "byte",    "char",     "short",
         "ushort",   "int",      "uint",    "long",    "ulong",    "float",    "double",
         "usize",    "isize",    "and",     "or",       "not",
@@ -57,7 +57,7 @@ const std::unordered_set<std::string>& keywords() {
 // longer operators first to guarantee longest match (OPS3 / OPS2 / OPS1 in lexer.py)
 const char* const OPS3[] = {"<<=", ">>=", "...", "..="};
 const char* const OPS2[] = {"==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=",
-                            "|=", "^=", "<<", ">>", "..", "++", "--", "=>"};
+                            "|=", "^=", "<<", ">>", "..", "++", "--", "=>", "->"};
 const char* const OPS1 = "+-*/%&|^!~<>=(){}[];,.?:";
 
 // used for the "invalid character" message; as in other diagnostics, source snippets are wrapped in backticks

@@ -1,1 +1,1 @@
-`i` is a `const` binding and cannot be assigned
+a static array is C storage and does not support `for-in`

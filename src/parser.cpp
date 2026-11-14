@@ -18,6 +18,8 @@ Parser::Parser(const std::string& src, const std::string& filename)
     : filename_(filename), toks_(tokenize(src, filename)) {
     // string type provided by std.string (the library is not visible before sema)
     type_names_.insert("string");
+    type_names_.insert("String");
+    type_names_.insert("buffer");
     // std.string is always an implicit dependency (string literals need its type)
     module_names_.insert("std.string");
     module_names_.insert("std.exception");

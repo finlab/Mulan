@@ -24,7 +24,7 @@ int main() {
     int[] e = {};
     int n = 0;
     for v in e { n += 1; }
-    if len(e) == 0 and n == 0 { puts("empty slice ok"); }
+    if e.length() == 0 and n == 0 { puts("empty slice ok"); }
 
     // zero-value construction
     P z = P();

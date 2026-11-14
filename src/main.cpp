@@ -47,9 +47,17 @@ build options:
   --backend <b>    backend to use (only llvm in this version; kept for compatibility)
   --emit-ir <path> also write the generated LLVM IR to <path>
   -g, --debug      emit DWARF debug info (line tables / function scopes)
+  --bounds=on|off  subscript bounds checks for managed sequences (default: on)
   --cc <name>      linker driver (default: $CC, else gcc)
+  --os <os>        resolve `platform/<os>/` units for this platform (windows/linux/macos)
   -I <dir>         extra unit search directory (repeatable)
+  -v, --verbose    print the resolved file of every unit
   --run            run the executable after a successful build
+
+check options:
+  --os <os>        check the program against another platform's units (any host)
+  -I <dir>         extra unit search directory (repeatable)
+  -v, --verbose    print the resolved file of every unit
 
 Environment:
   MUC_BACKEND      default backend (llvm only)
@@ -279,9 +287,12 @@ struct BuildArgs {
     std::string emit_ir;
     std::string backend = "llvm";
     std::string cc = "gcc";
+    std::string os;  // platform shadow directory to resolve units against (empty = host)
     std::vector<std::string> dirs;
     bool run = false;
     bool debug = false;
+    bool bounds = true;  // emit subscript bounds checks for managed sequences (--bounds=off disables)
+    bool verbose = false;
 };
 
 static BuildArgs parse_build_args(const std::vector<std::string>& args) {
@@ -302,19 +313,41 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "--emit-ir") b.emit_ir = need("--emit-ir");
         else if (a == "--backend") b.backend = need("--backend");
         else if (a == "--cc") b.cc = need("--cc");
+        else if (a == "--os") b.os = need("--os");
         else if (a == "-I") b.dirs.push_back(need("-I"));
         else if (a == "--run") b.run = true;
+        else if (a == "-v" || a == "--verbose") b.verbose = true;
         else if (a == "-g" || a == "--debug") b.debug = true;
+        else if (a == "--bounds=on") b.bounds = true;
+        else if (a == "--bounds=off") b.bounds = false;
         else throw MuError("unknown option `" + a + "`");
         ++i;
     }
     return b;
 }
 
+// `check` accepts the same resolution options as `build` but nothing that produces an artifact.
 static int cmd_check(const std::vector<std::string>& args) {
-    if (args.empty()) { std::fputs(USAGE, stderr); return 2; }
+    std::string entry;
+    std::string os;
+    std::vector<std::string> dirs;
+    bool verbose = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        const std::string& a = args[i];
+        auto need = [&](const char* what) {
+            if (i + 1 >= args.size()) throw MuError(std::string("missing argument for ") + what);
+            return args[++i];
+        };
+        if (a == "-I") dirs.push_back(need("-I"));
+        else if (a == "--os") os = need("--os");
+        else if (a == "-v" || a == "--verbose") verbose = true;
+        else if (!a.empty() && a[0] == '-') throw MuError("unknown option `" + a + "`");
+        else if (entry.empty()) entry = a;
+        else throw MuError("unexpected argument `" + a + "`");
+    }
+    if (entry.empty()) { std::fputs(USAGE, stderr); return 2; }
     std::string entry_name;
-    auto units = load_units(args[0], {}, entry_name);
+    auto units = load_units(entry, dirs, entry_name, os, verbose);
     size_t n = units.size();
     auto prog = analyze(std::move(units), entry_name);
     std::cout << "ok: " << n << " units, semantic checks passed\n";
@@ -331,8 +364,16 @@ static int cmd_dump(const std::vector<std::string>& args) {
 
 static int cmd_build(const std::vector<std::string>& args) {
     BuildArgs ba = parse_build_args(args);
+    // Selecting another platform's units is only meaningful for checking: codegen and linking still
+    // target the host toolchain, so a cross-target `build` would mix a Linux unit set with a
+    // Windows object file. Cross-compilation is a separate (later) feature.
+    if (!ba.os.empty() && ba.os != host_platform_os()) {
+        throw MuError("`--os " + ba.os + "` is not supported by `build` yet (it would mix another "
+                      "platform's units with the host object format); use `muc check --os " + ba.os +
+                      "` to verify that platform's units");
+    }
     std::string entry_name;
-    auto units = load_units(ba.entry, ba.dirs, entry_name);
+    auto units = load_units(ba.entry, ba.dirs, entry_name, ba.os, ba.verbose);
     auto prog = analyze(std::move(units), entry_name);
 
     fs::path entry_p(ba.entry);
@@ -350,10 +391,10 @@ static int cmd_build(const std::vector<std::string>& args) {
     {
         std::ofstream f(ir_path, std::ios::binary);
         if (!f) throw MuError("cannot write " + ir_path.string());
-        f << llvm_emit_text(prog);
+        f << llvm_emit_text(prog, ba.bounds);
     }
     fs::path obj = build_dir / (base + ".o");
-    llvm_emit_object(prog, obj.string(), ba.debug);
+    llvm_emit_object(prog, obj.string(), ba.debug, ba.bounds);
     std::string cmd = ba.cc + " -o " + quote(native_path(out.string())) + " " + quote(native_path(obj.string()));
     std::cout << "+ " << cmd << "\n";
     int rc = std::system(cmd.c_str());

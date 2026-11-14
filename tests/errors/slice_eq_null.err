@@ -1,1 +1,1 @@
-slice cannot be compared with `null` (use `len(s) == 0`)
+slice cannot be compared with `null` (use `s.length() == 0`)

@@ -149,6 +149,31 @@ std::unique_ptr<Block> Parser::parse_block() {
     return block;
 }
 
+std::unique_ptr<Stmt> Parser::parse_para() {
+    const Token tk = peek();
+    advance();  // `para`
+    if (at_kw("for")) {
+        auto pf = std::make_unique<ParaForStmt>();
+        pf->line = tk.line;
+        pf->col = tk.col;
+        auto st = parse_for();
+        pf->loop.reset(static_cast<ForInStmt*>(st.release()));
+        return pf;
+    }
+    auto node = std::make_unique<ParaStmt>();
+    node->line = tk.line;
+    node->col = tk.col;
+    expect_op("{");
+    while (!at_op("}")) {
+        if (at_eof()) throw err_at("unterminated `para` block", tk);
+        if (!at_op("{")) throw err_at("a `para` section must be a block: write `{ ... }`", peek());
+        node->sections.push_back(parse_block());
+    }
+    expect_op("}");
+    if (node->sections.empty()) throw err_at("`para` needs at least one section", tk);
+    return node;
+}
+
 std::vector<StmtPtr> Parser::parse_stmt() {
     const Token t = peek();
     if (t.kind == TokKind::Op && t.text == "{") {
@@ -173,6 +198,11 @@ std::vector<StmtPtr> Parser::parse_stmt() {
     if (at_kw("for")) {
         std::vector<StmtPtr> out;
         out.push_back(parse_for());
+        return out;
+    }
+    if (at_kw("para")) {
+        std::vector<StmtPtr> out;
+        out.push_back(parse_para());
         return out;
     }
     if (at_kw("switch")) {

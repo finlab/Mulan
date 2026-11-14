@@ -6,6 +6,7 @@
 // Design: one-to-one with the Python version; semantic analysis writes the results back into the node fields.
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -200,9 +201,13 @@ struct NewExpr : Expr {
 };
 
 struct SizeofExpr : Expr {
-    TypeSpecPtr spec;
-    std::string which;  // "sizeof" | "alignof"
-    TypePtr spec_ty;    // sema: the resolved type of `spec` (codegen must not re-resolve it)
+    TypeSpecPtr spec;   // `sizeof(T)` / `alignof(T)` / `offsetof(T, field)`
+    ExprPtr expr;       // `sizeof expr`: the type is taken from the operand and the operand is never evaluated
+    std::string field;  // `offsetof` only: the member name
+    std::string which;  // "sizeof" | "alignof" | "offsetof"
+    // sema: the resolved type and the folded byte value (codegen emits `cval`; it never re-resolves `spec`)
+    TypePtr spec_ty;
+    uint64_t cval = 0;
 };
 
 struct Len : Expr {
@@ -417,6 +422,25 @@ struct ForInStmt : Stmt {
     const MethodSig* idx_method = nullptr;  // the index form: member operator[](usize) -> T
     std::string cname;
     std::unique_ptr<LocalVar> lvar;  // the loop variable symbol (codegen uses its cname/by_ref)
+    // cursor form (6.4.2): contract declared in core.iter (IIterator<T>)
+    TypePtr it_ty;                     // the cursor struct returned by iterator()
+    const MethodSig* iter_sig = nullptr;
+    const MethodSig* next_sig = nullptr;
+    const MethodSig* cur_sig = nullptr;
+};
+
+// `para { { ... } { ... } }`: structured fork/join (SPEC 3.17.2)
+struct ParaStmt : Stmt {
+    std::vector<std::unique_ptr<Block>> sections;
+    // sema: per section, the enclosing locals it reads (first-use order); codegen builds one frame per section
+    std::vector<std::vector<LocalVar*>> captures;
+};
+
+// `para for i in a..b { ... }`: concurrent iteration (SPEC 3.17.3). v1: ranges only.
+struct ParaForStmt : Stmt {
+    std::unique_ptr<ForInStmt> loop;
+    // sema: enclosing locals read by the body (first-use order)
+    std::vector<LocalVar*> captures;
 };
 
 // switch branch pattern: a single value or a half-open range [vlo, vhi)
