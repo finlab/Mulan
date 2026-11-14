@@ -10,6 +10,24 @@
 
 ## Releases
 
+### 0.0.120 — 2026-11-14
+
+**Sum types never cross into C; `para`/`thread` treat them as ordinary values (U42 S5).**
+
+- **`extern` rejection**: a sum type in a parameter or return position — directly, as an array/slice
+  element, or as a field of a struct that appears there — is a compile error: "its tag+payload layout
+  is an implementation detail, not a public interface (pass a plain `struct { tag; union }` and
+  convert)". This follows the same rule as class/interface/`T[]`: representation details stay inside
+  the language.
+- **`para` / `thread`**: no special handling. A sum is an ordinary value type — a section may read and
+  copy it, a delegate may capture it by value, and a reference-counted payload follows the usual RC
+  rules. Documented in SPEC 10.1.1; verified by a test that reads sums inside a section and captures
+  one in a delegate.
+- Tests: `sum_para` (sum read in a `para` section, `is` inside a section, sum captured by a delegate),
+  must-fail `sum_extern_param` and `sum_extern_field` (also covers a struct containing a sum).
+
+**Tests**: 532/532 (165 pass + 344 must-fail + 20 check + 3 ir)
+
 ### 0.0.119 — 2026-11-14
 
 **Sum-type ergonomics: `is` tests, contextual construction, value equality (U42 S4).**

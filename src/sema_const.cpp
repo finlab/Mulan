@@ -34,6 +34,23 @@ namespace muc_detail {
         return false;
     }
 
+    // Sum types are a language built-in whose layout (tag + union payload) is an implementation detail,
+    // not a public interface: a value of such a type never crosses into C (SPEC 10.1.1).
+    bool Sema::contains_sum_type(const TypePtr& t) {
+        if (!t) return false;
+        if (t->kind == TypeKind::Sum) return true;
+        if (t->kind == TypeKind::Array || t->kind == TypeKind::Slice) {
+            return contains_sum_type(t->elem);
+        }
+        if (t->kind == TypeKind::Struct) {
+            for (const auto& f : t->fields) {
+                if (f.weak) continue;
+                if (contains_sum_type(f.type)) return true;
+            }
+        }
+        return false;
+    }
+
     bool Sema::is_zeroable(const TypePtr& t) {
         if (!t) return false;
         return t->kind == TypeKind::Struct || t->kind == TypeKind::Array ||

@@ -451,6 +451,8 @@ private:
     static bool contains_reference_type(const TypePtr& t);
 
     static bool contains_slice_type(const TypePtr& t);
+    // Sum types are built-in and their layout is an implementation detail: never part of a C signature.
+    static bool contains_sum_type(const TypePtr& t);
 
     static bool is_zeroable(const TypePtr& t);
 

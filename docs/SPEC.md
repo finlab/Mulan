@@ -2119,9 +2119,16 @@ Value d = Value.None;        // a unit alternative is a plain value
   Only alternatives whose payload types have value equality take part (scalars, enums, pointers,
   function values); a class/interface/`String`/slice/struct payload is rejected with "no value
   equality (read it with `switch`)" — reference payloads would need an identity rule.
-- **Not provided yet**: ~~generic sums (`Option<T>`)~~ → **implemented in 0.0.117**, `==` between sums,
-  and sums as `extern` signatures.
-- C ABI: the layout is the classic `{ tag, union }` shape, but the type is not passed to C yet.
+- **Not allowed in C signatures**: a sum (or any struct/array containing one) is rejected in an
+  `extern` parameter or return position — its `{tag; union}` layout is a compiler implementation
+  detail, not a public interface. To talk to C, declare a plain `struct { tag; union }` on both sides
+  and convert explicitly.
+- **`para` / `thread`**: nothing special. A sum is an ordinary value type: a section may read and copy
+  it, a delegate may capture it by value, and a reference-counted payload follows the usual RC rules.
+- Equality (`==`, `!=`) compares the tag and then the payload fields (0.0.119); only payload types with
+  value equality take part.
+- C ABI: the layout is the classic `{ tag, union }` shape, but the type **never** crosses into C (see
+  the `extern` rule above): it is a language built-in whose representation is not a public interface.
 
 #### 10.1.2 Dispatching on a sum: `switch` (merged in 0.0.118)
 

@@ -947,6 +947,18 @@ namespace muc_detail {
                             "` cannot use dynamic arrays `T[]` (they carry an RC header and are not C layout)",
                         f);
                 }
+                // Sum types are a built-in whose layout is an implementation detail: build a plain
+                // `struct { tag; union }` on the C side and convert explicitly (SPEC 10.1.1).
+                if (contains_sum_type(f->rty) || [&] {
+                        for (auto& pt : f->pty)
+                            if (contains_sum_type(pt)) return true;
+                        return false;
+                    }()) {
+                    err("`extern` function `" + f->name +
+                            "` cannot use a sum type: its tag+payload layout is an implementation detail, "
+                            "not a public interface (pass a plain `struct { tag; union }` and convert)",
+                        f);
+                }
                 f->cname = f->name;
             } else if (f->name == "main" && u->name == entry_) {
                 f->cname = "mu_main";
