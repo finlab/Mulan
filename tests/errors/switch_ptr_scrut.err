@@ -1,1 +1,1 @@
-switch value must be an integer or enum (found int*)
+switch value must be an integer, enum or sum type

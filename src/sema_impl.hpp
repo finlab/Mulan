@@ -441,8 +441,6 @@ private:
     std::vector<std::pair<std::string, long long>> enum_members_of(const TypePtr& et);
 
     void check_switch(SwitchStmt* s);
-    // `match` on a sum type: bindings + exhaustiveness (SPEC 10.1.1).
-    void check_match(MatchStmt* s);
 
     // Index shape (SPEC 6.4.1): length() -> usize  +  operator[](C, usize) -> T
     void resolve_index_shape(ForInStmt* s, const TypePtr& st);

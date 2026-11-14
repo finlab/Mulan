@@ -633,18 +633,11 @@ namespace muc_detail {
         }
         // When the value domain is fully covered, a switch guarantees a return only if all of its arms return
         if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
-            if (!sw->has_else && !sw->enum_exhaustive) return false;
+            // an enum or sum scrutinee is exhaustive by construction (check_switch rejects a missing
+            // alternative/member without `else`)
+            if (!sw->has_else && !sw->enum_exhaustive && !sw->is_sum) return false;
             if (sw->arms.empty()) return false;
             for (auto& a : sw->arms) {
-                if (!guarantees_return(a->body.get())) return false;
-            }
-            return true;
-        }
-        // `match` is exhaustive by construction (check_match rejects an uncovered alternative without
-        // `else`), so it guarantees a return when every arm body does.
-        if (auto mt = dynamic_cast<MatchStmt*>(s)) {
-            if (mt->arms.empty()) return false;
-            for (auto& a : mt->arms) {
                 if (!guarantees_return(a->body.get())) return false;
             }
             return true;

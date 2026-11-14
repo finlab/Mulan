@@ -1,4 +1,4 @@
-// sum_match — `match` on a sum type (SPEC 10.1.1): bindings, exhaustiveness, `else`, and reference
+// sum_switch — `match` on a sum type (SPEC 10.1.1): bindings, exhaustiveness, `else`, and reference
 // payloads (the bound local owns a reference for the duration of the arm).
 unit sum_match;
 
@@ -21,7 +21,7 @@ type Holder = Obj(Box) | Empty;
 
 // a sum-typed parameter: dispatch is the only way to read the payload
 int describe(Value v) {
-    match v {
+    switch v {
         Int(n): { return n * 2; }
         Pair(a, b): { return a * 10 + b; }
         Text(s): { return 100; }
@@ -38,7 +38,7 @@ int main() {
     // `else` covers the rest
     Value v = Value.Pair(1, 2);
     int seen = 0;
-    match v {
+    switch v {
         Int(n): { seen = 1; }
         else: { seen = 9; }
     }
@@ -47,7 +47,7 @@ int main() {
     // a reference payload: the binding keeps the object alive inside the arm and releases it after
     Holder h = Holder.Obj(new Box(7));
     int id = 0;
-    match h {
+    switch h {
         Obj(b): {
             id = b.id;
             if live != 1 { printf("binding live\n"); return 6; }
@@ -61,11 +61,11 @@ int main() {
     {
         Holder tmp = Holder.Obj(new Box(8));
         int t = 0;
-        match tmp { Obj(b): { t = b.id; } Empty: { t = 0; } }
+        switch tmp { Obj(b): { t = b.id; } Empty: { t = 0; } }
         if t != 8 { printf("temp\n"); return 9; }
     }
     if live != 1 { printf("temp released\n"); return 10; }
 
-    printf("sum match ok\n");
+    printf("sum switch ok\n");
     return 0;
 }

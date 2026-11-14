@@ -1743,8 +1743,8 @@ switch code {
   - Range cases are not supported (enum members have no numeric order).
   - **Exhaustiveness is mandatory**: all members must be covered, otherwise it is a compile error listing the missing members; writing `else` gives up the exhaustiveness guarantee (in that case, if all members are already covered, `else` is unreachable and a warning is emitted).
 - **Integers / `char` / `byte`**: `else` is optional; unmatched values are simply skipped, which is not an error.
-- The type of the matched value is restricted to integers and enums; `bool`, floating point, pointers, class, interface, `string`, struct, and arrays are all compile errors.
-  **This is a decision, not an implementation limitation**: `switch` will not be extended to other matched types (a `string` case would need hashing or a comparison chain, which is a performance trap).
+- The type of the matched value is restricted to integers, enums and **sum types** (0.0.118); `bool`, floating point, pointers, class, interface, `string`, struct, and arrays are all compile errors.
+  **This is a decision, not an implementation limitation**: `switch` will not be extended to other matched types (a `string` case would need hashing or a comparison chain, which is a performance trap). A sum scrutinee dispatches on the tag and its labels are alternatives with optional payload bindings (10.1.2).
 - The matched expression is evaluated only once; cases are matched in source order. Duplicate or overlapping patterns (intersecting ranges, a value intersecting a range) are compile errors, so order does not affect semantics and the backend is free to reorder.
 - `break` / `continue` **do not belong** to `switch`: they always apply to the nearest loop; with no enclosing loop they are errors under the existing rules. `switch` cannot be the target of `break`.
 - When `as` produces an undeclared value for an enum and there is no `else`, falling through is **UB** (consistent with `as` performing no checking); debug builds may trap.
@@ -1755,7 +1755,7 @@ switch code {
   - guards (an `if` clause on a case);
   - bindings (`x @ pattern`);
   - or patterns (`p1 | p2`; for multiple values use a comma list);
-  - type cases (`switch` dispatching on runtime type / sum types);
+  - runtime type cases (class/interface dispatch uses `as`; a sum type dispatches on its **alternatives** through `switch`, which is the one exception and is not a type test);
   - struct / tuple / array destructuring;
   - C-style `case` labels and fallthrough;
   - the `match` keyword (not reserved).
@@ -2110,10 +2110,12 @@ Value d = Value.None;        // a unit alternative is a plain value
   and sums as `extern` signatures.
 - C ABI: the layout is the classic `{ tag, union }` shape, but the type is not passed to C yet.
 
-#### 10.1.2 `match` (implemented 0.0.116)
+#### 10.1.2 Dispatching on a sum: `switch` (merged in 0.0.118)
+
+`switch` is the **single dispatch construct**: the label domain is decided by the scrutinee's type.
 
 ```c
-match v {
+switch v {
     Int(n): { total = total + n; }
     Pair(a, b): { total = total + a * b; }
     Text(s): { total = total + 1; }
@@ -2121,18 +2123,19 @@ match v {
 }
 ```
 
-- `match value { ... }` is a statement; `match` is a **contextual keyword** (a call to a function
-  named `match` still parses as a call).
-- An arm is `Alt` or `Alt(a, b)` followed by `:` and a block. The bound names are ordinary locals of
-  the arm (one per payload field, in declaration order); a reference-typed payload is retained for the
-  duration of the arm and released when it ends, so `Obj(b)` may use `b` freely.
-- **Exhaustiveness**: without an `else` arm every alternative must be covered — a missing one is a
-  compile error naming it. `else: { ... }` may be added once and covers the rest. Unknown or duplicate
-  alternatives, and a pattern whose binding count does not match the payload, are errors.
-- `match` counts as a terminating path for the return-value check when every arm returns, so a
-  function over a sum type does not need a trailing `return` after an exhaustive `match`.
-- Not provided: guards, or-patterns, nested destructuring, matching on a payload's value
-  (the same "no pattern-matching extensions" decision as `switch`, 6.6).
+- With a **sum** scrutinee, an arm is `Alt` or `Alt(a, b)` followed by `:` and a block; the bound
+  names are ordinary locals of that arm (one per payload field, in declaration order). A
+  reference-typed payload is retained for the arm and released when it ends.
+- **Exhaustiveness**: without `else` every alternative must be covered (a missing one is a compile
+  error naming it); `else: { ... }` may appear once and covers the rest. Unknown or duplicate
+  alternatives, and a label whose binding count does not match the payload, are errors.
+- The same rule already applied to `enum` (member labels) and is unchanged for integers (literals,
+  several values, `..=` ranges, `else` required). Guards, or-patterns, nested destructuring and value
+  patterns on a payload are **not** provided (6.6).
+- A sum `switch` counts as a terminating path for the return-value check when every arm returns, so a
+  function over a sum type needs no trailing `return`.
+- There is **no separate `match` keyword**: `switch` covers both value and alternative dispatch, so the
+  language keeps one construct (the earlier `match` was folded into it before it ever shipped widely).
 
 ---
 

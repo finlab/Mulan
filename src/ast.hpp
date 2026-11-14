@@ -503,9 +503,16 @@ struct SwitchPat {
     long long vhi = 0;
 };
 
-struct SwitchArm {
+struct SwitchArm : Node {
     std::vector<SwitchPat> pats;
     bool is_else = false;
+    // sum-type arm: an alternative name with optional payload bindings (`Some(v)`); when `alt` is
+    // empty the arm is a value/range pattern or `else`.
+    std::string alt;
+    std::vector<std::string> binds;
+    // sema
+    int alt_index = -1;                       // sum scrutinee: which alternative
+    std::vector<LocalVar*> bind_locals;        // sum scrutinee: one local per bound field
     std::unique_ptr<Block> body;
     int line = 0;
     int col = 0;
@@ -518,24 +525,7 @@ struct SwitchStmt : Stmt {
     TypePtr sty;
     bool has_else = false;
     bool enum_exhaustive = false;  // the enum covers all members (it is exhaustive even without an else)
-};
-
-struct MatchArm : Node {
-    std::string alt;                 // the alternative name ("" for `else`)
-    std::vector<std::string> binds;  // names bound to the payload fields
-    std::unique_ptr<Block> body;
-};
-
-// `match value { Alt(bindings): { ... } Alt: { ... } else: { ... } }` — pattern dispatch on a sum type
-// (SPEC 10.1.1). Binding one name per payload field; `else` is optional and makes it non-exhaustive-safe.
-struct MatchStmt : Stmt {
-    ExprPtr value;
-    std::vector<std::unique_ptr<MatchArm>> arms;
-    // sema
-    TypePtr sum_ty;
-    std::vector<int> alt_index;                               // per arm (-1 for `else`)
-    std::vector<std::vector<LocalVar*>> bind_locals;          // per arm, one local per bound field
-    bool is_owned_temp = false;                               // the scrutinee is a temporary that needs cleanup
+    bool is_sum = false;           // the scrutinee is a sum type: arms name alternatives and bind payloads
 };
 
 struct BreakStmt : Stmt {};struct ContinueStmt : Stmt {};

@@ -19,7 +19,7 @@ class Box {
 }
 
 int unwrap_or(Option<int> o, int fallback) {
-    match o {
+    switch o {
         Some(v): { return v; }
         None: { return fallback; }
     }
@@ -34,7 +34,7 @@ int main() {
 
     Option<const char*> s = Option<const char*>.Some("hi");
     int n = 0;
-    match s {
+    switch s {
         Some(p): { n = 1; }
         None: { n = 0; }
     }
@@ -43,7 +43,7 @@ int main() {
     // two parameters, and a payload that needs reference counting
     Result<int, const char*> r = Result<int, const char*>.Ok(5);
     int v = 0;
-    match r {
+    switch r {
         Ok(x): { v = x; }
         Err(e): { v = -1; }
     }
@@ -52,7 +52,7 @@ int main() {
     {
         Option<Box> ob = Option<Box>.Some(new Box(9));
         int id = 0;
-        match ob {
+        switch ob {
             Some(x): { id = x.id; }
             None: { id = -1; }
         }

@@ -414,10 +414,6 @@ using ArgPack = Emitter::ArgPack;
             emitSwitch(sw);
             return;
         }
-        if (auto mt = dynamic_cast<MatchStmt*>(s)) {
-            emitMatch(mt);
-            return;
-        }
         if (dynamic_cast<BreakStmt*>(s)) {
             if (loops.empty()) fail("LLVM backend: `break` outside of a loop");
             emitFinallyForLoopExit();
@@ -685,67 +681,61 @@ using ArgPack = Emitter::ArgPack;
         b.SetInsertPoint(endBB);
     }
 
-    // `match` on a sum type: switch on the tag, bind the payload fields in each arm, then run the body.
-    void Emitter::emitMatch(MatchStmt* s) {
-        const TypePtr& st = s->sum_ty;
-        Value* sv = eval(s->value.get());
-        auto* slot = entryAlloca(lt(st), "match", alignOf(st));
-        b.CreateStore(sv, slot);
-        // an owned temporary (e.g. `match Value.Int(3)`) is destroyed at the end of the statement
-        if (st->needs_cleanup() && valueOwned(s->value.get())) stmtTemps.emplace_back(slot, st);
-
-        BasicBlock* endBB = BasicBlock::Create(ctx, "match.end", curFn);
-        Value* pay = fieldAddr(slot, st->sum_layout, 1);
-        Value* tag = loadAt(i32(), fieldAddr(slot, st->sum_layout, 0), false);
-
-        int elseIdx = -1;
-        std::vector<BasicBlock*> bodyBB;
-        for (size_t i = 0; i < s->arms.size(); ++i) {
-            bodyBB.push_back(BasicBlock::Create(ctx, "match.arm", curFn));
-            if (s->alt_index[i] < 0) elseIdx = static_cast<int>(i);
-        }
-        BasicBlock* fallback = elseIdx >= 0 ? bodyBB[static_cast<size_t>(elseIdx)] : endBB;
-        BasicBlock* defBB = BasicBlock::Create(ctx, "match.default", curFn);
-        b.CreateBr(defBB);
-        b.SetInsertPoint(defBB);
-        auto* sw = b.CreateSwitch(tag, fallback, static_cast<unsigned>(s->arms.size()));
-        for (size_t i = 0; i < s->arms.size(); ++i) {
-            if (s->alt_index[i] < 0) continue;
-            sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), s->alt_index[i])), bodyBB[i]);
-        }
-
-        for (size_t i = 0; i < s->arms.size(); ++i) {
-            b.SetInsertPoint(bodyBB[i]);
-            const int alt = s->alt_index[i];
-            const auto& binds = s->bind_locals[i];
-            if (alt >= 0 && !binds.empty()) {
-                const auto& fs = st->sum_fields[static_cast<size_t>(alt)];
-                for (size_t k = 0; k < binds.size(); ++k) {
-                    Value* src = pay;
-                    if (fs.size() > 1) {
-                        src = fieldAddr(pay, st->sum_payload[static_cast<size_t>(alt)],
-                                        static_cast<int>(k));
-                    }
-                    Value* v = loadAt(lt(fs[k]), src, false);
-                    auto* binding = entryAlloca(lt(fs[k]), sane(binds[k]->name), alignOf(fs[k]));
-                    b.CreateStore(v, binding);
-                    slots[binds[k]] = binding;
-                    // the binding owns its own reference (released when the arm scope ends)
-                    if (fs[k]->needs_cleanup()) {
-                        emitRetainValue(binding, fs[k]);
-                        refScopes.back().push_back(binds[k]);
-                    }
-                }
-            }
-            block(s->arms[i]->body.get());
-            if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
-        }
-        b.SetInsertPoint(endBB);
-    }
-
     // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
     void Emitter::emitSwitch(SwitchStmt* s) {
         Value* sv = eval(s->scrut.get());
+        // Sum scrutinee (SPEC 10.1.2): switch on the tag and bind the payload fields in each arm.
+        if (s->is_sum) {
+            const TypePtr& st = s->sty;
+            auto* slot = entryAlloca(lt(st), "switch.sum", alignOf(st));
+            b.CreateStore(sv, slot);
+            if (st->needs_cleanup() && valueOwned(s->scrut.get())) stmtTemps.emplace_back(slot, st);
+            BasicBlock* endBB = BasicBlock::Create(ctx, "switch.end", curFn);
+            Value* pay = fieldAddr(slot, st->sum_layout, 1);
+            Value* tag = loadAt(i32(), fieldAddr(slot, st->sum_layout, 0), false);
+            int elseIdx = -1;
+            std::vector<BasicBlock*> bodyBB;
+            for (size_t i = 0; i < s->arms.size(); ++i) {
+                bodyBB.push_back(BasicBlock::Create(ctx, "switch.arm", curFn));
+                if (s->arms[i]->is_else) elseIdx = static_cast<int>(i);
+            }
+            BasicBlock* fallback = elseIdx >= 0 ? bodyBB[static_cast<size_t>(elseIdx)] : endBB;
+            BasicBlock* defBB = BasicBlock::Create(ctx, "switch.default", curFn);
+            b.CreateBr(defBB);
+            b.SetInsertPoint(defBB);
+            auto* sw = b.CreateSwitch(tag, fallback, static_cast<unsigned>(s->arms.size()));
+            for (size_t i = 0; i < s->arms.size(); ++i) {
+                if (s->arms[i]->alt_index < 0) continue;
+                sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), s->arms[i]->alt_index)), bodyBB[i]);
+            }
+            for (size_t i = 0; i < s->arms.size(); ++i) {
+                b.SetInsertPoint(bodyBB[i]);
+                const int alt = s->arms[i]->alt_index;
+                const auto& binds = s->arms[i]->bind_locals;
+                if (alt >= 0 && !binds.empty()) {
+                    const auto& fs = st->sum_fields[static_cast<size_t>(alt)];
+                    for (size_t k = 0; k < binds.size(); ++k) {
+                        Value* src = pay;
+                        if (fs.size() > 1) {
+                            src = fieldAddr(pay, st->sum_payload[static_cast<size_t>(alt)],
+                                            static_cast<int>(k));
+                        }
+                        Value* v = loadAt(lt(fs[k]), src, false);
+                        auto* binding = entryAlloca(lt(fs[k]), sane(binds[k]->name), alignOf(fs[k]));
+                        b.CreateStore(v, binding);
+                        slots[binds[k]] = binding;
+                        if (fs[k]->needs_cleanup()) {
+                            emitRetainValue(binding, fs[k]);
+                            refScopes.back().push_back(binds[k]);
+                        }
+                    }
+                }
+                block(s->arms[i]->body.get());
+                if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
+            }
+            b.SetInsertPoint(endBB);
+            return;
+        }
         LType* sty = sv->getType();
         BasicBlock* endBB = BasicBlock::Create(ctx, "switch.end", curFn);
 

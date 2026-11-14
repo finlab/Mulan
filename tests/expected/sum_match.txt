@@ -1,1 +1,1 @@
-sum match ok
+sum switch ok

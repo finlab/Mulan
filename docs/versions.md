@@ -10,6 +10,26 @@
 
 ## Releases
 
+### 0.0.118 — 2026-11-14
+
+**`match` merged into `switch`: one dispatch construct.**
+
+- `switch` now decides its label domain from the scrutinee's type: integers (literals, several values,
+  `..=` ranges, `else` required), enums (member labels, exhaustive), and **sum types**
+  (`Some(v):` / `None:`, exhaustive, payload bindings scoped to the arm). The separate `match` keyword
+  is gone — it shipped one build earlier and was folded in before it spread, so there is exactly one
+  construct for "dispatch on a value" (the same "one concept, one construct" rule that removed
+  `length`/`size`/`count` synonyms).
+- A bare name label is parsed as a value pattern and reinterpreted as an alternative when the
+  scrutinee is a sum, so `Red:` (an enum member) and `Some:` (a unit alternative) stay unambiguous
+  without lookahead into the scrutinee type.
+- A sum `switch` counts as a terminating path when every arm returns; a missing alternative without
+  `else` is still a compile error naming it.
+- Tests migrated: `sum_match` (renamed behaviour: same cases, `switch` labels), `sum_match_missing`,
+  `sum_match_arity`, `switch_float` / `switch_ptr_scrut` (the diagnostic now mentions sum types).
+
+**Tests**: 527/527 (163 pass + 341 must-fail + 20 check + 3 ir)
+
 ### 0.0.117 — 2026-11-14
 
 **Generic sums (U42 S3): `Option<T>` / `Result<T, E>` instantiate like a generic struct.**
