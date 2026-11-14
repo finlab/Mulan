@@ -9,12 +9,22 @@
 
 #include "sema.hpp"
 
-// Emit textual IR (debug / --emit-ir). `exports` keeps those symbol names externally visible.
-std::string llvm_emit_text(Program& prog, bool bounds = true,
-                           const std::vector<std::string>& exports = {});
+// Which declarations form the binary export surface.
+//   ExportOnly: only declarations marked `export` (precise; the default)
+//   PublicOnly: every `public` declaration (convenient when everything should be reachable)
+enum class ExportMode { ExportOnly, PublicOnly };
 
-// Emit a COFF object file; when debug_info is true, DWARF is attached (-g).
-// An executable has no external consumers, so every definition except `main` and `exports` is
-// internalized before optimization (whole-program dead-code elimination, SPEC/toolchain plan).
-void llvm_emit_object(Program& prog, const std::string& obj_path, bool debug_info = false,
-                      bool bounds = true, const std::vector<std::string>& exports = {});
+struct EmitOptions {
+    bool debug = false;
+    bool bounds = true;
+    ExportMode export_mode = ExportMode::ExportOnly;
+    // Extra symbol names to keep externally visible (`--export <name>`), on top of the surface.
+    std::vector<std::string> extra_exports;
+};
+
+// Emit textual IR (debug / --emit-ir).
+std::string llvm_emit_text(Program& prog, const EmitOptions& opts = {});
+
+// Emit a COFF object file. In the executable target every definition outside the export surface is
+// internalized before optimization, so unreachable code is removed (agents/toolchain-plan.md §11).
+void llvm_emit_object(Program& prog, const std::string& obj_path, const EmitOptions& opts = {});

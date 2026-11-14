@@ -162,6 +162,7 @@ namespace muc_detail {
 
     void Emitter::run() {
         mayThrow = computeMayThrow(prog);
+        collectExportSurface();
         // target
         std::string tripleStr = "x86_64-w64-windows-gnu";
         std::string err;
@@ -327,6 +328,49 @@ namespace muc_detail {
             ModulePassManager MPM =
                 PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
             MPM.run(*mod, MAM);
+        }
+    }
+
+    // The export surface: the symbols an external consumer may link against. `ExportOnly` keeps
+    // only `export` declarations; `PublicOnly` widens it to every `public` one. A type contributes
+    // its public member functions plus the metadata a consumer needs to construct and destroy it
+    // (class descriptor, vtable, RC destroy entry).
+    void Emitter::collectExportSurface() {
+        auto keep = [&](const Decl* d) {
+            if (exportMode == ExportMode::PublicOnly) return d->is_public || d->is_export;
+            return d->is_export;
+        };
+        for (auto& u : prog.units) {
+            for (auto& d : u->decls) {
+                if (!keep(d.get())) continue;
+                if (auto* f = dynamic_cast<FuncDecl*>(d.get())) {
+                    if (!f->is_extern) exports.insert(f->cname);
+                } else if (auto* g = dynamic_cast<GlobalVar*>(d.get())) {
+                    if (!g->is_extern) exports.insert(g->cname);
+                } else if (auto* c = dynamic_cast<ClassDecl*>(d.get())) {
+                    if (!c->ty) continue;
+                    exports.insert(class_desc_name(c->ty->unit, c->name));
+                    exports.insert(class_vtable_name(c->ty->unit, c->name));
+                    exports.insert(destroy_cname(c->ty->unit, c->name));
+                    if (c->dtor) exports.insert(c->dtor->cname);
+                    for (auto& m : c->methods) {
+                        if (m->is_public) exports.insert(m->cname);
+                    }
+                    for (auto& ct : c->ctors) {
+                        if (ct->is_public) exports.insert(ct->cname);
+                    }
+                } else if (auto* sd = dynamic_cast<StructDecl*>(d.get())) {
+                    if (sd->dtor) exports.insert(sd->dtor->cname);
+                    for (auto& m : sd->methods) {
+                        if (m->is_public) exports.insert(m->cname);
+                    }
+                    for (auto& ct : sd->ctors) {
+                        if (ct->is_public) exports.insert(ct->cname);
+                    }
+                } else if (auto* itf = dynamic_cast<InterfaceDecl*>(d.get())) {
+                    for (auto& m : itf->methods) exports.insert(m->cname);
+                }
+            }
         }
     }
 

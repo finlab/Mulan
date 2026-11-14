@@ -1,0 +1,6 @@
+# `--exports=public`: every `public` declaration joins the surface, including the implicitly loaded
+# standard library, so the whole public API stays externally visible.
+@ --exports=public
++ mu_export_surface_public_pub_fn
++ mu_export_surface_public_exp_fn
++ mu_std\.string_MString_length

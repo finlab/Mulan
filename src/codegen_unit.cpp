@@ -3,31 +3,82 @@
 
 // Unit-level initialization and cleanup (SPEC 9.1).
 //
-// The loader already returns the units in DFS post-order (`use` declarations in source order,
-// first visit wins), so `prog.units` *is* the initialization order and its reverse is the cleanup
-// order. This TU turns that order into code: one `void()` hook per unit that has work to do, an
-// exit hook that calls the fini hooks in reverse order, and the C `main` wrapper that runs the
-// init hooks, registers the exit hook with `atexit`, and then calls the user entry (`mu_main`).
+// Self-registering model (also the model the library targets will use):
+//   * every unit that has work gets `muc$unit$init$<unit>` / `muc$unit$fini$<unit>` plus a
+//     `muc$unit$inited$<unit>` guard;
+//   * an init calls its direct `use` dependencies first (they recurse), then initializes its own
+//     variables, then registers its fini with `atexit` — `atexit` is LIFO, so cleanup is the exact
+//     reverse of construction without any global sequencing table;
+//   * the entry wrapper calls the init of every unit in loader order (post-order, dependencies
+//     first); the guards make repeated calls free, which is what lets a future library entry reuse
+//     the same hooks.
 #include "codegen_impl.hpp"
 
 namespace muc_detail {
 
     void Emitter::emitUnitLifecycle() {
-        struct Hooks {
-            Unit* unit = nullptr;
+        struct Hook {
+            Unit* u = nullptr;
             Function* init = nullptr;
             Function* fini = nullptr;
+            GlobalVariable* guard = nullptr;
+            std::vector<GlobalVar*> runtime_inits;
+            std::vector<GlobalVar*> cleanups;
         };
 
-        // One `void()` hook per unit, internal linkage: a future split-compilation mode can call
-        // the same symbols from a sequence assembled at link time.
-        auto emitInit = [&](const std::string& unit, const std::vector<GlobalVar*>& gs) {
-            Function* fn = Function::Create(FunctionType::get(LType::getVoidTy(ctx), false),
-                                            GlobalValue::InternalLinkage, unit_init_cname(unit),
-                                            mod.get());
+        std::vector<Hook> hooks;
+        hooks.reserve(prog.units.size());
+        for (auto& u : prog.units) {
+            Hook h;
+            h.u = u.get();
+            for (auto& d : u->decls) {
+                auto* g = dynamic_cast<GlobalVar*>(d.get());
+                if (!g || g->is_extern || g->is_const) continue;
+                if (g->runtime_init) h.runtime_inits.push_back(g);
+                // A zero-initialized variable of a cleanup-needing type is registered too: `main`
+                // may assign it later.
+                if (g->rty && g->rty->needs_cleanup()) h.cleanups.push_back(g);
+            }
+            hooks.push_back(std::move(h));
+        }
+
+        // Phase 1: create the symbols, so every init can name its dependencies.
+        for (auto& h : hooks) {
+            if (h.runtime_inits.empty() && h.cleanups.empty()) continue;
+            auto* voidTy = FunctionType::get(LType::getVoidTy(ctx), false);
+            if (!h.cleanups.empty()) {
+                h.fini = Function::Create(voidTy, GlobalValue::InternalLinkage,
+                                          unit_fini_cname(h.u->name), mod.get());
+            }
+            h.init = Function::Create(voidTy, GlobalValue::InternalLinkage,
+                                      unit_init_cname(h.u->name), mod.get());
+            h.guard = new GlobalVariable(*mod, i1(), /*isConstant=*/false,
+                                         GlobalValue::InternalLinkage, ConstantInt::get(i1(), 0),
+                                         unit_inited_cname(h.u->name));
+        }
+
+        auto emitInitBody = [&](Hook& h) {
             resetDebugScope();
-            beginBody(fn);
-            for (auto* g : gs) {
+            beginBody(h.init);
+            BasicBlock* run = BasicBlock::Create(ctx, "init.run", h.init);
+            BasicBlock* done = BasicBlock::Create(ctx, "init.done", h.init);
+            b.CreateCondBr(b.CreateLoad(i1(), h.guard), done, run);
+            b.SetInsertPoint(run);
+            b.CreateStore(ConstantInt::get(i1(), 1), h.guard);
+
+            // Dependencies first (they recurse); their guard makes repeated calls free.
+            for (auto& use : h.u->uses) {
+                for (auto& dep : hooks) {
+                    if (dep.init && dep.u->name == use->unit_name) {
+                        b.CreateCall(dep.init, {});
+                        // A throwing dependency aborts here: the program is half-initialized.
+                        emitAbortIfPending();
+                        break;
+                    }
+                }
+            }
+
+            for (auto* g : h.runtime_inits) {
                 auto* gv = mod->getNamedGlobal(g->cname);
                 if (!gv) continue;
                 if (g->init) {
@@ -46,67 +97,47 @@ namespace muc_detail {
                 // incomplete and destroying part of it is more dangerous than dying.
                 emitAbortIfPending();
             }
-            finishBody(fn, "unit initializer for `" + unit + "`");
-            return fn;
+
+            // Registered after this unit's own construction: `atexit` is LIFO, so this unit is
+            // cleaned up before its dependencies (construction order reversed).
+            if (h.fini) {
+                FunctionCallee atexit = mod->getOrInsertFunction(
+                    "atexit", FunctionType::get(i32(), {ptrTy()}, false));
+                b.CreateCall(atexit, {h.fini});
+            }
+            b.CreateBr(done);
+            b.SetInsertPoint(done);
+            finishBody(h.init, "unit initializer for `" + h.u->name + "`");
         };
 
-        auto emitFini = [&](const std::string& unit, const std::vector<GlobalVar*>& gs) {
-            Function* fn = Function::Create(FunctionType::get(LType::getVoidTy(ctx), false),
-                                            GlobalValue::InternalLinkage, unit_fini_cname(unit),
-                                            mod.get());
+        auto emitFiniBody = [&](Hook& h) {
             resetDebugScope();
-            beginBody(fn);
-            for (auto it = gs.rbegin(); it != gs.rend(); ++it) {
+            beginBody(h.fini);
+            for (auto it = h.cleanups.rbegin(); it != h.cleanups.rend(); ++it) {
                 auto* g = *it;
                 auto* gv = mod->getNamedGlobal(g->cname);
                 if (!gv) continue;
                 emitReleaseValue(gv, g->rty);
                 emitAbortIfPending();
             }
-            finishBody(fn, "unit cleanup for `" + unit + "`");
-            return fn;
+            finishBody(h.fini, "unit cleanup for `" + h.u->name + "`");
         };
 
-        std::vector<Hooks> hooks;
-        for (auto& u : prog.units) {
-            curUnit = u->name;
-            std::vector<GlobalVar*> inits;
-            std::vector<GlobalVar*> finis;
-            for (auto& d : u->decls) {
-                auto* g = dynamic_cast<GlobalVar*>(d.get());
-                if (!g || g->is_extern || g->is_const) continue;
-                if (g->runtime_init) inits.push_back(g);
-                // A zero-initialized variable of a cleanup-needing type is registered too: `main`
-                // may assign it later.
-                if (g->rty && g->rty->needs_cleanup()) finis.push_back(g);
-            }
-            Hooks h{u.get(), nullptr, nullptr};
-            if (!inits.empty()) h.init = emitInit(u->name, inits);
-            if (!finis.empty()) h.fini = emitFini(u->name, finis);
-            hooks.push_back(h);
+        // Phase 2: emit the bodies (all init symbols exist by now).
+        for (auto& h : hooks) {
+            if (!h.init) continue;
+            curUnit = h.u->name;
+            emitInitBody(h);
+        }
+        for (auto& h : hooks) {
+            if (!h.fini) continue;
+            curUnit = h.u->name;
+            emitFiniBody(h);
         }
 
-        bool anyFini = false;
-        for (auto& h : hooks) anyFini = anyFini || h.fini != nullptr;
-
-        Function* finiAll = nullptr;
-        if (anyFini) {
-            finiAll = Function::Create(FunctionType::get(LType::getVoidTy(ctx), false),
-                                       GlobalValue::InternalLinkage, unit_fini_all_cname(),
-                                       mod.get());
-            resetDebugScope();
-            beginBody(finiAll);
-            for (auto it = hooks.rbegin(); it != hooks.rend(); ++it) {
-                if (it->fini) {
-                    b.CreateCall(it->fini, {});
-                    // A destructor that threw propagated out of the hook: abort the remaining cleanup.
-                    emitAbortIfPending();
-                }
-            }
-            finishBody(finiAll, "unit cleanup sequence");
-        }
-
-        // The entry unit always exists when a program is compiled (a library check never reaches codegen).
+        // The entry unit always exists when a program is compiled (a library check never reaches
+        // codegen). The wrapper runs every init in loader order: dependencies come first and the
+        // guards make the calls idempotent.
         FuncDecl* entry = nullptr;
         for (auto& u : prog.units) {
             if (u->name != prog.entry) continue;
@@ -130,16 +161,9 @@ namespace muc_detail {
         for (auto& h : hooks) {
             if (!h.init) continue;
             b.CreateCall(h.init, {});
-            // A throwing initializer propagates out of the hook (the hook returns with the flag
-            // set): abort here instead of running `main` on a half-initialized program.
+            // A throwing initializer propagates out of the hook (it returns with the flag set):
+            // abort here instead of running `main` on a half-initialized program.
             emitAbortIfPending();
-        }
-        // Registered before the user entry so that `exit()` inside it still cleans up; the normal
-        // return path reaches the same hook when the CRT calls exit after `main` returns.
-        if (finiAll) {
-            FunctionCallee atexit = mod->getOrInsertFunction(
-                "atexit", FunctionType::get(i32(), {ptrTy()}, false));
-            b.CreateCall(atexit, {finiAll});
         }
 
         std::vector<LType*> ptys;

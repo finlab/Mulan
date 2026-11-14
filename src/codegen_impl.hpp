@@ -127,6 +127,8 @@ struct Emitter {
     // Symbol names that stay externally visible in the executable target (`--export`). Everything
     // else defined here is internalized before optimization: an executable has no consumers.
     std::set<std::string> exports;
+    // Which declarations contribute to `exports` (see ExportMode).
+    ExportMode exportMode = ExportMode::ExportOnly;
     MayThrowInfo mayThrow;
     LLVMContext ctx;
     std::unique_ptr<Module> mod;
@@ -650,8 +652,9 @@ struct Emitter {
     // reverse unit order, and the C `main` wrapper (the user entry is emitted as `mu_main`).
     void emitUnitLifecycle();
 
-    // Executable target: internalize every definition except `main` and the `--export` names so
-    // that the optimizer can drop unreachable functions, classes (desc/vtable/methods) and globals.
+    // Executable target: internalize every definition except `main` and the export surface so that
+    // the optimizer can drop unreachable functions, classes (desc/vtable/methods) and globals.
+    void collectExportSurface();
     void internalizeDefinitions();
 
     void initDebug();

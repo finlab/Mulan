@@ -10,6 +10,33 @@
 
 ## Releases
 
+### 0.0.104 — 2026-11-14
+
+**`export` declarations + export-surface switch; self-registering unit init/cleanup.**
+
+- **`export` is a top-level declaration modifier.** It implies `public` (nameable across units) and
+  marks the declaration as part of the **binary export surface**. Combining it with `private`,
+  `extern` or `use`, or writing it inside a type/interface body, is an error (export the type
+  instead: that exports its public member functions plus the class descriptor, vtable and RC destroy
+  entry). Implemented in the lexer (`export` keyword), the parser modifier loop, `Decl::is_export`,
+  the export-surface collector (`codegen_func.cpp`), and SPEC §2.3 / §9 / §12 #127.
+- **`--exports=export|public`** (default `export`) selects the surface: `export` keeps only
+  declarations marked `export` externally visible, `public` keeps every `public` declaration (bulk
+  export, including the implicitly loaded standard library). `--export <name>` still adds single
+  names. In an executable everything outside the surface is internalized and dead-code eliminated:
+  the default hello world stays at ~35 B `.text`, while `--exports=public` restores the full public
+  API (and the ~8 KB of standard-library code).
+- **Unit init/cleanup is now self-registering** (toolchain plan P11-2): each unit gets a guard global,
+  runs its `use` dependencies first, initializes its own variables, then registers its `fini` with
+  `atexit`; LIFO gives reverse cleanup without the global `fini_all` table, and the same hooks can be
+  reused by a future library entry. The `main` wrapper calls every unit hook in loader order (guards
+  make repeats free) and no longer owns the cleanup sequence.
+- Tests: `export_basic` (export across units), must-fail `export_in_class`, `export_private`,
+  `export_extern`; IR cases `export_surface` and `export_surface_public` (default vs
+  `--exports=public`). The `tests/ir/` format gained `@ <args>` to pass compiler options per case.
+
+**Tests**: 493/493 (148 pass + 323 must-fail + 19 check + 3 ir)
+
 ### 0.0.103 — 2026-11-14
 
 **`struct` implements interfaces fully: the interface default implementation is materialized as an
@@ -100,8 +127,7 @@ gained a fourth category, `tests/ir/*.mu` + `.txt` (`+ regex` must appear in the
 `- regex` must not), so the pruning policy itself is regression-tested (`dead_code`). The design of
 the other two targets (static library, shared library) and their different pruning rules is recorded
 in `agents/toolchain-plan.md` §11; only the executable policy is implemented.
-**Tests**: 487/487 (147 pass + 320 must-fail + 19 check + 1 ir) — the working tree also carries an
-in-flight struct-interface-default change with its own 5 cases.
+**Tests**: 483/483 (145 pass + 318 must-fail + 19 check + 1 ir)
 
 **Documentation-only follow-up (no build bump)**: design decision recorded — **member promotion
 (Go-style embedding) and mixin-style member injection are explicitly not done** in v1. Vetoed

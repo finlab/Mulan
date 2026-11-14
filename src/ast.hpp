@@ -263,6 +263,9 @@ struct Decl : Node {
     // Visibility: visible only inside the owning unit by default; public means visible across units.
     // The visibility of a unit is Unit::is_public (`public unit foo;`).
     bool is_public = false;
+    // `export`: this declaration belongs to the binary export surface (implies `public`). Whether an
+    // export surface is actually emitted depends on the target and `--exports=public|export`.
+    bool is_export = false;
     std::vector<TypeParam> type_params;  // empty = not generic
     bool is_template = false;            // sema: a generic template, not checked/emitted directly, only used for instantiation
     virtual ~Decl() = default;

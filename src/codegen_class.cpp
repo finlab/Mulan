@@ -449,7 +449,7 @@ namespace muc_detail {
 
     void Emitter::emitDestroy(ClassDecl* c) {
         resetDebugScope();
-        std::string nm = "mu_" + c->ty->unit + "_destroy_" + c->name;
+        std::string nm = destroy_cname(c->ty->unit, c->name);
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(nm, FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
                 .getCallee());
@@ -471,7 +471,7 @@ namespace muc_detail {
     }
 
     void Emitter::emitClassDesc(ClassDecl* c) {
-        std::string destroyName = "mu_" + c->ty->unit + "_destroy_" + c->name;
+        std::string destroyName = destroy_cname(c->ty->unit, c->name);
         FunctionCallee dfn =
             mod->getOrInsertFunction(destroyName,
                                      FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));

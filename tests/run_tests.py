@@ -38,6 +38,7 @@ CASES_DIR = ROOT / "tests" / "cases"
 EXPECTED_DIR = ROOT / "tests" / "expected"
 ERRORS_DIR = ROOT / "tests" / "errors"
 CHECKS_DIR = ROOT / "tests" / "check"
+IR_DIR = ROOT / "tests" / "ir"
 BUILD_DIR = ROOT / "build" / "tests"
 
 # Compiler command: <MUC_CMD> build <case.mu> -o <exe> --run
@@ -167,6 +168,83 @@ def collect_check_cases() -> list[CheckCase]:
     # Files starting with lib_ are dependency libraries for multi-unit tests, not cases themselves
     return [CheckCase(s.stem, s) for s in sorted(CHECKS_DIR.glob("*.mu"))
             if not s.stem.startswith("lib_")]
+
+
+class IrCase:
+    """A case that asserts on the *optimized* LLVM IR (`--emit-ir`).
+
+    Used for target/linkage policy: which symbols survive whole-program dead-code elimination.
+    Each .txt line is `+ <regex>` (must match) or `- <regex>` (must not match); `#` is a comment.
+    """
+
+    def __init__(self, name: str, src: Path, spec: Path) -> None:
+        self.name = name
+        self.src = src
+        self.spec = spec
+
+
+def collect_ir_cases() -> list[IrCase]:
+    if not IR_DIR.is_dir():
+        return []
+    return [IrCase(s.stem, s, IR_DIR / f"{s.stem}.txt") for s in sorted(IR_DIR.glob("*.mu"))
+            if not s.stem.startswith("lib_")]
+
+
+def run_ir_case(case: IrCase, verbose: bool) -> tuple[bool, str]:
+    if not case.spec.is_file():
+        return False, f"missing expectation file {case.spec} (+ / - regex per line)"
+    # `@ <args>` lines add compiler options (for example `@ --exports=public`).
+    checks: list[tuple[str, str]] = []
+    extra: list[str] = []
+    for raw in case.spec.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("@"):
+            extra += shlex.split(line[1:].strip())
+            continue
+        if line[0] not in "+-":
+            checks.append(("?", line))
+            continue
+        checks.append((line[0], line[1:].strip()))
+
+    exe = BUILD_DIR / (case.name + (".exe" if sys.platform == "win32" else ""))
+    ir = BUILD_DIR / (case.name + ".ll")
+    cmd = resolve_compiler() + [
+        "build", str(case.src.relative_to(ROOT)),
+        "--emit-ir", str(ir.relative_to(ROOT)),
+        "-o", str(exe.relative_to(ROOT)),
+    ] + extra
+    try:
+        r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                           errors="replace", timeout=RUN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, f"timeout (>{RUN_TIMEOUT}s): " + " ".join(cmd)
+    except OSError as e:
+        return False, f"cannot execute compiler `{cmd[0]}` ({e})"
+
+    if r.returncode != 0:
+        msg = ["build --emit-ir failed", "  command: " + " ".join(cmd), "  stderr tail:"]
+        msg += ["    " + ln for ln in (r.stderr.strip().splitlines() or ["<empty>"])[-8:]]
+        return False, "\n".join(msg)
+
+    text = ir.read_text(encoding="utf-8", errors="replace")
+    problems: list[str] = []
+    for kind, pattern in checks:
+        if kind == "?":
+            problems.append(f"bad expectation line (must start with +, - or @): {pattern!r}")
+        elif not re.search(pattern, text, re.MULTILINE):
+            if kind == "+":
+                problems.append(f"missing from IR: {pattern}")
+        elif kind == "-":
+            problems.append(f"still present in IR: {pattern}")
+    if not problems:
+        return True, "ok"
+    lines = ["IR assertion failed"] + ["  " + p for p in problems]
+    if verbose:
+        lines.append("  --- full IR ---")
+        lines += ["  " + ln for ln in text.splitlines()]
+    return False, "\n".join(lines)
 
 
 def run_check_case(case: CheckCase, verbose: bool) -> tuple[bool, str]:
@@ -308,14 +386,16 @@ def main(argv: list[str] | None = None) -> int:
     cases = collect_cases()
     err_cases = collect_error_cases()
     check_cases = collect_check_cases()
+    ir_cases = collect_ir_cases()
     if args.filter:
         cases = [c for c in cases if args.filter in c.name]
         err_cases = [c for c in err_cases if args.filter in c.name]
         check_cases = [c for c in check_cases if args.filter in c.name]
-    if not cases and not err_cases and not check_cases:
+        ir_cases = [c for c in ir_cases if args.filter in c.name]
+    if not cases and not err_cases and not check_cases and not ir_cases:
         print(f"no cases match `{args.filter}`")
         return 1
-    total = len(cases) + len(err_cases) + len(check_cases)
+    total = len(cases) + len(err_cases) + len(check_cases) + len(ir_cases)
 
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -356,9 +436,23 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL {case.name} (check)")
             print(msg)
 
+    for case in ir_cases:
+        artifacts.append(ROOT / "build" / (case.src.stem + ".o"))
+        artifacts.append(BUILD_DIR / (case.name + (".exe" if sys.platform == "win32" else "")))
+        artifacts.append(BUILD_DIR / (case.name + ".ll"))
+        ok, msg = run_ir_case(case, args.verbose)
+        if ok:
+            passed.append(case.name)
+            print(f"PASS {case.name} (ir)")
+        else:
+            failed.append(case.name)
+            print(f"FAIL {case.name} (ir)")
+            print(msg)
+
     print()
     print(f"passed {len(passed)} / {total}")
-    print(f"  ({len(cases)} run cases, {len(err_cases)} must-fail cases, {len(check_cases)} check cases)")
+    print(f"  ({len(cases)} run cases, {len(err_cases)} must-fail cases, "
+          f"{len(check_cases)} check cases, {len(ir_cases)} ir cases)")
     if failed:
         print("failed cases: " + ", ".join(failed))
         code = 1

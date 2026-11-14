@@ -1,0 +1,8 @@
+# Default `--exports=export`: only the `export` surface survives; a `public` declaration that is not
+# exported is internalized and then removed like any other dead code.
++ ^define .*@mu_export_surface_exp_fn__int
++ mu_export_surface_desc_Shape
++ mu_export_surface_vt_Shape
++ mu_export_surface_MShape_area
+- mu_export_surface_pub_fn
+- mu_std\.string_MString_length

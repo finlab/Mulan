@@ -39,6 +39,9 @@ std::unique_ptr<Unit> Parser::parse_unit() {
     while (!at_eof()) {
         const Token tk = peek();
         bool is_pub = false;
+        bool is_export = false;
+        bool saw_private = false;
+        Token export_tok = tk;
         // layout modifiers (packed / align(N)): same category as public/private, any order, composable
         bool packed = false;
         ExprPtr align_expr;
@@ -47,6 +50,14 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         for (;;) {
             if (at_kw("public", "private")) {
                 is_pub = at_kw("public");
+                if (!is_pub) saw_private = true;
+                advance();
+                continue;
+            }
+            if (at_kw("export")) {
+                if (is_export) throw err_at("duplicate modifier `export`", peek());
+                is_export = true;
+                export_tok = peek();
                 advance();
                 continue;
             }
@@ -72,9 +83,14 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             break;
         }
         if (at_eof()) throw err_at("expected declaration after modifier", tk);
+        if (is_export && saw_private) {
+            throw err_at("`export` implies `public`; `private` cannot be combined with `export`", export_tok);
+        }
+        if (is_export) is_pub = true;
 
         if (at_kw("use")) {
             if (is_pub) throw err_at("`public` cannot be used with `use`", tk);
+            if (is_export) throw err_at("`export` cannot be used with `use`", export_tok);
             if (has_layout) {
                 throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` or `union` declaration", layout_tok);
             }
@@ -91,6 +107,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         }
 
         if (at_kw("extern")) {
+            if (is_export) throw err_at("`extern` imports a C symbol; `export` cannot be used with it", export_tok);
             if (is_pub) throw err_at("`extern` declarations are implicitly public; `public` cannot be used", tk);
             if (has_layout) {
                 throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` or `union` declaration", layout_tok);
@@ -123,6 +140,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             semicolon();
             d->is_public = is_pub;
+            d->is_export = is_export;
             // The name is a type from here on: `is_type_start` must recognize it so that `sizeof(Op)` and
             // `Op x;` parse as a type rather than as an expression.
             type_names_.insert(d->name);
@@ -134,6 +152,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             const bool is_union = at_kw("union");
             auto d = parse_struct(is_union);
             d->is_public = is_pub;
+            d->is_export = is_export;
             if (auto* sd = dynamic_cast<StructDecl*>(d.get())) {
                 sd->is_packed = packed;
                 sd->is_union = is_union;
@@ -149,6 +168,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             auto d = parse_enum();
             d->is_public = is_pub;
+            d->is_export = is_export;
             unit->decls.push_back(std::move(d));
             continue;
         }
@@ -159,6 +179,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             auto d = parse_class();
             d->is_public = is_pub;
+            d->is_export = is_export;
             unit->decls.push_back(std::move(d));
             continue;
         }
@@ -169,6 +190,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             auto d = parse_interface();
             d->is_public = is_pub;
+            d->is_export = is_export;
             unit->decls.push_back(std::move(d));
             continue;
         }
@@ -184,6 +206,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         if (at_kw("const")) {
             auto globals = parse_global();
             for (auto& g : globals) g->is_public = is_pub;
+            for (auto& g : globals) g->is_export = is_export;
             for (auto& g : globals) unit->decls.push_back(std::move(g));
             continue;
         }
@@ -196,6 +219,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         if (at_kw("operator")) {
             auto f = parse_operator_func(std::move(spec), ret_ref, tk);
             f->is_public = is_pub;
+            f->is_export = is_export;
             unit->decls.push_back(std::move(f));
             continue;
         }
@@ -208,6 +232,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             f->type_params = std::move(tps);
             type_names_ = saved_type_names;
             f->is_public = is_pub;
+            f->is_export = is_export;
             unit->decls.push_back(std::move(f));
         } else {
             if (ret_ref) {
@@ -217,6 +242,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             // unit-level variable: private by default; `public` comes from the prefix
             auto globals = parse_global_list(std::move(spec), false);
             for (auto& g : globals) g->is_public = is_pub;
+            for (auto& g : globals) g->is_export = is_export;
             for (auto& g : globals) unit->decls.push_back(std::move(g));
         }
     }
@@ -296,6 +322,9 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
             member_pub = at_kw("public");
             advance();
             explicit_mod = true;
+        }
+        if (at_kw("export")) {
+            throw err("`export` applies to top-level declarations only; export the type itself");
         }
         if (at_op("~")) {
             if (explicit_mod) throw err("destructor cannot use `public`/`private`");
@@ -604,6 +633,9 @@ std::unique_ptr<Decl> Parser::parse_class() {
             advance();
             explicit_mod = true;
         }
+        if (at_kw("export")) {
+            throw err("`export` applies to top-level declarations only; export the type itself");
+        }
         if (at_op("~")) {
             if (explicit_mod) throw err("destructor cannot use `public`/`private`");
             if (cd->dtor) throw err("class `" + cd->name + "` can only have one destructor");
@@ -712,6 +744,9 @@ std::unique_ptr<Decl> Parser::parse_interface() {
     while (!at_op("}")) {
         if (at_kw("public", "private")) {
             throw err("`public`/`private` cannot be used on interface methods (interface methods are always public)");
+        }
+        if (at_kw("export")) {
+            throw err("`export` applies to top-level declarations only; export the interface itself");
         }
         if (at_kw("const")) {
             throw err("interface `" + id->name + "` does not support const members");

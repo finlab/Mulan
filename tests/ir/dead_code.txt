@@ -1,0 +1,12 @@
+# The executable target has no external consumers: every definition except `main` is internalized
+# before optimization, so unreachable user code *and* unused standard-library code disappear.
+# `+` = must match the emitted IR, `-` = must not match.
++ ^define .*@main\(
+- mu_dead_code_unused_public
+- mu_dead_code_unused_private
+- mu_dead_code_desc_Unused
+- mu_dead_code_MUnused_
+- mu_dead_code_MS_unused_method
+- mu_std\.string_MString_length
+- mu_std\.task_muc_para_start
+- muc_eh_pending

@@ -72,7 +72,7 @@
 ### 2.3 Keywords
 
 ```
-unit use public private const auto struct enum extern class interface new weak packed union
+unit use public private export const auto struct enum extern class interface new weak packed union
 if else while for in switch ref break continue return
 try catch throw finally
 true false null as sizeof alignof offsetof alloc realloc free
@@ -1810,11 +1810,18 @@ unit example;
   - The boundary of `private` is the unit (not the class body): operator free functions, same-unit inheritance/tests can access the internal representation.
   - `extern` is implicitly public; adding `public`/`private` is forbidden; non-`public` top-level symbols use `internal` linkage.
   - A `public` declaration must not leak a non-`public` type (recursive checks on signatures, field types, base classes, and interfaces).
+  - **`export`** (0.0.103) is a top-level declaration modifier that marks a declaration as part of the
+    **binary export surface**. It **implies `public`** (the declaration is nameable across units like a
+    `public` one) and cannot be combined with `private`, `extern` or `use`; inside a type or interface
+    body it is an error (export the type itself — that exports its public member functions plus the
+    class descriptor, vtable and RC destroy entry). Whether an export surface is emitted depends on the
+    target and on `--exports=export|public` (default `export` = only `export` declarations;
+    `public` = every `public` declaration).
   - Backend: non-`public` top-level symbols use `internal` linkage (`public` / `extern` / `main` keep external linkage).
   - **Visibility is a compile-time API contract, not a security boundary** (`void*`/`as` can bypass it).
   - `public` does not promise that the symbol appears in the final binary: an **executable** build
-    internalizes every definition except `main` (and the `--export` names) so that dead code can be
-    removed. Library targets keep their exported surface visible (see `agents/toolchain-plan.md` §11).
+    internalizes every definition outside the export surface (plus `--export` names) so that dead code
+    can be removed. Library targets keep their exported surface visible (see `agents/toolchain-plan.md` §11).
 - No preprocessor; module-level constants use top-level `const`.
 - `extern` is used for C functions/global variables; C ABI; struct layout is compatible with C. `extern` functions cannot be overloaded.
 - Class objects cannot be passed to C: the C side does not participate in reference counting; when crossing languages use a struct + `alloc`.
@@ -1854,10 +1861,12 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 - **Failure.** An exception escaping an initializer aborts the process **without** running cleanup: the
   object graph is incomplete and destroying part of it is more dangerous than dying. This matches an
   uncaught exception in `main`.
-- **Entry and exit.** The compiler emits a C `main` wrapper: run the initializer sequence → register
-  the cleanup sequence with `atexit` → call the user `main` (renamed internally) and return its
-  value. `exit()` therefore also runs the cleanup; `_exit`/`abort` do not. An exception escaping
-  cleanup aborts the remaining cleanup.
+- **Entry and exit.** Each unit's init hook is idempotent (a per-unit guard), initializes its `use`
+  dependencies first, then its own variables, and finally registers its own cleanup with `atexit`
+  (LIFO, so cleanup is the reverse of construction). The compiler emits a C `main` wrapper that calls
+  every unit hook in loader order, then the user `main` (renamed internally) and returns its value.
+  `exit()` therefore also runs the cleanup; `_exit`/`abort` do not. An exception escaping cleanup
+  aborts the remaining cleanup.
 - **Order relative to the C runtime** (ABI promise): initialization runs after C/C++ static
   constructors (`.init_array`) and before the user `main`; cleanup runs after the user `main` returns
   or `exit()` is called, and before C/C++ static destructors (both paths are `atexit` LIFO).
@@ -2072,6 +2081,7 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 | 124 | `thread` in `para` | Contextual keyword (2.3): run the section/item on the **bounded compute pool** — a dedicated OS thread, may block, OS stack. It is an intent hint, not a checked property |
 | 125 | Single-task `para` (`s = para f()`) | **Decided: not provided.** In a stackful model the call itself is the suspension, so "start then immediately join" is pure overhead; use the library task group when the join must be deferred |
 | 126 | Unit-level initialization and cleanup | **Implemented (9.1, 0.0.102).** Runtime initializers are allowed; the order is a DFS post-order over `use` edges from the entry unit (declaration order inside `use` lists), cleanup is its exact reverse, declaration order inside a unit. Only `use` dependencies are tracked; indirect dependencies (function pointer, interface dispatch, `extern` C symbol, a later variable reached through a function body) are undefined. An exception escaping an initializer aborts without cleanup; `atexit` makes `exit()` clean up. Lifted the three "no exit-time destruction" restrictions (3.3 `String`, 3.4 reference fields, 3.4 user destructors). Deferred: lazy first-use initialization, explicit `init(N)` priorities, debug-mode lifecycle assertions, link-time sequencing for split compilation |
+| 127 | `export` and the binary export surface | **Decided and implemented (0.0.103).** `export` is a top-level declaration modifier that implies `public` and marks the declaration as part of the binary export surface; it cannot be combined with `private`/`extern`/`use` or used inside a type body (export the type, which exports its public methods and class metadata). `--exports=export` (default) keeps only `export` declarations externally visible, `--exports=public` keeps every `public` declaration; `--export <name>` still adds individual names. In an executable everything outside the surface is internalized and dead-code-eliminated; library targets keep the surface visible (toolchain plan §11) |
 | 127 | Member promotion (Go-style embedding) / mixin | **Decided (2026-11-14): explicitly not done.** No `mixin`/`embed` member form: a method call never falls back to a field's type. Rationale: (a) it cannot satisfy an interface without an offset thunk, and after such a thunk `this` is the embedded subobject, so identity comparisons and stored `this` silently change meaning; (b) the set of callable names would depend on another type's evolution across units — adding a method to the embedded type silently turns a remote compile error into legal code, and can silently change overload resolution (violates the "information must be locally expressible" criterion); (c) it saves a few lines of forwarding while adding a resolution hop at every call site, whose verification cost is the expensive one. Reuse instead: `struct S : I` with explicit forwarding methods (3.10, 3.15.7), or field composition. Reopen conditions and rejected variants: `agents/design-backlog.md` U40 |
 
 ---

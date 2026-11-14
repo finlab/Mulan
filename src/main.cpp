@@ -54,6 +54,8 @@ build options:
   -v, --verbose    print the resolved file of every unit
   --export <name>  keep this symbol externally visible (repeatable); by default every definition
                    except `main` is internalized so unused code is removed
+  --exports=<mode> export surface: `export` (default) keeps only declarations marked `export`,
+                   `public` keeps every `public` declaration
   --run            run the executable after a successful build
 
 check options:
@@ -292,6 +294,7 @@ struct BuildArgs {
     std::string os;  // platform shadow directory to resolve units against (empty = host)
     std::vector<std::string> dirs;
     std::vector<std::string> exports;  // --export: keep these symbol names externally visible
+    ExportMode export_mode = ExportMode::ExportOnly;  // --exports=public|export
     bool run = false;
     bool debug = false;
     bool bounds = true;  // emit subscript bounds checks for managed sequences (--bounds=off disables)
@@ -319,6 +322,8 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "--os") b.os = need("--os");
         else if (a == "-I") b.dirs.push_back(need("-I"));
         else if (a == "--export") b.exports.push_back(need("--export"));
+        else if (a == "--exports=public") b.export_mode = ExportMode::PublicOnly;
+        else if (a == "--exports=export") b.export_mode = ExportMode::ExportOnly;
         else if (a == "--run") b.run = true;
         else if (a == "-v" || a == "--verbose") b.verbose = true;
         else if (a == "-g" || a == "--debug") b.debug = true;
@@ -392,13 +397,18 @@ static int cmd_build(const std::vector<std::string>& args) {
 
     fs::path ir_path = ba.emit_ir.empty() ? build_dir / (base + ".ll") : fs::path(ba.emit_ir);
     if (ir_path.has_parent_path()) fs::create_directories(ir_path.parent_path());
+    EmitOptions eo;
+    eo.debug = ba.debug;
+    eo.bounds = ba.bounds;
+    eo.export_mode = ba.export_mode;
+    eo.extra_exports = ba.exports;
     {
         std::ofstream f(ir_path, std::ios::binary);
         if (!f) throw MuError("cannot write " + ir_path.string());
-        f << llvm_emit_text(prog, ba.bounds, ba.exports);
+        f << llvm_emit_text(prog, eo);
     }
     fs::path obj = build_dir / (base + ".o");
-    llvm_emit_object(prog, obj.string(), ba.debug, ba.bounds, ba.exports);
+    llvm_emit_object(prog, obj.string(), eo);
     std::string cmd = ba.cc + " -o " + quote(native_path(out.string())) + " " + quote(native_path(obj.string()));
     std::cout << "+ " << cmd << "\n";
     int rc = std::system(cmd.c_str());

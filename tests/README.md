@@ -55,6 +55,25 @@ because they are libraries for the multi-unit example.
   rules (`>>` is arithmetic), and avoid any undefined behaviour (out of bounds, overflow,
   reading uninitialized memory).
 
+## IR assertion cases (`tests/ir/`)
+
+Some policies are only visible in the generated code — the executable target internalizes every
+definition except `main`, so unused functions, classes and library units disappear. Cases in
+`tests/ir/` compile with `--emit-ir` and assert on the optimized IR text:
+
+- `tests/ir/<name>.mu` — the program (no `main` check: it must build);
+- `tests/ir/<name>.txt` — one assertion per line: `+ <regex>` must appear in the IR,
+  `- <regex>` must not; `@ <args>` adds compiler options (e.g. `@ --exports=public`); blank lines
+  and `#` comments are ignored.
+
+```text
++ ^define .*@main\(
+- mu_dead_code_unused_public
+```
+
+The regexes are matched against the whole IR with `re.MULTILINE`, so anchor with `^`/`$` when the
+position matters. Files starting with `lib_` are dependency units, not cases.
+
 ## What the cases cover
 
 | Case | Coverage |

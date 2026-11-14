@@ -108,6 +108,10 @@ std::string dtor_cname(const std::string& unit, const std::string& owner) {
     return "mu_" + unit + "_D" + ident_safe(owner);
 }
 
+std::string destroy_cname(const std::string& unit, const std::string& owner) {
+    return "mu_" + unit + "_destroy_" + ident_safe(owner);
+}
+
 std::string class_desc_name(const std::string& unit, const std::string& owner) {
     return "mu_" + unit + "_desc_" + ident_safe(owner);
 }
@@ -116,8 +120,8 @@ std::string class_vtable_name(const std::string& unit, const std::string& owner)
     return "mu_" + unit + "_vt_" + ident_safe(owner);
 }
 
+std::string unit_inited_cname(const std::string& unit) { return "muc$unit$inited$" + unit; }
+
 std::string unit_init_cname(const std::string& unit) { return "muc$unit$init$" + unit; }
 
 std::string unit_fini_cname(const std::string& unit) { return "muc$unit$fini$" + unit; }
-
-std::string unit_fini_all_cname() { return "muc$unit$fini$all"; }
