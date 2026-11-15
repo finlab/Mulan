@@ -578,7 +578,11 @@ static bool is_numeric(const TypePtr& t) {
         if (op == "<<" || op == ">>") {
             l = convertTo(l, lt_, e->ty);
             r = convertTo(r, rt_, e->ty);
-            return op == "<<" ? b.CreateShl(l, r) : b.CreateAShr(l, r);
+            if (op == "<<") return b.CreateShl(l, r);
+            // The shift is performed at the declared width (`byte >> 1` is an i8 shift), so the
+            // signedness of the result type — not of a promoted operand — selects the instruction.
+            const bool sg = e->ty->kind == TypeKind::Prim && e->ty->is_signed();
+            return sg ? b.CreateAShr(l, r) : b.CreateLShr(l, r);
         }
 
         TypePtr res = e->ty;

@@ -364,7 +364,7 @@ using ArgPack = Emitter::ArgPack;
             else if (op == "|") res = b.CreateOr(old, rv);
             else if (op == "^") res = b.CreateXor(old, rv);
             else if (op == "<<") res = b.CreateShl(old, rv);
-            else if (op == ">>") res = b.CreateAShr(old, rv);
+            else if (op == ">>") res = sg ? b.CreateAShr(old, rv) : b.CreateLShr(old, rv);
             storeAt(res, addr, una);
             return;
         }

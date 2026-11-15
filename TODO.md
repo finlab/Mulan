@@ -54,3 +54,15 @@
 - [ ] C ABI — **SysV 下含 float 的聚合仍未实现**（0.0.128 已把整数类聚合按两个 INTEGER eightbyte 打包）：
   需要 per-eightbyte 的 INTEGER/SSE 分类；目前 codegen 对这类签名直接报错拒绝，
   `abi_agg` / `abi_float` 用例已用 `@platform windows` 隔离。
+
+- [ ] 性能 — **issue #18：`weak` 注册表是全局单链表 + 全局 spin lock，注销走 O(W)**
+  （https://github.com/finlab/Mulan/issues/18）。改法需要设计决策：按目标对象挂 weak 链表（`mu_weak_node`
+  加 `next_in_target` + 目标对象里放头指针），或做成开放寻址表；两者都改 RC/弱引用运行时布局，
+  还要先有基准（该 issue 目前**无 benchmark**）。非正确性 bug，无 weak 的程序不受影响（IR 里不发射任何代码）。
+  动作：先补一个 weak 创建/销毁的基准，再按基准决定改法。
+
+- [ ] 性能 / 语义 — **issue #19：`--single-thread` 非原子引用计数开关**
+  （https://github.com/finlab/Mulan/issues/19）。SPEC §12 #74/#87 记为「未决定」；issue 实测每对象
+  33.4 ns vs C malloc/free 19.5 ns。落地需要：`--single-thread` 编译期开关贯穿 RC emit 路径
+  （retain/release 之外的 fence 也要处理）、与 `std.thread`/`para` 的互斥诊断（用了线程就必须报错或忽略开关）、
+  以及一组基准对比。属于特性 + 决策，不是随手能改的 bug。

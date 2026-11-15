@@ -572,9 +572,13 @@ namespace muc_detail {
             long long v = l.i;
             if (op == "<<") {
                 v = static_cast<long long>(static_cast<unsigned long long>(v) << r.i);
+            } else if (l.ty->kind == TypeKind::Prim && !l.ty->is_signed()) {
+                // Unsigned: the run-time instruction is LShR, so zero-extend the bit pattern of the
+                // declared width to 64 bits and shift that.
+                const unsigned long long mask = bits >= 64 ? ~0ULL : ((1ULL << bits) - 1);
+                v = static_cast<long long>((static_cast<unsigned long long>(v) & mask) >> r.i);
             } else {
-                // Run time unconditionally uses AShr (arithmetic right shift by the declared width): the constant path must agree,
-                // so sign-extend the two's-complement bit pattern to 64 bits by that width, shift arithmetically, then normalize.
+                // Signed: AShr sign-extends from the declared width, so do the same here.
                 v = sext_bits(v, bits) >> r.i;
             }
             out.ty = l.ty;

@@ -89,13 +89,13 @@ int main() {
     if Cat.CharVal != -23 { puts("char literal member failed"); return 1; }
     puts("const member wide types ok");
 
-    // ---------- unsigned >>: the constant result must match run time ----------
+    // ---------- unsigned >> is logical: the constant result must match run time ----------
     ulong x = (0x4000000000000000 as ulong) << 1;
     uint u = 0x80000000 as uint;
     if Cat.ULongShift != x >> 60 { puts("ulong shr mismatch"); return 1; }
     if Cat.UIntShift != u >> 4 { puts("uint shr mismatch"); return 1; }
-    if Cat.ULongShift as long != -8 { puts("ulong shr const wrong"); return 1; }
-    if Cat.UIntShift != 4160749568 { puts("uint shr const wrong"); return 1; }
+    if Cat.ULongShift as long != 8 { puts("ulong shr const wrong"); return 1; }
+    if Cat.UIntShift != 134217728 { puts("uint shr const wrong"); return 1; }
     puts("const member shr ok");
 
     // ---------- bare name in a method body + mixed with instance fields ----------

@@ -34,8 +34,8 @@ int main() {
     int a = 3;
     printf("cast=%d\n", (b as uint) > a);
 
-    // ---- `>>` is an arithmetic shift even for an unsigned value: 0x80000000 >> 4 is
-    //      0xF8000000, not 0x08000000 (SPEC 5) ----
+    // ---- `>>` follows the operand's signedness: 0x80000000 >> 4 is 0x08000000 (logical),
+    //      while a signed value sign-extends (SPEC 5) ----
     uint sh = 0x80000000;
     printf("shr=%u\n", sh >> 4);
 

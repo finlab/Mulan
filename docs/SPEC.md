@@ -1511,9 +1511,10 @@ type PP = P;          // alias of an alias
 - Bitwise operators: binary `&`, `^`, `|`; unary `~` is **bitwise complement** (as in C). Logical negation is the keyword `not`.
   - `~` only accepts integer types (or a user type's `operator~` overload); using `~` on `bool` is a compile error (use `not`).
   - `!` is no longer used: `!x` is an error that suggests "use `not` for logical negation and `~` for bitwise complement".
-- **`>>` is always an arithmetic right shift** (using the innermost bit width of the operand): signed types sign-extend normally; **unsigned types are also interpreted as two's complement for an arithmetic right shift**
-  (`uint 0x80000000 >> 4` = `0xF8000000`). This differs from C's "unsigned right shift is a logical shift" and is the semantics the current implementation has settled on;
-  compile-time constant evaluation and runtime code generation in the compiler backend must stay consistent; if this ever changes to "signed arithmetic / unsigned logical", both places must change together.
+- **`>>` follows the signedness of the operand** (the shift happens at the operand's declared bit width): a signed type sign-extends, an unsigned type shifts in zeros
+  (`int -8 >> 1` = `-4`, `uint 0x80000000 >> 4` = `0x08000000`). This matches C and differs from the 0.0.1–0.0.128 semantics, where `>>` was always arithmetic
+  (`uint 0x80000000 >> 4` came out as `0xF8000000`) — changed in 0.0.129 with issue #17.
+  Compile-time constant evaluation and runtime code generation must stay consistent; both places changed together.
   `<<` is a bitwise left shift (overflow wraps in two's complement); a shift count ≥ the bit width is still undefined behavior (8.2).
 - `%` is also legal for floating point (LLVM `frem`, synonymous with C `fmod`: the sign of the result follows the dividend); integer `%` is truncated remainder (the sign follows the dividend).
 - **No exponentiation operator is provided** (settled): `^` is reserved for bitwise xor, avoiding a clash with C users' intuition (`a ^ b` silently becoming exponentiation would produce silent bugs).

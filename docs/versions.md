@@ -10,6 +10,27 @@
 
 ## Releases
 
+### 0.0.129 — 2026-11-15
+
+**`>>` on an unsigned type is a logical shift (issue #17).**
+
+- `codegen_expr.cpp` lowered every `>>` to `AShr`, so any value with the top bit of its declared width
+  set came back sign-extended (`(uint)2332836374 >> 16` gave `4294937356`). It now selects `LShr` when
+  the result type is an unsigned prim; the shift stays at the declared width (`byte >> 1` is an i8
+  shift), so the instruction follows the result type, not a promoted operand.
+- `codegen_stmt.cpp`: `>>=` shared the same unconditional `AShr`; it now uses the signedness already
+  computed for `/` and `%`.
+- `sema_const.cpp`: the constant folder deliberately matched the wrong instruction (sign-extend, then
+  shift arithmetically), so it was consistently wrong too; it now zero-extends for unsigned types, and
+  compile-time and run-time agree again.
+- **This is a language change, not only a bug fix**: SPEC §5 said "`>>` is always an arithmetic right
+  shift ... unsigned types are also interpreted as two's complement" (`uint 0x80000000 >> 4` =
+  `0xF8000000`); the rule now reads "`>>` follows the operand's signedness", which is C's behaviour.
+  `unsigned_wrap` and `const_member` had pinned the old value and now assert `0x08000000` / `134217728`.
+- New run case `shift_unsigned`: every unsigned width with the top bit set, `>>=` on `uint` / `ulong`
+  and on a signed type, and the same expressions folded at compile time.
+- Tests: 563/563 Windows (UCRT64), 561/561 Linux with LLVM 21 and LLVM 18.
+
 ### 0.0.128 — 2026-11-15
 
 **Linux is a supported host: the runtime platform layer, the glibc binding layer, and a Linux CI job.**

@@ -1,0 +1,3 @@
+runtime int=-125 byte=100 ushort=156 uint=35595 ulong=576460752303423488
+compound uint=35595 ulong=8 int=-16
+const uint=35595 int=-125 ulong=576460752303423488 byte=100
