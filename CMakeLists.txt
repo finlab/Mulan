@@ -23,9 +23,9 @@ endif()
 #   - the default MSYS2 install location (probed automatically, for convenience only)
 if(NOT LLVM_DIR)
   foreach(_llvm_hint
+      "C:/msys64/ucrt64/lib/cmake/llvm"
       "C:/msys64/mingw64/lib/cmake/llvm"
-      "C:/msys64/clang64/lib/cmake/llvm"
-      "C:/msys64/ucrt64/lib/cmake/llvm")
+      "C:/msys64/clang64/lib/cmake/llvm")
     if(EXISTS "${_llvm_hint}/LLVMConfig.cmake")
       set(LLVM_DIR "${_llvm_hint}" CACHE PATH "LLVM cmake dir")
       break()
@@ -83,8 +83,8 @@ target_include_directories(muc SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 
 if(MSVC)
   target_compile_options(muc PRIVATE /W4 /WX-)
-  # The parser and the AST walkers recurse; the default 1 MB reserve turns deep (but legitimate)
-  # input into a stack overflow instead of the parser's own "nesting too deep" diagnostic.
+  # The parser and the AST walkers recurse, but the input is capped in the parser (kMaxNestDepth =
+  # 320 levels, ~0.9 MB of frames). Keep the reserve at 8 MB for headroom on the AST walkers.
   target_link_options(muc PRIVATE /STACK:8388608)
 else()
   target_compile_options(muc PRIVATE -Wall -Wextra -Wno-unused-parameter)

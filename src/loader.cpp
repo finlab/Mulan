@@ -23,12 +23,14 @@
 #include <string>
 #include <vector>
 
-#include "common.hpp"
-#include "parser.hpp"
-
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
 #endif
+
+#include "common.hpp"
+#include "parser.hpp"
 
 namespace {
 
@@ -85,14 +87,64 @@ bool is_platform_os(const std::string& s) {
     return false;
 }
 
-std::string resolve_platform(const std::string& requested) {
-    if (requested.empty()) return host_os();
-    if (!is_platform_os(requested)) {
+// A platform spec is `os[-arch[-abi]]` (e.g. `windows-x86_64-ucrt`). The loader resolves each unit
+// against the most specific shadow directory that exists:
+//   platform/<os>-<arch>-<abi>/  ->  platform/<os>-<arch>/  ->  platform/<os>/
+// All three levels are optional except the OS; a unit only needs the level where it really differs.
+struct PlatformSpec {
+    std::string os;
+    std::string arch;
+    std::string abi;
+};
+
+bool one_of(const std::string& v, const std::vector<std::string>& allowed) {
+    for (const auto& a : allowed)
+        if (a == v) return true;
+    return false;
+}
+
+PlatformSpec parse_platform_spec(const std::string& requested) {
+    PlatformSpec spec;
+    if (requested.empty()) {
+        spec.os = host_os();
+        return spec;
+    }
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (true) {
+        size_t dash = requested.find('-', start);
+        parts.push_back(requested.substr(start, dash == std::string::npos ? std::string::npos : dash - start));
+        if (dash == std::string::npos) break;
+        start = dash + 1;
+    }
+    if (parts.empty() || parts.size() > 3 || parts[0].empty()) {
+        throw MuError("bad platform `" + requested + "`: expected `os[-arch[-abi]]`");
+    }
+    if (!is_platform_os(parts[0])) {
         std::string known;
         for (const auto& o : platform_os_names()) known += (known.empty() ? "" : ", ") + o;
-        throw MuError("unknown platform `" + requested + "` (known: " + known + ")");
+        throw MuError("unknown platform OS `" + parts[0] + "` (known: " + known + ")");
     }
-    return requested;
+    spec.os = parts[0];
+    if (parts.size() >= 2) {
+        if (!one_of(parts[1], {"x86_64", "aarch64"})) {
+            throw MuError("unknown platform arch `" + parts[1] + "` (known: x86_64, aarch64)");
+        }
+        spec.arch = parts[1];
+    }
+    if (parts.size() >= 3) {
+        if (parts[2].empty()) throw MuError("bad platform `" + requested + "`: empty ABI");
+        spec.abi = parts[2];
+    }
+    return spec;
+}
+
+std::vector<std::string> platform_shadow_keys(const PlatformSpec& spec) {
+    std::vector<std::string> keys;
+    if (!spec.arch.empty() && !spec.abi.empty()) keys.push_back(spec.os + "-" + spec.arch + "-" + spec.abi);
+    if (!spec.arch.empty()) keys.push_back(spec.os + "-" + spec.arch);
+    keys.push_back(spec.os);
+    return keys;
 }
 
 std::vector<std::string> split_unit(const std::string& un) {
@@ -139,6 +191,15 @@ fs::path executable_dir() {
     wchar_t buf[32768];
     DWORD n = GetModuleFileNameW(nullptr, buf, 32768);
     if (n > 0 && n < 32768) return fs::path(std::wstring(buf, n)).parent_path();
+#elif defined(__APPLE__)
+    // macOS has no /proc; `_NSGetExecutablePath` returns a possibly relative, symlink-laden path.
+    char buf[4096];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) {
+        std::error_code ec;
+        fs::path p = fs::canonical(buf, ec);
+        if (!ec) return p.parent_path();
+    }
 #else
     std::error_code ec;
     fs::path p = fs::read_symlink("/proc/self/exe", ec);
@@ -150,10 +211,16 @@ fs::path executable_dir() {
 // libs / libs/std in the current directory, the executable directory, and their ancestors
 void add_default_lib_dirs(std::vector<std::string>& dirs) {
     if (const char* env = std::getenv("MUC_LIBS")) {
+        // Windows paths contain a drive colon (`C:\a;D:\b`), so only `;` separates there; POSIX uses `:`.
+#ifdef _WIN32
+        const char separator = ';';
+#else
+        const char separator = ':';
+#endif
         std::string s = env;
         std::string cur;
         for (char c : s) {
-            if (c == ';' || c == ':') {
+            if (c == separator) {
                 if (!cur.empty()) add_unique(dirs, cur);
                 cur.clear();
             } else {
@@ -184,6 +251,39 @@ void add_default_lib_dirs(std::vector<std::string>& dirs) {
 
 }  // namespace
 
+// Unit files are resolved through the host filesystem, which on Windows is case-insensitive: `unit
+// Foo.Bar;` happily finds `libs/foo/bar.mu` there and then fails on Linux. When a resolved path differs
+// from the requested spelling only by case, report it as an error (agents/portability-plan.md #13).
+static bool iequals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+            return false;
+    return true;
+}
+
+static std::string case_mismatch(const std::string& path) {
+    fs::path p = fs::path(path).lexically_normal();
+    fs::path cur = p.root_path();
+    for (const auto& part : p.relative_path()) {
+        const std::string wanted = part.string();
+        const fs::path next = cur.empty() ? fs::path(wanted) : cur / wanted;
+        std::error_code ec;
+        bool exact = false;
+        std::string other;
+        for (fs::directory_iterator it(cur.empty() ? fs::path(".") : cur, ec), end; !ec && it != end;
+             it.increment(ec)) {
+            const std::string name = it->path().filename().string();
+            if (name == wanted) { exact = true; break; }
+            if (other.empty() && iequals(name, wanted)) other = name;
+        }
+        if (!exact && !other.empty()) return next.string() + " (on disk: " + other + ")";
+        if (ec) return "";
+        cur = next;
+    }
+    return "";
+}
+
 std::string host_platform_os() { return host_os(); }
 
 std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
@@ -195,27 +295,56 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
     for (auto& d : search_dirs) add_unique(dirs, d);
     add_default_lib_dirs(dirs);
 
-    const std::string os_name = resolve_platform(platform_os);
+    const PlatformSpec spec = parse_platform_spec(platform_os);
+    const std::vector<std::string> shadow_keys = platform_shadow_keys(spec);
+    const std::string os_name = spec.os;
 
     std::map<std::string, std::unique_ptr<Unit>> owned;
     std::set<std::string> in_progress;
     std::vector<std::string> post_order;
 
-    // Two accepted file names per unit: the flat dotted name (`std.thread.backend.mu`) and the
-    // slashed path (`std/thread/backend.mu`). Both are also accepted inside a platform shadow
-    // directory, where the file keeps the full unit name.
-    auto try_dir = [&](const std::string& d, const std::string& un) -> std::string {
-        const std::string flat = d + "/" + un + ".mu";
-        const std::string slashed = d + "/" + dotted_path(un) + ".mu";
-        const bool has_flat = file_exists(flat);
-        const bool has_slashed = slashed != flat && file_exists(slashed);
-        if (has_flat && has_slashed) {
-            throw MuError("unit `" + un + "` is ambiguous: both " + flat + " and " + slashed +
-                          " exist (keep one)");
+    // Accepted file names per unit: the flat dotted name (`std.thread.backend.mu`) and the slashed
+    // path (`std/thread/backend.mu`). Inside a platform shadow directory the segments already present
+    // in the directory path may be dropped (`libs/cstd/platform/windows/stdio.mu` = `cstd.stdio`);
+    // the full name is still accepted, and having both is an error.
+    struct Cand {
+        std::string dir;
+        size_t dropped;  // leading unit segments represented by `dir`
+    };
+
+    auto try_dir = [&](const std::string& d, const std::string& un, size_t dropped) -> std::string {
+        std::vector<std::string> names{un};
+        if (dropped > 0) {
+            auto seg = split_unit(un);
+            if (dropped < seg.size()) {
+                std::string short_name = seg[dropped];
+                for (size_t i = dropped + 1; i < seg.size(); ++i) short_name += "." + seg[i];
+                names.push_back(short_name);
+            }
         }
-        if (has_flat) return flat;
-        if (has_slashed) return slashed;
-        return "";
+        std::string found;
+        for (const auto& n : names) {
+            const std::string flat = d + "/" + n + ".mu";
+            const std::string slashed = d + "/" + dotted_path(n) + ".mu";
+            const bool has_flat = file_exists(flat);
+            const bool has_slashed = slashed != flat && file_exists(slashed);
+            if (has_flat && has_slashed) {
+                throw MuError("unit `" + un + "` is ambiguous: both " + flat + " and " + slashed +
+                              " exist (keep one)");
+            }
+            if (!has_flat && !has_slashed) continue;
+            const std::string hit = has_flat ? flat : slashed;
+            if (std::string mismatch = case_mismatch(hit); !mismatch.empty()) {
+                throw MuError("unit `" + un + "` is spelled with a different case on disk: " + mismatch +
+                              "; this would fail on a case-sensitive file system");
+            }
+            if (!found.empty()) {
+                throw MuError("unit `" + un + "` is ambiguous: both " + found + " and " + hit +
+                              " exist (keep one)");
+            }
+            found = hit;
+        }
+        return found;
     };
 
     std::function<std::string(const std::string&)> find_file = [&](const std::string& un) {
@@ -223,18 +352,19 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         // prefixes[k] = the directory holding the first k-1 segments; k = n is "next to the unit",
         // k = 1 is "at the search root", so a nearer shadow wins over a farther one.
         auto candidates = [&](const std::string& root) {
-            std::vector<std::string> out;
+            std::vector<Cand> out;
             std::vector<std::string> prefixes(seg.size() + 1);
             prefixes[1] = root;
             for (size_t k = 2; k <= seg.size(); ++k) prefixes[k] = prefixes[k - 1] + "/" + seg[k - 2];
             for (size_t k = seg.size(); k >= 1; --k)
-                out.push_back(prefixes[k] + "/platform/" + os_name);
-            out.push_back(root);
+                for (const auto& key : shadow_keys)
+                    out.push_back({prefixes[k] + "/platform/" + key, k - 1});
+            out.push_back({root, 0});
             return out;
         };
         for (const auto& root : dirs) {
-            for (const auto& d : candidates(root)) {
-                if (std::string p = try_dir(d, un); !p.empty()) return p;
+            for (const auto& c : candidates(root)) {
+                if (std::string p = try_dir(c.dir, un, c.dropped); !p.empty()) return p;
             }
         }
         std::string list;
@@ -242,12 +372,12 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         const std::string rel = dotted_path(un) + ".mu";
         for (const auto& root : dirs) {
             if (!fs::exists(root)) continue;  // do not report roots that are not there at all
-            for (const auto& d : candidates(root)) {
+            for (const auto& c : candidates(root)) {
                 if (shown == 24) {
                     list += "\n  ...";
                     break;
                 }
-                list += "\n  " + d + "/" + rel;
+                list += "\n  " + c.dir + "/" + rel;
                 ++shown;
             }
         }

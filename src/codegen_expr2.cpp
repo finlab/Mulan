@@ -232,10 +232,9 @@ using ArgPack = Emitter::ArgPack;
         uint64_t sz = objectSize(cls);
         Value* p = nullptr;
         if (classNeedsAlignedAlloc(cls)) {
-            // _aligned_malloc(size, alignment): the object alignment exceeds malloc's 16-byte guarantee (paired with _aligned_free)
-            p = b.CreateCall(libFn("_aligned_malloc", ptrTy(), {i64(), i64()}),
-                             {ConstantInt::get(i64(), sz),
-                              ConstantInt::get(i64(), objectAlign(cls))});
+            // The object alignment exceeds malloc's guarantee; emit the target's aligned allocator.
+            p = emitAlignedAlloc(ConstantInt::get(i64(), sz),
+                                 ConstantInt::get(i64(), objectAlign(cls)));
         } else {
             p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {ConstantInt::get(i64(), sz)});
         }

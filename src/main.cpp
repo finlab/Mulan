@@ -40,6 +40,7 @@ Usage:
   muc check <entry.mu>            run semantic checks only
   muc dump  <entry.mu>            dump the AST (debug)
   muc build <entry.mu> [options]  compile and link
+  muc run   <entry.mu> [options]  compile, link and run
   muc -V | --version              print version
 
 build options:
@@ -52,6 +53,9 @@ build options:
   --link <obj>     extra object file for the link step (repeatable), e.g. a C shim
                    compiled with the same compiler
   --os <os>        resolve `platform/<os>/` units for this platform (windows/linux/macos)
+  --platform <spec>  resolve units for `os[-arch[-abi]]` (e.g. windows-x86_64-ucrt); supersedes --os
+  --target <triple>  LLVM target triple (default: host); a cross target emits the object/IR and needs
+                   `--cc <cross driver>` to link
   -I <dir>         extra unit search directory (repeatable)
   -v, --verbose    print the resolved file of every unit
   --export <name>  keep this symbol externally visible (repeatable); by default every definition
@@ -62,6 +66,7 @@ build options:
 
 check options:
   --os <os>        check the program against another platform's units (any host)
+  --platform <spec>  check against `os[-arch[-abi]]` (e.g. windows-x86_64-ucrt)
   -I <dir>         extra unit search directory (repeatable)
   -v, --verbose    print the resolved file of every unit
 
@@ -287,13 +292,63 @@ static void dump(const Node* n, int ind) {
 
 // ---------------------------------------------------------------- commands
 
+// Whether a triple names a target other than the host (OS or architecture differs).
+static bool is_cross_target(const std::string& triple) {
+    const std::string os = triple.find("windows") != std::string::npos
+                               ? "windows"
+                               : (triple.find("darwin") != std::string::npos
+                                      ? "macos"
+                                      : (triple.find("linux") != std::string::npos ? "linux" : ""));
+    const bool cross_os = !os.empty() && os != host_platform_os();
+    const bool cross_arch = triple.rfind("aarch64", 0) == 0 or triple.rfind("arm64", 0) == 0;
+    return cross_os or cross_arch;
+}
+
+// The link step must produce the object format the target asks for. A host driver that does not know
+// the format still exits 0 and writes a broken file, so verify the magic instead of trusting `rc`.
+static void check_output_format(const fs::path& out, const std::string& target) {
+    if (target.empty()) return;  // host target: the driver is the host toolchain
+    std::ifstream f(out, std::ios::binary);
+    // Some PE drivers append `.exe` to an output name without an extension.
+    if (!f) f.open(out.string() + ".exe", std::ios::binary);
+    if (!f) {
+        throw MuError("the link driver produced no output at `" + out.string() + "` for target `" +
+                      target + "`");
+    }
+    unsigned char magic[4] = {};
+    f.read(reinterpret_cast<char*>(magic), 4);
+    const std::streamsize got = f.gcount();
+    const bool elf = got >= 4 && magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+    const bool pe = got >= 2 && magic[0] == 'M' && magic[1] == 'Z';
+    const bool macho = got >= 4 && ((magic[0] == 0xFE && magic[1] == 0xED && magic[2] == 0xFA && (magic[3] == 0xCE or magic[3] == 0xCF)) or
+                                    (magic[0] == 0xCF && magic[1] == 0xFA && magic[2] == 0xED && magic[3] == 0xFE) or
+                                    (magic[0] == 0xCA && magic[1] == 0xFE && magic[2] == 0xBA && magic[3] == 0xBE));
+    const bool want_pe = target.find("windows") != std::string::npos;
+    const bool want_elf = !want_pe && target.find("darwin") == std::string::npos;
+    const bool ok = want_pe ? pe : (want_elf ? elf : macho);
+    if (!ok) {
+        throw MuError("the link driver produced the wrong object format for target `" + target +
+                      "` (expected " + (want_pe ? "PE/COFF" : (want_elf ? "ELF" : "Mach-O")) +
+                      "); pass `--cc <cross driver>`");
+    }
+}
+
+// The OS part of a platform spec (`windows-x86_64-ucrt` -> `windows`).
+static std::string platform_os_part(const std::string& spec) {
+    const size_t dash = spec.find('-');
+    return dash == std::string::npos ? spec : spec.substr(0, dash);
+}
+
 struct BuildArgs {
     std::string entry;
     std::string out;
     std::string emit_ir;
     std::string backend = "llvm";
     std::string cc = "gcc";
-    std::string os;  // platform shadow directory to resolve units against (empty = host)
+    bool cc_explicit = false;  // set by $CC or --cc
+    std::string target;        // LLVM triple (`--target`); empty = host
+    std::string os;        // platform shadow directory to resolve units against (empty = host)
+    std::string platform;  // `os[-arch[-abi]]`; supersedes --os
     std::vector<std::string> dirs;
     std::vector<std::string> exports;  // --export: keep these symbol names externally visible
     std::vector<std::string> link;     // --link: extra object files handed to the link step
@@ -306,7 +361,7 @@ struct BuildArgs {
 
 static BuildArgs parse_build_args(const std::vector<std::string>& args) {
     BuildArgs b;
-    if (const char* cc = std::getenv("CC")) b.cc = cc;
+    if (const char* cc = std::getenv("CC")) { b.cc = cc; b.cc_explicit = true; }
     if (const char* bk = std::getenv("MUC_BACKEND")) b.backend = bk;
     size_t i = 0;
     if (args.empty()) throw MuError("missing entry file");
@@ -321,9 +376,11 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         if (a == "-o") b.out = need("-o");
         else if (a == "--emit-ir") b.emit_ir = need("--emit-ir");
         else if (a == "--backend") b.backend = need("--backend");
-        else if (a == "--cc") b.cc = need("--cc");
+        else if (a == "--cc") { b.cc = need("--cc"); b.cc_explicit = true; }
+        else if (a == "--target") b.target = need("--target");
         else if (a == "--link") b.link.push_back(need("--link"));
         else if (a == "--os") b.os = need("--os");
+        else if (a == "--platform") b.platform = need("--platform");
         else if (a == "-I") b.dirs.push_back(need("-I"));
         else if (a == "--export") b.exports.push_back(need("--export"));
         else if (a == "--exports=public") b.export_mode = ExportMode::PublicOnly;
@@ -343,6 +400,7 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
 static int cmd_check(const std::vector<std::string>& args) {
     std::string entry;
     std::string os;
+    std::string platform;
     std::vector<std::string> dirs;
     bool verbose = false;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -353,14 +411,18 @@ static int cmd_check(const std::vector<std::string>& args) {
         };
         if (a == "-I") dirs.push_back(need("-I"));
         else if (a == "--os") os = need("--os");
+        else if (a == "--platform") platform = need("--platform");
         else if (a == "-v" || a == "--verbose") verbose = true;
         else if (!a.empty() && a[0] == '-') throw MuError("unknown option `" + a + "`");
         else if (entry.empty()) entry = a;
         else throw MuError("unexpected argument `" + a + "`");
     }
     if (entry.empty()) { std::fputs(USAGE, stderr); return 2; }
+    if (!os.empty() && !platform.empty()) {
+        throw MuError("`--os` and `--platform` select the same thing; use one of them");
+    }
     std::string entry_name;
-    auto units = load_units(entry, dirs, entry_name, os, verbose);
+    auto units = load_units(entry, dirs, entry_name, platform.empty() ? os : platform, verbose);
     size_t n = units.size();
     auto prog = analyze(std::move(units), entry_name);
     std::cout << "ok: " << n << " units, semantic checks passed\n";
@@ -377,23 +439,34 @@ static int cmd_dump(const std::vector<std::string>& args) {
 
 static int cmd_build(const std::vector<std::string>& args) {
     BuildArgs ba = parse_build_args(args);
+    if (!ba.os.empty() && !ba.platform.empty()) {
+        throw MuError("`--os` and `--platform` select the same thing; use one of them");
+    }
+    const std::string target_spec = ba.platform.empty() ? ba.os : ba.platform;
     // Selecting another platform's units is only meaningful for checking: codegen and linking still
     // target the host toolchain, so a cross-target `build` would mix a Linux unit set with a
     // Windows object file. Cross-compilation is a separate (later) feature.
-    if (!ba.os.empty() && ba.os != host_platform_os()) {
-        throw MuError("`--os " + ba.os + "` is not supported by `build` yet (it would mix another "
-                      "platform's units with the host object format); use `muc check --os " + ba.os +
+    const std::string target_os = platform_os_part(target_spec);
+    if (!target_os.empty() && target_os != host_platform_os()) {
+        throw MuError("`--os " + target_os + "` is not supported by `build` yet (it would mix another "
+                      "platform's units with the host object format); use `muc check --os " + target_os +
                       "` to verify that platform's units");
     }
     std::string entry_name;
-    auto units = load_units(ba.entry, ba.dirs, entry_name, ba.os, ba.verbose);
+    auto units = load_units(ba.entry, ba.dirs, entry_name, target_spec, ba.verbose);
     auto prog = analyze(std::move(units), entry_name);
 
     fs::path entry_p(ba.entry);
     std::string base = entry_p.stem().string();
     fs::path build_dir = fs::current_path() / "build";
     fs::create_directories(build_dir);
-    fs::path out = ba.out.empty() ? build_dir / (base + ".exe") : fs::path(ba.out);
+    const bool target_windows =
+        ba.target.empty() ? (host_platform_os() == "windows") : (ba.target.find("windows") != std::string::npos);
+    fs::path out = ba.out.empty() ? build_dir / (base + (target_windows ? ".exe" : "")) : fs::path(ba.out);
+    if (!ba.cc_explicit && !ba.target.empty()) {
+        if (ba.target.find("darwin") != std::string::npos) ba.cc = "clang";
+        else if (!target_windows) ba.cc = "cc";
+    }
 
     if (ba.backend != "llvm") {
         throw MuError("unknown backend `" + ba.backend + "` (only llvm in this version)");
@@ -406,6 +479,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     eo.bounds = ba.bounds;
     eo.export_mode = ba.export_mode;
     eo.extra_exports = ba.exports;
+    eo.target = ba.target;
     {
         std::ofstream f(ir_path, std::ios::binary);
         if (!f) throw MuError("cannot write " + ir_path.string());
@@ -413,17 +487,28 @@ static int cmd_build(const std::vector<std::string>& args) {
     }
     fs::path obj = build_dir / (base + ".o");
     llvm_emit_object(prog, obj.string(), eo);
+    // The object and IR are on disk; only the link needs a cross driver.
+    if (!ba.cc_explicit && !ba.target.empty() && is_cross_target(ba.target)) {
+        throw MuError("target `" + ba.target + "` is not the host; pass `--cc <cross driver>` to link it "
+                      "(the object file and IR are written: " + obj.string() + ")");
+    }
     std::string cmd = ba.cc + " -o " + quote(native_path(out.string())) + " " + quote(native_path(obj.string()));
     for (const auto& extra : ba.link) cmd += " " + quote(native_path(extra));
     std::cout << "+ " << cmd << "\n";
+    std::cout.flush();
     int rc = std::system(cmd.c_str());
     if (rc != 0) {
         std::cerr << "error: link failed (object file: " << obj.string()
                   << ", IR: " << ir_path.string() << ")\n";
+        if (!ba.target.empty() && !ba.cc_explicit) {
+            std::cerr << "hint: cross target `" << ba.target << "` needs a cross driver: --cc <compiler>\n";
+        }
         return rc;
     }
+    check_output_format(out, ba.target);
     std::cout << "ok: " << out.string() << "\n";
     if (ba.run) {
+        std::cout.flush();
         return std::system(quote(native_path(out.string())).c_str());
     }
     return 0;
@@ -446,6 +531,12 @@ int main(int argc, char** argv) {
         if (cmd == "check") return cmd_check(rest);
         if (cmd == "dump") return cmd_dump(rest);
         if (cmd == "build") return cmd_build(rest);
+        if (cmd == "run") {
+            // `muc run a.mu` is `muc build a.mu --run`: same pipeline, run at the end.
+            if (rest.empty()) { std::fputs(USAGE, stderr); return 2; }
+            rest.push_back("--run");
+            return cmd_build(rest);
+        }
         std::cerr << "unknown command `" << cmd << "`\n\n" << USAGE;
         return 2;
     } catch (const MuErrorList& e) {

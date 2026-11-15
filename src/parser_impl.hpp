@@ -102,13 +102,14 @@ private:
 
     // Two budgets, because they exhaust the stack for different reasons (measured on this host,
     // MSYS2/UCRT, with the 8 MB main-thread reserve from CMakeLists.txt):
-    //   * recursive nesting: one guard level = a parenthesised subexpression (3 levels), a unary
-    //     operator, a nested block, a brace initializer, a type argument list or an `if`. ~2.5 KB
-    //     of parser frames per nesting level; 1000 levels of parentheses pass, ~2000 overflow.
+    //   * recursive nesting: a parenthesised subexpression costs **3** guard levels (expression →
+    //     unary → primary), a unary operator or a nested block costs 1. ~2.5 KB of parser frames per
+    //     level, so 320 levels ≈ 100 nested parentheses ≈ 0.8 MB — far below the 8 MB reserve.
+    //     Hand-written code rarely goes past ~10 levels; the cap exists so absurd input gets a
+    //     diagnostic instead of a stack overflow.
     //   * a chain built in a loop (`a.b.c…`, `1+1+1…`, `int***…`): no parser recursion, one AST
     //     level per link; the AST walkers (sema, codegen) recurse over it and overflow past 5k.
-    // Both limits keep a ~2x margin below the measured overflow points.
-    static constexpr int kMaxNestDepth = 3072;
+    static constexpr int kMaxNestDepth = 320;
     static constexpr int kMaxChainLinks = 2048;
 
     // One level of nesting for the lifetime of the guard. Throws before incrementing, so a guard

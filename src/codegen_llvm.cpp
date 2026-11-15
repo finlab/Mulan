@@ -15,9 +15,10 @@
 using namespace llvm;
 
 std::string llvm_emit_text(Program& prog, const EmitOptions& opts) {
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    muc_detail::Emitter em{prog, false, opts.bounds};
+    llvm::InitializeAllTargets();
+    llvm::InitializeAllTargetMCs();
+    llvm::InitializeAllAsmPrinters();
+    muc_detail::Emitter em{prog, false, opts.bounds, opts.target};
     em.exportMode = opts.export_mode;
     for (auto& e : opts.extra_exports) em.exports.insert(e);
     em.run();
@@ -29,9 +30,10 @@ std::string llvm_emit_text(Program& prog, const EmitOptions& opts) {
 }
 
 void llvm_emit_object(Program& prog, const std::string& obj_path, const EmitOptions& opts) {
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    muc_detail::Emitter em{prog, opts.debug, opts.bounds};
+    llvm::InitializeAllTargets();
+    llvm::InitializeAllTargetMCs();
+    llvm::InitializeAllAsmPrinters();
+    muc_detail::Emitter em{prog, opts.debug, opts.bounds, opts.target};
     em.exportMode = opts.export_mode;
     for (auto& e : opts.extra_exports) em.exports.insert(e);
     em.run();

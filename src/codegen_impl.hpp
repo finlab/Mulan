@@ -46,6 +46,7 @@
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/TargetParser/Host.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
@@ -119,7 +120,7 @@ bool is_zero_literal(Init* init);
 // ------------------------------------------------------------ Emitter
 
 struct Emitter {
-    explicit Emitter(Program& p, bool dbg = false, bool bounds = true);
+    explicit Emitter(Program& p, bool dbg = false, bool bounds = true, std::string target = {});
 
     Program& prog;
     bool wantDebug = false;
@@ -354,6 +355,13 @@ struct Emitter {
     // Used by `new` and by the synthesized lambda environment (U41).
     Value* emitClassAlloc(const TypePtr& cls);
     Value* descOf(const TypePtr& cls);
+
+    // ------------------------------------------------------------ C runtime allocation
+    // `_aligned_malloc`/`_aligned_free` exist only on Windows; POSIX uses `posix_memalign` + `free`.
+    // Both helpers return null on failure so the caller's existing null check still works.
+    bool isWindowsTarget() const { return targetTriple.find("windows") != std::string::npos; }
+    Value* emitAlignedAlloc(Value* size, Value* alignment);
+    void emitAlignedFree(Value* ptr);
 
     LType* lt(const TypePtr& t);
 

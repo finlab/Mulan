@@ -23,7 +23,8 @@ A unit belongs to exactly one layer. The unit-name prefix makes the layer visibl
 | Layer | Units | Contract | Status |
 |---|---|---|---|
 | **L0 ABI types** | `std.ctypes` | C-side widths, per platform | implemented |
-| **L1 raw C bindings** | `std.cstdio`, `std.cstdlib`, `std.cstring`, `std.cmath`, `std.ctime`, `std.cctype` | C semantics: sentinel returns, `errno`, caller-owned buffers, no checks, no exceptions, no ownership | `cstdio` implemented, the rest planned |
+| **L1 raw C bindings** | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | a **separate library** (`libs/cstd/`): C semantics — sentinel returns, `errno`, caller-owned buffers, no checks, no exceptions, no ownership | implemented for Windows/UCRT |
+| **L1 platform C** | per-platform files of the same `cstd.*` units (`platform/<os>/`) | the same C library where the targets disagree; a unit only needs the level where it really differs | Windows implemented; POSIX/macOS planned |
 | **L2 native API** | `std.string`, `std.fmt`, `std.io`, `std.collections`, `std.fs`, `std.parse`, `std.random`, `std.unicode`, `std.time` | Mulan semantics: exceptions, bounds checks, explicit state, value types where possible | `string` implemented, the rest planned |
 | **L3 runtime contracts** | `std.exception`, `std.interfaces`, `std.task`, `std.thread` | The minimum the compiler and the runtime need; implicitly loaded | implemented |
 
@@ -47,8 +48,8 @@ that matter for the layer model:
 
 - Unit names are lowercase, dot-separated; the path mirrors the name (`std.string` →
   `libs/std/string.mu`), platform implementations live under `libs/std/platform/<os>/...`.
-- The `c` prefix on the first segment after `std` means "raw C binding" (`std.cstdio`), nothing else
-  uses it.
+- The `cstd` library holds the raw C bindings (`cstd.stdio`, `cstd.string`, …); `std` itself never
+  contains a C-header binding.
 - A **library** type is PascalCase (`String`, `Thread`), a **built-in** type is lowercase
   (`buffer<T>`, `int`); `string` is a declared lowercase alias of `String`.
 - A free function does not repeat its module name: `std.thread.start`, not `std.thread.thread_start`
@@ -60,7 +61,7 @@ that matter for the layer model:
 | Unit | Layer | Implicit | Public surface | Details |
 |---|---|---|---|---|
 | `std.ctypes` | L0 | no | `c_char` … `c_voidp` | §5, §7 |
-| `std.cstdio` | L1 | no | `fopen`, `fread`, `fwrite`, `printf` family, `fgets`, `fseek` … | §5, §7 |
+| `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | L1 | no | the ISO headers, one unit per header, in the separate `cstd` library; Windows implementation under `libs/cstd/platform/windows/` | §5, §7 |
 | `std.string` | L2 | **yes** | `String`: `length`, `is_empty`, `operator[]`, `==`, `sub`, `concat`, `find`, `trim`, `starts_with`, `ends_with`, `cstr`, `strlen` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
 | `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `bounds_fail` | §6.1 |
 | `std.interfaces` | L3 | **yes** | `IIterator<T>`, `IEnumerable<T>`, `IIndexable<T>`, `IEquatable`, `IOrdered`, `IAddable` … | §6.2 |
@@ -79,7 +80,6 @@ Planned (no code yet, listed so that naming and layering are decided before impl
 | `std.random` | L2 | explicit PRNG state, seedable (replaces `rand`) |
 | `std.unicode` | L2 | UTF-8 decode/encode, codepoint iteration |
 | `std.time` | L2 | `Instant` / `Duration` / wall clock |
-| `std.cstdlib`, `std.cstring`, `std.cmath`, `std.ctime`, `std.cctype` | L1 | the remaining ISO C bindings |
 
 ## 4. Error model
 
@@ -103,20 +103,26 @@ Planned (no code yet, listed so that naming and layering are decided before impl
 
 ## 5. C interoperability policy
 
-The ISO C surface is bound in tiers (safe / interoperability-only / not bound), every `extern`
-declaration uses `std.ctypes` names, the raw layer keeps C semantics, and **completeness is never a
-goal** — any symbol a program needs can be declared with `extern` in two lines, so the library's job
-is a calibrated, documented, ABI-correct subset, not an exhaustive copy.
+The ISO C surface is imported **relatively completely** into the separate `cstd` library: one unit per
+header, one implementation per platform under `libs/cstd/platform/<os>/`. A unit keeps the same name on
+every platform; the platform file contains that platform's full surface, so a symbol whose name or
+layout differs is declared truthfully instead of being unified. Every `extern` declaration uses
+`std.ctypes` names, and the raw layer keeps C semantics.
+
+Constructs that are not importable at all stay out: macros (`assert`, `errno`, `limits`, ...) are
+re-expressed as constants or functions; `stdarg` (no `va_list`), `setjmp` (conflicts with exceptions and
+RC), and the wide-character API (UTF-16 vs UTF-32) are excluded by construction.
 
 **Standard baseline: C99, plus a whitelist of C11/POSIX symbols that exist on every target.** C17 adds
 no library functions; C23 is not a baseline. Consequences: `timespec_get` / `quick_exit` are not
 portable (UCRT only on Windows), `aligned_alloc` and `threads.h` are absent on Windows, and `strdup` is
-C23/POSIX (`_strdup` on Windows) — those live in `std.posix` / `std.win32`, not in `std.c*`.
+C23/POSIX (`_strdup` on Windows) — the platform files declare both spellings, so they are usable on the
+platform that has them.
 
-The tier tables, the CRT linking model (system CRT, dynamically linked), the per-symbol minimum
-standard and the platform variance list (where `printf` / `fopen` / `rand` / `clock` differ between
-Windows and POSIX) are implementation policy and live in the internal record
-`agents/stdlib/c-bindings.md`.
+The per-header inventory, the tier labels, the CRT linking model (system CRT, dynamically linked), the
+per-symbol minimum standard and the platform variance list (where `printf` / `fopen` / `rand` / `clock`
+differ between Windows and POSIX) are implementation policy and live in the internal records
+`agents/stdlib/clib-inventory.md` and `agents/stdlib/c-bindings.md`.
 
 ## 6. Contracts of the implicit units
 

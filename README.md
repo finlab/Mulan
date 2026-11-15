@@ -117,23 +117,28 @@ and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 
 ## Quick start
 
-Requirements: **Windows + MSYS2**, CMake ≥ 3.20, Ninja, g++ ≥ 11 (C++20), gcc, and LLVM ≥ 17
-development libraries.
+Requirements: **Windows 10+ + MSYS2 (UCRT64 toolchain)**, CMake ≥ 3.20, Ninja, g++ ≥ 11 (C++20),
+gcc, and LLVM ≥ 17 development libraries.
 
 ```powershell
-# 1. LLVM (MSYS2)
-C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm mingw-w64-x86_64-llvm"
+# 1. UCRT64 toolchain + LLVM (MSYS2)
+C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-llvm"
 
-# 2. Build the compiler (CMake finds LLVM via LLVM_DIR, or probes the MSYS2 path)
-python -m cmake -S . -B build -G Ninja
+# 2. Build the compiler (CMake probes the UCRT64 path first; pass -DLLVM_DIR to override)
+python -m cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=C:/msys64/ucrt64/bin/g++.exe
 python -m cmake --build build          # output: build/muc.exe
 
-# 3. Try it
+# 3. Try it (link with the UCRT64 gcc so the produced program uses the same CRT)
+$env:CC = "C:/msys64/ucrt64/bin/gcc.exe"
 build\muc.exe check examples\example.mu         # semantic checks only
 build\muc.exe dump  examples\math.mu            # print the AST
 build\muc.exe build examples\example.mu --run   # compile, link, run
+build\muc.exe run   examples\example.mu         # same, shorter
 build\muc.exe build examples\example.mu -g      # with DWARF, so gdb can break and step
 ```
+
+Produced executables import `KERNEL32.dll` and a handful of `api-ms-win-crt-*.dll` names — these are
+Windows API sets resolved by the OS, so a program is still a single file (no CRT DLLs to ship).
 
 If a dependency is missing: `python -m pip install cmake ninja`. For LLVM installed elsewhere, pass
 `-DLLVM_DIR=<path>/lib/cmake/llvm`.

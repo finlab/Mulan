@@ -534,7 +534,7 @@ namespace muc_detail {
             FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
         b.CreateCall(dtor, {p});
         if (classNeedsAlignedAlloc(c->ty)) {
-            b.CreateCall(libFn("_aligned_free", LType::getVoidTy(ctx), {ptrTy()}), {p});
+            emitAlignedFree(p);
         } else {
             b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {p});
         }

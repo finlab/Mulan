@@ -1,0 +1,4 @@
+len=5 ordered=1 copied=1 found=1 digit=1 upper=A sorted=1 bsearch=1
+parsed=3.5 integral=42 wide=7 root=3.0 power=1024.0 down=-2.0
+year_ok=1 clock=1 errno=1 locale=1 round=1 flags=1 format=1 div=1
+int_max=2147483647 char_bit=8 dbl_dig=15 size_max=18446744073709551615 refs=33

@@ -20,11 +20,14 @@ struct EmitOptions {
     ExportMode export_mode = ExportMode::ExportOnly;
     // Extra symbol names to keep externally visible (`--export <name>`), on top of the surface.
     std::vector<std::string> extra_exports;
+    // LLVM target triple (`--target`); empty selects the host triple.
+    std::string target;
 };
 
 // Emit textual IR (debug / --emit-ir).
 std::string llvm_emit_text(Program& prog, const EmitOptions& opts = {});
 
-// Emit a COFF object file. In the executable target every definition outside the export surface is
-// internalized before optimization, so unreachable code is removed (agents/toolchain-plan.md §11).
+// Emit an object file (COFF/ELF/Mach-O, chosen by the target triple). In the executable target every
+// definition outside the export surface is internalized before optimization, so unreachable code is
+// removed (agents/toolchain-plan.md §11).
 void llvm_emit_object(Program& prog, const std::string& obj_path, const EmitOptions& opts = {});

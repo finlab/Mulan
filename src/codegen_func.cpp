@@ -16,8 +16,35 @@ namespace muc_detail {
         ab.SetCurrentDebugLocation(DebugLoc());
     }
 
+    // SysV classifies each eightbyte as INTEGER or SSE; the backend hands a float-bearing aggregate one
+    // register per field, which disagrees with C's packing for e.g. `{float, float}`. Windows (MS ABI)
+    // coerces the whole aggregate through an integer, so it is fine there. Refuse instead of emitting
+    // code that silently passes the wrong register set.
+    static bool containsFloatField(const TypePtr& t) {
+        if (!t) return false;
+        if (t->kind == TypeKind::Prim) return t->name == "float" || t->name == "double";
+        if (t->kind == TypeKind::Struct) {
+            for (const auto& field : t->fields)
+                if (containsFloatField(field.type)) return true;
+            return false;
+        }
+        if (t->kind == TypeKind::Array) return containsFloatField(t->elem);
+        return false;
+    }
+
     void Emitter::emitFunction(FuncDecl* f) {
         if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm] emit " << f->name << "\n";
+        if (f->c_abi && !isWindowsTarget()) {
+            auto check = [&](const TypePtr& t) {
+                if (t && t->kind == TypeKind::Struct && containsFloatField(t)) {
+                    throw MuError("SysV C ABI with a floating-point aggregate is not implemented yet "
+                                  "(function `" + f->name + "`, target `" + targetTriple +
+                                  "`); pass the fields as scalars instead");
+                }
+            };
+            for (const auto& pt : f->pty) check(pt);
+            check(f->rty);
+        }
         Function* fn = nullptr;
         if (f->c_abi) {
             fn = llvm::dyn_cast<Function>(cAbiCallee(f).getCallee());
@@ -238,7 +265,7 @@ namespace muc_detail {
         mayThrow = computeMayThrow(prog);
         collectExportSurface();
         // target
-        std::string tripleStr = "x86_64-w64-windows-gnu";
+        std::string tripleStr = targetTriple.empty() ? llvm::sys::getDefaultTargetTriple() : targetTriple;
         targetTriple = tripleStr;
         std::string err;
         llvm::Triple triple(tripleStr);

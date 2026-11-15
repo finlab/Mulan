@@ -10,6 +10,98 @@
 
 ## Releases
 
+### 0.0.127 — 2026-11-15
+
+**Cross-platform code generation: `--target`, all LLVM targets, and per-target runtime choices.**
+
+- `--target <triple>` selects the LLVM triple (default `getDefaultTargetTriple()`); `InitializeAllTargets`
+  / `AllTargetMCs` / `AllAsmPrinters` make every backend available. Verified object output:
+  `x86_64-pc-linux-gnu` → ELF64 x86-64, `aarch64-unknown-linux-gnu` → ELF64 aarch64,
+  `arm64-apple-darwin` → Mach-O arm64.
+- Per-target runtime choices: over-aligned allocation uses `_aligned_malloc`/`_aligned_free` on Windows
+  and `posix_memalign` + `free` elsewhere (checked in the emitted IR); the output suffix (`.exe`) and the
+  default link driver (`gcc` / `cc` / `clang`) follow the target.
+- Cross targets refuse to link without an explicit `--cc` (the object and IR are still written), and the
+  produced file's magic is verified against the target so a host driver cannot silently "succeed" with
+  the wrong format.
+- SysV C-ABI aggregates containing `float`/`double` are refused at codegen with a clear message until
+  the INTEGER/SSE eightbyte classification lands: the backend passes one register per field, which
+  disagrees with C for e.g. `{float, float}`. (Windows coerces the whole aggregate through an integer,
+  so the host path is unaffected.)
+- `MUC_LIBS` now splits on `;` only on Windows (drive colons no longer truncate entries) and on `:` only
+  on POSIX. macOS gets `_NSGetExecutablePath` for the library search (no `/proc/self/exe` there).
+- Unit resolution verifies the on-disk spelling of every path segment: `unit foo.bar;` that only
+  matches `libs/Foo/bar.mu` through Windows' case-insensitivity is now an error, instead of failing on
+  Linux later.
+- Tests: 561/561 on both the UCRT64 and the MSVCRT builds (the host path is unchanged).
+
+### 0.0.126 — 2026-11-15
+
+**`muc run a.mu` — compile, link and run in one command.**
+
+- `run` is `build … --run` without the flag: same pipeline, same options (`-o`, `--cc`, `-g`,
+  `--link`, `--platform`, …), and the program's exit code is returned. `muc run` without an entry
+  prints the usage and exits with 2.
+- Also flushes the compiler's own output before spawning the linker and the program, so `+ gcc …`
+  and `ok: …` appear in the right order instead of after the program's output.
+- Tests: 561/561 on both the UCRT64 and the MSVCRT builds (`run` is sugar over the covered `build --run`).
+
+### 0.0.125 — 2026-11-15
+
+**Loader: a platform shadow may drop the unit segments its directory already represents.**
+
+- `libs/cstd/platform/windows/stdio.mu` now resolves as `cstd.stdio`: the shadow directory already
+  carries the library segment, so repeating it in the file name was noise. The full name
+  (`cstd.stdio.mu`) is still accepted, and having both is an error (`ambiguous unit`). Applies at
+  every shadow level (`libs/std/platform/windows/thread/backend.mu` = `std.thread.backend`, etc.).
+- The `cstd` units were renamed to the short form accordingly; no unit name changed.
+- Also documents the `--platform <os>[-<arch>[-<abi>]]` key chain in SPEC 2.1 (most specific shadow
+  first: `os-arch-abi`, `os-arch`, `os`).
+- Tests: 561/561 on both the UCRT64 and the MSVCRT builds.
+
+### 0.0.124 — 2026-11-15
+
+**`cstd`: the C standard library bindings land as a separate library (Windows/UCRT first).**
+
+- New library `cstd` under `libs/cstd/platform/windows/`, unit names `cstd.<header>`: `stdio`, `stdlib`,
+  `string`, `ctype`, `math`, `time`, `locale`, `errno`, `limits`, `floats`, `stdint`, `inttypes`, `fenv`.
+  Raw declarations only (C semantics, no checks, no exceptions, no ownership).
+- **Loader**: `--platform os[-arch[-abi]]` (e.g. `windows-x86_64-ucrt`), resolving shadow directories in
+  the order `os-arch-abi → os-arch → os`, with flat file names (`cstd.stdio.mu`). `--os` still selects
+  the OS axis alone; `build` still refuses a non-host OS.
+- **Macro globals as functions**: `stdin()/stdout()/stderr()` call `__acrt_iob_func`, `errno` is
+  `cstd.errno.current()` over `_errno()` — no data-symbol import, and `dllimport` is irrelevant for them.
+- **Deliberately not bound**: `va_list` families, `setjmp`, the wide-character API, `complex` (needs a
+  2×double convention), `uchar.h` (`mbstate_t` layout, UCRT-only), `signal.h`. `timespec_get` is kept
+  out of the shared Windows unit so the same file links against both CRTs.
+- **Language limits made explicit**: `realloc`/`free`/`alloc` are builtins and not redeclared; `strtold`
+  is absent (no `long double`); `const char*` does not implicitly convert to `const void*`, so literals
+  passed to `memcpy`/`fwrite` need `as const void*`.
+- **Tests**: `cstd_stdio` and `cstd_core` take the address of **every** non-variadic declaration (link
+  coverage) and exercise file I/O, strings, sorting/searching, math, the time round-trip, locale, errno,
+  fenv and inttypes. 561/561 on both the UCRT64 and the MSVCRT builds.
+
+### 0.0.123 — 2026-11-15
+
+**Windows development moves to the UCRT toolchain; absurd nesting is now rejected by a sane cap instead of a stack overflow.**
+
+- **Why**: the standard-library plan targets the Universal CRT (it is the CRT MSVC/Rust/Python use, it is
+  serviced with Windows, and it carries the C11 pieces our baseline whitelists). CI already built with
+  MSYS2 UCRT64; local builds used the MinGW/MSVCRT toolchain. Switching exposed a latent bug:
+  `deep_nesting` (3000 nested parentheses) crashed with a stack overflow before the parser's limit was
+  reached — the old cap (3072 guard levels ≈ 1000 parentheses) was far above anything real code needs,
+  and the UCRT/GCC 16.2 build spends ~2.7 KB of stack per level.
+- **Change**: `kMaxNestDepth` goes from 3072 to **320 guard levels**, which is about **100 nested
+  parentheses** (a parenthesised subexpression costs 3 levels: expression → unary → primary). That is
+  ~0.9 MB of frames, so the executable keeps its 8 MB stack reserve unchanged. Hand-written code
+  rarely exceeds ~10 levels; `deep_parens` now locks 100 nested parentheses as still accepted, and
+  `deep_nesting` (3000) gets the diagnostic instead of a crash. The loop-built chain cap
+  (`kMaxChainLinks = 2048`) is unchanged.
+- **Also**: CMake probes `ucrt64`'s LLVM first; the README quick start installs the UCRT64 toolchain.
+  Produced executables import `KERNEL32.dll` plus a handful of `api-ms-win-crt-*.dll` names — API sets
+  resolved by the OS, so a program is still distributed as a single file.
+- **Tests**: 559/559 on both the UCRT64 build and the MinGW/MSVCRT build.
+
 ### 0.0.122 — 2026-11-14
 
 **Correctness sweep from the review of 0.0.120: silent generic miscompiles, a heap out-of-bounds, a

@@ -66,12 +66,16 @@
 - **Platform shadows**: a directory `platform/<os>/` (`<os>` = `windows`, `linux`, `macos`) shadows
   the units below its parent, nearest directory first. For `a.b.c` the loader tries
   `<root>/a/b/platform/<os>/…`, `<root>/a/platform/<os>/…`, `<root>/platform/<os>/…`, and only then
-  the portable unit. Inside a shadow directory the file keeps the **full** unit name, so a library
-  ships its own per-OS implementations next to its code and stays vendorable as one directory:
-  `libs/std/platform/windows/std.thread.backend.mu`, `ms/xxlib/platform/linux/ms.xxlib.io.mu`.
+  the portable unit. Inside a shadow directory the file may keep the **full** unit name
+  (`libs/std/platform/windows/std.thread.backend.mu`) or **drop the segments the directory already
+  represents** (`libs/cstd/platform/windows/stdio.mu` is `cstd.stdio`); the full name is always
+  accepted, and having both is an error (ambiguous unit). A library therefore ships its own per-OS
+  implementations next to its code and stays vendorable as one directory.
   `platform` is reserved for this: a unit name may not start with it, and a `platform.<os>` segment
-  pair is rejected. Two files for the same unit in one directory is an error (ambiguous unit).
-  `muc check --os <os>` resolves the program against another platform's units, on any host.
+  pair is rejected.
+  `muc check --os <os>` / `--platform <os>[-<arch>[-<abi>]]` resolves the program against another
+  platform's units, on any host; the shadow keys are tried most specific first
+  (`<os>-<arch>-<abi>`, `<os>-<arch>`, `<os>`), so a unit only needs the level where it really differs.
 
 ### 2.2 Identifiers
 

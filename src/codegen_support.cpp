@@ -7,7 +7,10 @@
 
 namespace muc_detail {
 
-Emitter::Emitter(Program& p, bool dbg, bool bounds) : prog(p), wantDebug(dbg), boundsCheck(bounds) {}
+Emitter::Emitter(Program& p, bool dbg, bool bounds, std::string target)
+    : prog(p), wantDebug(dbg), boundsCheck(bounds) {
+    if (!target.empty()) targetTriple = std::move(target);
+}
 
 std::string sane(std::string s) {
     for (char& c : s) {
@@ -266,6 +269,29 @@ bool is_zero_literal(Init* init) {
         return b.CreateStructGEP(st, objPtr, idx);
     }
 
+    // Over-aligned C allocation: `_aligned_malloc` on Windows, `posix_memalign` elsewhere. Returns null
+    // on failure (the callers branch on null and abort), so the two failures are unified.
+    Value* Emitter::emitAlignedAlloc(Value* size, Value* alignment) {
+        if (isWindowsTarget()) {
+            return b.CreateCall(libFn("_aligned_malloc", ptrTy(), {i64(), i64()}), {size, alignment});
+        }
+        auto* slot = entryAlloca(ptrTy(), "aligned.slot", 8);
+        b.CreateStore(Constant::getNullValue(ptrTy()), slot);
+        Value* rc = b.CreateCall(libFn("posix_memalign", i32(), {ptrTy(), i64(), i64()}),
+                                 {slot, alignment, size});
+        Value* p = b.CreateLoad(ptrTy(), slot);
+        return b.CreateSelect(b.CreateICmpNE(rc, ConstantInt::get(i32(), 0)),
+                              Constant::getNullValue(ptrTy()), p);
+    }
+
+    void Emitter::emitAlignedFree(Value* ptr) {
+        if (isWindowsTarget()) {
+            b.CreateCall(libFn("_aligned_free", LType::getVoidTy(ctx), {ptrTy()}), {ptr});
+        } else {
+            b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {ptr});
+        }
+    }
+
     // Allocate a class object: header (rc = 1, class descriptor) plus zeroed fields. The caller stores
     // the fields — `new` then runs a constructor, a synthesized lambda environment (U41) copies the
     // captures directly.
@@ -273,9 +299,8 @@ bool is_zero_literal(Init* init) {
         uint64_t sz = objectSize(cls);
         Value* p = nullptr;
         if (classNeedsAlignedAlloc(cls)) {
-            p = b.CreateCall(libFn("_aligned_malloc", ptrTy(), {i64(), i64()}),
-                             {ConstantInt::get(i64(), sz),
-                              ConstantInt::get(i64(), objectAlign(cls))});
+            p = emitAlignedAlloc(ConstantInt::get(i64(), sz),
+                                 ConstantInt::get(i64(), objectAlign(cls)));
         } else {
             p = b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {ConstantInt::get(i64(), sz)});
         }

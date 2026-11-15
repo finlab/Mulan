@@ -15,7 +15,8 @@
 
   **2026-11-14 已定方案（待实施）**：→ 详见 `agents/stdlib/abi-boundary.md`
   - 要专门的边界单元 `std.ffi`（先做一个 unit，条目多了再拆）；
-  - 完整规则已写成三张表（直接可用 / 需要包装 / 包装也不行），公开摘要进 `docs/StdLibSPEC.md` §8；
+  - 完整规则已写成三张表（直接可用 / 需要包装 / 包装也不行），公开摘要**暂未**进
+    `docs/StdLibSPEC.md`（该节曾被撤回，待实施时再提炼）；
   - 导出函数 nothrow 只警告不强制；`--emit-header` 暂缓；句柄用 `Handle<T>` 优先。
 
 ## 待办
@@ -30,3 +31,11 @@
   `__acrt_iob_func()`），`extern` 声明会 `undefined reference`；`dllimport` 解决不了，必须绑访问器函数。
   真正的数据符号（`_iob` / `_environ` / `_fmode`）在 msvcrt 导出表里、今天能链上，但属 Windows 私有，
   归 `std.win32`。详见 `agents/stdlib/c-bindings.md` §3.2。
+
+- [ ] 工具链 — **切到 UCRT（2026-11-15 定）**：安装 `mingw-w64-ucrt-x86_64-gcc` + `mingw-w64-ucrt-x86_64-llvm`，
+  用 ucrt64 工具链构建 muc 本身，`--cc` 默认指向 ucrt64 gcc；CI 的 import 白名单从 `msvcrt.dll` 改成
+  `ucrtbase.dll` + `api-ms-win-crt-*.dll`；`cstd` 的平台键用 `windows-x86_64-ucrt`（msvcrt 变体保留）。
+  依据：`agents/stdlib/c-bindings.md` §2.1、`agents/portability-plan.md` §3。
+
+- [ ] 可选 — **用 MSVC 构建 muc 自己**：源码无 GNU 扩展，前提是 MSVC 版 LLVM（官方二进制/vcpkg）；
+  另需 `/utf-8`、`src/loader.cpp` 的 `NOMINMAX`。评估见 `agents/portability-plan.md` §3。
