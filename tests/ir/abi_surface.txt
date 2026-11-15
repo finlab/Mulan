@@ -1,5 +1,8 @@
 # C ABI of exported symbols (SPEC 7.2 / 9). Every line is a regex over the optimized IR:
 #   + must match, - must not match.
+# This is the MS x64 shape; `abi_surface.linux.txt` holds the SysV one. The marker keeps a host that
+# has neither profile (macOS today) from asserting the wrong ABI.
+@platform windows
 # 16-byte struct parameter: by reference (byval), not split into two registers.
 + define i64 @mu_abi_surface_take_pair__S_abi_surface_Pair\(ptr .*byval\(%mu_abi_surface_Pair\) align 8
 - define i64 @mu_abi_surface_take_pair__S_abi_surface_Pair\(%mu_abi_surface_Pair

@@ -62,7 +62,6 @@ using llvm::DIType;
 using llvm::ConstantAsMetadata;
 using llvm::DILocation;
 using llvm::DINode;
-using llvm::DISourceLanguageName;
 using llvm::DISubprogram;
 using llvm::CallInst;
 using llvm::Constant;
@@ -241,6 +240,8 @@ struct Emitter {
     // slot of the aggregate's size, which is exactly what the ABI does).
     Value* coerceToReg(Value* v, const TypePtr& t, LType* reg);
     Value* coerceFromReg(Value* v, const TypePtr& t);
+    // Slot shared by both directions: big enough for the register type, aligned for an i64 access.
+    AllocaInst* cAbiSlot(const TypePtr& t);
     // Declaration (and callee) for a `c_abi` function, with `byval`/`sret`/`align` attributes applied.
     FunctionCallee cAbiCallee(FuncDecl* f);
     // Same attributes on a call site: LLVM only lowers a first-class aggregate as C expects when the

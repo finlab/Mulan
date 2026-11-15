@@ -50,25 +50,29 @@ public ulong monotonic_ms() { return backend_monotonic_ms(); }
 
 // ---------------------------------------------------------------- mutex
 
+// `s` is opaque storage for the OS lock object, sized for the largest backend: SRWLOCK and
+// CONDITION_VARIABLE are 8 bytes, pthread_mutex_t is 40 and pthread_cond_t 48 on 64-bit Linux. Both
+// backends accept zeroed memory as an initialised object, which is what lets a Mutex be a plain
+// field with no init/destroy call.
 public struct Mutex {
-    usize s;      // SRWLOCK: the zero value is a valid unlocked lock
+    usize[8] s;
 }
 
-public void mutex_lock(ref Mutex m) { backend_mutex_lock(&m.s); }
-public void mutex_unlock(ref Mutex m) { backend_mutex_unlock(&m.s); }
+public void mutex_lock(ref Mutex m) { backend_mutex_lock(&m.s[0]); }
+public void mutex_unlock(ref Mutex m) { backend_mutex_unlock(&m.s[0]); }
 
 // ---------------------------------------------------------------- condition variable
 
 public struct CondVar {
-    usize s;      // CONDITION_VARIABLE: same representation
+    usize[8] s;
 }
 
 // Waits until signalled or `ms` elapses (THREAD_WAIT_INFINITE for no timeout). The mutex must
 // be held on entry; it is re-acquired before returning. Returns true when signalled.
 public bool cond_wait(ref CondVar c, ref Mutex m, uint ms) {
-    return backend_cond_wait(&c.s, &m.s, ms) != 0;
+    return backend_cond_wait(&c.s[0], &m.s[0], ms) != 0;
 }
 
-public void cond_signal(ref CondVar c) { backend_cond_signal(&c.s); }
-public void cond_broadcast(ref CondVar c) { backend_cond_broadcast(&c.s); }
+public void cond_signal(ref CondVar c) { backend_cond_signal(&c.s[0]); }
+public void cond_broadcast(ref CondVar c) { backend_cond_broadcast(&c.s[0]); }
 

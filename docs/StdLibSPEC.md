@@ -23,8 +23,8 @@ A unit belongs to exactly one layer. The unit-name prefix makes the layer visibl
 | Layer | Units | Contract | Status |
 |---|---|---|---|
 | **L0 ABI types** | `std.ctypes` | C-side widths, per platform | implemented |
-| **L1 raw C bindings** | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | a **separate library** (`libs/cstd/`): C semantics — sentinel returns, `errno`, caller-owned buffers, no checks, no exceptions, no ownership | implemented for Windows/UCRT |
-| **L1 platform C** | per-platform files of the same `cstd.*` units (`platform/<os>/`) | the same C library where the targets disagree; a unit only needs the level where it really differs | Windows implemented; POSIX/macOS planned |
+| **L1 raw C bindings** | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | a **separate library** (`libs/cstd/`): C semantics — sentinel returns, `errno`, caller-owned buffers, no checks, no exceptions, no ownership | implemented for Windows/UCRT and Linux/glibc |
+| **L1 platform C** | per-platform files of the same `cstd.*` units (`platform/<os>/`) | the same C library where the targets disagree; a unit only needs the level where it really differs | Windows and Linux implemented; macOS planned |
 | **L2 native API** | `std.string`, `std.fmt`, `std.io`, `std.collections`, `std.fs`, `std.parse`, `std.random`, `std.unicode`, `std.time` | Mulan semantics: exceptions, bounds checks, explicit state, value types where possible | `string` implemented, the rest planned |
 | **L3 runtime contracts** | `std.exception`, `std.interfaces`, `std.task`, `std.thread` | The minimum the compiler and the runtime need; implicitly loaded | implemented |
 
@@ -61,7 +61,7 @@ that matter for the layer model:
 | Unit | Layer | Implicit | Public surface | Details |
 |---|---|---|---|---|
 | `std.ctypes` | L0 | no | `c_char` … `c_voidp` | §5, §7 |
-| `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | L1 | no | the ISO headers, one unit per header, in the separate `cstd` library; Windows implementation under `libs/cstd/platform/windows/` | §5, §7 |
+| `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | L1 | no | the ISO headers, one unit per header, in the separate `cstd` library; one implementation per platform under `libs/cstd/platform/<os>/` (`windows` = MSVC CRT, `linux` = glibc) | §5, §7 |
 | `std.string` | L2 | **yes** | `String`: `length`, `is_empty`, `operator[]`, `==`, `sub`, `concat`, `find`, `trim`, `starts_with`, `ends_with`, `cstr`, `strlen` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
 | `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `bounds_fail` | §6.1 |
 | `std.interfaces` | L3 | **yes** | `IIterator<T>`, `IEnumerable<T>`, `IIndexable<T>`, `IEquatable`, `IOrdered`, `IAddable` … | §6.2 |

@@ -36,10 +36,27 @@ namespace muc_detail {
         if (std::getenv("MUC_LLVM_TRACE")) std::cerr << "[llvm] emit " << f->name << "\n";
         if (f->c_abi && !isWindowsTarget()) {
             auto check = [&](const TypePtr& t) {
-                if (t && t->kind == TypeKind::Struct && containsFloatField(t)) {
+                if (!t || t->kind != TypeKind::Struct) return;
+                if (containsFloatField(t)) {
                     throw MuError("SysV C ABI with a floating-point aggregate is not implemented yet "
                                   "(function `" + f->name + "`, target `" + targetTriple +
                                   "`); pass the fields as scalars instead");
+                }
+                // SysV puts an aggregate whose field is unaligned, or straddles an eightbyte, in class
+                // MEMORY (passed by pointer). Packing it through two INTEGER registers would silently
+                // move that field, so refuse instead.
+                for (size_t i = 0; i < t->fields.size(); ++i) {
+                    const TypePtr& ft = t->fields[i].type;
+                    const uint64_t off = type_member_offset(t, i);
+                    const uint64_t fsz = type_size(ft);
+                    const uint64_t fal = type_align(ft);
+                    const bool unaligned = fal != 0 && off % fal != 0;
+                    const bool straddles = fsz != 0 && (off / 8) != ((off + fsz - 1) / 8);
+                    if (unaligned || straddles) {
+                        throw MuError("SysV C ABI with an unaligned (packed) aggregate is not implemented "
+                                      "yet (function `" + f->name + "`, target `" + targetTriple +
+                                      "`); pass the fields as scalars instead");
+                    }
                 }
             };
             for (const auto& pt : f->pty) check(pt);
@@ -257,7 +274,10 @@ namespace muc_detail {
         dib = std::make_unique<DIBuilder>(*mod);
         diFile = dib->createFile(base, dir);
         diCu = dib->createCompileUnit(
-            DISourceLanguageName(llvm::dwarf::DW_LANG_C99), diFile, "muc " MUC_VERSION,
+            // LLVM < 23 takes the language as `unsigned`, >= 23 as a `DISourceLanguageName`
+            // wrapper class; the plain DWARF enum converts implicitly to both, a cast to either
+            // type breaks the other.
+            llvm::dwarf::DW_LANG_C99, diFile, "muc " MUC_VERSION,
             /*isOptimized=*/false, "", 0);
     }
 
@@ -269,14 +289,27 @@ namespace muc_detail {
         targetTriple = tripleStr;
         std::string err;
         llvm::Triple triple(tripleStr);
+        // LLVM 19 moved the module-level target APIs from `const std::string&` to `const Triple&`.
+#if LLVM_VERSION_MAJOR >= 19
         const Target* target = TargetRegistry::lookupTarget(triple, err);
+#else
+        const Target* target = TargetRegistry::lookupTarget(tripleStr, err);
+#endif
         if (!target) throw MuError("LLVM backend: cannot find target " + tripleStr + ": " + err);
         TargetOptions opt;
+#if LLVM_VERSION_MAJOR >= 19
         tm.reset(target->createTargetMachine(triple, "generic", "", opt,
+#else
+        tm.reset(target->createTargetMachine(tripleStr, "generic", "", opt,
+#endif
                                              std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_),
                                              std::nullopt, CodeGenOptLevel::Default));
         mod = std::make_unique<Module>("mulan", ctx);
+#if LLVM_VERSION_MAJOR >= 19
         mod->setTargetTriple(triple);
+#else
+        mod->setTargetTriple(tripleStr);
+#endif
         if (tm) mod->setDataLayout(tm->createDataLayout());
         mod->addModuleFlag(Module::Warning, "mulan.version",
                            llvm::MDString::get(ctx, MUC_VERSION));

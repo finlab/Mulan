@@ -1,0 +1,1 @@
+read=5 text=hello eof=-1 bufsiz=8192 refs=32

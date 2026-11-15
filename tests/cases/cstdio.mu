@@ -31,8 +31,9 @@ int main() {
                       std.cstdio.EOF, std.cstdio.SEEK_END, std.cstdio.BUFSIZ);
 
     // ---- other output functions ----
+    // Only the sign is portable: glibc returns the character count, the Windows CRT returns 0.
     int n = std.cstdio.puts("puts works");
-    std.cstdio.printf("puts returned %d\n", n);
+    std.cstdio.printf("puts ok=%d\n", n >= 0 ? 1 : 0);
     std.cstdio.putchar('X');
     std.cstdio.putchar('\n');
     return 0;

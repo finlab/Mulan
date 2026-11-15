@@ -1,0 +1,2 @@
+@platform linux
+posix case=1 aligned=1 gm=86400 tm=1 env=1 tok=1 refs=12

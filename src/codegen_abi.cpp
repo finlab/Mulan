@@ -16,19 +16,32 @@ namespace muc_detail {
 
     LType* Emitter::coercedType(AbiPass pass, const TypePtr& t) {
         if (pass != AbiPass::CoerceInt) return nullptr;
+        // One INTEGER register per eightbyte: MS x64 only ever uses a single one (1/2/4/8 bytes),
+        // SysV takes 9..16 bytes as two.
+        if (sizeOf(t) > 8) return llvm::StructType::get(ctx, std::vector<LType*>{i64(), i64()});
         return IntegerType::get(ctx, static_cast<unsigned>(sizeOf(t) * 8));
     }
 
+    AllocaInst* Emitter::cAbiSlot(const TypePtr& t) {
+        // A 9..16-byte aggregate is loaded and stored as two i64, so the slot is rounded up to 16
+        // bytes — sizing it to the aggregate would let the two-register store run past it. The
+        // alignment is the aggregate's own, widened to 8 for the i64 access; the *size* is never used
+        // as an alignment (a 6-byte aggregate has align 2, and `Align(6)` is not a power of two).
+        if (sizeOf(t) > 8) {
+            auto* slot = entryAlloca(llvm::ArrayType::get(i64(), 2), "carg", 16);
+            return slot;
+        }
+        return entryAlloca(lt(t), "carg", std::max<uint64_t>(alignOf(t), 8));
+    }
+
     Value* Emitter::coerceToReg(Value* v, const TypePtr& t, LType* reg) {
-        // The slot must satisfy the register type's alignment too: a packed aggregate only asks for
-        // 1 byte, but an i64/f64 access through it claims its natural alignment.
-        auto* tmp = entryAlloca(lt(t), "carg", std::max<uint64_t>(alignOf(t), sizeOf(t)));
+        auto* tmp = cAbiSlot(t);
         b.CreateStore(v, tmp);
         return b.CreateLoad(reg, tmp);
     }
 
     Value* Emitter::coerceFromReg(Value* v, const TypePtr& t) {
-        auto* tmp = entryAlloca(lt(t), "cres", std::max<uint64_t>(alignOf(t), sizeOf(t)));
+        auto* tmp = cAbiSlot(t);
         b.CreateStore(v, tmp);
         return b.CreateLoad(lt(t), tmp);
     }

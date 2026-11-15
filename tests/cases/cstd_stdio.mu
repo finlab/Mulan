@@ -1,4 +1,8 @@
 // cstd.stdio: every declaration resolves at link time, and the core file API round-trips.
+//
+// Restricted to the portable surface: the MSVC-only `__acrt_iob_func` / `_flushall` / `_snprintf`
+// are covered by `cstd_windows`, the POSIX additions by `cstd_posix`. `BUFSIZ` really differs between
+// the CRTs, so the expected output has a per-OS file.
 unit cstd_stdio;
 
 use cstd.stdio;
@@ -17,20 +21,19 @@ void variadic_refs(char* buffer) {
         sprintf(buffer, "%d", v);
         sscanf("42", "%d", &v);
         snprintf(buffer, 8, "%d", v);
-        _snprintf(buffer, 8, "%d", v);
     }
 }
 
 int main() {
     // One reference per non-variadic declaration: a missing symbol fails the link.
-    void*[34] refs = {
+    void*[32] refs = {
         fopen as void*, freopen as void*, fclose as void*, fflush as void*,
-        _flushall as void*, remove as void*, rename as void*, tmpfile as void*,
+        remove as void*, rename as void*, tmpfile as void*,
         tmpnam as void*, setbuf as void*, setvbuf as void*, fread as void*,
         fwrite as void*, fgetc as void*, getc as void*,
         getchar as void*, fgets as void*, fputc as void*, putc as void*,
         putchar as void*, fputs as void*, puts as void*, ungetc as void*,
-        __acrt_iob_func as void*, perror as void*,
+        perror as void*,
         fseek as void*, ftell as void*, rewind as void*, fgetpos as void*,
         fsetpos as void*, clearerr as void*, feof as void*, ferror as void*,
         fileno as void*

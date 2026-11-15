@@ -1,3 +1,4 @@
+@platform windows
 c pair 34
 c pair back 5 6
 c wide 123

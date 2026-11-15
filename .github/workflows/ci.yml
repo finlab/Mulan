@@ -52,3 +52,31 @@ jobs:
         run: |
           export MUC_CMD="$PWD/build/muc.exe"
           python tests/run_tests.py
+
+  build-test-linux:
+    name: build & test (Ubuntu, LLVM dev)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      # `llvm-dev` bundles `llvm-config`, which is what the CMake configure step needs; the runtime
+      # platform layer (pthread + ucontext + glibc declarations) is exercised by the same suite.
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build llvm-dev clang
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR="$(llvm-config --cmakedir)"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Version
+        run: ./build/muc --version
+
+      - name: Run regression tests
+        run: |
+          export MUC_CMD="$PWD/build/muc"
+          python3 tests/run_tests.py

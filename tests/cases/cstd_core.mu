@@ -1,4 +1,8 @@
 // cstd core units: every declaration resolves at link time, and the common surface behaves.
+//
+// This case is restricted to the part of the binding surface that exists on every supported
+// platform; the MSVC-only and POSIX-only symbols are covered by `cstd_windows` / `cstd_posix`, which
+// carry an `@platform` marker. The C ABI itself (LP64 vs LLP64) shows up in the last output line.
 unit cstd_core;
 
 use cstd.ctype;
@@ -24,10 +28,9 @@ int compare_int(const void* left, const void* right) {
 
 int main() {
     // ---------------------------------------------------------------- link coverage
-    void*[33] stdlib_refs = {
-        malloc as void*, calloc as void*, _aligned_malloc as void*, _aligned_free as void*,
-        abort as void*, exit as void*, _Exit as void*, atexit as void*,
-        system as void*, getenv as void*, _putenv as void*, strtod as void*,
+    void*[30] stdlib_refs = {
+        malloc as void*, calloc as void*, abort as void*, exit as void*, _Exit as void*,
+        atexit as void*, system as void*, getenv as void*, strtod as void*,
         strtof as void*, strtol as void*, strtoul as void*, strtoll as void*,
         strtoull as void*, atoi as void*, atol as void*, atoll as void*,
         atof as void*, abs as void*, labs as void*, llabs as void*,
@@ -35,15 +38,13 @@ int main() {
         mblen as void*, mbtowc as void*, wctomb as void*, mbstowcs as void*,
         wcstombs as void*
     };
-    void*[31] string_refs = {
+    void*[24] string_refs = {
         memcpy as void*, memmove as void*, memset as void*, memcmp as void*,
         memchr as void*, strlen as void*, strnlen as void*, strcmp as void*,
         strncmp as void*, strcoll as void*, strxfrm as void*, strcpy as void*,
         strncpy as void*, strcat as void*, strncat as void*, strchr as void*,
         strrchr as void*, strspn as void*, strcspn as void*, strpbrk as void*,
-        strstr as void*, strtok as void*, strerror as void*, _strdup as void*,
-        strdup as void*, _stricmp as void*, _strnicmp as void*, strtok_s as void*,
-        strerror_s as void*, _expand as void*, _msize as void*
+        strstr as void*, strtok as void*, strerror as void*, strdup as void*
     };
     void*[14] ctype_refs = {
         isalnum as void*, isalpha as void*, isblank as void*, iscntrl as void*,
@@ -85,7 +86,7 @@ int main() {
     void*[3] inttypes_refs = {
         imaxabs as void*, strtoimax as void*, strtoumax as void*
     };
-    void*[1] errno_refs = { _errno as void* };
+    void*[1] errno_refs = { current as void* };
 
     // ---------------------------------------------------------------- string / ctype
     c_size length = cstd.string.strlen("hello");
@@ -130,8 +131,19 @@ int main() {
     double down = floor(-1.5);
 
     // ---------------------------------------------------------------- time round-trip
-    Tm broken = {tm_sec = 0, tm_min = 0, tm_hour = 0, tm_mday = 1, tm_mon = 0,
-                 tm_year = 100, tm_wday = 0, tm_yday = 0, tm_isdst = -1};
+    // `Tm` carries platform extensions (glibc adds `tm_gmtoff`/`tm_zone`), so the aggregate is
+    // zero-filled first and only the standard fields are assigned: a named initializer would have to
+    // list the extension fields too.
+    Tm broken = {};
+    broken.tm_sec = 0;
+    broken.tm_min = 0;
+    broken.tm_hour = 0;
+    broken.tm_mday = 1;
+    broken.tm_mon = 0;
+    broken.tm_year = 100;
+    broken.tm_wday = 0;
+    broken.tm_yday = 0;
+    broken.tm_isdst = -1;
     Time stamp = mktime(&broken);
     Tm* back = localtime(&stamp);
     int year_ok = back != null and back->tm_year == 100 and back->tm_mon == 0 ? 1 : 0;

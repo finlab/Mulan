@@ -10,6 +10,8 @@
 #    define WIN32_LEAN_AND_MEAN
 #  endif
 #  include <windows.h>
+#else
+#  include <sys/wait.h>
 #endif
 
 #include <cstdio>
@@ -99,6 +101,34 @@ static void enableUtf8Console() {}
 #endif
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
+
+// `std::system` returns the process exit code on Windows, but a wait status on POSIX (exit code in
+// bits 8-15, or the signal number). Normalize so `--run` forwards a real exit code either way.
+static int shell_status(int rc) {
+#ifdef _WIN32
+    return rc;
+#else
+    if (rc == -1) return rc;
+    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
+    if (WIFSIGNALED(rc)) return 128 + WTERMSIG(rc);
+    return rc;
+#endif
+}
+
+// Whether the link driver should be given the POSIX-only libraries. An empty target means "host", so
+// the host decides; an explicit triple decides by its OS, which matters when cross-linking.
+static bool posix_libc_target(const std::string& target) {
+    // `mingw` has no "windows" substring, so both spellings are checked.
+    if (!target.empty()) {
+        return target.find("windows") == std::string::npos &&
+               target.find("mingw") == std::string::npos;
+    }
+#ifdef _WIN32
+    return false;
+#else
+    return true;
+#endif
+}
 
 // On Windows std::system is parsed by cmd.exe: forward-slash paths are treated as argument separators and cannot execute,
 // so convert them to backslashes before passing to the shell (gcc accepts both forms).
@@ -494,9 +524,13 @@ static int cmd_build(const std::vector<std::string>& args) {
     }
     std::string cmd = ba.cc + " -o " + quote(native_path(out.string())) + " " + quote(native_path(obj.string()));
     for (const auto& extra : ba.link) cmd += " " + quote(native_path(extra));
+    // POSIX keeps the math and thread entry points in separate libraries (`-lm`, `-lpthread`), while
+    // the Windows CRTs have both in the default set: without these the link fails on `pow`,
+    // `fegetround`, `pthread_create`, ...
+    if (posix_libc_target(ba.target)) cmd += " -lm -lpthread";
     std::cout << "+ " << cmd << "\n";
     std::cout.flush();
-    int rc = std::system(cmd.c_str());
+    int rc = shell_status(std::system(cmd.c_str()));
     if (rc != 0) {
         std::cerr << "error: link failed (object file: " << obj.string()
                   << ", IR: " << ir_path.string() << ")\n";
@@ -509,7 +543,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     std::cout << "ok: " << out.string() << "\n";
     if (ba.run) {
         std::cout.flush();
-        return std::system(quote(native_path(out.string())).c_str());
+        return shell_status(std::system(quote(native_path(out.string())).c_str()));
     }
     return 0;
 }

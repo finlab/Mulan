@@ -39,3 +39,18 @@
 
 - [ ] 可选 — **用 MSVC 构建 muc 自己**：源码无 GNU 扩展，前提是 MSVC 版 LLVM（官方二进制/vcpkg）；
   另需 `/utf-8`、`src/loader.cpp` 的 `NOMINMAX`。评估见 `agents/portability-plan.md` §3。
+
+- [ ] 标准库 — **`std.cstdio` 的常量仍是 Windows CRT 的硬编码**（`BUFSIZ = 512`、`FILENAME_MAX = 260`），
+  而 glibc 的真值是 8192 / 4096；`cstd.stdio` 那边已经是平台正确值。本想写
+  `public const int BUFSIZ = cstd.stdio.BUFSIZ;`，但 0.0.128 实测报「initializer of `const` unit-level
+  variable must be a compile-time constant」（跨 unit 限定名不进常量求值器），所以暂时维持硬编码，
+  `cstdio` 用例已改成不依赖该值的写法。要修得先让跨 unit 的 const 引用参与常量求值，
+  或把 `std.cstdio` 退化成 `cstd.stdio` 的别名层。
+
+- [ ] 标准库 — **macOS 平台层缺失**：`libs/std/platform/macos` 只有 `std/ctypes.mu`，
+  `std/thread/backend` 与 `libs/cstd/platform/macos` 都没有；0.0.128 只落了 Linux。
+  Linux 的 backend（pthread + ucontext）大体可复用，差异在 mach 的线程状态接口与 dyld（`_NSGetExecutablePath` 已有）。
+
+- [ ] C ABI — **SysV 下含 float 的聚合仍未实现**（0.0.128 已把整数类聚合按两个 INTEGER eightbyte 打包）：
+  需要 per-eightbyte 的 INTEGER/SSE 分类；目前 codegen 对这类签名直接报错拒绝，
+  `abi_agg` / `abi_float` 用例已用 `@platform windows` 隔离。

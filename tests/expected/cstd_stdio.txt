@@ -1,1 +1,1 @@
-read=5 text=hello eof=-1 bufsiz=512 refs=34
+read=5 text=hello eof=-1 bufsiz=512 refs=32

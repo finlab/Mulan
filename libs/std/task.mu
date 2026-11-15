@@ -16,6 +16,7 @@
 public unit std.task;
 
 use std.thread.backend;
+use std.thread;
 
 // ---------------------------------------------------------------- public surface
 
@@ -61,9 +62,12 @@ struct Carrier {
     bool busy;   // running a task (a stalled busy carrier is what handoff looks for)
 }
 
-usize S = 0;    // scheduler lock (SRWLOCK: all-zero is a valid unlocked lock)
-usize qcv = 0;  // carriers sleep here when the run queue is empty
-usize dcv = 0;  // plain threads (main) sleep here while joining
+// The OS lock objects come from std.thread: their storage is backend-specific (8 bytes for
+// SRWLOCK/CONDITION_VARIABLE, 40/48 for pthread objects), so a raw `usize` here would be wrong on
+// POSIX.
+Mutex S;       // scheduler lock
+CondVar qcv;   // carriers sleep here when the run queue is empty
+CondVar dcv;   // plain threads (main) sleep here while joining
 
 Task* run_head = null;
 Task* run_tail = null;
@@ -90,8 +94,8 @@ bool started = false;
 
 // ---------------------------------------------------------------- scheduler primitives
 
-void lock_sched() { backend_mutex_lock(&S); }
-void unlock_sched() { backend_mutex_unlock(&S); }
+void lock_sched() { mutex_lock(S); }
+void unlock_sched() { mutex_unlock(S); }
 
 // Both require the scheduler lock. Pushing a task wakes one sleeping carrier: without that signal a
 // task can sit in a non-empty queue while every carrier sleeps (lost wakeup), which hangs the join.
@@ -104,7 +108,7 @@ void push_run(Task* t) {
     }
     run_tail = t;
     run_n = run_n + 1;
-    backend_cond_signal(&qcv);
+    cond_signal(qcv);
 }
 
 Task* pop_run() {
@@ -198,7 +202,7 @@ void finish_locked(Task* t) {
         push_run(w);
         w = nx;
     }
-    backend_cond_broadcast(&dcv);
+    cond_broadcast(dcv);
     fiber_release_locked((*t).fiber);
 }
 
@@ -212,7 +216,7 @@ void carrier_main(void* arg) {
         if (t == null) {
             (*rec).busy = false;
             (*rec).hb = backend_monotonic_ms();
-            backend_cond_wait(&qcv, &S, WAIT_FOREVER);
+            cond_wait(qcv, S, WAIT_FOREVER);
             unlock_sched();
             continue;
         }
@@ -388,7 +392,7 @@ public void muc_para_join(void* h) {
         }
         if (cur == null) {
             while (*t).state != T_DONE {
-                backend_cond_wait(&dcv, &S, WAIT_FOREVER);
+                cond_wait(dcv, S, WAIT_FOREVER);
             }
         } else {
             (*cur).wnext = (*t).waiters;

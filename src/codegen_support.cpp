@@ -495,21 +495,27 @@ bool is_zero_literal(Init* init) {
             return dib->createPointerType(pointee, bits);
         }
         if (t->kind == TypeKind::Struct) {
+            // LLVM 19 turned the size/offset operands of a composite DI type from plain byte counts
+            // into metadata, so the same call site has two shapes.
+#if LLVM_VERSION_MAJOR >= 19
+            auto diBits = [&](uint64_t v) -> llvm::Metadata* {
+                return ConstantAsMetadata::get(ConstantInt::get(i64(), v));
+            };
+#else
+            auto diBits = [](uint64_t v) -> uint64_t { return v; };
+#endif
             std::vector<llvm::Metadata*> members;
             members.reserve(t->fields.size());
             for (size_t i = 0; i < t->fields.size(); ++i) {
                 const auto& f = t->fields[i];
                 members.push_back(dib->createMemberType(
                     diCu, f.name, diFile, 0,
-                    ConstantAsMetadata::get(ConstantInt::get(
-                        i64(), static_cast<uint64_t>(sizeOf(f.type) * 8))),
+                    diBits(static_cast<uint64_t>(sizeOf(f.type) * 8)),
                     static_cast<uint32_t>(alignOf(f.type) * 8),
-                    ConstantAsMetadata::get(ConstantInt::get(
-                        i64(), static_cast<uint64_t>(memberOffset(t, i) * 8))),
+                    diBits(static_cast<uint64_t>(memberOffset(t, i) * 8)),
                     DINode::FlagZero, diType(f.type, depth + 1)));
             }
-            auto* sizeMeta =
-                ConstantAsMetadata::get(ConstantInt::get(i64(), bits));
+            auto sizeMeta = diBits(bits);
             return dib->createStructType(diCu, t->str(), diFile, 0, sizeMeta,
                                          static_cast<uint32_t>(alignOf(t) * 8),
                                          DINode::FlagZero, nullptr,

@@ -14,13 +14,13 @@
 //
 // The backend's own lowering of a first-class aggregate is *not* the C rule — it assigns one
 // register per field — hence `CoerceInt`: the frontend reinterprets the bits through memory so the
-// value really travels as the single integer the ABI asks for.
+// value really travels as the integer(s) the ABI asks for (one for MS x64, one per eightbyte on SysV).
 //
-// Not implemented (the target machine is fixed to x86_64-w64-windows-gnu today): SysV classifies each
-// eightbyte as INTEGER or SSE, while the backend hands a float-bearing aggregate one register per
-// *field* (two XMM registers for `{float, float}`, where C packs both into XMM0). A SysV aggregate with
-// float fields would therefore take the wrong register set, and a packed SysV aggregate with unaligned
-// fields is class MEMORY. Recorded in agents/design-backlog.md; resolve it before cross-compilation.
+// Not implemented: the SysV SSE class. C classifies each eightbyte as INTEGER or SSE, while the
+// backend hands a float-bearing aggregate one register per *field* (two XMM registers for
+// `{float, float}`, where C packs both into XMM0), so such a function is refused at codegen instead
+// of being lowered wrongly. A packed SysV aggregate whose field straddles an eightbyte is class
+// MEMORY and is also not distinguished. Recorded in agents/design-backlog.md.
 #include "abi.hpp"
 
 namespace muc_detail {
@@ -40,8 +40,12 @@ AbiPass abi_class(const TypePtr& t, bool is_return, const std::string& target) {
         if (register_sized && al <= 8) return AbiPass::CoerceInt;
         return is_return ? AbiPass::Sret : AbiPass::ByVal;
     }
-    // SysV: register-passed aggregates are limited to 16 bytes and 16-byte alignment.
-    if (sz <= 16 && al <= 16) return AbiPass::Direct;
+    // SysV: an aggregate of at most two eightbytes travels in registers, classified per eightbyte
+    // (INTEGER or SSE). Only the INTEGER case is implemented — a float-bearing aggregate is refused
+    // in codegen before it gets here — so both eightbytes are packed through memory as integers.
+    // A packed aggregate whose field straddles an eightbyte would be class MEMORY; that case is not
+    // distinguished here (same as before) because it needs the per-field walk.
+    if (sz <= 16 && al <= 16) return AbiPass::CoerceInt;
     return is_return ? AbiPass::Sret : AbiPass::ByVal;
 }
 

@@ -10,6 +10,46 @@
 
 ## Releases
 
+### 0.0.128 — 2026-11-15
+
+**Linux is a supported host: the runtime platform layer, the glibc binding layer, and a Linux CI job.**
+
+- `libs/std/platform/linux/std/thread/backend.mu` — the pthread/ucontext backend behind `std.task`:
+  threads, sleep / monotonic clock, task fibers (`getcontext` / `makecontext` / `swapcontext`),
+  `pthread_key` TLS, `get_nprocs`, and `pthread_mutex_t` / `pthread_cond_t` locks. `loader.cpp` loads
+  `std.task` for every program, so without it not a single Linux program could even be checked.
+- `std.thread`'s `Mutex` / `CondVar` are now 64-byte opaque blobs (SRWLOCK is 8 bytes, `pthread_mutex_t`
+  40 and `pthread_cond_t` 48 on 64-bit Linux); both backends accept zeroed memory, so a lock field still
+  needs no init call. `std.task` uses those types instead of raw `usize` globals — the old form silently
+  overran the neighbouring globals on POSIX (`para` crashed at random).
+- `libs/cstd/platform/linux/` — the glibc binding layer (stdio, stdlib, string, math, time, locale,
+  fenv, errno, ctype, stdint, limits, floats, inttypes): LP64 widths, glibc's `FE_*` / `LC_*` / `errno`
+  values, 64-bit `fpos_t` / `tm`, and the POSIX `_r` / `casecmp` variants in place of the MSVC
+  extensions. glibc's standard streams are data symbols, so they live in `cstd.streams` while
+  `cstd.stdio` keeps the portable `stdin()` / `stdout()` / `stderr()` accessors (a second `FILE` over
+  fd 1 would split the output buffering).
+- `muc build` appends `-lm -lpthread` when the target is not Windows (POSIX keeps the math and thread
+  entry points in their own libraries), and `--run` decodes the POSIX wait status instead of forwarding
+  the raw `system()` value.
+- SysV integer aggregates: `abi_class` coerces a 9..16-byte non-float aggregate through two INTEGER
+  eightbytes instead of handing C two field registers, which fixes calls like `c_eight(Two)` that
+  silently read garbage. The coercion slot is sized for the register pair (a 12-byte aggregate is
+  stored as two i64, and its alignment comes from the fields — a 6-byte aggregate has align 2, and
+  `size` was never a valid alignment). Float-bearing aggregates and packed aggregates whose field is
+  unaligned or straddles an eightbyte (class MEMORY) are refused on SysV, so `abi_agg` / `abi_float`
+  are fenced to Windows; `abi_mix` gained 12- and 6-byte shapes round-tripped through a real C
+  compiler both ways.
+- The test runner gained `@platform <os>` (fences a case to hosts where its subject exists:
+  `cstd_windows`, `cstd_posix`, `abi_agg`, `abi_float`) and per-OS expectations (`<name>.<os>.txt`,
+  `tests/ir/abi_surface.linux.txt`) for values that really differ (`BUFSIZ`, the SysV IR shape).
+  `cstd_core` / `cstd_stdio` / `cstdio` are portable now, with `cstd_windows` / `cstd_posix` covering
+  the platform-only symbols.
+- LLVM 18 builds: the DI size/offset operands and the `Triple`-typed target APIs are gated on
+  `LLVM_VERSION_MAJOR` (19 changed both; the local toolchain is 21, MSYS2 ships 23), so the new
+  `build-test-linux` job on `ubuntu-24.04` (llvm-dev 18) is green.
+- Tests: 562/562 on Windows (UCRT64), 560/560 on Linux with LLVM 21 and with LLVM 18 (three
+  Windows-only cases skipped, one POSIX-only case skipped on Windows).
+
 ### 0.0.127 — 2026-11-15
 
 **Cross-platform code generation: `--target`, all LLVM targets, and per-target runtime choices.**

@@ -84,9 +84,10 @@ class Case:
 def parse_expected(path: Path) -> tuple[list[str], int, list[str]]:
     """Split an expected file into (output lines, expected exit code, extra compiler args).
 
-    Two marker lines are recognised and removed from the output comparison:
+    Three marker lines are recognised and removed from the output comparison:
       * `@exit <code>` — the run must end with that process exit code (default 0; a case that
         documents abnormal termination expects 3);
+      * `@platform <os>[,<os>]` — the case only runs on those hosts (see `platform_skips`);
       * `@ <args>` — extra options appended to the `muc build` command (for example `@ --bounds=off`).
     """
     exit_code = 0
@@ -97,6 +98,8 @@ def parse_expected(path: Path) -> tuple[list[str], int, list[str]]:
             line = raw.rstrip()
             if line.startswith("@exit"):
                 exit_code = int(line[len("@exit"):].strip())
+            elif line.startswith("@platform"):
+                continue
             elif line.startswith("@"):
                 extra += shlex.split(line[1:].strip())
             else:
@@ -104,6 +107,32 @@ def parse_expected(path: Path) -> tuple[list[str], int, list[str]]:
     while out and out[-1] == "":
         out.pop()
     return out, exit_code, extra
+
+
+def host_os() -> str:
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def platform_skips(spec: Path | None) -> bool:
+    """Whether a case is fenced off from this host by an `@platform <os>[,<os>]` marker line.
+
+    The marker sits in the case's expectations file (or IR spec). It exists for cases whose
+    subject is a platform fact — MSVC-only symbols, the MS x64 aggregate ABI — so the case is not
+    silently weakened to the lowest common denominator.
+    """
+    if spec is None or not spec.is_file():
+        return False
+    wanted: list[str] | None = None
+    for raw in spec.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if line.startswith("@platform"):
+            wanted = [p.strip() for p in line[len("@platform"):].split(",") if p.strip()]
+            break
+    return bool(wanted) and host_os() not in wanted
 
 
 def _strip_comments_and_literals(text: str) -> str:
@@ -152,16 +181,26 @@ def defines_main(src: Path) -> bool:
     return _ENTRY_RE.search(_strip_comments_and_literals(src.read_text(encoding="utf-8"))) is not None
 
 
+def expected_path(stem: str) -> Path:
+    """The expectations file for a case: `<name>.<os>.txt` when it exists, else `<name>.txt`.
+
+    Per-OS files exist only where the observable result really differs (a `BUFSIZ`-like constant,
+    the aggregate ABI); everything else stays in one platform-neutral file.
+    """
+    per_os = EXPECTED_DIR / f"{stem}.{host_os()}.txt"
+    return per_os if per_os.is_file() else EXPECTED_DIR / f"{stem}.txt"
+
+
 def collect_cases() -> list[Case]:
     cases: list[Case] = []
     for src in sorted(CASES_DIR.glob("*.mu")):
-        cases.append(Case(src.stem, src, EXPECTED_DIR / f"{src.stem}.txt"))
+        cases.append(Case(src.stem, src, expected_path(src.stem)))
     # examples/*.mu that define `main` also run as cases; the rest are library units
     # for the multi-unit example (such as examples/math.mu).
     for src in sorted(ROOT.glob("examples/*.mu")):
         if not defines_main(src):
             continue
-        cases.append(Case(src.stem, src, EXPECTED_DIR / f"{src.stem}.txt"))
+        cases.append(Case(src.stem, src, expected_path(src.stem)))
     return cases
 
 
@@ -219,7 +258,11 @@ class IrCase:
 def collect_ir_cases() -> list[IrCase]:
     if not IR_DIR.is_dir():
         return []
-    return [IrCase(s.stem, s, IR_DIR / f"{s.stem}.txt") for s in sorted(IR_DIR.glob("*.mu"))
+    def spec_for(stem: str) -> Path:
+        per_os = IR_DIR / f"{stem}.{host_os()}.txt"
+        return per_os if per_os.is_file() else IR_DIR / f"{stem}.txt"
+
+    return [IrCase(s.stem, s, spec_for(s.stem)) for s in sorted(IR_DIR.glob("*.mu"))
             if not s.stem.startswith("lib_")]
 
 
@@ -341,6 +384,8 @@ def run_ir_case(case: IrCase, verbose: bool) -> tuple[bool, str]:
     for raw in case.spec.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
+            continue
+        if line.startswith("@platform"):
             continue
         if line.startswith("@"):
             extra += shlex.split(line[1:].strip())
@@ -501,6 +546,21 @@ def main(argv: list[str] | None = None) -> int:
         check_cases = [c for c in check_cases if args.filter in c.name]
         ir_cases = [c for c in ir_cases if args.filter in c.name]
         abi_cases = [c for c in abi_cases if args.filter in c.name]
+
+    skipped: list[str] = []
+    def fence(case_list, spec_of):
+        kept = []
+        for c in case_list:
+            if platform_skips(spec_of(c)):
+                skipped.append(c.name)
+            else:
+                kept.append(c)
+        return kept
+
+    cases = fence(cases, lambda c: c.expected)
+    err_cases = fence(err_cases, lambda c: c.spec)
+    ir_cases = fence(ir_cases, lambda c: c.spec)
+    abi_cases = fence(abi_cases, lambda c: c.expected)
     if not cases and not err_cases and not check_cases and not ir_cases and not abi_cases:
         print(f"no cases match `{args.filter}`")
         return 1
@@ -576,6 +636,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  ({len(cases)} run cases, {len(err_cases)} must-fail cases, "
           f"{len(check_cases)} check cases, {len(ir_cases)} ir cases, "
           f"{len(abi_cases)} c abi cases)")
+    if skipped:
+        print(f"  skipped on {host_os()}: " + ", ".join(skipped))
     if failed:
         print("failed cases: " + ", ".join(failed))
         code = 1
