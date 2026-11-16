@@ -85,7 +85,8 @@ Tests: `is_null_class`, `is_iface`, `forin_range_write_copy`, `compound_wrap_uin
 `string_sub_clamp`, `const_return_fn`, `sum_assign_release`, `slice_alias` (run),
 `compound_narrow_int`, `compound_narrow_byte`, `is_bind_compose`, `multidim_forin_len_hint`,
 `long_chain_too_long`, `deep_nest_too_deep` (must-fail), `tests/cli/build_args.py`.
-Full suite: 702/702 (244 run, 422 must-fail, 23 check, 1 warning, 9 ir, 3 c abi).
+Full suite: 703/703 (244 run, 422 must-fail, 24 check, 1 warning, 9 ir, 3 c abi); the
+check case para_mono_return pins the generic-instantiation-inside-para path.
 
 #### build 164 — 2026-11-17
 
