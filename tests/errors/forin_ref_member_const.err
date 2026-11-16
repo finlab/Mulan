@@ -1,0 +1,1 @@
+requires a mutable borrow: `operator[]` returns `ref const T`

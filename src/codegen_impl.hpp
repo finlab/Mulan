@@ -217,6 +217,39 @@ struct Emitter {
     // owned struct/array temporaries materialized by taking their address inside a statement, released together at the end of the statement
     std::vector<std::pair<Value*, TypePtr>> stmtTemps;
 
+    // ------------------------------------------------------------ partially constructed objects
+    // A construction sequence that is still running, innermost last. When an exception leaves it, the
+    // subobjects it already finished are released with their full destructor while the one being built
+    // right now gets its partial destructor: its constructor never returned, so its user destructor body
+    // must not run (value-semantics §6.3, #24 / #26). Each released subobject is left zeroed, so the
+    // enclosing level's partial release - which cannot know how far this constructor got - is a no-op.
+    struct CtorProgress {
+        Value* self = nullptr;    // the object being constructed
+        TypePtr ty;               // its type (a struct, class or fixed array)
+        size_t first = 0;         // first subobject this sequence owns (base fields belong to the level)
+        size_t next = 0;          // index of the subobject under construction
+        bool inBody = false;      // the member step finished: every own subobject is complete
+        bool unaligned = false;
+        bool array = false;       // `ty` is an array: elements instead of fields
+        AllocaInst* released = nullptr;  // guard: the release must run at most once per object
+    };
+    std::vector<CtorProgress> ctorProgress;
+    static constexpr size_t kNoCtorProgress = static_cast<size_t>(-1);
+    // Open a sequence and return its index (valid across pushes, which may reallocate the vector).
+    size_t pushCtorProgress(Value* self, const TypePtr& ty, size_t first, bool unaligned);
+    void setCtorProgressNext(size_t entry, size_t next);
+    void markCtorProgressBody(size_t entry);
+    // Index of the open sequence building a `ty` object, or kNoCtorProgress.
+    size_t findCtorProgress(const TypePtr& ty) const;
+    // Emit the release of every open sequence on an unwind path (innermost first).
+    void emitCtorProgressCleanup();
+    Value* ctorProgressSlot(const CtorProgress& p, size_t idx);
+    const TypePtr& ctorProgressSub(const CtorProgress& p, size_t idx);
+    size_t ctorProgressCount(const CtorProgress& p);
+    bool ctorProgressWeak(const CtorProgress& p, size_t idx);
+    // Release one field of an object, then zero it (`weak` fields only unregister).
+    void emitReleaseFieldZeroed(Value* addr, const TypePtr& ty, bool weak, bool unaligned);
+
     // ------------------------------------------------------------ C ABI (extern / export)
     // Set once from the target machine; only the OS part matters to the classifier.
     std::string targetTriple;
@@ -489,11 +522,30 @@ struct Emitter {
 
     void releaseLocal(const LocalVar* lv);
 
+    // The unconditional destruction of one local's value; `releaseLocal` adds the moved guard around it.
+    void releaseLocalValue(const LocalVar* lv);
+
     // Variables whose ownership was moved out (`move x`): they are zeroed by the move and must not be
     // destroyed by the scope, until a new assignment re-arms them (agents/value-semantics.md §8.3).
+    // This is the compile-time answer, used only for locals that have no runtime moved flag.
     std::unordered_set<const LocalVar*> movedLocals;
     void noteMovedLocal(const LocalVar* lv);
     void noteRevivedLocal(const LocalVar* lv);
+
+    // Per-function `i1` slot holding whether an owning local still holds its value. `move x` sets it, a
+    // new assignment clears it, and every release site tests it: the cleanup decision belongs to the
+    // control-flow path that is actually taken, not to the lexical scope (#21, #23). Keyed by function
+    // because the same LocalVar node is emitted into more than one body (a `para` producer and the task
+    // body share the loop variable).
+    std::unordered_map<const Function*, std::unordered_map<const LocalVar*, AllocaInst*>> movedFlags;
+    AllocaInst* movedFlagFor(const LocalVar* lv);
+    // Create (once per function) the moved flag of a local and clear it at the current point.
+    AllocaInst* createMovedFlag(const LocalVar* lv);
+    // Register an owning local for cleanup in the current scope, with its moved flag and declaration
+    // depth (which is where a revived local goes back, see noteRevivedLocal).
+    void registerLocalCleanup(const LocalVar* lv);
+    std::unordered_map<const LocalVar*, size_t> localDeclScope;
+
     void pushRefScope();
 
     void popRefScope();

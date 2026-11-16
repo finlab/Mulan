@@ -283,7 +283,7 @@ using ArgPack = Emitter::ArgPack;
                     });
                 }
             }
-            if (needsCleanup(lv->rty) && !lv->by_ref) refScopes.back().push_back(lv);
+            if (needsCleanup(lv->rty) && !lv->by_ref) registerLocalCleanup(lv);
             return;
         }
         if (auto es = dynamic_cast<ExprStmt*>(s)) {
@@ -603,7 +603,7 @@ using ArgPack = Emitter::ArgPack;
             const size_t curDepth = refScopes.size();
             loops.push_back({incBB, endBB});
             pushRefScope();
-            if (ownCur) refScopes.back().push_back(s->lvar.get());
+            if (ownCur) registerLocalCleanup(s->lvar.get());
             loopScopeDepth.push_back(curDepth);
             if (paraSpawn) emitParaForSpawnItem(varSlot); else block(s->body.get());
             loopScopeDepth.pop_back();
@@ -649,7 +649,7 @@ using ArgPack = Emitter::ArgPack;
             const size_t outerDepth = refScopes.size();
             loops.push_back({incBB, endBB});
             pushRefScope();
-            if (ownVar) refScopes.back().push_back(s->lvar.get());
+            if (ownVar) registerLocalCleanup(s->lvar.get());
             loopScopeDepth.push_back(outerDepth);
             if (paraSpawn) emitParaForSpawnItem(varSlot); else block(s->body.get());
             loopScopeDepth.pop_back();
@@ -711,7 +711,7 @@ using ArgPack = Emitter::ArgPack;
         const size_t outerDepth = refScopes.size();
         loops.push_back({incBB, endBB});
         pushRefScope();
-        if (ownVar) refScopes.back().push_back(s->lvar.get());
+        if (ownVar) registerLocalCleanup(s->lvar.get());
         loopScopeDepth.push_back(outerDepth);
         if (paraSpawn) emitParaForSpawnItem(varSlot); else block(s->body.get());
         loopScopeDepth.pop_back();
@@ -804,7 +804,7 @@ using ArgPack = Emitter::ArgPack;
                         slots[binds[k]] = binding;
                         if (fs[k]->needs_cleanup()) {
                             emitRetainValue(binding, fs[k]);
-                            refScopes.back().push_back(binds[k]);
+                            registerLocalCleanup(binds[k]);
                         }
                     }
                 }
@@ -1107,7 +1107,7 @@ using ArgPack = Emitter::ArgPack;
         // The item copy is an owning local of the body (SPEC §4); a borrowed element is not released.
         const bool own = !q.byRef && needsCleanup(q.elemTy);
         pushRefScope();
-        if (own) refScopes.back().push_back(f->lvar.get());
+        if (own) registerLocalCleanup(f->lvar.get());
         block(f->body.get());
         popRefScope();
         if (!hasTerm(b.GetInsertBlock())) b.CreateRetVoid();

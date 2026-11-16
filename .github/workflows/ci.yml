@@ -53,6 +53,11 @@ jobs:
           export MUC_CMD="$PWD/build/muc.exe"
           python tests/run_tests.py
 
+      - name: CLI target/platform checks
+        run: |
+          export MUC_CMD="$PWD/build/muc.exe"
+          python tests/cli/target_platform.py
+
   build-test-linux:
     name: build & test (Ubuntu, LLVM dev)
     runs-on: ubuntu-24.04
@@ -80,3 +85,8 @@ jobs:
         run: |
           export MUC_CMD="$PWD/build/muc"
           python3 tests/run_tests.py
+
+      - name: CLI target/platform checks
+        run: |
+          export MUC_CMD="$PWD/build/muc"
+          python3 tests/cli/target_platform.py

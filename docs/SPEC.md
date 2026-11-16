@@ -4,7 +4,9 @@
 > 2026-11-14: aligned with the current implementation — string literals are `const char*` (0.0.89), `len` is
 > removed and static arrays are C storage (0.0.101), unit-level init/cleanup (9.1), `export` and the export
 > surface (0.0.104), arrays decay to pointers (C99, 0.0.106).
-> Status: draft, current through version 0.0.106. The text distinguishes "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
+> Status: draft, current through build 145 (2026-11-16; the per-build change log is docs/versions.md,
+> where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
+> "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
 > Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor, reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
 >
@@ -336,16 +338,20 @@ struct Point {
 - **Temporary restrictions**:
   - **Cannot take the address of a struct with reference fields** (`&s`, `&arr[i]`; a scalar field `&s.x` still works): a raw pointer could bypass
     field-by-field retain/release (backlog U24). To modify in place, pass/return by value, or switch to `class`;
-    **structs with user destructors are the exception**—they can only be used through pointers anyway (see the "user destructors" item below).
+    **structs with user destructors are the exception**—they may take their address (see the "user destructors" item below).
   - Structs with reference fields may be unit-level variables (they are destroyed by the exit
     sequence, 9.1);
   - `extern C` signature recursive check: structs containing class/interface cannot be C parameters/return values;
   - Structs with **user destructors** may be fields of structs/classes and elements of fixed-size arrays:
     construction and destruction recurse through fields and elements, in declaration/index order
-    (`agents/value-semantics.md` §4). They still **cannot be copied/assigned/passed/returned by value**
-    (copy construction is unimplemented, so a copy would double free), and they cannot be **dynamic array
-    elements** yet (`new T[n]` element construction is unimplemented); use a pointer in those positions.
-    A struct that *contains* one inherits both restrictions.
+    (`agents/value-semantics.md` §4). Whether such a struct can be **copied / assigned / passed /
+    returned by value** is governed by the rule of three: it must declare a copy constructor
+    `T(const ref T other)` (0.0.138) and, for moves, `T(move T other)` (0.0.137) — then all four work
+    through those constructors (assignment is synthesized as copy-and-swap); without them it is a
+    "cannot copy" compile error, because a byte copy would double free (see the copy/move/`swap` items
+    below). It still **cannot be a dynamic array element** (`new T[n]` element construction is
+    unimplemented); use a pointer in that position. A struct that *contains* one inherits these
+    restrictions unless it declares its own copy/move constructors.
     They may be unit-level variables (9.1);
 - `sizeof(S)` is available; pure-value struct assignment has byte-copy semantics, and copies of structs with reference fields get RC operations inserted by the compiler.
 - Fields also support multiple names sharing a type: `int x, y;`; the type-first fixed-size array form is also allowed, e.g. `char[20] name;`.
@@ -875,7 +881,9 @@ class Button : Widget {
 - Virtual calls during construction are C++-style: they dispatch only to the current construction layer and above, and never enter a derived implementation that has not been constructed yet.
 - A class that declares no constructor keeps the zero-initialization of `new T`; once a constructor is declared, `new T` is legal only if a zero-argument constructor exists.
 - An abstract class may have constructors, but cannot be `new`ed.
-- There are no user destructors (phase one); destruction is performed by the destroy entry of the vtable (see 8.3).
+- User destructors are specified in 3.13 and implemented for both `class` and `struct`; on a class the
+  destruction runs as the user destructor first, then the fields in reverse order, driven by the destroy
+  entry of the vtable (see 8.3).
 
 ### 3.13 Destructors `~T()`
 
@@ -2310,7 +2318,7 @@ switch v {
 | 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, and a constant expression reports it |
 | 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
 | 10 | `goto`/`typedef`/function pointers/varargs | `goto` is not done (phase one); function pointers and lambdas are implemented in 3.16 (0.0.84); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
-| 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding + `ref` (built-ins only); `for i, x` provides a `usize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; `for ref` is not available for user types; **multi-dimensional arrays forbid `for-in`** |
+| 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding by default; `for i, x` provides a `usize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; **`for ref` works for user types in the index form when the container's `operator[]` returns a mutable `ref T`** — either spelling of the operator (member or free function, 6.4.1); it is unavailable for ranges, `string`, the cursor form, `const` sequences and class/interface elements; **multi-dimensional arrays forbid `for-in`** |
 | 12 | `..=` / `step` / reverse order for ranges | Implemented (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`) and must be a non-zero compile-time constant; reverse order relies on an **explicit negative step** (`a..b` does not reverse automatically); switch case ranges support `..=` and **do not support `step`** |
 | 13 | Local type inference | Decided: `auto x = expr;`; locals only, an initializer is required; all declarators must have the same type |
 | 14 | Default mutability of parameters | Mutable (C semantics) |

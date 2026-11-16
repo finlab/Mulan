@@ -838,13 +838,14 @@ namespace muc_detail {
         if (s->by_ref && s->loop_kind == "string") {
             err("`string` is immutable and cannot be iterated with `for ref`", s);
         }
-        if (s->by_ref && s->loop_kind == "index" &&
-            !(s->idx_fn && is_borrow_type(s->idx_fn->rty))) {
+        // Both spellings of `operator[]` borrow: a member overload (idx_method) and a free function
+        // (idx_fn). resolve_index_shape prefers the member form, so the check has to see both.
+        const TypePtr idx_ret = s->idx_method ? s->idx_method->ret : (s->idx_fn ? s->idx_fn->rty : nullptr);
+        if (s->by_ref && s->loop_kind == "index" && !is_borrow_type(idx_ret)) {
             err("user types do not support `for ref` unless `operator[]` returns `ref T`; use `for i, x` with `c[i] = ...` instead",
                 s->seq.get());
         }
-        if (s->by_ref && s->loop_kind == "index" && s->idx_fn && is_borrow_type(s->idx_fn->rty) &&
-            s->idx_fn->rty->is_const) {
+        if (s->by_ref && s->loop_kind == "index" && is_borrow_type(idx_ret) && idx_ret->is_const) {
             err("`for ref` requires a mutable borrow: `operator[]` returns `ref const T`", s->seq.get());
         }
         if (s->by_ref && s->loop_kind == "range") {

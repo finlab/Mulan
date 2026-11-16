@@ -9,7 +9,7 @@
 > `agents/stdlib/c-bindings.md`, `agents/stdlib/interfaces.md`, `agents/stdlib/style.md`,
 > `agents/stdlib/task.md`, `agents/stdlib/backlog.md`.
 
-> Status: draft, current through 0.0.121 (2026-11-14). Companion to the language specification:
+> Status: draft, current through build 145 (2026-11-16). Companion to the language specification:
 > `docs/SPEC.md` says what a program *means*; this file says what the library *provides*.
 > **Boundary test**: delete the library, and a program that uses none of it must still be fully
 > specified by `docs/SPEC.md` alone.
@@ -201,8 +201,8 @@ on. It does not know about `para`. Signatures (bodies omitted):
 public const uint WAIT_INFINITE = 0xFFFFFFFF;
 
 public struct Thread { void* h; }          // opaque OS handle
-public struct Mutex { usize s; }           // platform slot; the zero value is a valid unlocked lock
-public struct CondVar { usize s; }         // same representation
+public struct Mutex   { usize[8] s; }      // opaque storage: 64 bytes, sized for the largest backend
+public struct CondVar { usize[8] s; }      // (SRWLOCK is 8, pthread_mutex_t 40, pthread_cond_t 48 on 64-bit Linux)
 
 public Thread start((void*) => void body, void* arg);
 public void   join(ref Thread t);
@@ -219,8 +219,10 @@ public void cond_broadcast(ref CondVar c);
 ```
 
 The declarations above show the intended names; the current source still uses `thread_start` /
-`thread_join` / `thread_detach` / `thread_sleep` (U37, pending rename). The OS layer is
-`std.thread.backend`, resolved through the platform search path.
+`thread_join` / `thread_detach` / `thread_sleep` (U37, pending rename). `Mutex` / `CondVar` are opaque
+byte blobs (0.0.128): each backend's lock object lives inside the 64-byte storage, and both the Win32
+and the pthread backend accept zeroed memory as a valid unlocked lock, so a lock field still needs no
+init/destroy call. The OS layer is `std.thread.backend`, resolved through the platform search path.
 
 ## 7. Platform units
 

@@ -560,12 +560,10 @@ namespace muc_detail {
         return t && t->needs_cleanup();
     }
 
-    void Emitter::releaseLocal(const LocalVar* lv) {
-        if (!lv || !needsCleanup(lv->rty) || lv->by_ref) return;
-        if (movedLocals.count(lv)) return;  // ownership left with `move x`; the slot is already zeroed
+    void Emitter::releaseLocalValue(const LocalVar* lv) {
         auto it = slots.find(lv);
         if (it == slots.end()) return;
-        
+
         if (isRefKind(lv->rty)) {
             Value* v = b.CreateLoad(lt(lv->rty), it->second);
             emitReleaseRef(v, lv->rty);
@@ -577,6 +575,26 @@ namespace muc_detail {
         } else {
             emitReleaseValue(it->second, lv->rty);
         }
+    }
+
+    // Release one local on the way out of the scope(s) that own it. A local that can be `move`d carries a
+    // runtime moved flag, so the decision is made on the path actually taken: the branch that moved it
+    // skips the destruction, a sibling branch that did not still destroys the value (#21, #23). Only a
+    // local that never got a flag (a capture, a synthetic owner) falls back to the compile-time answer.
+    void Emitter::releaseLocal(const LocalVar* lv) {
+        if (!lv || !needsCleanup(lv->rty) || lv->by_ref) return;
+        AllocaInst* flag = movedFlagFor(lv);
+        if (!flag) {
+            if (!movedLocals.count(lv)) releaseLocalValue(lv);
+            return;
+        }
+        BasicBlock* rel = BasicBlock::Create(ctx, "release.local", curFn);
+        BasicBlock* done = BasicBlock::Create(ctx, "release.next", curFn);
+        b.CreateCondBr(b.CreateLoad(i1(), flag), done, rel);
+        b.SetInsertPoint(rel);
+        releaseLocalValue(lv);
+        if (!hasTerm(b.GetInsertBlock())) b.CreateBr(done);
+        b.SetInsertPoint(done);
     }
 
     // Build `dst` from `src` and leave `src` an empty shell. A type with a move constructor runs it (the
@@ -633,13 +651,116 @@ namespace muc_detail {
         emitReleaseValue(tmp, ty);
     }
 
+    // ------------------------------------------------------------ partially constructed objects
+    size_t Emitter::findCtorProgress(const TypePtr& ty) const {
+        for (size_t i = ctorProgress.size(); i > 0; --i) {
+            if (!ctorProgress[i - 1].array && ctorProgress[i - 1].ty == ty) return i - 1;
+        }
+        return kNoCtorProgress;
+    }
+
+    // `first` is the first subobject the sequence owns: a class's inherited fields belong to the level's
+    // partial destructor, which releases the (complete) base subobject.
+    size_t Emitter::pushCtorProgress(Value* self, const TypePtr& ty, size_t first, bool unaligned) {
+        CtorProgress p;
+        p.self = self;
+        p.ty = ty;
+        p.first = first;
+        p.next = first;
+        p.unaligned = unaligned || ty->is_packed;
+        p.array = ty->kind == TypeKind::Array;
+        p.released = entryAlloca(i1(), "ctor.rel.done", 1);
+        b.CreateStore(ConstantInt::get(i1(), 0), p.released);
+        ctorProgress.push_back(p);
+        return ctorProgress.size() - 1;
+    }
+
+    void Emitter::setCtorProgressNext(size_t entry, size_t next) {
+        if (entry >= ctorProgress.size()) return;
+        ctorProgress[entry].next = next;
+    }
+
+    void Emitter::markCtorProgressBody(size_t entry) {
+        if (entry >= ctorProgress.size()) return;
+        ctorProgress[entry].inBody = true;
+        ctorProgress[entry].next = ctorProgressCount(ctorProgress[entry]);
+    }
+
+    Value* Emitter::ctorProgressSlot(const CtorProgress& p, size_t idx) {
+        if (p.array) {
+            auto* st = cast<LStruct>(lt(p.ty));
+            return b.CreateGEP(st, p.self, {ConstantInt::get(i64(), 0),
+                                            ConstantInt::get(i32(), 0),
+                                            ConstantInt::get(i64(), idx)});
+        }
+        return fieldAddr(p.self, p.ty, static_cast<int>(idx));
+    }
+
+    const TypePtr& Emitter::ctorProgressSub(const CtorProgress& p, size_t idx) {
+        return p.array ? p.ty->elem : p.ty->fields[idx].type;
+    }
+
+    size_t Emitter::ctorProgressCount(const CtorProgress& p) {
+        return p.array ? p.ty->array_size : p.ty->fields.size();
+    }
+
+    bool Emitter::ctorProgressWeak(const CtorProgress& p, size_t idx) {
+        return !p.array && p.ty->fields[idx].weak;
+    }
+
+    void Emitter::emitReleaseFieldZeroed(Value* addr, const TypePtr& ty, bool weak, bool unaligned) {
+        if (!ty) return;
+        if (weak) {
+            b.CreateCall(ensureWeakUnreg(), {addr});
+        } else {
+            emitReleaseValue(addr, ty, unaligned);
+        }
+        zeroMem(addr, ty, unaligned);
+    }
+
+    // Release everything the interrupted construction sequences have built, innermost first. Subobjects
+    // are released in reverse construction order: the ones that finished get their full destructor, the
+    // one under construction only its partial destructor (its constructor never returned). Every released
+    // subobject is left zeroed, so the enclosing level's partial release - which cannot know how far this
+    // constructor got - destroys an empty value.
+    void Emitter::emitCtorProgressCleanup() {
+        for (size_t k = ctorProgress.size(); k > 0; --k) {
+            CtorProgress& p = ctorProgress[k - 1];
+            const size_t total = ctorProgressCount(p);
+            BasicBlock* skip = BasicBlock::Create(ctx, "ctor.rel.skip", curFn);
+            BasicBlock* run = BasicBlock::Create(ctx, "ctor.rel", curFn);
+            b.CreateCondBr(b.CreateLoad(i1(), p.released), skip, run);
+            b.SetInsertPoint(run);
+            // PERF: one guard per object, so an unwind that crosses several checks (the try dispatch
+            // re-checks on the no-match path) releases each object exactly once.
+            b.CreateStore(ConstantInt::get(i1(), 1), p.released);
+            if (!p.inBody && p.next < total) {
+                Value* slot = ctorProgressSlot(p, p.next);
+                const TypePtr& sub = ctorProgressSub(p, p.next);
+                emitReleasePartialValue(slot, sub);
+                zeroMem(slot, sub, p.unaligned);
+            }
+            const size_t done = p.inBody ? total : p.next;
+            // PERF: unrolled, like the construction it mirrors; an array's element count is the same
+            // compile-time constant, and only elements with a constructor get here at all.
+            for (size_t idx = done; idx > p.first; --idx) {
+                const TypePtr& sub = ctorProgressSub(p, idx - 1);
+                if (!sub) continue;
+                emitReleaseFieldZeroed(ctorProgressSlot(p, idx - 1), sub,
+                                       ctorProgressWeak(p, idx - 1), p.unaligned);
+            }
+            if (!hasTerm(b.GetInsertBlock())) b.CreateBr(skip);
+            b.SetInsertPoint(skip);
+        }
+    }
+
     // Run the user constructors an implicit construction has to invoke. Zeroing is the caller's job (it
     // happens whenever the type needs cleanup), so a POD value emits nothing at all and `int[1000] a;`
     // stays as cheap as it was.
     //
-    // A constructor that throws leaves the value in whatever state its own partial destroy left it in;
-    // the owner is released by the enclosing cleanup (the local declaration, the class's destroy_partial),
-    // which relies on releasing a zero value being a no-op. No cleanup is emitted here on purpose.
+    // A sequence of subobject constructions opens a `CtorProgress` entry: an exception leaving it releases
+    // the completed subobjects and the one being built (see emitCtorProgressCleanup). A user constructor
+    // does that for its own members, so this only covers the inline sequences built here.
     void Emitter::emitCtorGlue(Value* addr, const TypePtr& ty, bool unaligned) {
         if (!ty || !ty->needs_ctor()) return;
         if (ty->kind == TypeKind::Struct) {
@@ -654,24 +775,36 @@ namespace muc_detail {
                 emitCheckPending();
                 return;
             }
+            const size_t mark = ctorProgress.size();
+            const size_t entry = ty->needs_cleanup()
+                                     ? pushCtorProgress(addr, ty, 0, unaligned)
+                                     : kNoCtorProgress;
             for (size_t i = 0; i < ty->fields.size(); ++i) {
                 const Field& f = ty->fields[i];
                 if (f.weak || !f.type || !f.type->needs_ctor()) continue;
+                setCtorProgressNext(entry, i);
                 emitCtorGlue(fieldAddr(addr, ty, static_cast<int>(i)), f.type,
                              unaligned || ty->is_packed);
             }
+            ctorProgress.resize(mark);
             return;
         }
         if (ty->kind == TypeKind::Array) {
             // PERF: unrolled because the count is a compile-time constant; switch to a loop if arrays of
             // constructor-having elements ever show up with a large size.
+            const size_t mark = ctorProgress.size();
+            const size_t entry = ty->needs_cleanup()
+                                     ? pushCtorProgress(addr, ty, 0, unaligned)
+                                     : kNoCtorProgress;
             auto* st = cast<LStruct>(lt(ty));
             for (size_t i = 0; i < ty->array_size; ++i) {
                 Value* ep = b.CreateGEP(st, addr, {ConstantInt::get(i64(), 0),
                                                    ConstantInt::get(i32(), 0),
                                                    ConstantInt::get(i64(), i)});
+                setCtorProgressNext(entry, i);
                 emitCtorGlue(ep, ty->elem, unaligned);
             }
+            ctorProgress.resize(mark);
         }
     }
 
@@ -679,6 +812,10 @@ namespace muc_detail {
     // Re-assigning the variable re-arms it (`noteRevivedLocal`).
     void Emitter::noteMovedLocal(const LocalVar* lv) {
         if (!lv) return;
+        if (AllocaInst* flag = movedFlagFor(lv)) {
+            b.CreateStore(ConstantInt::get(i1(), 1), flag);
+            return;
+        }
         movedLocals.insert(lv);
         for (auto& scope : refScopes) {
             scope.erase(std::remove(scope.begin(), scope.end(), lv), scope.end());
@@ -686,9 +823,47 @@ namespace muc_detail {
     }
 
     void Emitter::noteRevivedLocal(const LocalVar* lv) {
-        if (!lv || !movedLocals.count(lv)) return;
+        if (!lv) return;
+        if (AllocaInst* flag = movedFlagFor(lv)) {
+            b.CreateStore(ConstantInt::get(i1(), 0), flag);
+            return;
+        }
+        if (!movedLocals.count(lv)) return;
         movedLocals.erase(lv);
-        if (!refScopes.empty() && needsCleanup(lv->rty) && !lv->by_ref) refScopes.back().push_back(lv);
+        if (!needsCleanup(lv->rty) || lv->by_ref || refScopes.empty()) return;
+        // Register back into the scope the local was declared in, not into the innermost one: a
+        // re-assignment inside a nested block must not shorten the variable's lifetime (#21). A
+        // declaration scope that is no longer active would mean the variable outlived its own block, so
+        // the outermost still-active scope is used instead and the cleanup is never dropped.
+        size_t idx = 0;
+        auto it = localDeclScope.find(lv);
+        if (it != localDeclScope.end() && it->second < refScopes.size()) idx = it->second;
+        refScopes[idx].push_back(lv);
+    }
+
+    AllocaInst* Emitter::movedFlagFor(const LocalVar* lv) {
+        if (!curFn || !lv) return nullptr;
+        auto fn = movedFlags.find(curFn);
+        if (fn == movedFlags.end()) return nullptr;
+        auto it = fn->second.find(lv);
+        return it == fn->second.end() ? nullptr : it->second;
+    }
+
+    AllocaInst* Emitter::createMovedFlag(const LocalVar* lv) {
+        if (!curFn || !lv) return nullptr;
+        AllocaInst*& flag = movedFlags[curFn][lv];
+        if (!flag) flag = entryAlloca(i1(), "moved");
+        // Cleared at the declaration, so a local declared inside a loop is re-armed every iteration;
+        // every release site of that local is dominated by its declaration.
+        b.CreateStore(ConstantInt::get(i1(), 0), flag);
+        return flag;
+    }
+
+    void Emitter::registerLocalCleanup(const LocalVar* lv) {
+        if (!lv || !needsCleanup(lv->rty) || lv->by_ref || refScopes.empty()) return;
+        createMovedFlag(lv);
+        localDeclScope[lv] = refScopes.size() - 1;
+        refScopes.back().push_back(lv);
     }
 
     // Debug aid (MUC_VERIFY_MEM=1): catch writes that run past a stack slot. The LLVM verifier accepts an

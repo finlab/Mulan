@@ -105,7 +105,7 @@ and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 | Functions | Recursion, overloading (bounded rules), variadic `extern` calls (0.0.57); function values `(T1, T2) => R` and non-capturing lambdas `(int a) => ...` (0.0.84); explicit capture-list lambdas — `[x]` by value, `[ref x]` by reference, `[this]` (0.0.110–0.0.112) |
 | Modules | `unit` / `use` / `public` / `private`; units are loaded from same-named files |
 | C interop | `extern` declarations, C ABI, controllable `struct` layout (`packed` / `align(N)`) |
-| Toolchain | `check` / `dump` / `build`, `--emit-ir`, DWARF debug info via `-g`, multiple errors reported at once |
+| Toolchain | `check` / `dump` / `build` / `run`, `--emit-ir`, DWARF debug info via `-g`, `--target <triple>` for cross compilation (all LLVM targets), `--os` / `--platform <os[-arch[-abi]]>` unit resolution, multiple errors reported at once |
 
 **Not implemented yet**
 
@@ -113,12 +113,20 @@ and [`examples/math.mu`](examples/math.mu) (cross-unit calls).
 - Method-level generics, type-argument deduction, specialization, generic `extern` / generic type aliases (see SPEC 3.15)
 - Implicit captures (a lambda that uses an enclosing variable without a capture list), method values and `goto`
 - A full standard library (today: the runtime contracts `std.task`/`std.thread`/`std.string`/`std.exception`/`std.interfaces` plus a minimal C binding layer `std.cstdio`/`std.ctypes`; formatting, IO, containers and the rest of the C bindings are planned — see [`docs/StdLibSPEC.md`](docs/StdLibSPEC.md))
-- Non-Windows targets: the backend is fixed to `x86_64-w64-windows-gnu` and emits COFF
+- **macOS host builds** are not supported yet (only Windows and Linux are; cross targets such as
+  `arm64-apple-darwin` can emit Mach-O objects, but linking them still needs your own cross driver)
+- **Full cross toolchains**: `--target <triple>` emits code for any LLVM target, but the compiler does
+  not ship cross sysroots or cross link drivers — a cross target must be linked with `--cc <driver>`,
+  which you provide
+- A first-class `std.posix` / `std.win32` extension surface is planned (platform backend units exist
+  for `std.thread` / `std.task` / `cstd.*` only)
 
 ## Quick start
 
-Requirements: **Windows 10+ + MSYS2 (UCRT64 toolchain)**, CMake ≥ 3.20, Ninja, g++ ≥ 11 (C++20),
-gcc, and LLVM ≥ 17 development libraries.
+Mulan builds and runs natively on **Windows** and **Linux** (both are exercised by CI). Common
+requirements: CMake ≥ 3.20, Ninja, g++ ≥ 11 (C++20), and LLVM ≥ 17 development libraries.
+
+**Windows 10+ (MSYS2, UCRT64 toolchain):**
 
 ```powershell
 # 1. UCRT64 toolchain + LLVM (MSYS2)
@@ -140,8 +148,33 @@ build\muc.exe build examples\example.mu -g      # with DWARF, so gdb can break a
 Produced executables import `KERNEL32.dll` and a handful of `api-ms-win-crt-*.dll` names — these are
 Windows API sets resolved by the OS, so a program is still a single file (no CRT DLLs to ship).
 
+**Linux** (any distribution with the requirements above; CI runs on Ubuntu 24.04 with `llvm-dev 18`):
+
+```sh
+sudo apt-get install -y build-essential cmake ninja-build llvm-dev   # or the equivalent
+cmake -S . -B build -G Ninja -DLLVM_DIR="$(llvm-config --cmakedir)"
+cmake --build build                         # output: build/muc
+./build/muc build examples/example.mu --run
+```
+
+On a non-Windows target the link step appends `-lm -lpthread` automatically.
+
 If a dependency is missing: `python -m pip install cmake ninja`. For LLVM installed elsewhere, pass
 `-DLLVM_DIR=<path>/lib/cmake/llvm`.
+
+### Cross compilation
+
+The host target is chosen from the toolchain you build `muc` with; by default code generation and
+linking target that host. Two opt-ins exist (see `muc --help`):
+
+- `muc check --os <os>` / `--platform <os[-arch[-abi]]>` — semantic-check a program against **another
+  platform's library units** (e.g. `check a.mu --os linux` on a Windows host picks the `platform/linux/`
+  units). Checking only: `build` still emits host object code.
+- `muc build --target <triple>` — **cross code generation** for any LLVM target
+  (e.g. `x86_64-pc-linux-gnu` → ELF, `arm64-apple-darwin` → Mach-O). The object/IR is emitted for the
+  target, but linking needs a matching cross driver that you supply with `--cc <driver>`; without it,
+  a cross target stops after emitting the object with an explanatory error. The default link driver,
+  the output suffix and the object format follow the target.
 
 ## Documentation
 

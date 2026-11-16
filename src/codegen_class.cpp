@@ -201,6 +201,7 @@ namespace muc_detail {
         refScopes.clear();
         loopScopeDepth.clear();
         stmtTemps.clear();
+        ctorProgress.clear();
         allocaBB = BasicBlock::Create(ctx, "allocas", fn);
         bodyBB = BasicBlock::Create(ctx, "entry", fn);
         ab.SetInsertPoint(allocaBB);
@@ -232,6 +233,7 @@ namespace muc_detail {
         refScopes.clear();
         loopScopeDepth.clear();
         stmtTemps.clear();
+        ctorProgress.clear();
         ehStack.clear();
         finallyStack.clear();
         abortBases.clear();
@@ -274,7 +276,7 @@ namespace muc_detail {
             } else {
                 emitRetainValue(it->second, pl->rty);
             }
-            refScopes.back().push_back(pl.get());
+            registerLocalCleanup(pl.get());
         }
     }
 
@@ -344,8 +346,17 @@ namespace muc_detail {
         ownParams(ctor->param_locals);
         // Members come between base and body. With an explicit `super(...)` the base constructor call is a
         // statement in the body, and that statement runs the member step itself (codegen_expr2).
+        //
+        // The whole constructor is one construction sequence: a throw anywhere in the member step or the
+        // body releases the fields this class finished and the one being built (emitMemberInits advances
+        // the same entry, so the explicit-`super` path is covered too).
+        size_t baseCount = 0;
+        if (c->ty->base && c->ty->base->kind == TypeKind::Class) baseCount = c->ty->base->fields.size();
+        const size_t progressMark = ctorProgress.size();
+        pushCtorProgress(b.CreateLoad(ptrTy(), thisSlot), c->ty, baseCount, false);
         if (!ctor->has_explicit_super) emitMemberInits(b.CreateLoad(ptrTy(), thisSlot), c->ty);
         block(ctor->body.get());
+        ctorProgress.resize(progressMark);
         popRefScope();
         finishBody(fn, c->name + " constructor");
     }
@@ -353,16 +364,31 @@ namespace muc_detail {
     // C++ order: base constructor, then the members in declaration order, then the body. The object was
     // zero-filled at allocation, and a failing member constructor leaves the rest zeroed, so the
     // allocating caller's partial destroy releases everything that did get constructed.
+    //
+    // The member step advances the constructor's construction sequence (emitCtor opened it): members that
+    // finished are destroyed by it, and the member that threw only gets its partial destructor, because
+    // its constructor never returned (#24). An explicit `super(...)` runs this step from inside the body,
+    // hence the lookup instead of a fresh sequence.
     void Emitter::emitMemberInits(Value* self, const TypePtr& cls) {
         if (!self || !cls || cls->kind != TypeKind::Class) return;
         size_t total = cls->fields.size();
         size_t baseCount = 0;
         if (cls->base && cls->base->kind == TypeKind::Class) baseCount = cls->base->fields.size();
+        size_t own = findCtorProgress(cls);
+        const size_t mark = ctorProgress.size();
+        if (own == kNoCtorProgress) {
+            own = pushCtorProgress(self, cls, baseCount, false);
+            setCtorProgressNext(own, baseCount);
+        }
         for (size_t i = baseCount; i < total; ++i) {
             const Field& f = cls->fields[i];
             if (f.weak || !f.type || !f.type->needs_ctor()) continue;
+            setCtorProgressNext(own, i);
             emitCtorGlue(fieldAddr(self, cls, static_cast<int>(i)), f.type);
         }
+        // Every own member is complete once the step returns, so the body starts with a fully built level.
+        markCtorProgressBody(own);
+        ctorProgress.resize(mark);
     }
 
     void Emitter::emitReleaseValue(Value* addr, const TypePtr& ty, bool unaligned) {
@@ -448,6 +474,18 @@ namespace muc_detail {
                 dtor_partial_cname(ty->unit, ty->name),
                 FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
             b.CreateCall(partial, {addr});
+            return;
+        }
+        if (ty->kind == TypeKind::Array && needsCleanup(ty->elem)) {
+            auto* st = cast<LStruct>(lt(ty));
+            // Reverse construction order: the elements that were built are destroyed last-first, the way
+            // a destructor for a complete array destroys them.
+            for (size_t i = ty->array_size; i > 0; --i) {
+                Value* ep = b.CreateGEP(st, addr, {ConstantInt::get(i64(), 0),
+                                                   ConstantInt::get(i32(), 0),
+                                                   ConstantInt::get(i64(), i - 1)});
+                emitReleasePartialValue(ep, ty->elem);
+            }
             return;
         }
         emitReleaseValue(addr, ty);
@@ -585,6 +623,11 @@ namespace muc_detail {
 
     // Releases exactly what a failed constructor call may have constructed: this class's own
     // fields plus, when the base subobject is complete, the base's full destructor.
+    //
+    // The constructor already released and zeroed the fields it finished (the construction sequence in
+    // emitCtor / emitMemberInits authorizes exactly that), so the own-field release here must treat the
+    // remainder as possibly incomplete: a value field gets its partial destructor, never its user
+    // destructor body. Releasing an already released (zeroed) field is a no-op.
     void Emitter::emitDtorPartial(ClassDecl* c) {
         resetDebugScope();
         Function* fn = cast<Function>(
@@ -607,7 +650,7 @@ namespace muc_detail {
                 b.CreateCall(ensureWeakUnreg(), {fa});
                 continue;
             }
-            emitReleaseValue(fa, c->ty->fields[idx].type);
+            emitReleasePartialValue(fa, c->ty->fields[idx].type);
         }
         if (c->ty->base && c->ty->base->kind == TypeKind::Class) {
             // Reaching this level means the base constructor returned normally (see
@@ -745,15 +788,25 @@ namespace muc_detail {
         ownParams(ctor->param_locals);
         // A member with its own default constructor is constructed before the body (C++ order); the body
         // then assigns whatever it wants on top.
+        //
+        // The member step and the body are one construction sequence: a throw releases the members that
+        // finished and, for the one that threw, only its partial destructor (#24). A base subobject does
+        // not exist for a struct, so the sequence owns every field.
+        const size_t progressMark = ctorProgress.size();
+        const size_t progress = pushCtorProgress(b.CreateLoad(ptrTy(), thisSlot), sd->ty, 0,
+                                                sd->ty->is_packed);
         {
             Value* self = b.CreateLoad(ptrTy(), thisSlot);
             for (size_t i = 0; i < sd->ty->fields.size(); ++i) {
                 const Field& f = sd->ty->fields[i];
                 if (f.weak || !f.type || !f.type->needs_ctor()) continue;
+                setCtorProgressNext(progress, i);
                 emitCtorGlue(fieldAddr(self, sd->ty, static_cast<int>(i)), f.type);
             }
         }
+        markCtorProgressBody(progress);
         block(ctor->body.get());
+        ctorProgress.resize(progressMark);
         popRefScope();
         finishBody(fn, sd->name + " constructor");
     }
@@ -785,6 +838,10 @@ namespace muc_detail {
         finishBody(fn, sd->name + " destructor");
     }
 
+    // The level's own fields are released as *possibly incomplete* values: the constructor that threw has
+    // already destroyed (and zeroed) the subobjects it finished, so what is left here is either the field
+    // under construction or untouched storage. A value type therefore gets its partial destructor - its own
+    // user destructor body must not run - while handles and references are released normally.
     void Emitter::emitStructDtorPartial(StructDecl* sd) {
         resetDebugScope();
         if (!sd->ty || !sd->ty->needs_cleanup()) return;
@@ -799,8 +856,8 @@ namespace muc_detail {
         for (size_t k = sd->ty->fields.size(); k > 0; --k) {
             size_t idx = k - 1;
             if (sd->ty->fields[idx].weak) continue;
-            emitReleaseValue(fieldAddr(self, sd->ty, static_cast<int>(idx)),
-                             sd->ty->fields[idx].type, sd->ty->is_packed);
+            emitReleasePartialValue(fieldAddr(self, sd->ty, static_cast<int>(idx)),
+                                    sd->ty->fields[idx].type);
         }
         finishBody(fn, sd->name + " partial destructor");
     }

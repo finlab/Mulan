@@ -110,6 +110,9 @@ struct Analysis {
                 } else {
                     std::string key = default_ctor_key(n->class_ty);
                     if (!key.empty()) addDep(it, key);
+                    // The allocation site runs this class's member step itself (evalNew), because the
+                    // inherited default constructor only covers the base subobject.
+                    addMemberStepDeps(it, n->class_ty);
                 }
             }
             for (auto& d : n->dims) visitExpr(d.get(), it);
@@ -260,8 +263,41 @@ struct Analysis {
         // BreakStmt / ContinueStmt: no calls.
     }
 
+    // A value-typed subobject with a constructor is built before the enclosing constructor's body
+    // (emitMemberInits / emitCtorGlue), and that call can throw. The member step is synthesized in
+    // codegen, so it is invisible to the body walk above; mirroring it here keeps a constructor that
+    // only throws from a member (or a member's member) classified as throwing (#24).
+    void addValueConstructionDep(Item& it, const TypePtr& ty) {
+        if (!ty || !ty->needs_ctor()) return;
+        if (ty->kind == TypeKind::Struct) {
+            if (ty->has_default_ctor()) {
+                it.deps.push_back(ctor_cname(ty->unit, ty->name, {}));
+                return;
+            }
+            // No user default constructor: the member step constructs this level's fields inline.
+            for (const auto& f : ty->fields) addValueConstructionDep(it, f.type);
+            return;
+        }
+        if (ty->kind == TypeKind::Array) addValueConstructionDep(it, ty->elem);
+    }
+
+    // Deps for the member step of `owner`: its own fields only, because a class's inherited fields
+    // belong to the base subobject's constructor chain.
+    void addMemberStepDeps(Item& it, const TypePtr& owner) {
+        if (!owner) return;
+        size_t first = 0;
+        if (owner->kind == TypeKind::Class && owner->base && owner->base->kind == TypeKind::Class) {
+            first = owner->base->fields.size();
+        }
+        for (size_t i = first; i < owner->fields.size(); ++i) {
+            if (owner->fields[i].weak) continue;
+            addValueConstructionDep(it, owner->fields[i].type);
+        }
+    }
+
     void analyzeItem(Item& it) {
         if (it.body) visitBlock(it.body, it);
+        if (it.ctor && it.ownerClass) addMemberStepDeps(it, it.ownerClass);
         // An omitted `super(...)` becomes an implicit base default-constructor call.
         if (it.ctor && it.ownerClass && !it.ctor->has_explicit_super) {
             TypePtr base = it.ownerClass->base;

@@ -1,0 +1,4 @@
+inner=0 outer=0
+a_full=2 order=2,1 b_partial=0 wide_dtor=0
+ca_full=1 cb_partial=0 class_dtor=0
+exception_partial_nested ok

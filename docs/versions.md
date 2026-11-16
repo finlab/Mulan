@@ -27,6 +27,42 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 146 — 2026-11-16
+
+**Six correctness bugs and two CLI validation gaps found in a review pass (issues #21–#27).**
+
+- **`move` cleanup is path-sensitive (#21, #23)**: every owning local that can be moved now carries a
+  runtime moved flag (an `i1` slot): `move x` sets it, a new assignment clears it, and every release site
+  (scope exit, `break`/`continue`, `return`, unwinding) tests it. The compile-time cleanup scopes are
+  registered once at the declaration and never removed, so a `move` written in a branch no longer cancels
+  the cleanup of the paths that did not execute it. A local revived by assignment is registered back into
+  the scope that declared it, so reassigning a moved outer variable inside a nested block no longer
+  destroys it at the inner block's exit (#21). The compile-time `movedLocals` answer remains only for
+  locals without a flag (captures and synthetic owners).
+- **Partial construction releases exactly what was built (#24, #26)**: constructor bodies and inline
+  member/element sequences now open a construction sequence (`CtorProgress`). When an exception leaves
+  one, the subobjects that finished are destroyed with their full destructor in reverse construction
+  order while the one under construction gets only its partial destructor (its user destructor body must
+  not run); each released subobject is zeroed so the enclosing level's partial release is a no-op.
+  Covered for a throwing nested struct field (#24), a fixed-array prefix (#26, including an array of
+  structs with no user constructor) and a class's value members; `emitDtorPartial` /
+  `emitStructDtorPartial` now recurse with partial destruction, and the may-throw analysis also sees the
+  synthesized member step.
+- **`for ref` accepts a member `operator[]` returning `ref T` (#27)**: `resolve_index_shape` prefers the
+  member overload, but the borrow check only looked at the free-function form; both spellings are now
+  validated (mutable borrow required).
+- **`build` rejects a platform whose architecture or ABI differs from the codegen target (#22)**, and a
+  musl target on a glibc host is a cross target that needs `--cc` (#25). The triple is parsed by role
+  (arch / OS / environment), the Windows CRT families stay interchangeable, a triple whose runtime
+  cannot exist on its OS fails early, and a linked ELF's `PT_INTERP` is checked against the requested
+  runtime. New CLI checks: `tests/cli/target_platform.py`, run by CI on both hosts.
+- New run cases: `move_cleanup_nested_scope`, `move_cleanup_conditional`,
+  `exception_partial_nested`, `exception_partial_array`, `for_ref_member_index`; new must-fail cases:
+  `forin_ref_member`, `forin_ref_member_const`.
+
+**Tests**: 606/606 (209 run + 370 must-fail + 20 check + 4 ir + 3 c abi); `MUC_VERIFY_MEM=1` 606/606;
+`tests/cli/target_platform.py` 9/9 on Windows.
+
 #### build 145 — 2026-11-16
 
 **The release version and the build number are now two independent numbers.**
@@ -42,6 +78,13 @@
   (`mulan.version` + `mulan.build`), so an object file can be traced to the exact build that produced it.
 - Version history now groups build entries under a release section. Entries up to 0.0.144 keep the old
   single-number headings under *Legacy numbering*.
+- **Documentation-only follow-up (no build bump)**: #20/#28 — `README.md` now states the real platform
+  status (Windows and Linux hosts, cross compilation via `--target` + `--cc`), and `docs/SPEC.md` /
+  `docs/StdLibSPEC.md` were reconciled with the implementation: the SPEC status line tracks build 145,
+  §3.4 user-destructor rules now match the 0.0.137–0.0.140 value semantics (copy/move constructors,
+  copy-and-swap assignment), §3.12 no longer says user destructors do not exist (they are 3.13),
+  §12 #11 now allows `for ref` for user types whose `operator[]` returns `ref T` (6.4.1), and
+  `std.thread`'s `Mutex` / `CondVar` are documented as the 64-byte opaque blobs they are since 0.0.128.
 
 ### Legacy numbering (0.0.1 – 0.0.144)
 

@@ -1,0 +1,3 @@
+attempts=3 dtors=2 order=2,1
+leaf_attempts=2 leaf_ctors=1 leaf_dtors=1
+exception_partial_array ok

@@ -87,58 +87,13 @@ bool is_platform_os(const std::string& s) {
     return false;
 }
 
-// A platform spec is `os[-arch[-abi]]` (e.g. `windows-x86_64-ucrt`). The loader resolves each unit
-// against the most specific shadow directory that exists:
-//   platform/<os>-<arch>-<abi>/  ->  platform/<os>-<arch>/  ->  platform/<os>/
-// All three levels are optional except the OS; a unit only needs the level where it really differs.
-struct PlatformSpec {
-    std::string os;
-    std::string arch;
-    std::string abi;
-};
-
 bool one_of(const std::string& v, const std::vector<std::string>& allowed) {
     for (const auto& a : allowed)
         if (a == v) return true;
     return false;
 }
 
-PlatformSpec parse_platform_spec(const std::string& requested) {
-    PlatformSpec spec;
-    if (requested.empty()) {
-        spec.os = host_os();
-        return spec;
-    }
-    std::vector<std::string> parts;
-    size_t start = 0;
-    while (true) {
-        size_t dash = requested.find('-', start);
-        parts.push_back(requested.substr(start, dash == std::string::npos ? std::string::npos : dash - start));
-        if (dash == std::string::npos) break;
-        start = dash + 1;
-    }
-    if (parts.empty() || parts.size() > 3 || parts[0].empty()) {
-        throw MuError("bad platform `" + requested + "`: expected `os[-arch[-abi]]`");
-    }
-    if (!is_platform_os(parts[0])) {
-        std::string known;
-        for (const auto& o : platform_os_names()) known += (known.empty() ? "" : ", ") + o;
-        throw MuError("unknown platform OS `" + parts[0] + "` (known: " + known + ")");
-    }
-    spec.os = parts[0];
-    if (parts.size() >= 2) {
-        if (!one_of(parts[1], {"x86_64", "aarch64"})) {
-            throw MuError("unknown platform arch `" + parts[1] + "` (known: x86_64, aarch64)");
-        }
-        spec.arch = parts[1];
-    }
-    if (parts.size() >= 3) {
-        if (parts[2].empty()) throw MuError("bad platform `" + requested + "`: empty ABI");
-        spec.abi = parts[2];
-    }
-    return spec;
-}
-
+// The shadow directories a platform spec selects, most specific first.
 std::vector<std::string> platform_shadow_keys(const PlatformSpec& spec) {
     std::vector<std::string> keys;
     if (!spec.arch.empty() && !spec.abi.empty()) keys.push_back(spec.os + "-" + spec.arch + "-" + spec.abi);
@@ -251,6 +206,46 @@ void add_default_lib_dirs(std::vector<std::string>& dirs) {
 
 }  // namespace
 
+// A platform spec is `os[-arch[-abi]]` (e.g. `windows-x86_64-ucrt`). The loader resolves each unit
+// against the most specific shadow directory that exists:
+//   platform/<os>-<arch>-<abi>/  ->  platform/<os>-<arch>/  ->  platform/<os>/
+// All three levels are optional except the OS; a unit only needs the level where it really differs.
+PlatformSpec parse_platform_spec(const std::string& requested) {
+    PlatformSpec spec;
+    if (requested.empty()) {
+        spec.os = host_os();
+        return spec;
+    }
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (true) {
+        size_t dash = requested.find('-', start);
+        parts.push_back(requested.substr(start, dash == std::string::npos ? std::string::npos : dash - start));
+        if (dash == std::string::npos) break;
+        start = dash + 1;
+    }
+    if (parts.empty() || parts.size() > 3 || parts[0].empty()) {
+        throw MuError("bad platform `" + requested + "`: expected `os[-arch[-abi]]`");
+    }
+    if (!is_platform_os(parts[0])) {
+        std::string known;
+        for (const auto& o : platform_os_names()) known += (known.empty() ? "" : ", ") + o;
+        throw MuError("unknown platform OS `" + parts[0] + "` (known: " + known + ")");
+    }
+    spec.os = parts[0];
+    if (parts.size() >= 2) {
+        if (!one_of(parts[1], {"x86_64", "aarch64"})) {
+            throw MuError("unknown platform arch `" + parts[1] + "` (known: x86_64, aarch64)");
+        }
+        spec.arch = parts[1];
+    }
+    if (parts.size() >= 3) {
+        if (parts[2].empty()) throw MuError("bad platform `" + requested + "`: empty ABI");
+        spec.abi = parts[2];
+    }
+    return spec;
+}
+
 // Unit files are resolved through the host filesystem, which on Windows is case-insensitive: `unit
 // Foo.Bar;` happily finds `libs/foo/bar.mu` there and then fails on Linux. When a resolved path differs
 // from the requested spelling only by case, report it as an error (agents/portability-plan.md #13).
@@ -285,6 +280,33 @@ static std::string case_mismatch(const std::string& path) {
 }
 
 std::string host_platform_os() { return host_os(); }
+
+// The CPU architecture the compiler itself runs on, in the platform spec spelling. The MSVC and
+// the GCC/Clang macros are both checked, because the two toolchains spell the same CPU
+// differently (`_M_ARM64` vs `__aarch64__`).
+std::string host_platform_arch() {
+#if defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__aarch64__)
+    return "aarch64";
+#else
+    // The platform spec only knows the 64-bit architectures, so every other host (x86-64 on
+    // MSVC and on GCC alike) is `x86_64`.
+    return "x86_64";
+#endif
+}
+
+// The C runtime the host uses. Only glibc can be identified reliably (from the headers the
+// compiler was built against): on Windows the runtime is decided by the link driver rather than
+// by the compiler, and musl does not define a macro that tells it apart from other libcs. An
+// empty answer means "unknown", and an unknown ABI must never be reported as a mismatch.
+std::string host_platform_abi() {
+#if defined(_WIN32)
+    return "";
+#elif defined(__GLIBC__)
+    return "gnu";
+#else
+    return "";
+#endif
+}
 
 std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
                                               const std::vector<std::string>& search_dirs,

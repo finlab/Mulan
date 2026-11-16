@@ -98,6 +98,9 @@ namespace muc_detail {
         Value* saved = loadPendingObj();
         clearPending();
         if (onThrow) onThrow();
+        // Every object whose construction this throw interrupted releases what it already built before
+        // the scopes below (and the caller) see the partially constructed level (#24, #26).
+        emitCtorProgressCleanup();
         // Leave every `para for` region this point sits in: its tasks read the producer's slots, so
         // they are joined before the scopes below are released (innermost region first).
         for (size_t i = paraUnwindCleanup.size(); i > 0; --i) paraUnwindCleanup[i - 1]();

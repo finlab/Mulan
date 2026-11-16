@@ -58,16 +58,30 @@
   待做：用户显式 `operator=(ref S)` 覆盖、显式构造形式 `S(a)`、前缀清理（W3b）、动态数组元素构造（W4）、
   `ref` 参数进 method。
 
-- [ ] codegen — **构造中途抛异常时，未构造的兄弟元素/成员也会跑用户析构体**（2026-11-15，0.0.135）：
+- [x] codegen — **构造中途抛异常时，未构造的兄弟元素/成员也会跑用户析构体**（2026-11-15，0.0.135）：
   `S[3] a;` 中第 1 个元素的构造器抛出时，元素 1、2 的用户析构体都会执行（元素 1 半构造、元素 2 从未构造）。
   零值安全约束保证不会双重释放、不会崩，偏差只在于"析构体在从未构造的对象上产生可观察副作用"，
   违反 C++ [except.ctor] 的语义。修法：每个展开步骤建失败块，只销毁 0..k（失败槽用部分析构），
   并保证外层不再重复释放——等价于 C++ 的 landing pad。触发条件：用户报告析构计数不对，或 std 库出现
   依赖析构副作用的对象（文件/socket 句柄）。详见 `agents/value-semantics.md` §5.5。
+  **✅ 已修（未发布）**：`Emitter` 增加构造进度栈（`CtorProgress`），`emitCtor` / `emitStructCtor` /
+  `emitMemberInits` / `emitCtorGlue` 每层登记"已完成前缀 + 正在构造的下标"，unwind 时按逆序只销毁
+  已完成者（完整析构）与失败槽（部分析构，不跑用户析构体），并清零避免外层重复释放；`emitDtorPartial` /
+  `emitStructDtorPartial` 改为结构性部分释放（数组递归）。同时补上 may-throw 对合成成员构造步骤的分析
+  （此前 class 的 `new` 路径漏判 → 走全量析构、双析构）。用例：
+  `tests/cases/exception_partial_nested.mu`（#24）、`tests/cases/exception_partial_array.mu`（#26）。
   **另有一个已实测的 class 侧 bug**（✅ 已修，0.0.132）：构造抛异常时 `emitRelease(p)` 走 `emitDestroy`
   → 无条件跑用户析构器（实测 dtor 计数为 1），而构造中途的对象只有零值字段/半初始化状态；
   C++ 不会跑析构器。修法：`destroy_partial` 按对象 descriptor 派发到"正在执行的 ctor 层"的部分析构
   （自有字段 + 祖先完整析构），不跑本层用户析构体。详见 `agents/value-semantics.md` §5.6。
+
+- [ ] codegen — **`new` 一个没有自有构造器的 class 时，成员构造抛异常会泄漏对象**（2026-11-16 实测）：
+  `class COuter { A a; B b; }`（无 ctor）+ `new COuter()`：成员构造在分配点内联展开，B 的构造器抛出后
+  `emitUnwindCurrent` 直接跳到 try 派发；分配出来的对象既没存进局部变量，也没有 owner 去
+  `destroy_partial` → 每次迭代泄漏一次分配（实测 `~COuter` 计数 0，`a_full` 计数仍正确）。有自有构造器的
+  路径不受影响（`evalNew` 的 `emitCheckPendingWith(emitPartialDestroyCall)` 覆盖）。修法：给分配点的
+  内联成员步骤也登记 unwind 清理（构造进度条目带 owner + partial destroy，或复用回调栈）；顺序必须是
+  先构造进度清理、再销毁对象（字段先归零，避免重复跑用户析构体）。
 
 - [ ] 文档 — **`AGENTS.md` 的测试命令缺 `MUC_CMD`**（2026-11-15 实测）：文档写
   `python tests/run_tests.py`，但 `muc` 不在 PATH 上，直接跑会 576 个用例全部
@@ -136,3 +150,11 @@
   33.4 ns vs C malloc/free 19.5 ns。落地需要：`--single-thread` 编译期开关贯穿 RC emit 路径
   （retain/release 之外的 fence 也要处理）、与 `std.thread`/`para` 的互斥诊断（用了线程就必须报错或忽略开关）、
   以及一组基准对比。属于特性 + 决策，不是随手能改的 bug。
+
+- [ ] 工具链 — **cross 目标的校验只在 Windows host 上实测过**（2026-11-16，issue #22/#25）：
+  `muc build` 现在会比对 platform 规格与 codegen 目标的 arch/ABI，triple 的 OS/arch/env 也会与 host 比较
+  （`x86_64-unknown-linux-musl` 在 glibc host 上不再被当成 host target）。但 host ABI 只认得出 glibc
+  （`__GLIBC__`），musl/其它 libc 一律返回「未知」→ 不报错；链接后靠 ELF `PT_INTERP` 名字（`ld-linux-*`
+  vs `ld-musl-*`）反查运行时，静态链接查不出来。要在 Linux CI 上补测：① glibc host 上 musl target 必须要求
+  `--cc`；② musl host 上 gnu target 必须被拒；③ 交叉链接后产物的解释器与 target 一致。
+  配套用例：`tests/cli/target_platform.py`（按 host 推导期望值，可在三种 host 上跑）。
