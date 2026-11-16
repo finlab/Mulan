@@ -51,7 +51,7 @@ that matter for the layer model:
 - The `cstd` library holds the raw C bindings (`cstd.stdio`, `cstd.string`, …); `std` itself never
   contains a C-header binding.
 - A **library** type is PascalCase (`String`, `Thread`), a **built-in** type is lowercase
-  (`buffer<T>`, `int`); `string` is a declared lowercase alias of `String`.
+  (`int`, `T[]`); `string` is a declared lowercase alias of `String`.
 - A free function does not repeat its module name: `std.thread.start`, not `std.thread.thread_start`
   (the current `thread_start` / `thread_join` / `thread_sleep` names are a pending cleanup, U37).
 - `extern` declarations keep the C name verbatim; wrappers follow the Mulan rules.
@@ -74,7 +74,7 @@ Planned (no code yet, listed so that naming and layering are decided before impl
 |---|---|---|
 | `std.fmt` | L2 | type-safe formatting (`format("{}", x)`), replaces `printf` for new code |
 | `std.io` | L2 | `Reader` / `Writer` interfaces, buffered streams, binary mode explicit |
-| `std.collections` | L2 | `Array<T>` / `Array2d` / `Array3d` (the `T[]` sugar), `Map<K,V>`, `StringBuilder` |
+| `std.collections` | L2 | `Array<T>` / `Array2d` / `Array3d` (wrappers over the built-in `T[]`), `Map<K,V>`, `StringBuilder` |
 | `std.fs` | L2 | files, directories, paths (UTF-8 paths) |
 | `std.parse` | L2 | `parse_int` / `parse_float` with explicit failure |
 | `std.random` | L2 | explicit PRNG state, seedable (replaces `rand`) |
@@ -136,9 +136,9 @@ public:
 
 public class BoundsError : Exception {
 public:
-    usize index;
-    usize length;
-    usize axis;                      // 0-based; multi-dimensional subscript
+    isize index;
+    isize length;
+    isize axis;                      // 0-based; multi-dimensional subscript
 }
 ```
 
@@ -158,7 +158,7 @@ declaration checking the same shape, `class` equality staying identity — is SP
 |---|---|---|
 | `IIterator<T>` | `bool next()`, `T current()` | a cursor for `for-in` (SPEC 6.4.2) |
 | `IEnumerable<T>` | `IIterator<T> iterator()` | a container |
-| `IIndexable<T>` | `usize length()` (+ a structural subscript, SPEC 6.4.1) | containers; the subscript half is not declarable in an interface |
+| `IIndexable<T>` | `isize length()` (+ a structural subscript, SPEC 6.4.1) | containers; the subscript half is not declarable in an interface |
 | `IEquatable` | `==`, `!=` | numbers, pointers, a value type with those operators |
 | `IOrdered : IEquatable` | `<`, `<=`, `>`, `>=` (plus equality) | numbers, pointers, enums, a value type with those operators |
 | `IAddable` / `ISubtractable` / `IMultipliable` / `IDivisible` / `IModulable` | the binary `+ - * / %` returning `Self` | numbers (`%` is `frem` for floats) |
@@ -183,7 +183,7 @@ declaration checking the same shape, `class` equality staying identity — is SP
   so a substring never exposes the source bytes after its end.
 - **`sub(start, count)`** clamps both bounds to the source length (a start past the end gives the
   empty string) instead of producing an invalid view.
-- **`find(needle)`** returns `long`: `-1` means not found, and every representable offset stays
+- **`find(needle)`** returns `isize`: `-1` means not found, and every representable offset stays
   positive on the supported 64-bit targets.
 - The compiler knows neither the layout nor the operations (SPEC 12 #4): `String` is an ordinary
   struct in `libs/std/string.mu`.

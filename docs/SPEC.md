@@ -23,7 +23,7 @@
 | Topic | Conclusion |
 |---|---|
 | Loops | Only `while` and `for-in` are kept; C-style `for` and `do-while` are not kept |
-| Iteration | `for x in seq { }` (parentheses optional); ranges `a..b` / `a..=b` (optionally `step n`) and managed sequences (`Array<T>` written `T[]` / `buffer<T>` / `String`) are supported; static arrays are C storage and are not iterable; `continue` proceeds to the next iteration |
+| Iteration | `for x in seq { }` (parentheses optional); ranges `a..b` / `a..=b` (optionally `step n`) and managed sequences (`T[]` / `T[,]` / `String` and library containers that provide `length()` + `operator[]`) are supported; static arrays are C storage and are not iterable; `continue` proceeds to the next iteration |
 | Mutability | C#-style: the type is declared before use; mutable by default; `const` is a C-model prefix qualifier: on named types it is a read-only binding marker, on pointers/slices it makes the pointee read-only |
 | Declaration initialization | Declarations use only `=`: `Point p = {1, 2}`, `Point p = {}`, `Point p = Point(1, 2)`; in non-declaration positions use `Point(...)` |
 | Type inference | Local variables may use `auto x = expr;`; local only, and an initializer is required; `dynamic`/`any` are reserved names only |
@@ -164,7 +164,7 @@ where  move  typeof
 | `int` / `uint` | 4 | signed/unsigned 32-bit |
 | `long` / `ulong` | 8 | signed/unsigned 64-bit |
 | `float` / `double` | 4 / 8 | IEEE-754 |
-| `usize` / `isize` | pointer width | platform-dependent; used for sizes and indices |
+| `usize` / `isize` | pointer width | platform-dependent; `isize` for lengths, indices and byte sizes; `usize` for unsigned arithmetic and C-facing sizes |
 | `string` | defined by the library | value type of the std library: UTF-8 byte sequence, immutable; for layout/`sizeof`/API see the library docs |
 | `void` | — | no value; usable only as a return type or as the base type of `void*` |
 
@@ -206,18 +206,33 @@ where  move  typeof
   - No `length()` and no `for-in`; use `sizeof(a) / sizeof(a[0])` for the count and an index loop.
   - Aggregate initialization `T[N] a = {…}` (zero-padded when short) and `= {}` (all zeros) are
     unchanged, as is initialization of a `char`/`byte` array from a string literal.
-- **Dynamic arrays**: `T[]` / `T[,]` / `T[,,]` are **syntax sugar for the container types**
-  `Array<T>` / `Array2d<T>` / `Array3d<T>` (rank 1–3; decided 2026-11-14, containers themselves
-  still to be written — stdlib backlog U38). The sugar names a *library* container; it is not a distinct
-  runtime type.
-  - **Implementation status (0.0.106)**: until `Array*` lands, `T[]` and `buffer<T>` resolve to the
-    **same** built-in reference-counted sequence (`{ i64 rc; i64 len; i64 cap; data... }`), so every
-    rule below describes that shared representation. When `Array` lands, `T[]` means `Array<T>`
-    (a library type over `buffer<T>`) and `buffer<T>` keeps its own spelling.
-  - `new T[n]` creates one (`n` is a runtime integer, elements zeroed); `T[] s = {}` means empty (null handle).
+- **Dynamic arrays**: `T[]` / `T[,]` / `T[,,]` are **built-in types** (rank 1–3; decided 2026-11-16,
+  superseding the earlier "sugar for `Array<T>`" rule). A dynamic array is the single way to obtain a
+  heap block of elements: the representation is the compiler's, and the former `buffer<T>` name is
+  **removed** (`buffer<T>` is an error telling the user to write `T[]`). A library container
+  (`Array<T>` and friends) wraps a `T[]`; it adds methods, not representation.
+  - **Representation**: a reference-counted handle `{ i64 rc; i64 len; data... }` (rank 1; rank r keeps
+    `r` dimension fields). There is **no capacity field**: the length is fixed for the whole lifetime of
+    the block, elements cannot be added, and the block is never reallocated — so an element address
+    taken from it stays valid until the handle is released.
+  - **Built-in members**: exactly three — `length()`, `operator[]`, `ptr()`. Everything else
+    (`push`, `reserve`, `find`, `sort`, …) belongs to a library container.
+  - `new T[n]` creates one (`n` is a runtime integer) and **zeroes the element block**;
+    `uninit new T[n]` omits that zeroing and is legal only for a trivial element type (below).
+    `T[] s = {}` means empty (null handle).
     Every length must be **non-negative** and the resulting byte count must not overflow: a negative
     constant is a compile error, a negative or overflowing computed length aborts like a failed
     allocation (6.6). `length()` is therefore always the number of valid indices (6.4.3).
+  - **`uninit`**: `uninit new T[n]` leaves the element area undefined (reading an element before writing
+    it is UB, 8.2). The header — reference count, length, dimensions — is always valid, so `length()`
+    and the bounds check keep working. The element type must be **trivial**: no `class` / `interface` /
+    `string` / `T[]` field (directly or nested) and no user destructor; otherwise the program is
+    rejected, because a non-zero handle would corrupt the reference count at release time.
+  - **`ptr()`**: the address of element 0 as `T*` (`const T*` for a `const` block); a null handle
+    yields a null pointer. It borrows the block, so the operand must be a variable or a field
+    (binding a temporary first is required). It requires a **trivial** element type for the same reason
+    as `uninit`: a raw write would bypass the element's retain/release. `ptr` is a method, not a field
+    (`x.ptr` is an error).
   - Assignment/argument passing copies the **handle** (O(1)), sharing the same array; destroyed when the reference count reaches zero;
     if the element type holds class/interface references, release element by element.
   - Element types: scalars, enums, pointers, structs (including reference fields and user destructors),
@@ -232,11 +247,8 @@ where  move  typeof
   - `sizeof(T[])` / `sizeof(T[,])` = 8 (handle size); the size of library types is defined by the library (for `string` see the library docs).
   - Aggregate initialization `T[] s = {1, 2, 3};` allocates a new array and initializes the elements.
   - `T[N]` → `T[]` implicit conversion: **allocates and copies** (dynamic arrays no longer provide a borrowed view).
-  - Sub-slicing/borrowed-view syntax (`s[1..]` etc.) is not provided yet.
-- **`buffer<T>` is the built-in safe memory block** — the low-level infrastructure the `Array`
-  family is built on, not a user-facing container. Zero-initialized, RC-shared, element-wise RC for
-  class/interface elements, bounds-checked subscript, `b.ptr` for C interop. It stays lowercase
-  because it is compiler-provided (the naming rules are internal: `agents/stdlib/style.md` §1); `T[]` sugar never denotes it.
+  - Sub-slicing/borrowed-view syntax (`s[1..]` etc.) is not provided yet; `ptr()` plus an explicit
+    length is the current escape hatch, and it is limited to trivial element types.
 - **`String` is the canonical name** of the library string type; `string` is a `type` alias (0.0.101).
 - **Static rectangular multi-dimensional arrays**: `T[m,n,...]` (`m,n` compile-time constants), contiguous C storage.
   - `int[2,3] a = {{1, 2, 3}, {4, 5, 6}};` (nested braces, missing elements filled with zero).
@@ -245,8 +257,8 @@ where  move  typeof
   - The dimensions are derived with `sizeof`: `sizeof(a)/sizeof(a[0])` is dimension 0, `sizeof(a[0])/sizeof(a[0][0])` is dimension 1, and so on.
   - May contain class/interface/struct reference elements (RC element by element); `sizeof` is the total byte count.
 - **Dynamic rectangular multi-dimensional arrays**: `T[,]` (only the rank is written; the size is determined by `new`) —
-  sugar for `Array2d<T>` (see the dynamic-array bullet above), same for `T[,,]` / `Array3d<T>`; 4+ dimensions
-  have no sugar (use `Array<T>` with a manual index).
+  the rank-2 built-in type (see the dynamic-array bullet above), same for `T[,,]`; rank 4+ is not
+  provided (use a flat `T[]` with a manual index).
   - `int[,] a = new int[m,n];`; any `new T[d0,d1,...]`.
   - Indexing `a[i,j]` (all dimensions must be given; taking a "row view" is not supported).
   - `a.length()` = dimension 0, `a.length(k)` = dimension k (k may be a runtime expression; subscripts are bounds-checked).
@@ -260,9 +272,9 @@ where  move  typeof
 - All-zero: `int[5] c = {};`; empty dynamic/rectangular arrays: `int[] d = {};`, `int[,] e = {};`.
 - Arrays **do** decay to pointers in value position (C99 6.3.2.1, 0.0.106); `&arr[0]` remains an
   equivalent explicit spelling. The array object itself is not assignable (see the rules above).
-- Indexing `x[i]` / `x[i,j]`; the index type is an integer, `usize` recommended.
-- Managed sequences answer `x.length()` (`usize`); **static arrays are C storage and have no `length()`** - derive the count with `sizeof(a) / sizeof(a[0])`.
-- **Bounds checking**: managed sequences (`T[]` / `buffer<T>`) are checked at the subscript; `--bounds=on|off` (default on) controls it, and a violation throws `std.exception.BoundsError { index, length, axis }`. Static arrays and `T*` are unchecked (C semantics).
+- Indexing `x[i]` / `x[i,j]`; the index type is `isize` (any integer widens to it; a negative index is out of range and throws).
+- Managed sequences answer `x.length()` (`isize`); **static arrays are C storage and have no `length()`** - derive the count with `sizeof(a) / sizeof(a[0])`.
+- **Bounds checking**: managed sequences (`T[]`) are checked at the subscript; `--bounds=on|off` (default on) controls it, and a violation throws `std.exception.BoundsError { index, length, axis }`. Static arrays and `T*` are unchecked (C semantics).
 - All-zero/null values use `{}`: `int[5] a = {};`, `int[] s = {};`, `string s = {};` (aggregate types no longer support `= 0`).
 - **`String` is a value type provided by the std library** (`string` is a lowercase `type` alias; not a language built-in type; the spec of the library is
   [docs/StdLibSPEC.md](file:///D:/dev/mu_lan/docs/StdLibSPEC.md) §6.3, the implementation notes are an
@@ -619,7 +631,7 @@ Usable for unit-level `const`, type-level `const` members, and enum member value
 - `as` conversions (the same truncation / sign extension / integer↔float conversion semantics as at runtime);
 - References to other constants: unit-level `const` of this unit, enum members (`Color.Red` or a bare `Red`),
   type-level `const` members (`Type.NAME`); **forward references and arbitrary declaration order are supported** (`const int A = B; const int B = 1;`);
-- Built-in `sizeof(T)` / `alignof(T)`: the result is `usize`; assigning it to `int` and similar types requires an explicit `as`
+- Built-in `sizeof(T)` / `alignof(T)`: the result is `isize`; assigning it to `int` and similar types requires an explicit `as`
   (`const int W = sizeof(int) as int;`; `const int W = sizeof(int);` still fails under the strict typing rules);
 - Errors: division by zero / modulo by zero, signed division/remainder overflow (`MIN / -1`), circular dependency (`circular constant definition involving ...`), nesting depth exceeding 512 levels;
 - In constant expressions `and` / `or` **evaluate both sides** (at runtime they short-circuit); therefore `false and (1 / 0 == 0)` reports division by zero in a constant context;
@@ -832,7 +844,7 @@ bool  operator==(Point a, Point b) { ... }
 struct Vec {
     int n;
     Vec operator+(Vec o) { ... }       // binary: 1 parameter
-    int operator[](usize i) { ... }    // read:   1 parameter
+    int operator[](isize i) { ... }    // read:   1 parameter
     bool operator==(Vec o) { ... }
 }
 ```
@@ -965,7 +977,7 @@ Type parameters are written after the name and before `:` and `{`:
 ```c
 struct Vec<T> { T[] data; }
 class Box<T> { T v; }
-interface ISeq<T> { usize length(); T at(usize i); }
+interface ISeq<T> { isize length(); T at(isize i); }
 T max2<T>(T a, T b) { return a > b ? a : b; }
 ```
 
@@ -1392,7 +1404,7 @@ para for req in server.requests() { handle(req); }
 - The producer is a **single puller**: the source expression is evaluated once, and `next()` is called
   between item starts, so a blocking `next()` is where backpressure and the end condition live. The
   source, not the syntax, decides when the iteration ends.
-- Sources: the built-in sequences of 6.4.1 (ranges and managed sequences `T[]` / `buffer<T>` / `String`) and user types
+- Sources: the built-in sequences of 6.4.1 (ranges, managed sequences `T[]` / `String` and containers that provide `length()` + `operator[]`) and user types
   satisfying the **cursor form** of 6.4.2 (`iterator()`, `next() -> bool`, `current() -> T`). A
   blocking `next()` is where backpressure and the end condition live; the source, not the syntax,
   decides when the iteration ends.
@@ -1613,7 +1625,7 @@ type PP = P;          // alias of an alias
 - No comma operator is provided.
 - `sizeof(T)` / `alignof(T)` operate on types; `sizeof(expr)` is pending.
 - `length()` is the accessor for managed sequences.
-- Built-in functions: `alloc(bytes: usize) -> void*`, `realloc(p: void*, bytes: usize) -> void*`, `free(p: void*)`.
+- Built-in functions: `alloc(bytes: isize) -> void*`, `realloc(p: void*, bytes: isize) -> void*`, `free(p: void*)`.
 - Struct construction expression: `Point(1, 2)`, `Point(x = 1, y = 2)`, `Point()` (zero value); brace initialization is not an expression.
 - `new T(...)` is an expression (`T` must be a class) and returns a class reference; there is no corresponding release statement (`del` has been removed; just set it to null).
 - `0` in an expression is an `int`; zero-value initialization (aggregate `{}` / scalar constants) is only used in the declaration-initializer position. For a struct's zero value in an expression/assignment use `Point()`; you cannot write `p = {}`, `p = 0`, or `f(0)`.
@@ -1694,7 +1706,7 @@ for i, x in seq { ... }    // with index/ordinal (see 6.4.4)
 ```
 
 - The parenthesized forms `for (x in seq)` / `for (i, x in seq)` / `for (ref x in seq)` are also accepted; canonical style omits the parentheses.
-- Built-in sequences: half-open range `a..b` and managed sequences (`T[]` / `buffer<T>`). **Static arrays `T[N]` are C storage and are not iterable** (use an index loop). A `String` is iterated through the
+- Built-in sequences: half-open range `a..b` and managed sequences (`T[]` and library containers). **Static arrays `T[N]` are C storage and are not iterable** (use an index loop). A `String` is iterated through the
   index form of 6.4.1 (`length()` + the library's member `operator[]`, byte by byte) — the compiler has no
   built-in knowledge of it.
 - **`for-in` is not supported for multidimensional arrays** (both `T[m,n,...]` and `T[,]` count): use an index loop; for a static multidimensional array you can take a row first and then iterate.
@@ -1717,25 +1729,25 @@ for i, x in seq { ... }    // with index/ordinal (see 6.4.4)
 
 ```c
 class Vec {
-    usize n;
+    isize n;
     int* data;
-    usize length() { return n; }
+    isize length() { return n; }
 }
-int operator[](Vec v, usize i) { return v.data[i]; }   // free-function operator, see 3.11
+int operator[](Vec v, isize i) { return v.data[i]; }   // free-function operator, see 3.11
 ```
 
 - Conditions (all must hold):
-  - a method `length() -> usize`;
-  - `operator[](usize) -> T`, either a **member operator** on the container or a free-function operator `operator[](C, usize) -> T` (3.11).
-- Signatures are matched **exactly** on `usize`: `operator[](C, int)` does not qualify (no narrowing conversion); on error the actual signature is reported.
-- Lowering: `usize n = c.length();` (evaluated only once) → `for (usize i = 0; i < n; ++i) { T x = c[i]; ... }`.
+  - a method `length() -> isize`;
+  - `operator[](isize) -> T`, either a **member operator** on the container or a free-function operator `operator[](C, isize) -> T` (3.11).
+- Signatures are matched **exactly** on `isize`: `operator[](C, int)` does not qualify (no narrowing conversion); on error the actual signature is reported.
+- Lowering: `isize n = c.length();` (evaluated only once) → `for (isize i = 0; i < n; ++i) { T x = c[i]; ... }`.
 - The element type is the return type of `operator[]` (if it returns `ref T`, the element type is `T`); **proxy/reference wrappers are not recognized**
   (a `vector<bool>`-style proxy design is not supported).
 - `length()` must equal the number of valid indices of `[]`; a mismatch is a user error (debug bounds checks catch it).
-- In `for i, x`, `i` is the real `usize` index.
+- In `for i, x`, `i` is the real `isize` index.
 - `for ref` requires `operator[]` to return `ref T` (the element is then addressable); when `[]` returns a value, use `for i, x` + `c[i] = ...`.
 - **Copy cost**: with the free-function form, `C` is copied on every iteration (reference fields retained/released field by field); write it as
-  `ref C` or, better, define the operator as a **member** (`T operator[](usize i)`), whose borrowed `this` makes every iteration a plain indexed load.
+  `ref C` or, better, define the operator as a **member** (`T operator[](isize i)`), whose borrowed `this` makes every iteration a plain indexed load.
 - A temporary container (`for x in makeVec()`) is constructed only once and cleaned up at loop exit according to U24.
 
 #### 6.4.2 Cursor form (sequential access; implemented 0.0.96)
@@ -1781,12 +1793,12 @@ class List { Iter iterator() { ... } }
 5. Neither is satisfied → a compile error that names `std.interfaces.IIterator<T>` and the index-form
    members (`length()` + a subscript).
 
-- `length()` is a normal method for user types and a compiler-lowered accessor for `T[]` / `buffer<T>`; static arrays have no `length()`;
+- `length()` is a normal method for user types and a compiler-lowered accessor for `T[]`; static arrays have no `length()`;
   user containers write `e.length()`.
 
 #### 6.4.4 Index variable `i`
 
-- `for i, x in seq`: `i` is a `usize` with the same scope as `x` and is read-only inside the loop.
+- `for i, x in seq`: `i` is an `isize` with the same scope as `x` and is read-only inside the loop.
 - Built-in sequences: a sequential number starting at 0 (for a range, the offset relative to `lo`).
 - Index form: the real index; cursor form: the iteration ordinal.
 - Implemented (built-in sequences + index form); the iteration ordinal of the cursor form lands together with 6.4.2.
@@ -1972,18 +1984,21 @@ an internal record (`agents/stdlib/c-bindings.md`) §3.
 
 | Function | Semantics |
 |---|---|
-| `alloc(bytes: usize) -> void*` | Allocates uninitialized memory; returns `null` on failure |
-| `realloc(p: void*, bytes: usize) -> void*` | Resizes; returns `null` on failure, leaving the original block unchanged |
+| `alloc(bytes: isize) -> void*` | Allocates uninitialized memory; returns `null` on failure |
+| `realloc(p: void*, bytes: isize) -> void*` | Resizes; returns `null` on failure, leaving the original block unchanged |
 | `free(p: void*)` | Frees; `free(null)` is a no-op |
-| `sizeof(T) -> usize` | Size of a type, **including an instantiated generic** (`sizeof(IIterator<int>)`, `sizeof(Box<int>)`) and an anonymous delegate/function type | 
-| `sizeof expr -> usize` | Size of the operand's type; the operand is **not evaluated** (`sizeof *p`, `sizeof a[i]`, `sizeof(a)`) |
-| `alignof(T) -> usize` / `alignof expr` | Alignment of a type / of the operand's type (not evaluated); generic instantiations as above |
-| `offsetof(T, field) -> usize` | Byte offset of a struct member (0 for every `union` member; compile-time constant) |
-| `x.length() -> usize` | Length of a managed sequence (`T[]` / `buffer<T>` / `String` / user containers); `x.length(axis)` for a multidimensional sequence; static arrays use `sizeof(a) / sizeof(a[0])` |
+| `sizeof(T) -> isize` | Size of a type, **including an instantiated generic** (`sizeof(IIterator<int>)`, `sizeof(Box<int>)`) and an anonymous delegate/function type | 
+| `sizeof expr -> isize` | Size of the operand's type; the operand is **not evaluated** (`sizeof *p`, `sizeof a[i]`, `sizeof(a)`) |
+| `alignof(T) -> isize` / `alignof expr` | Alignment of a type / of the operand's type (not evaluated); generic instantiations as above |
+| `offsetof(T, field) -> isize` | Byte offset of a struct member (0 for every `union` member; compile-time constant) |
+| `x.length() -> isize` | Length of a managed sequence (`T[]` / `String` / user containers); `x.length(axis)` for a multidimensional sequence; static arrays use `sizeof(a) / sizeof(a[0])` |
 
 - `alloc` returns memory aligned to at least 16 bytes (consistent with common malloc); this is a **lower-bound guarantee**, not an upper bound.
   For heap restrictions on over-aligned types see 3.4 (class objects are allocated by the compiler with the required alignment; dynamic array elements have `align ≤ 8`;
   a manually `alloc`ed struct instance with `align > 16` is UB). A general `alloc_aligned` is still pending (backlog U27).
+- `uninit new T[n]` is an allocation modifier, not a function: it skips the zeroing of the element
+  block (3.3), and the element type must be trivial. A negative `alloc`/`realloc` byte count is UB;
+  the managed form aborts instead (6.6).
 - No GC, no ownership, no borrow checking; leaking is the programmer's responsibility.
 
 ### 8.2 Undefined behavior (UB)
@@ -2322,12 +2337,12 @@ switch v {
 | 3 | Fixed-width type naming (C names vs `i32`) | Use C names first |
 | 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are allowed since 9.1 (a `const` one is still an error: unit-level `const` must be a compile-time constant) |
 | 5 | Whether arrays implicitly decay to pointers | **Decided (0.0.106): yes, as in C99.** An array in value position decays to a pointer to its first element (initializer, assignment, argument, struct-field access, row of a static multi-dimensional array); `sizeof`/`alignof` do not decay. The array object itself is **not assignable** (`a = b`, `int[N] b = a`, `s.v = a` are errors) and a `T[N]` parameter is `T*` (6.7.5.3p7). Kept as Mu extensions: an array-typed `return` copies, and a prvalue array (function result) can initialize an array. Arrays of class/interface elements keep value semantics (no pointer-to-reference type exists) |
-| 6 | Whether dynamic arrays are included in phase one | Decided: included. `T[]` / `T[,]` / `T[,,]` are **syntax sugar for `Array<T>` / `Array2d<T>` / `Array3d<T>`** (decided 2026-11-14; the containers are still to be written, stdlib backlog U38) and the built-in `buffer<T>` is the low-level safe block they build on. Until `Array*` lands both spellings resolve to the same built-in RC sequence (`{rc,len,cap,data}`), so the current semantics are those of `buffer<T>` |
+| 6 | Whether dynamic arrays are included in phase one | Decided: included. `T[]` / `T[,]` / `T[,,]` are **built-in types** (2026-11-16, superseding the earlier "sugar for `Array<T>`" rule): the compiler owns the representation `{rc,len,data}` (no capacity field — a block never grows, so its addresses stay valid), the built-in members are only `length()` / `operator[]` / `ptr()`, and `new T[n]` zeroes the elements unless written `uninit new T[n]` (trivial element types only). The `buffer<T>` name is removed. A library container (`Array<T>` and friends) wraps a `T[]` and adds methods |
 | 7 | Bounds checking strategy | Managed sequences checked by default (`--bounds=on` / `--bounds=off`), a violation throws `BoundsError`; static arrays and `T*` unchecked |
 | 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, and a constant expression reports it |
 | 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
 | 10 | `goto`/`typedef`/function pointers/varargs | `goto` is not done (phase one); function pointers and lambdas are implemented in 3.16 (0.0.84); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
-| 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding by default; `for i, x` provides a `usize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; **`for ref` works for user types in the index form when the container's `operator[]` returns a mutable `ref T`** — either spelling of the operator (member or free function, 6.4.1); it is unavailable for ranges, `string`, the cursor form, `const` sequences and class/interface elements; **multi-dimensional arrays forbid `for-in`** |
+| 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding by default; `for i, x` provides an `isize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; **`for ref` works for user types in the index form when the container's `operator[]` returns a mutable `ref T`** — either spelling of the operator (member or free function, 6.4.1); it is unavailable for ranges, `string`, the cursor form, `const` sequences and class/interface elements; **multi-dimensional arrays forbid `for-in`** |
 | 12 | `..=` / `step` / reverse order for ranges | Implemented (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`) and must be a non-zero compile-time constant; reverse order relies on an **explicit negative step** (`a..b` does not reverse automatically); switch case ranges support `..=` and **do not support `step`** |
 | 13 | Local type inference | Decided: `auto x = expr;`; locals only, an initializer is required; all declarators must have the same type |
 | 14 | Default mutability of parameters | Mutable (C semantics) |
@@ -2445,6 +2460,7 @@ switch v {
 | 126 | Unit-level initialization and cleanup | **Implemented (9.1, 0.0.102).** Runtime initializers are allowed; the order is a DFS post-order over `use` edges from the entry unit (declaration order inside `use` lists), cleanup is its exact reverse, declaration order inside a unit. Only `use` dependencies are tracked; indirect dependencies (function pointer, interface dispatch, `extern` C symbol, a later variable reached through a function body) are undefined. An exception escaping an initializer aborts without cleanup; `atexit` makes `exit()` clean up. Lifted the three "no exit-time destruction" restrictions (3.3 `String`, 3.4 reference fields, 3.4 user destructors). Deferred: lazy first-use initialization, explicit `init(N)` priorities, debug-mode lifecycle assertions, link-time sequencing for split compilation |
 | 127 | `export` and the binary export surface | **Decided and implemented (0.0.103).** `export` is a top-level declaration modifier that implies `public` and marks the declaration as part of the binary export surface; it cannot be combined with `private`/`extern`/`use` or used inside a type body (export the type, which exports its public methods and class metadata). `--exports=export` (default) keeps only `export` declarations externally visible, `--exports=public` keeps every `public` declaration; `--export <name>` still adds individual names. In an executable everything outside the surface is internalized and dead-code-eliminated; library targets keep the surface visible (toolchain plan §11) |
 | 127 | Member promotion (Go-style embedding) / mixin | **Decided (2026-11-14): explicitly not done.** No `mixin`/`embed` member form: a method call never falls back to a field's type. Rationale: (a) it cannot satisfy an interface without an offset thunk, and after such a thunk `this` is the embedded subobject, so identity comparisons and stored `this` silently change meaning; (b) the set of callable names would depend on another type's evolution across units — adding a method to the embedded type silently turns a remote compile error into legal code, and can silently change overload resolution (violates the "information must be locally expressible" criterion); (c) it saves a few lines of forwarding while adding a resolution hop at every call site, whose verification cost is the expensive one. Reuse instead: `struct S : I` with explicit forwarding methods (3.10, 3.15.7), or field composition. Reopen conditions and rejected variants: `agents/design-backlog.md` U40 |
+| 128 | Signed or unsigned index / length type | **Decided (2026-11-16): `isize`.** `length()`, subscripts, `for i, x` ordinals, `find` offsets, `sizeof`/`alignof`/`offsetof` and the `alloc`/`realloc` byte counts are all `isize`; `usize` is kept for unsigned arithmetic and for C-facing sizes (`cstd.*`, `c_size`), where an explicit `as` is required. Rationale: `length() - 1` on an empty sequence must not wrap to `2^64-1`, descending loops need a signed counter, `find` already returns `-1`, and the emitted bounds check (`icmp uge` on the 64-bit index) catches a negative index with no extra instruction |
 
 ---
 
