@@ -696,6 +696,8 @@ class Cat {
 - `ref T` parameters (0.0.62; scalars supported since 0.0.63): `void f(ref Point p)` / `void inc(ref int x)` borrow the caller's variable;
   the callee may write to it; it cannot be rebound.
   - Borrowable types: primitive types, enums, pointers, and structs that contain **no reference-counted fields, have no destructor, and are not a union**.
+    A type parameter is checked when it is substituted, i.e. at **instantiation** — `void f<T>(ref T c)`
+    instantiated with a type that owns a block is an error, not a run-time surprise.
   - The argument must be an **addressable lvalue**; `ref` parameters perform no conversion (they do not accept temporaries).
   - Assignment to a struct borrow is still a "rebinding" error (as in 0.0.62); assignment to a scalar/enum/pointer borrow **writes through** to the caller's variable.
   - Method/constructor parameters do not support `ref` yet; operator parameters do (see 3.11); `extern` does not.
@@ -1050,6 +1052,15 @@ T: A | B  →  type set is the union (wider)  →  available members of T are th
 
 - Method members: `T` has a method with the same name and exactly the same parameter types and return type (looked up along the base class chain and in interface default methods).
 - Operator members: an operator that accepts `(T, T)` and returns `T` exists — a **built-in operator or an `operator` free function of a visible unit**.
+- **Subscript members are asymmetric**: `operator[]` takes the receiver plus an index or key, so only the
+  *receiver* operand has to be `Self`; the operands after it may be any type. A signature must therefore
+  spell the receiver explicitly (`T operator[](Self c, isize i)`), because an interface member has no
+  `this`. A container satisfies it with either spelling — a member `T operator[](isize)` (the receiver is
+  the implicit `this`) or a free `T operator[](C, isize)` — and a `ref T` implementation satisfies the
+  declared `T`, since a borrow is usable as a value. A contract may declare the return as `ref T`
+  instead, and then only a `ref` implementation satisfies it — that is what lets a generic body write
+  through elements (`c[i] = v`) without an `operator[]=` or a second contract. A built-in block (`T[]`)
+  satisfies the value form: its `length()` and subscript are compiler-lowered, so they count as members.
 - Therefore **built-in types satisfy interfaces at zero cost**: `int` satisfies `Self operator+(Self, Self)` thanks to the built-in `+`.
   The ready-made contracts (`IAddable`, `IOrdered`, `INumber`, …) live in `std.interfaces` (3.15.9).
 
@@ -1122,7 +1133,9 @@ unchanged:
   required signatures is enough; declaring it (`struct Money : IAddable`) checks the same shape at the
   definition site and is optional.
 - The constraint checker recognises only `+ - * / %` and the comparison operators as built-in
-  operators, so there is deliberately no bitwise contract.
+  arithmetic/comparison operators, so there is deliberately no bitwise contract. A **subscript** is
+  declarable and satisfiable (3.15.9), which is what lets `IIndexable<T>` constrain generic container
+  algorithms; it is not an arithmetic operator and does not participate in `INumber`.
 - User value types satisfy these contracts through `operator` members or free `operator` functions in
   a visible unit; `class` equality stays identity, so a `class` does not satisfy `IEquatable`.
 
