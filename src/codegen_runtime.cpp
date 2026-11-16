@@ -343,6 +343,9 @@ namespace muc_detail {
     GlobalVariable* Emitter::weakLockGlobal() { return mod->getNamedGlobal("mu_weak_lock"); }
 
     void Emitter::emitWeakLock(IRBuilder<>& hb) {
+        // `--single-thread`: the registry is only touched by this thread, so the spin lock is dead
+        // weight on every destruction (see EmitOptions::single_thread).
+        if (singleThread) return;
         auto* fn = hb.GetInsertBlock()->getParent();
         auto* spin = BasicBlock::Create(ctx, "weak.spin", fn);
         auto* got = BasicBlock::Create(ctx, "weak.got", fn);
@@ -358,9 +361,18 @@ namespace muc_detail {
     }
 
     void Emitter::emitWeakUnlock(IRBuilder<>& hb) {
+        if (singleThread) return;
         hb.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, weakLockGlobal(),
                            ConstantInt::get(i32(), 0), MaybeAlign(4),
                            llvm::AtomicOrdering::Release);
+    }
+
+    void Emitter::emitWeakEmptyCheck(IRBuilder<>& hb, BasicBlock* emptyBB, BasicBlock* busyBB) {
+        // Acquire: pairs with the release store of `mu_rt_weak_reg`, so a non-null head also makes the
+        // node it points at visible.
+        auto* head = hb.CreateAlignedLoad(ptrTy(), weakHeadGlobal(), MaybeAlign(8));
+        head->setAtomic(llvm::AtomicOrdering::Acquire);
+        hb.CreateCondBr(hb.CreateICmpEQ(head, Constant::getNullValue(ptrTy())), emptyBB, busyBB);
     }
 
     Function* Emitter::ensureWeakReg() {
@@ -404,6 +416,9 @@ namespace muc_detail {
         auto* done = BasicBlock::Create(ctx, "done", fn);
 
         hb.SetInsertPoint(entry);
+        auto* lockBB = BasicBlock::Create(ctx, "weak.lock", fn);
+        emitWeakEmptyCheck(hb, done, lockBB);
+        hb.SetInsertPoint(lockBB);
         emitWeakLock(hb);
         auto* curS = hb.CreateAlloca(ptrTy());
         auto* prevS = hb.CreateAlloca(ptrTy());
@@ -466,6 +481,9 @@ namespace muc_detail {
         auto* done = BasicBlock::Create(ctx, "done", fn);
 
         hb.SetInsertPoint(entry);
+        auto* lockBB = BasicBlock::Create(ctx, "weak.lock", fn);
+        emitWeakEmptyCheck(hb, done, lockBB);
+        hb.SetInsertPoint(lockBB);
         emitWeakLock(hb);
         auto* curS = hb.CreateAlloca(ptrTy());
         auto* prevS = hb.CreateAlloca(ptrTy());

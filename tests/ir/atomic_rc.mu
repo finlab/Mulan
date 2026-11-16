@@ -1,21 +1,29 @@
 unit atomic_rc;
 
-// Reference counting is atomic by default: the retain at the call and the release at the end of the
-// scope must stay atomic, and the final release needs the acquire fence (SPEC 3.17 / 8.3).
-// Paired with `single_thread_rc.txt`, which asserts that `--single-thread` drops both.
+// Default mode, same program as `single_thread_rc`: reference counting is atomic (relaxed add,
+// release sub + acquire fence on the final release, SPEC 3.17 / 8.3) and the weak registry is
+// guarded by its spin lock (`atomicrmw xchg`).
+
+extern int putchar(int c);
 
 class Node {
     int v;
-    Node(int x) { v = x; }
+    weak Node next;
+    Node(int x) { v = x; next = null; }
+    ~Node() { putchar(10); }
 }
 
-int read(Node n) {
-    return n.v;
-}
+Node last;
 
-int main() {
-    Node a = new Node(1);
-    int r = read(a);
-    a = null;
-    return r == 1 ? 0 : 1;
+int main(int argc, char** argv) {
+    Node keep = new Node(argc);
+    int n = argc + 2;
+    for i in 0..n {
+        Node p = new Node(i);
+        keep.next = p;
+        last = p;
+    }
+    last = null;
+    keep = null;
+    return 0;
 }

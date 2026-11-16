@@ -478,6 +478,10 @@ struct Emitter {
 
     void emitWeakUnlock(IRBuilder<>& hb);
 
+    // Branches to `emptyBB` when the global weak list is null (nothing to walk, so the lock can be
+    // skipped) and to `busyBB` otherwise. See `mu_rt_weak_unreg` for why this matters (#18).
+    void emitWeakEmptyCheck(IRBuilder<>& hb, BasicBlock* emptyBB, BasicBlock* busyBB);
+
     Function* ensureWeakReg();
 
     Function* ensureWeakUnreg();

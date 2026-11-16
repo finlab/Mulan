@@ -1,9 +1,9 @@
-# `--single-thread`: the reference count is only touched by one thread, so the retain/release are
-# plain loads and stores and the acquire fence disappears. Same program as `atomic_rc.mu`.
-# The weak-registry lock stays atomic (it is unrelated to reference counting).
+# `--single-thread`: no atomics at all (no atomic RC, no acquire fence, no weak-registry spin lock),
+# but the allocation, the destructor and the free are still there.
 @ --single-thread
 + ^define .*@main\(
 + calloc
-- atomicrmw add ptr
-- atomicrmw sub ptr
++ @putchar
++ @free
+- atomicrmw
 - fence acquire

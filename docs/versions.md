@@ -27,6 +27,28 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 150 — 2026-11-16
+
+**Weak registry: empty-list fast path, and no spin lock under `--single-thread` (#18, partial).**
+
+- `mu_rt_weak_unreg` and `mu_rt_weak_notify` now begin with an acquire load of `mu_weak_head` and
+  return immediately when it is null. Every class destruction calls `mu_rt_weak_notify`, so a program
+  with no live `weak` cells used to pay a lock/unlock pair per destruction; it now pays one load.
+- `--single-thread` skips the registry spin lock entirely (no other thread exists), which removes two
+  more atomics per destruction in that mode.
+- The `#18` cost that remains — `unregister` walks the whole global list, so the per-object cost still
+  grows with the number of live weak cells, and all threads serialise on one cache line — needs the
+  per-target intrusive list (a design decision recorded in the issue); the issue stays open.
+- `tests/bench/rc_new.mu` reworked to be escape-proof (the handle escapes into a global strong
+  reference and the destructor is observable), because the optimizer legitimately deletes a
+  `new` + drop sequence once reference counting stops being atomic. Measured with it, best of 3
+  (Windows x64, MinGW LLVM, O2): **36.5 ns/object** default vs **19.3 ns/object** `--single-thread`.
+- The IR cases `atomic_rc` / `single_thread_rc` now compile the *same* program (weak field, loop,
+  observable destructor) in both modes: the default pins `atomicrmw add/sub/xchg` + `fence acquire`,
+  the single-thread one pins that no `atomicrmw` and no fence are left at all.
+
+**Tests**: 624/624 (211 run + 382 must-fail + 21 check + 7 ir + 3 c abi).
+
 #### build 149 — 2026-11-16
 
 **`--single-thread`: opt-in non-atomic reference counting (#19).**
