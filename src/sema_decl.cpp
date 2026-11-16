@@ -948,6 +948,18 @@ namespace muc_detail {
                                 (borrowable_type(pt) ? "; take it as `const ref " + pt->str() + "`" : "; declare `" + pt->str() + "(const ref " + pt->str() + " other)`"),
                         p.get());
                 }
+                // A C caller never participates in Mulan's ownership protocol: it cannot move a value
+                // into the callee or hand over a resource, so a by-value struct that needs cleanup
+                // (a destructor, or a field/array that owns something) is rejected at the boundary
+                // even when it is movable inside the language (#30).
+                if (c_abi && !p->by_ref && pt->kind == TypeKind::Struct && pt->needs_cleanup() &&
+                    !contains_reference_type(pt)) {
+                    err(ckw + " function `" + f->name + "` cannot take struct `" + pt->str() +
+                            "` by value: it needs cleanup (" + noncopyable_reason(pt) +
+                            "), and a C caller does not own it the way a Mulan callee expects; pass a "
+                            "pointer or use a plain C struct",
+                        p.get());
+                }
                 if (p->by_ref) {
                     if (c_abi) {
                         err(ckw + " functions cannot take `ref` parameters (`&` borrows are a language mechanism; write a pointer)", p.get());
@@ -973,6 +985,18 @@ namespace muc_detail {
                 if (f->rty && f->rty->kind == TypeKind::Array) {
                     err(ckw + " function `" + f->name + "` cannot return a fixed-size array `" +
                             f->rty->str() + "`: C has no array result (return a pointer or wrap it in a struct)",
+                        f);
+                }
+                // A C caller never participates in Mulan's ownership protocol: it cannot move a value
+                // into the callee or hand over a resource, so a by-value struct that needs cleanup
+                // (a destructor, or a field/array that owns something) is rejected at the boundary
+                // even when it is movable inside the language (#30).
+                if (f->rty && f->rty->kind == TypeKind::Struct && f->rty->needs_cleanup() &&
+                    !contains_reference_type(f->rty)) {
+                    err(ckw + " function `" + f->name + "` cannot return struct `" + f->rty->str() +
+                            "` by value: it needs cleanup (" + noncopyable_reason(f->rty) +
+                            "), and a C caller does not participate in Mulan's ownership protocol; "
+                            "return a pointer or use a plain C struct",
                         f);
                 }
                 // A delegate owns an environment: C has no such ABI (and no way to release it).

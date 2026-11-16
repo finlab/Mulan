@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------- exports
 
 std::string mangle(const std::string& unit, const std::string& name) {
-    return "mu_" + unit + "_" + name;
+    return "mu$" + unit + "$" + name;
 }
 
 Program analyze(std::vector<std::unique_ptr<Unit>> units, const std::string& entry) {

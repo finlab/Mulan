@@ -36,7 +36,7 @@ namespace muc_detail {
     // Cold path of the bounds check: call std.exception.bounds_fail(index, length, axis), which throws.
     void Emitter::emitBoundsFail(Value* index, Value* length, Value* axis) {
         FunctionCallee callee = mod->getOrInsertFunction(
-            mangle_unit("std.exception", "bounds_fail") + "__usize__usize__usize",
+            mangle_unit("std.exception", "bounds__fail") + "$usize$usize$usize",
             FunctionType::get(LType::getVoidTy(ctx), {i64(), i64(), i64()}, false));
         b.CreateCall(callee, {index, length, axis});
         // `bounds_fail` always throws: unwind through the current handler on the cold path.

@@ -57,8 +57,13 @@ public:
         return p[i];
     }
 
-    // NUL-terminated view; both literals and normal strings guarantee a trailing 0
+    // NUL-terminated view of the logical value. The zero value (p == null) is the empty string;
+    // every other representation ends its buffer with a 0 at n: the constructor, `concat` and `sub`
+    // each allocate their own buffer, so the view cannot expose bytes beyond the value (#32).
     const char* cstr() {
+        if p == null {
+            return "";
+        }
         return p as const char*;
     }
 
@@ -107,11 +112,27 @@ public:
 
     // ---------------------------------------------------------------- slicing and concatenation
 
+    // A substring copies into its own NUL-terminated buffer. A view into the source would share
+    // the trailing bytes after the range, so `cstr()` could expose them (#32); out-of-range
+    // arguments are clamped to the source length instead of producing a read past the buffer (#33).
     String sub(usize start, usize count) {
+        if start > n {
+            start = n;
+        }
+        if count > n - start {
+            count = n - start;
+        }
+        byte[] buf = new byte[count + 1];
+        usize i = 0;
+        while i < count {
+            buf[i] = p[i + start];
+            i += 1;
+        }
+        buf[count] = 0;
         String r = {};
-        r.p = p + start;
+        r.p = &buf[0];
         r.n = count;
-        r.owner = owner;
+        r.owner = buf;
         return r;
     }
 
@@ -138,8 +159,10 @@ public:
 
     // ---------------------------------------------------------------- search and match
 
-    // returns the byte offset of the first occurrence, or -1 if not found
-    int find(String needle) {
+    // returns the byte offset of the first occurrence, or -1 if not found.
+    // `long` represents every offset on the supported 64-bit targets; `int` could turn a match
+    // beyond 2^31-1 into a negative value indistinguishable from "not found" (#34).
+    long find(String needle) {
         if needle.n == 0 {
             return 0;
         }
@@ -158,7 +181,7 @@ public:
                 j += 1;
             }
             if same {
-                return i as int;
+                return i as long;
             }
             i += 1;
         }

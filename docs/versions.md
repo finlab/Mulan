@@ -27,6 +27,37 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 147 — 2026-11-16
+
+**Eleven review reports (issues #29–#39): symbolic-name soundness, C-ABI ownership, and library/CLI
+correctness.**
+
+- **Symbol mangling is injective (#35, ABI-breaking)**: components are now separated by `$`, every
+  literal `_` is doubled and every other non-alphanumeric byte becomes `_XX` (uppercase hex), so
+  `lib_u_a` + `b` and `lib_u` + `a_b`, or `Box<int>` and `Box_int_`, can no longer collapse into one
+  symbol. `mu$<unit>$<name>$<param>...` replaces the old `mu_<unit>_<name>__<param>` form; `tests/abi/*.c`
+  and the IR assertions were updated, and `tests/ir/mangle_injective.txt` pins the distinction.
+- **Generic recursion terminates with a diagnostic (#31)**: an expansion whose next instance never
+  repeats a key (`Deep<T>` → `Deep<Box<T>>` → …) used to overflow the stack; a 256-level nesting limit
+  reports `recursive generic instantiation … does not terminate` instead.
+- **`swap` rejects `weak` fields and values embedding one (#29)**: the weak registry is keyed by
+  (target, field address), so a raw byte exchange would leave both registrations attached to the wrong
+  holder.
+- **A cleanup-needing struct cannot cross the C ABI by value (#30)**: even when movable inside the
+  language, a caller that does not follow Mulan's ownership protocol cannot hand over a destructor-owned
+  resource; `extern`/`export` parameters and results are rejected with a pointer/plain-struct hint.
+- **`std.string` (#32–#34)**: `String.sub` copies into its own NUL-terminated buffer and clamps its
+  range (a start past the end is the empty string); the zero value's `cstr()` is `""`, not null;
+  `find` returns `long` so a valid offset can never be confused with `-1`.
+- **`std.cstdio` is platform-neutral (#39)**: the implementation-defined `BUFSIZ` / `FILENAME_MAX`
+  moved out of the portable declaration layer (the platform values live in `cstd.stdio`).
+- **Enum constants (#36, #37)**: a value (explicit or incremented) outside the underlying `int` range
+  is rejected, and two enums can no longer declare the same unqualified member name (write `E.MEMBER`).
+- **Unit loading reports cycles (#38)**: the back-edge check now precedes the "already loaded" lookup,
+  so `a` → `b` → `a` is an error instead of a silently half-built unit.
+
+**Tests**: 617/617 (210 run + 378 must-fail + 21 check + 5 ir + 3 c abi); CLI 9/9.
+
 #### build 146 — 2026-11-16
 
 **Six correctness bugs and two CLI validation gaps found in a review pass (issues #21–#27).**

@@ -1,6 +1,6 @@
 cstdio ok
 read: line 42
-EOF=-1 SEEK_END=2 BUFSIZ=512
+EOF=-1 SEEK_END=2
 puts works
 puts ok=1
 X

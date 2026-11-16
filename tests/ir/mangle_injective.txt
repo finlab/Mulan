@@ -1,0 +1,7 @@
+# Symbol mangling is injective (#35). `lib_u_a` + `b` and `lib_u` + `a_b` used to produce the same
+# name because the components were concatenated with `_`; the unit boundary is now a `$` and every
+# literal `_` is doubled. `--exports=public` keeps both symbols in the IR instead of inlining them.
+@ --exports=public
++ mu\$lib_u_a\$b\$int
++ mu\$lib_u\$a__b\$int
+- mu_lib_u_a_b__

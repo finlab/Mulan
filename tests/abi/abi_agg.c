@@ -1,7 +1,7 @@
 /* C side of tests/abi/abi_agg.mu.
  *
  * Implements the `extern` functions the Mu unit imports, and calls back into its `export`ed
- * functions. The Mu symbols are spelled with the compiler's mangling: `mu_<unit>_<function>`
+ * functions. The Mu symbols are spelled with the compiler's mangling: `mu$<unit>$<function>`
  * followed by one `__<type code>` per parameter (`S_<unit>_<Type>` for a struct, `long` for a
  * primitive).
  */
@@ -68,29 +68,29 @@ long long c_take_bits(union Bits b) { return b.i + 1; }
 
 /* ---- exported by the Mu unit ---- */
 
-extern long long mu_abi_agg_mu_take_pair__S_abi_agg_Pair(struct Pair p);
-extern struct Pair mu_abi_agg_mu_make_pair__long__long(long long a, long long b);
-extern long long mu_abi_agg_mu_take_wide__S_abi_agg_Wide(struct Wide w);
-extern struct Wide mu_abi_agg_mu_make_wide__long__long__long(long long a, long long b,
+extern long long mu$abi_agg$mu__take__pair$S$abi_agg$Pair(struct Pair p);
+extern struct Pair mu$abi_agg$mu__make__pair$long$long(long long a, long long b);
+extern long long mu$abi_agg$mu__take__wide$S$abi_agg$Wide(struct Wide w);
+extern struct Wide mu$abi_agg$mu__make__wide$long$long$long(long long a, long long b,
                                                             long long c);
-extern long long mu_abi_agg_mu_take_quad__S_abi_agg_Quad(struct Quad q);
+extern long long mu$abi_agg$mu__take__quad$S$abi_agg$Quad(struct Quad q);
 
 int run_checks(void) {
     struct Pair p;
     p.a = 3;
     p.b = 4;
-    printf("mu pair %lld\n", mu_abi_agg_mu_take_pair__S_abi_agg_Pair(p));
+    printf("mu pair %lld\n", mu$abi_agg$mu__take__pair$S$abi_agg$Pair(p));
 
-    struct Pair q = mu_abi_agg_mu_make_pair__long__long(5, 6);
+    struct Pair q = mu$abi_agg$mu__make__pair$long$long(5, 6);
     printf("mu pair back %lld %lld\n", q.a, q.b);
 
     struct Wide w;
     w.a = 1;
     w.b = 2;
     w.c = 3;
-    printf("mu wide %lld\n", mu_abi_agg_mu_take_wide__S_abi_agg_Wide(w));
+    printf("mu wide %lld\n", mu$abi_agg$mu__take__wide$S$abi_agg$Wide(w));
 
-    struct Wide w2 = mu_abi_agg_mu_make_wide__long__long__long(7, 8, 9);
+    struct Wide w2 = mu$abi_agg$mu__make__wide$long$long$long(7, 8, 9);
     printf("mu wide back %lld %lld %lld\n", w2.a, w2.b, w2.c);
 
     struct Quad d;
@@ -98,6 +98,6 @@ int run_checks(void) {
     d.v[1] = 2;
     d.v[2] = 3;
     d.v[3] = 4;
-    printf("mu quad %lld\n", mu_abi_agg_mu_take_quad__S_abi_agg_Quad(d));
+    printf("mu quad %lld\n", mu$abi_agg$mu__take__quad$S$abi_agg$Quad(d));
     return 0;
 }

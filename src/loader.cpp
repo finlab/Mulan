@@ -412,10 +412,12 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         std::string name = unit->name;
         check_unit_name(name, unit->line, unit->col, unit->filename);
         auto it = owned.find(name);
-        if (it != owned.end()) return it->second.get();
+        // The cycle check must come first: the unit is inserted into `owned` before its dependencies
+        // are visited, so a back edge would otherwise return the half-built unit and hide the cycle.
         if (in_progress.count(name)) {
             throw MuError("unit circular dependency: " + name);
         }
+        if (it != owned.end()) return it->second.get();
         if (verbose) std::cerr << "unit " << name << " <- " << path << "\n";
         in_progress.insert(name);
         Unit* raw = unit.get();

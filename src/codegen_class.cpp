@@ -60,7 +60,7 @@ namespace muc_detail {
         std::string key = sigKey(slot) + "#" + impl.owner->str() + "#" + std::to_string(idx);
         auto it = thunkCache.find(key);
         if (it != thunkCache.end()) return it->second;
-        std::string nm = "mu_" + cls->unit + "_ithunk_" + cls->name + "__" +
+        std::string nm = "mu$" + cls->unit + "$ithunk$" + cls->name + "$" +
                          std::to_string(idx);
         std::vector<LType*> ptys{ptrTy(), ptrTy()};
         for (auto& t : slot.params) ptys.push_back(lt(t));
@@ -110,7 +110,7 @@ namespace muc_detail {
         auto* arrTy = LArray::get(ptrTy(), ents.size());
         return new GlobalVariable(*mod, arrTy, true, GlobalValue::InternalLinkage,
                                   ConstantArray::get(arrTy, ents),
-                                  "mu_" + cls->unit + "_itab_" + cls->name);
+                                  "mu$" + cls->unit + "$itab$" + cls->name);
     }
 
     // ------------------------------------------------------------ virtual table

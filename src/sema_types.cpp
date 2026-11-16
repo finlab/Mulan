@@ -434,6 +434,40 @@ namespace muc_detail {
     void Sema::check_unit(Unit* u) {
         cur_ = u;
         unit_globals_so_far_.clear();
+        // An enum is backed by `int` (types.cpp) and its members share the unit's unqualified
+        // namespace. A value outside the `int` range would be truncated and a repeated member name
+        // would silently bind to the first declaration, so both are rejected here (#36 / #37).
+        {
+            std::vector<std::pair<std::string, std::string>> owner;  // member -> enum
+            for (auto& d : u->decls) {
+                auto* ed = dynamic_cast<EnumDecl*>(d.get());
+                if (!ed) continue;
+                long long value = 0;
+                bool has = false;
+                for (auto& [m, v] : ed->members) {
+                    if (v.has_value()) {
+                        value = *v;
+                        has = true;
+                    } else if (has) {
+                        value += 1;
+                    } else {
+                        value = 0;
+                        has = true;
+                    }
+                    if (value < -2147483648LL || value > 2147483647LL) {
+                        err("value of enum member `" + m + "` (" + std::to_string(value) +
+                                ") does not fit the underlying `int` range", ed);
+                    }
+                    for (auto& [seen, seen_enum] : owner) {
+                        if (seen != m) continue;
+                        err("duplicate enum member `" + m + "` (declared in `" + seen_enum +
+                                "` and `" + ed->name + "`); write `" + ed->name + "." + m + "`",
+                            ed);
+                    }
+                    owner.emplace_back(m, ed->name);
+                }
+            }
+        }
         for (auto& d : u->decls) {
             auto* g = dynamic_cast<GlobalVar*>(d.get());
             if (!g) continue;

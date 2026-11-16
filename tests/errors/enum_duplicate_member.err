@@ -1,0 +1,1 @@
+duplicate enum member `X` (declared in `A` and `B`); write `B.X`

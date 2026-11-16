@@ -178,6 +178,17 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     if (generic_busy_.count(key)) {
         err_ts("recursive generic instantiation of `" + display + "`", spec);
     }
+    if (generic_depth_ >= kGenericDepthLimit) {
+        err_ts("recursive generic instantiation of `" + base + "` does not terminate (more than " +
+                   std::to_string(kGenericDepthLimit) +
+                   " nested instances; SPEC 3.15.4 requires a finite expansion)",
+               spec);
+    }
+    ++generic_depth_;
+    struct DepthGuard {
+        int& d;
+        ~DepthGuard() { --d; }
+    } depth_guard{generic_depth_};
     generic_busy_.insert(key);
 
     auto* sd_tmpl = dynamic_cast<StructDecl*>(tmpl_decl);

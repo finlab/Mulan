@@ -4,17 +4,16 @@
 # The MS x64 shape lives in `abi_surface.txt`; these are the SysV rules, where an aggregate of at most
 # two eightbytes is passed in registers instead of by reference.
 # 16-byte integer aggregate parameter: two INTEGER eightbytes in registers, not a pointer.
-+ define i64 @mu_abi_surface_take_pair__S_abi_surface_Pair\(\{ i64, i64 \} %p
-- define i64 @mu_abi_surface_take_pair__S_abi_surface_Pair\(ptr
++ define i64 @?"mu\$abi_surface\$take__pair\$S\$abi_surface\$Pair"\(\{ i64, i64 \} %p
+- define i64 @?"mu\$abi_surface\$take__pair\$S\$abi_surface\$Pair"\(ptr
 # and its 16-byte result comes back in RAX:RDX, no hidden pointer.
-+ define \{ i64, i64 \} @mu_abi_surface_make_pair__long__long\(
-- define void @mu_abi_surface_make_pair
++ define \{ i64, i64 \} @?"mu\$abi_surface\$make__pair\$long\$long"\(
+- define void @?"mu\$abi_surface\$make__pair"
 # 24-byte struct parameter: MEMORY class, by reference.
-+ define i64 @mu_abi_surface_take_wide__S_abi_surface_Wide\(ptr .*byval\(%mu_abi_surface_Wide\) align 8
++ define i64 @?"mu\$abi_surface\$take__wide\$S\$abi_surface\$Wide"\(ptr .*byval\(%mu_abi_surface_Wide\) align 8
 # 8-byte struct: one INTEGER register, never the two field registers.
-+ define .*@mu_abi_surface_take_small__S_abi_surface_Small\(i64
-- define .*@mu_abi_surface_take_small__S_abi_surface_Small\(%mu_abi_surface_Small
++ define .*@?"mu\$abi_surface\$take__small\$S\$abi_surface\$Small"\(i64
+- define .*@?"mu\$abi_surface\$take__small\$S\$abi_surface\$Small"\(%mu_abi_surface_Small
 # and its 8-byte result travels as one i64 too.
-+ define .*@mu_abi_surface_flip__S_abi_surface_Small\(i64
-- define .*@mu_abi_surface_flip__S_abi_surface_Small\(%mu_abi_surface_Small
-
++ define .*@?"mu\$abi_surface\$flip\$S\$abi_surface\$Small"\(i64
+- define .*@?"mu\$abi_surface\$flip\$S\$abi_surface\$Small"\(%mu_abi_surface_Small

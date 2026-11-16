@@ -5,15 +5,23 @@
 
 #include "ast.hpp"
 
-// Symbol name sanitization: characters like `<`, `>`, `,` and spaces in a generic instance name (like `Box<int>`) cannot appear in symbols
+// Symbol name sanitization. It must be **reversible**: `_` is doubled and every other
+// non-alphanumeric byte becomes `_XX` (uppercase hex), so `Box<int>` and `Box_int_` no longer
+// collapse to the same symbol (issue #35). `$` separates the components downstream and cannot be
+// produced here, which makes the concatenations below injective.
 static std::string ident_safe(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
     std::string out;
     out.reserve(s.size() + 4);
     for (unsigned char c : s) {
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+        if (c == '_') {
+            out += "__";
+        } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
             out += static_cast<char>(c);
         } else {
             out += '_';
+            out += hex[c >> 4];
+            out += hex[c & 15];
         }
     }
     return out;
@@ -24,24 +32,26 @@ std::string type_code(const TypePtr& t) {
     switch (t->kind) {
         case TypeKind::Void: return "v";
         case TypeKind::Prim: return t->name;
-        case TypeKind::Ptr: return "p_" + type_code(t->elem);
-        case TypeKind::Ref: return "r_" + type_code(t->elem);
-        case TypeKind::Array: return "a" + std::to_string(t->array_size) + "_" + type_code(t->elem);
+        case TypeKind::Ptr: return "p$" + type_code(t->elem);
+        case TypeKind::Ref: return "r$" + type_code(t->elem);
+        case TypeKind::Array: return "a" + std::to_string(t->array_size) + "$" + type_code(t->elem);
         case TypeKind::Slice:
-            return "s" + std::to_string(t->rank) + "_" + type_code(t->elem);
-        case TypeKind::Struct: return "S_" + t->unit + "_" + ident_safe(t->name);
-        case TypeKind::Enum: return "E_" + t->unit + "_" + ident_safe(t->name);
-        case TypeKind::Class: return "C_" + t->unit + "_" + ident_safe(t->name);
-        case TypeKind::Interface: return "I_" + t->unit + "_" + ident_safe(t->name);
-        case TypeKind::Sum: return "U_" + t->unit + "_" + ident_safe(t->name);
-        case TypeKind::Module: return "m_" + t->unit;
+            return "s" + std::to_string(t->rank) + "$" + type_code(t->elem);
+        case TypeKind::Struct: return "S$" + t->unit + "$" + ident_safe(t->name);
+        case TypeKind::Enum: return "E$" + t->unit + "$" + ident_safe(t->name);
+        case TypeKind::Class: return "C$" + t->unit + "$" + ident_safe(t->name);
+        case TypeKind::Interface: return "I$" + t->unit + "$" + ident_safe(t->name);
+        case TypeKind::Sum: return "U$" + t->unit + "$" + ident_safe(t->name);
+        case TypeKind::Module: return "m$" + t->unit;
         case TypeKind::Null: return "null";
         case TypeKind::Range: return "rng";
         case TypeKind::Func:
         case TypeKind::Delegate: {
+            // The arity is part of the code, so the parameter/return boundary is unambiguous.
             std::string s = t->kind == TypeKind::Delegate ? "dlg" : "fn";
-            for (const auto& p : t->fparams) s += "_" + type_code(p);
-            s += "__" + type_code(t->fret);
+            s += std::to_string(t->fparams.size()) + "$";
+            for (const auto& p : t->fparams) s += type_code(p) + "$";
+            s += type_code(t->fret);
             return s;
         }
     }
@@ -77,7 +87,7 @@ std::string func_code_name(const std::string& name) {
 }
 
 std::string mangle_unit(const std::string& unit, const std::string& name) {
-    return "mu_" + unit + "_" + name;
+    return "mu$" + unit + "$" + name;
 }
 
 std::string func_cname(const std::string& unit, FuncDecl* f) {
@@ -86,7 +96,7 @@ std::string func_cname(const std::string& unit, FuncDecl* f) {
     for (size_t i = 0; i < f->pty.size(); ++i) {
         // A borrowed parameter is T* on the C side and must be distinguished in the symbol name, otherwise f(T) and f(ref T) would collide
         const bool by_ref = i < f->pty_ref.size() && f->pty_ref[i];
-        out += by_ref ? "__r" : "__";
+        out += by_ref ? "$R$" : "$";
         out += type_code(f->pty[i]);
     }
     return out;
@@ -94,47 +104,47 @@ std::string func_cname(const std::string& unit, FuncDecl* f) {
 
 std::string method_cname(const std::string& unit, const std::string& owner,
                          const std::string& name, const std::vector<TypePtr>& params) {
-    std::string out = "mu_" + unit + "_M" + ident_safe(owner) + "_" + func_code_name(name);
-    for (auto& t : params) out += "__" + type_code(t);
+    std::string out = "mu$" + unit + "$M" + ident_safe(owner) + "$" + func_code_name(name);
+    for (auto& t : params) out += "$" + type_code(t);
     return out;
 }
 
 std::string ctor_cname(const std::string& unit, const std::string& owner,
                        const std::vector<TypePtr>& params) {
-    std::string out = "mu_" + unit + "_C" + ident_safe(owner);
-    for (auto& t : params) out += "__" + type_code(t);
+    std::string out = "mu$" + unit + "$C" + ident_safe(owner);
+    for (auto& t : params) out += "$" + type_code(t);
     return out;
 }
 
 std::string dtor_cname(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_D" + ident_safe(owner);
+    return "mu$" + unit + "$D" + ident_safe(owner);
 }
 
 std::string destroy_cname(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_destroy_" + ident_safe(owner);
+    return "mu$" + unit + "$destroy$" + ident_safe(owner);
 }
 
 std::string dtor_partial_cname(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_D_partial_" + ident_safe(owner);
+    return "mu$" + unit + "$D$partial$" + ident_safe(owner);
 }
 std::string destroy_partial_cname(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_destroy_partial_" + ident_safe(owner);
+    return "mu$" + unit + "$destroy$partial$" + ident_safe(owner);
 }
 
 std::string move_ctor_cname(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_move_" + ident_safe(owner);
+    return "mu$" + unit + "$move$" + ident_safe(owner);
 }
 
 std::string copy_ctor_cname(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_copy_" + ident_safe(owner);
+    return "mu$" + unit + "$copy$" + ident_safe(owner);
 }
 
 std::string class_desc_name(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_desc_" + ident_safe(owner);
+    return "mu$" + unit + "$desc$" + ident_safe(owner);
 }
 
 std::string class_vtable_name(const std::string& unit, const std::string& owner) {
-    return "mu_" + unit + "_vt_" + ident_safe(owner);
+    return "mu$" + unit + "$vt$" + ident_safe(owner);
 }
 
 std::string unit_inited_cname(const std::string& unit) { return "muc$unit$inited$" + unit; }

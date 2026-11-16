@@ -4,17 +4,16 @@
 # has neither profile (macOS today) from asserting the wrong ABI.
 @platform windows
 # 16-byte struct parameter: by reference (byval), not split into two registers.
-+ define i64 @mu_abi_surface_take_pair__S_abi_surface_Pair\(ptr .*byval\(%mu_abi_surface_Pair\) align 8
-- define i64 @mu_abi_surface_take_pair__S_abi_surface_Pair\(%mu_abi_surface_Pair
++ define i64 @?"mu\$abi_surface\$take__pair\$S\$abi_surface\$Pair"\(ptr .*byval\(%mu_abi_surface_Pair\) align 8
+- define i64 @?"mu\$abi_surface\$take__pair\$S\$abi_surface\$Pair"\(%mu_abi_surface_Pair
 # 16-byte struct return: hidden pointer (sret), void return.
-+ define void @mu_abi_surface_make_pair__long__long\(ptr .*sret\(%mu_abi_surface_Pair\) align 8
-- define %mu_abi_surface_Pair @mu_abi_surface_make_pair
++ define void @?"mu\$abi_surface\$make__pair\$long\$long"\(ptr .*sret\(%mu_abi_surface_Pair\) align 8
+- define %mu_abi_surface_Pair @?"mu\$abi_surface\$make__pair"
 # 24-byte struct parameter: also by reference.
-+ define i64 @mu_abi_surface_take_wide__S_abi_surface_Wide\(ptr .*byval\(%mu_abi_surface_Wide\) align 8
++ define i64 @?"mu\$abi_surface\$take__wide\$S\$abi_surface\$Wide"\(ptr .*byval\(%mu_abi_surface_Wide\) align 8
 # 8-byte struct: "as if an integer of the same size" (never two registers).
-+ define .*@mu_abi_surface_take_small__S_abi_surface_Small\(i64
-- define .*@mu_abi_surface_take_small__S_abi_surface_Small\(%mu_abi_surface_Small
++ define .*@?"mu\$abi_surface\$take__small\$S\$abi_surface\$Small"\(i64
+- define .*@?"mu\$abi_surface\$take__small\$S\$abi_surface\$Small"\(%mu_abi_surface_Small
 # and its 8-byte result travels as one i64 too.
-+ define .*@mu_abi_surface_flip__S_abi_surface_Small\(i64
-- define .*@mu_abi_surface_flip__S_abi_surface_Small\(%mu_abi_surface_Small
-
++ define .*@?"mu\$abi_surface\$flip\$S\$abi_surface\$Small"\(i64
+- define .*@?"mu\$abi_surface\$flip\$S\$abi_surface\$Small"\(%mu_abi_surface_Small

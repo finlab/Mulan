@@ -178,6 +178,13 @@ declaration checking the same shape, `class` equality staying identity — is SP
 - **Library API** (layout, RC behaviour, `sub` / `concat` / `cstr` / `strlen`) is a library detail
   (internal record: `agents/stdlib/string.md`). `sizeof(String)` is not a language guarantee;
   cross-ABI strings use `const char*`.
+- **`cstr()` contract**: every representation of a value returns a NUL-terminated C string for that
+  value — the zero value (`{}`) is the empty string, and `sub` copies into its own terminated buffer,
+  so a substring never exposes the source bytes after its end.
+- **`sub(start, count)`** clamps both bounds to the source length (a start past the end gives the
+  empty string) instead of producing an invalid view.
+- **`find(needle)`** returns `long`: `-1` means not found, and every representable offset stays
+  positive on the supported 64-bit targets.
 - The compiler knows neither the layout nor the operations (SPEC 12 #4): `String` is an ordinary
   struct in `libs/std/string.mu`.
 

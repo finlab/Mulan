@@ -185,6 +185,11 @@ private:
     std::unordered_map<std::string, TypePtr> generic_insts_;    // "unit.Vec<int>" → instantiated type
     std::unordered_map<std::string, FuncDecl*> generic_func_insts_;  // "unit.f<int>" → instantiated function
     std::unordered_set<std::string> generic_busy_;              // being instantiated (recursion guard)
+    // Nesting depth of the instantiation being expanded. A template whose next instance is a strictly
+    // larger type argument (`Deep<T>` → `Deep<Box<T>>` → ...) never repeats a key, so the exact-key
+    // guard cannot see it; the depth limit turns that into a diagnostic instead of a stack overflow.
+    int generic_depth_ = 0;
+    static constexpr int kGenericDepthLimit = 256;
     std::vector<std::unique_ptr<Decl>> generic_decls_;          // instantiation products (lifetime)
     std::vector<std::unique_ptr<Decl>> synth_decls_;            // synthesized lambda environment classes (lifetime)
 

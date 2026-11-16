@@ -1452,6 +1452,23 @@ namespace muc_detail {
 
     // `swap(a, b)`: exchange the values at two writable places (agents/value-semantics.md §14).
     // Both sides stay initialized, so this never interacts with the moved tracking.
+    //
+    // A weak field is the exception: the registry is keyed by (target, field address), and a raw byte
+    // exchange would leave both registrations pointing at the wrong target, so the operation is
+    // rejected instead of lowering to bytes (#29). A struct that contains a weak field inherits the
+    // restriction, because swapping it would move the registration the same way.
+    static bool type_embeds_weak(const TypePtr& t, int depth = 0) {
+        if (!t || depth > 32) return false;
+        if (t->kind == TypeKind::Struct) {
+            for (const auto& f : t->fields) {
+                if (f.weak) return true;
+                if (f.type && type_embeds_weak(f.type, depth + 1)) return true;
+            }
+        }
+        if (t->kind == TypeKind::Array) return type_embeds_weak(t->elem, depth + 1);
+        return false;
+    }
+
     TypePtr Sema::check_swap(SwapExpr* sw) {
         TypePtr ta = check_expr(sw->a.get());
         TypePtr tb = check_expr(sw->b.get());
@@ -1464,6 +1481,12 @@ namespace muc_detail {
         }
         if (!is_lvalue(sw->a.get()) || !is_lvalue(sw->b.get())) {
             err("`swap` needs two writable places (a variable, a field, an element or a dereference)", sw);
+        }
+        if (is_weak_field_access(sw->a.get()) || is_weak_field_access(sw->b.get()) || type_embeds_weak(ta)) {
+            err("`swap` cannot exchange `weak` fields or a value that contains one: the weak-reference "
+                "registry tracks each field address, so a raw exchange would leave the registrations "
+                "pointing at the wrong target; assign through the field instead",
+                sw);
         }
         check_writable(sw->a.get());
         check_writable(sw->b.get());

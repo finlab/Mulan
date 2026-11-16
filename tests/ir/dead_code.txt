@@ -2,11 +2,11 @@
 # before optimization, so unreachable user code *and* unused standard-library code disappear.
 # `+` = must match the emitted IR, `-` = must not match.
 + ^define .*@main\(
-- mu_dead_code_unused_public
-- mu_dead_code_unused_private
-- mu_dead_code_desc_Unused
-- mu_dead_code_MUnused_
-- mu_dead_code_MS_unused_method
-- mu_std\.string_MString_length
-- mu_std\.task_muc_para_start
+- mu\$dead_code\$unused__public
+- mu\$dead_code\$unused__private
+- mu\$dead_code\$desc\$Unused
+- mu\$dead_code\$MUnused\$
+- mu\$dead_code\$MS\$unused__method
+- mu\$std\.string\$MString\$length
+- mu\$std\.task\$muc__para__start
 - muc_eh_pending

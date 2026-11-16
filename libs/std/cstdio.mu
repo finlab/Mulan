@@ -15,9 +15,10 @@ public unit std.cstdio;
 use std.ctypes;
 
 // ---------------------------------------------------------------- constants
+// `EOF` and the `SEEK_*` origin values are fixed by C. `BUFSIZ` and `FILENAME_MAX` are
+// implementation-defined (MSVC 512/260, glibc 8192/4096), so this portable declaration does not
+// export them: take the platform value from `cstd.stdio`, which resolves one unit per host.
 public const int EOF = -1;
-public const int BUFSIZ = 512;
-public const int FILENAME_MAX = 260;
 public const int SEEK_SET = 0;
 public const int SEEK_CUR = 1;
 public const int SEEK_END = 2;

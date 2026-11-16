@@ -379,7 +379,9 @@ struct Point {
   even for types whose address must not be taken (`&` is refused for a struct with reference fields), and
   because a byte exchange is exactly what a reference-counted handle needs (the counts do not change). Both
   sides stay initialized, so it never interacts with the moved tracking; `swap(a, a)` is a no-op. It is the
-  primitive a container needs for `remove`/`swap_remove`.
+  primitive a container needs for `remove`/`swap_remove`. **`weak` fields cannot be swapped**, and neither
+  can a value that embeds one: the weak-reference registry is keyed by (target, field address), so a raw
+  exchange would leave both registrations attached to the wrong holder.
 
 - **Copy construction and assignment (implemented, 0.0.138; `const ref` source in 0.0.139-0.0.140)**:
   `T(const ref T other)` declares the copy constructor (`ref`/`const ref` parameters on a constructor are accepted only
@@ -1005,8 +1007,10 @@ Box<int> b = new Box<int>(7);    // generic class construction
 - **Lazy**: `Vec<int>` is instantiated on demand when it is encountered; the same `(template, argument list)` reuses the same instance.
 - **Canonical name**: `Type::name` is `Vec<int>`, `Vec<Vec<int>>` (one space after the comma),
   which keeps the string comparison of `same_type` stable.
-- **Symbol name**: the instance name is sanitized when it enters a symbol (`Vec<int>` → `Vec_int_`), see `mangle`.
-- **Recursive instantiation** (needing itself again during instance expansion with no cached instance) is an error: `recursive generic instantiation`.
+- **Symbol name**: the instance name enters a symbol through the injective mangling of 12 #88
+  (`Vec<int>` → `Vec_3C_int_3E_`): the unit/name/parameter components are separated by `$`, every
+  literal `_` is doubled, and every other non-alphanumeric byte is written `_XX` (uppercase hex).
+- **Recursive instantiation** (needing itself again during instance expansion with no cached instance) is an error: `recursive generic instantiation`. An expansion whose next instance never repeats a key (a strictly larger type argument, e.g. `Deep<Box<T>>`) is caught by a nesting limit (256 levels) and reported with the same diagnostic instead of exhausting the stack.
 - An instantiated class follows the vtable/`class_desc`/RC path of an ordinary class; an instantiated struct follows the ordinary struct layout.
 - Generic inheritance `class D<T> : Base<T>` supports a single base class: the base class is instantiated first, and the fields are flattened with "base class first";
   `super(...)`, method inheritance, and vtable slot reuse are the same as with ordinary inheritance.
@@ -2094,8 +2098,11 @@ unit example;
   the link step (compile them with the same `--cc` driver); `tests/abi/` uses this to check the C ABI of
   aggregates against a real C compiler in both directions.
 - Class objects cannot be passed to C: the C side does not participate in reference counting; when crossing languages use a struct + `alloc`.
+- A struct that needs cleanup (a destructor, or a reference-counted/owning field) cannot cross the C ABI **by value** in either direction, even when it is movable inside the language: a foreign caller cannot hand over or take back the resource the callee's destructor assumes. Use a pointer, or a plain C struct.
 - A string literal is a NUL-terminated `const char*` and can be passed to C directly.
-- Symbol mangling/naming conflict rules are pending.
+- Symbol mangling is injective (12 #88): `mu$<unit>$<name>$<param>...`, with the components separated
+  by `$`, every literal `_` doubled and every other non-alphanumeric byte written `_XX` (uppercase hex).
+  `extern` declarations keep the C name; `main` is special.
 
 ### 9.1 Unit-level initialization and cleanup (implemented 0.0.102)
 
@@ -2395,7 +2402,7 @@ switch v {
 | 85 | Arrays/dynamic arrays of class | Supported; the Widget tree still recommends `first_child/next_sibling` |
 | 86 | `sizeof`/`alignof` on a class | Decided (implemented): same as #73 (class=8, interface=16) |
 | 87 | Multithreaded RC | Decided (same as 94): atomic RC (relaxed increments, release decrement + acquire fence); the thread-local heap scheme has been rejected |
-| 88 | Name mangling | Decided: parameter types are included; `extern` keeps the original name; `main` is special |
+| 88 | Name mangling | Decided (injective): `mu$<unit>$<name>$<param>...`; components are separated by `$`, every literal `_` is doubled and every other non-alphanumeric byte is `_XX` (uppercase hex), so no two declarations share a symbol; `extern` keeps the original name; `main` is special |
 | 89 | Unary `~` overloading | Allowed (`operator~`, 1 parameter) |
 | 90 | Static arrays of class | Decided: allowed (forbidden for structs); retain/release per element |
 | 91 | `[]` overloading | Decided: only `operator[]`; return `ref T` for a writable subscript (`operator[]=` was removed in 0.0.101) |

@@ -27,8 +27,8 @@ int main() {
     std.cstdio.fclose(f);
 
     // ---- constants ----
-    std.cstdio.printf("EOF=%d SEEK_END=%d BUFSIZ=%d\n",
-                      std.cstdio.EOF, std.cstdio.SEEK_END, std.cstdio.BUFSIZ);
+    // BUFSIZ / FILENAME_MAX are implementation-defined and live in cstd.stdio (one unit per host).
+    std.cstdio.printf("EOF=%d SEEK_END=%d\n", std.cstdio.EOF, std.cstdio.SEEK_END);
 
     // ---- other output functions ----
     // Only the sign is portable: glibc returns the character count, the Windows CRT returns 0.
