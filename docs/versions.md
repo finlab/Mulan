@@ -27,6 +27,66 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 165 — 2026-11-17
+
+**审计 issue 批量修复（is 判别、复合赋值窄化、sum 载荷 RC、字符串边界、诊断与 CLI）。**
+
+Language / compiler:
+
+- `is` on a class or interface value is lowered through the `as` machinery: a null receiver matches
+  nothing (used to dereference null and crash) and an interface aggregate takes its object pointer
+  first (used to emit `getelementptr` on an aggregate, which is invalid IR, so interface
+  discrimination never compiled). Binding forms bind only on a match.
+- Compound assignment on numbers is checked as `x = x op y`: the arithmetic result must not narrow
+  back into the target, so `byte b; b += 1000;` and `int i; i += 2^40;` are compile errors (unsigned
+  wrap-around such as `uint u; u += 1;` stays legal).
+- A sum value's assignment and copy-initialization now release the old payload and retain the new
+  one (SPEC decision #55): `Holder h = ...; h = ...` used to leak one payload object per assignment,
+  and `Holder h2 = h;` copied the tag without retaining the payload.
+- Range `for-in` keeps its iteration counter in a hidden slot, so writing the loop variable is a
+  per-iteration copy (it used to skip elements); generic bodies are checked in a clean para/lambda
+  context, so the first instantiation inside a `para` section no longer rejects the body's `return`.
+- Interface values accept `is`, and implicit construction applies to call results at coercion points
+  (`string c = s.cstr();`), matching the variable form.
+- Ternary arms now take the target type, so a bare sum alternative resolves there
+  (`Option<int> v = c ? Some(7) : None;`).
+- `sizeof` stays `isize` (SPEC decision 128): the Linux `cstd_posix` failure was a type mismatch in
+  the case itself (`c_size` is `usize`), not a host-dependent compiler type; the case now casts at
+  the `size_t` boundary and `sizeof_isize` pins the rule.
+- `std.target.Abi` has a `Musl` member: a musl triple used to fall through to "the build
+  configuration has no value for `abi`" while compiling `std.target`, which is the wrong diagnostic
+  from the wrong stage. Such a target now compiles and is rejected at the link step with the
+  cross-driver message (`is not the host; pass --cc`), as `tests/cli/target_platform.py` expects.
+- `const` at unit level parses the function form (`const char* f() { ... }`), not just the variable
+  form.
+- Diagnostics: a binding `is` in an `and`/`or` operand names the "whole condition" rule instead of
+  reporting `undefined identifier`; the multidimensional `for-in` hint names `a.length(k)` (the
+  `len(a, k)` form was removed); the `override` diagnostic says "base class or interface method".
+- `muc build` takes the entry file as the first non-option argument, wherever it appears, matching
+  `muc check`; two entry files and a missing entry are reported explicitly.
+
+Library:
+
+- `String.operator[]` is bounds-checked and throws `BoundsError` (index / length / axis), as SPEC 3.7
+  promises; `String.sub` clamps a negative start/count instead of reading before the buffer or
+  aborting through an internal `buf[-1]`.
+- Dynamic array handles share their buffer through the RC rules: README says so, and `slice_alias`
+  pins the behaviour.
+
+Runtime:
+
+- The weak registry is sharded (64 lists + 64 locks, shard = `(target >> 4) & 63`), so
+  `mu_rt_weak_unreg` / `mu_rt_weak_notify` walk `O(W/64)` instead of the whole global list and
+  threads touching different targets stop sharing one cache line. Object layout is unchanged;
+  measured per-object destruction at W = 100k went from 99 µs to 4.3 µs (`bench/weak_sweep.mu`).
+
+Tests: `is_null_class`, `is_iface`, `forin_range_write_copy`, `compound_wrap_uint`,
+`implicit_ctor_call_result`, `ternary_sum_context`, `sizeof_isize`, `string_index_bounds`,
+`string_sub_clamp`, `const_return_fn`, `sum_assign_release`, `slice_alias` (run),
+`compound_narrow_int`, `compound_narrow_byte`, `is_bind_compose`, `multidim_forin_len_hint`,
+`long_chain_too_long`, `deep_nest_too_deep` (must-fail), `tests/cli/build_args.py`.
+Full suite: 702/702 (244 run, 422 must-fail, 23 check, 1 warning, 9 ir, 3 c abi).
+
 #### build 164 — 2026-11-17
 
 **A generic `ref T` return keeps the borrow at instantiation.**

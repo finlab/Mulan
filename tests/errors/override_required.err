@@ -1,1 +1,1 @@
-overriding or implementing a base class method requires `override`
+overriding or implementing a base class or interface method requires `override`

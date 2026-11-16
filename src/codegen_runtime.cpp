@@ -387,10 +387,19 @@ namespace muc_detail {
     }
 
     // ------------------------------------------------------------ weak registry
-    GlobalVariable* Emitter::weakHeadGlobal() { return mod->getNamedGlobal("mu_weak_head"); }
-    GlobalVariable* Emitter::weakLockGlobal() { return mod->getNamedGlobal("mu_weak_lock"); }
+    GlobalVariable* Emitter::weakHeadsGlobal() { return mod->getNamedGlobal("mu_weak_heads"); }
+    GlobalVariable* Emitter::weakLocksGlobal() { return mod->getNamedGlobal("mu_weak_locks"); }
 
-    void Emitter::emitWeakLock(IRBuilder<>& hb) {
+    Value* Emitter::weakShardSlot(IRBuilder<>& hb, GlobalVariable* arr, LType* elemTy, Value* target) {
+        // Sharding by address keeps every node next to its target: `unreg` and the death notify both
+        // derive the same shard from the target pointer, without adding a field to the object header.
+        Value* n = hb.CreateLShr(hb.CreatePtrToInt(target, i64()), ConstantInt::get(i64(), 4));
+        Value* idx = hb.CreateAnd(n, ConstantInt::get(i64(), kWeakShards - 1));
+        return hb.CreateGEP(llvm::ArrayType::get(elemTy, kWeakShards), arr,
+                            {ConstantInt::get(i64(), 0), idx});
+    }
+
+    void Emitter::emitWeakLock(IRBuilder<>& hb, Value* lockSlot) {
         // `--single-thread`: the registry is only touched by this thread, so the spin lock is dead
         // weight on every destruction (see EmitOptions::single_thread).
         if (singleThread) return;
@@ -401,25 +410,26 @@ namespace muc_detail {
         hb.SetInsertPoint(spin);
         // Acquire on lock, Release on unlock: the registry must not be read while another thread
         // is in the middle of modifying it (this used to be relaxed, which only worked on x86-TSO).
-        auto* old = hb.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, weakLockGlobal(),
+        auto* old = hb.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, lockSlot,
                                        ConstantInt::get(i32(), 1), MaybeAlign(4),
                                        llvm::AtomicOrdering::Acquire);
         hb.CreateCondBr(hb.CreateICmpEQ(old, ConstantInt::get(i32(), 0)), got, spin);
         hb.SetInsertPoint(got);
     }
 
-    void Emitter::emitWeakUnlock(IRBuilder<>& hb) {
+    void Emitter::emitWeakUnlock(IRBuilder<>& hb, Value* lockSlot) {
         if (singleThread) return;
-        hb.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, weakLockGlobal(),
+        hb.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, lockSlot,
                            ConstantInt::get(i32(), 0), MaybeAlign(4),
                            llvm::AtomicOrdering::Release);
     }
 
-    void Emitter::emitWeakEmptyCheck(IRBuilder<>& hb, BasicBlock* emptyBB, BasicBlock* busyBB) {
+    void Emitter::emitWeakEmptyCheck(IRBuilder<>& hb, Value* headSlot, BasicBlock* emptyBB,
+                                     BasicBlock* busyBB) {
         // Acquire: pairs with the release store of `mu_rt_weak_reg`, so a non-null head also makes the
         // node it points at visible. Under `--single-thread` nothing else can touch the registry, so
         // the ordering (and the atomic itself) has nothing to order against.
-        auto* head = hb.CreateAlignedLoad(ptrTy(), weakHeadGlobal(), MaybeAlign(8));
+        auto* head = hb.CreateAlignedLoad(ptrTy(), headSlot, MaybeAlign(8));
         if (!singleThread) head->setAtomic(llvm::AtomicOrdering::Acquire);
         hb.CreateCondBr(hb.CreateICmpEQ(head, Constant::getNullValue(ptrTy())), emptyBB, busyBB);
     }
@@ -432,16 +442,17 @@ namespace muc_detail {
         IRBuilder<> hb(ctx);
         auto* entry = BasicBlock::Create(ctx, "entry", fn);
         hb.SetInsertPoint(entry);
-        emitWeakLock(hb);
+        auto* H = weakShardSlot(hb, weakHeadsGlobal(), ptrTy(), fn->getArg(0));
+        auto* L = weakShardSlot(hb, weakLocksGlobal(), i32(), fn->getArg(0));
+        emitWeakLock(hb, L);
         auto* node = hb.CreateCall(libFn("malloc", ptrTy(), {i64()}),
                                    {ConstantInt::get(i64(), 24)});
         hb.CreateStore(fn->getArg(0), hb.CreateStructGEP(weakNodeTy, node, 0));  // target
         hb.CreateStore(fn->getArg(1), hb.CreateStructGEP(weakNodeTy, node, 1));  // field
-        auto* H = weakHeadGlobal();
         auto* head = hb.CreateLoad(ptrTy(), H);
         hb.CreateStore(head, hb.CreateStructGEP(weakNodeTy, node, 2));  // next
         hb.CreateStore(node, H);
-        emitWeakUnlock(hb);
+        emitWeakUnlock(hb, L);
         hb.CreateRetVoid();
         weakRegFn = fn;
         return fn;
@@ -453,7 +464,6 @@ namespace muc_detail {
         auto* fn = cast<Function>(mod->getOrInsertFunction("mu_rt_weak_unreg", ft).getCallee());
         fn->setLinkage(GlobalValue::InternalLinkage);
         IRBuilder<> hb(ctx);
-        auto* H = weakHeadGlobal();
         auto* entry = BasicBlock::Create(ctx, "entry", fn);
         auto* loop = BasicBlock::Create(ctx, "loop", fn);
         auto* body = BasicBlock::Create(ctx, "body", fn);
@@ -462,17 +472,19 @@ namespace muc_detail {
         auto* rmNode = BasicBlock::Create(ctx, "rm.node", fn);
         auto* removed = BasicBlock::Create(ctx, "removed", fn);
         auto* keep = BasicBlock::Create(ctx, "keep", fn);
-        // Two distinct exits: the registry was empty (no lock held) and the locked path, which must
+        // Two distinct exits: the shard was empty (no lock held) and the locked path, which must
         // release the spin lock. Sharing one block made the empty path execute an unlock it never
         // took — an `xchg 0` on a global cache line, on every object destruction.
         auto* emptyDone = BasicBlock::Create(ctx, "weak.empty", fn);
         auto* lockedDone = BasicBlock::Create(ctx, "weak.done", fn);
 
         hb.SetInsertPoint(entry);
+        auto* H = weakShardSlot(hb, weakHeadsGlobal(), ptrTy(), fn->getArg(0));
+        auto* L = weakShardSlot(hb, weakLocksGlobal(), i32(), fn->getArg(0));
         auto* lockBB = BasicBlock::Create(ctx, "weak.lock", fn);
-        emitWeakEmptyCheck(hb, emptyDone, lockBB);
+        emitWeakEmptyCheck(hb, H, emptyDone, lockBB);
         hb.SetInsertPoint(lockBB);
-        emitWeakLock(hb);
+        emitWeakLock(hb, L);
         auto* curS = hb.CreateAlloca(ptrTy());
         auto* prevS = hb.CreateAlloca(ptrTy());
         hb.CreateStore(hb.CreateLoad(ptrTy(), H), curS);
@@ -508,7 +520,7 @@ namespace muc_detail {
         hb.CreateBr(loop);
 
         hb.SetInsertPoint(lockedDone);
-        emitWeakUnlock(hb);
+        emitWeakUnlock(hb, L);
         hb.CreateRetVoid();
 
         hb.SetInsertPoint(emptyDone);
@@ -523,7 +535,6 @@ namespace muc_detail {
         auto* fn = cast<Function>(mod->getOrInsertFunction("mu_rt_weak_notify", ft).getCallee());
         fn->setLinkage(GlobalValue::InternalLinkage);
         IRBuilder<> hb(ctx);
-        auto* H = weakHeadGlobal();
         auto* entry = BasicBlock::Create(ctx, "entry", fn);
         auto* loop = BasicBlock::Create(ctx, "loop", fn);
         auto* body = BasicBlock::Create(ctx, "body", fn);
@@ -538,10 +549,12 @@ namespace muc_detail {
         auto* lockedDone = BasicBlock::Create(ctx, "weak.done", fn);
 
         hb.SetInsertPoint(entry);
+        auto* H = weakShardSlot(hb, weakHeadsGlobal(), ptrTy(), fn->getArg(0));
+        auto* L = weakShardSlot(hb, weakLocksGlobal(), i32(), fn->getArg(0));
         auto* lockBB = BasicBlock::Create(ctx, "weak.lock", fn);
-        emitWeakEmptyCheck(hb, emptyDone, lockBB);
+        emitWeakEmptyCheck(hb, H, emptyDone, lockBB);
         hb.SetInsertPoint(lockBB);
-        emitWeakLock(hb);
+        emitWeakLock(hb, L);
         auto* curS = hb.CreateAlloca(ptrTy());
         auto* prevS = hb.CreateAlloca(ptrTy());
         hb.CreateStore(hb.CreateLoad(ptrTy(), H), curS);
@@ -586,7 +599,7 @@ namespace muc_detail {
         hb.CreateBr(loop);
 
         hb.SetInsertPoint(lockedDone);
-        emitWeakUnlock(hb);
+        emitWeakUnlock(hb, L);
         hb.CreateRetVoid();
 
         hb.SetInsertPoint(emptyDone);

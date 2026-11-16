@@ -303,7 +303,26 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         }
 
         if (at_kw("const")) {
-            auto globals = parse_global();
+            // `const` at unit level introduces either a const variable (`const int N = 3;`) or a
+            // readonly return type (`const char* f() { ... }`). Both start with a type; an
+            // identifier followed by `(` or `<` makes it a function definition.
+            TypeSpecPtr spec = parse_type();
+            if (peek().kind == TokKind::Ident && (peek(1).is_op("(") || peek(1).is_op("<"))) {
+                const Token name_tok = advance();
+                std::vector<TypeParam> tps = parse_type_params();
+                const std::unordered_set<std::string> saved_type_names = type_names_;
+                for (const auto& p : tps) type_names_.insert(p.name);
+                auto f = parse_func(name_tok.text, std::move(spec), /*ret_ref=*/false, name_tok);
+                f->type_params = std::move(tps);
+                type_names_ = saved_type_names;
+                f->is_public = is_pub;
+                f->is_export = is_export;
+                unit->decls.push_back(std::move(f));
+                continue;
+            }
+            // const variable: `const` is a declaration marker on a bare `const T`
+            const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
+            auto globals = parse_global_list(std::move(spec), is_const);
             for (auto& g : globals) g->is_public = is_pub;
             for (auto& g : globals) g->is_export = is_export;
             for (auto& g : globals) unit->decls.push_back(std::move(g));

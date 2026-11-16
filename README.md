@@ -22,7 +22,7 @@ The design is less about what was added than about why each rule exists:
 
 | Decision | What it means | Why |
 |---|---|---|
-| **Values and references are separate** | `struct` is a value type, `class` is a reference type, with a clear line between them | `=` tells you whether it copies or shares |
+| **Values and references are separate** | `struct` is a value type, `class` is a reference type, with a clear line between them | `=` copies a `struct` value; a `class` handle, and a managed sequence handle (`T[]`, `string`), share the reference-counted object |
 | **Sharing is explicit** | Iteration binds by value; write `for ref v in a` to modify elements | No hidden aliases, no accidental in-place mutation |
 | **Reclamation is deterministic** | `class` uses atomic reference counting; the destructor runs as soon as the last reference goes away | No GC pauses, no "clean it up later" |
 | **Cycles are broken with `weak`** | `weak T` is a non-owning reference; cycles must be broken by hand | No cycle collector, predictable behaviour |

@@ -363,6 +363,18 @@ namespace muc_detail {
             return;
         }
         if (!(is_numeric(tt) && is_numeric(vt))) err("`" + s->op + "` requires numeric operands", s);
+        // `x op= y` means `x = x op y`: the arithmetic result has to fit back into `x` without
+        // narrowing (SPEC 3.6, design principle 2 "no implicit narrowing"). Small integer types
+        // promote to `int`, so `byte b; b += 1;` is an error just like `b = b + 1` — the caller
+        // writes `b = (b + 1) as byte`. Unsigned wrap-around stays legal (`u += 1` has a `uint`
+        // result), which is what `same_type` accepts.
+        TypePtr res = (op == "<<" || op == ">>") ? tt : usual_arith(tt, vt);
+        if (!res) err("`" + s->op + "` is not supported for " + tt->str() + " and " + vt->str(), s);
+        if (!same_type(res, tt) && !implicit_ok(res, tt)) {
+            err("compound assignment `" + s->op + "` would narrow `" + res->str() + "` to `" +
+                    tt->str() + "`; write `x = (x " + op + " y) as " + tt->str() + "`",
+                s);
+        }
     }
 
     void Sema::check_return(ReturnStmt* s) {
@@ -791,7 +803,6 @@ namespace muc_detail {
                 s->seq.get());
         }
 
-        FuncDecl* picked = nullptr;
         std::string saw_index;
         // A member `operator[](isize)` on the struct takes precedence (borrowed receiver, no copy/RC).
         const MethodSig* picked_m = nullptr;
@@ -866,7 +877,7 @@ namespace muc_detail {
             } else if (st->kind == TypeKind::Slice) {
                 if (st->rank > 1) {
                     err("`for-in` does not support multidimensional arrays `" + st->str() +
-                            "`: use an index loop (get each dimension's length with `len(a, k)`)",
+                            "`: use an index loop (get each dimension's length with `a.length(k)`)",
                         s->seq.get());
                 }
                 s->loop_kind = "slice";

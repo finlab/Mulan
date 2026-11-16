@@ -646,7 +646,7 @@ private:
 
     bool can_cast(const TypePtr& src, const TypePtr& dst);
     // ------------------------------------------------------------ calls
-    TypePtr check_call(Call* c);
+    TypePtr check_call(Call* c, const TypePtr& expected = nullptr);
 
     int rank_arg(Expr* e, const TypePtr& aty, const TypePtr& p);
 

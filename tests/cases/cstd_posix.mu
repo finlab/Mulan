@@ -51,8 +51,10 @@ int main() {
     char* second = strtok_r(null, ",", &save);
     int tok_ok = first != null and second != null and *second == 'b' ? 1 : 0;
 
-    c_size total = sizeof(stdlib_refs) + sizeof(string_refs) + sizeof(time_refs) + sizeof(io_refs);
+    // `sizeof` is `isize` (SPEC decision 128), so the size_t-typed `c_size` needs an explicit cast;
+    // the division keeps the isize spelling and only the `%zu` argument is converted.
+    isize total = sizeof(stdlib_refs) + sizeof(string_refs) + sizeof(time_refs) + sizeof(io_refs);
     printf("posix case=%d aligned=%d gm=%lld tm=%d env=%d tok=%d refs=%zu\n",
-           case_ok, aligned_ok, gm, tm_ok, env_ok, tok_ok, total / sizeof(void*));
+           case_ok, aligned_ok, gm, tm_ok, env_ok, tok_ok, (total / sizeof(void*)) as usize);
     return 0;
 }

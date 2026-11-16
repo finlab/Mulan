@@ -301,7 +301,7 @@ where  move  typeof
       converts a `string` to a pointer implicitly. `strlen(cstr)` gives the byte length of a C string.
     - Usable as struct/class fields, array elements, parameters, return values; **copyable and destructible**
       (value semantics, copies are independent).
-  - Size: `sizeof(string)` is defined by the library (currently 24 bytes: `byte* p; usize n; byte[] owner`);
+  - Size: `sizeof(string)` is defined by the library (currently 24 bytes: `byte* p; isize n; byte[] owner`);
     to pass strings across the ABI use `const char*`.
   - **A `string` may be a unit-level variable** (9.1): it is a struct with reference-counted fields
     and is destroyed by the exit sequence. A `const` unit-level `string` is still an error, because a

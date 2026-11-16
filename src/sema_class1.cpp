@@ -524,7 +524,8 @@ namespace muc_detail {
                         m.get());
                 }
                 if (!m->is_override) {
-                    err("overriding or implementing a base class method requires `override`", m.get());
+                    err("overriding or implementing a base class or interface method requires `override`",
+                        m.get());
                 }
                 std::vector<const MethodSig*> matches;
                 collect_sigs(c->ty->base ? c->ty->base : c->ty, sig, matches);
@@ -1022,12 +1023,12 @@ namespace muc_detail {
                 check_expr(e, ty);
                 direct_init_expr_ = nullptr;
                 if (call->callee_kind == "struct_ctor") return;  // in-place construction
-                if (!same_type(call->ty, ty)) {
-                    err("struct `" + ty->str() +
-                            "` has a constructor and must be built with `T(...)` or copy-initialized from an expression of the same type",
-                        node);
-                }
-                return;  // same-type returned value: copy initialization
+                if (same_type(call->ty, ty)) return;             // same-type returned value: copy initialization
+                // Anything else may still be a copy-initialization through an implicit constructor:
+                // `string c = s.cstr();` has the same type as `const char* p = s.cstr();` followed by
+                // `string b = p;`, so the coercion rules of assignment apply here too (SPEC 3.6).
+                check_assign(e, ty, what);
+                return;
             }
             if (ty->kind == TypeKind::Array && is_char(ty->elem) &&
                 dynamic_cast<StringLit*>(e)) {

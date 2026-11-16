@@ -47,7 +47,7 @@ static const char* USAGE = R"(muc - Mulan language compiler (LLVM backend)
 Usage:
   muc check <entry.mu>            run semantic checks only
   muc dump  <entry.mu>            dump the AST (debug)
-  muc build <entry.mu> [options]  compile and link
+  muc build [options] <entry.mu>  compile and link (the entry file may also follow the options)
   muc run   <entry.mu> [options]  compile, link and run
   muc dump-config [options]       print the build constants `#if` conditions read
   muc -V | --version              print version
@@ -597,10 +597,16 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
     BuildArgs b;
     if (const char* cc = std::getenv("CC")) { b.cc = cc; b.cc_explicit = true; }
     if (const char* bk = std::getenv("MUC_BACKEND")) b.backend = bk;
+    // The entry file is the first non-option argument, wherever it appears: `muc build --bounds=off
+    // a.mu` and `muc build a.mu --bounds=off` mean the same thing (the `check` subcommand already
+    // accepts both orders).
+    auto set_entry = [&](const std::string& a) {
+        if (!b.entry.empty()) {
+            throw MuError("unexpected argument `" + a + "` (the entry file is already `" + b.entry + "`)");
+        }
+        b.entry = a;
+    };
     size_t i = 0;
-    if (args.empty()) throw MuError("missing entry file");
-    b.entry = args[0];
-    i = 1;
     while (i < args.size()) {
         const std::string& a = args[i];
         auto need = [&](const char* what) {
@@ -626,9 +632,11 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "--bounds=off") b.bounds = false;
         else if (a == "--single-thread") b.single_thread = true;
         else if (a == "--strict") b.strict = true;
+        else if (!a.empty() && a[0] != '-') set_entry(a);
         else throw MuError("unknown option `" + a + "`");
         ++i;
     }
+    if (b.entry.empty()) throw MuError("missing entry file");
     return b;
 }
 

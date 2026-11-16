@@ -26,7 +26,7 @@ namespace muc_detail {
         return ft->fret;
     }
 
-    TypePtr Sema::check_call(Call* c) {
+    TypePtr Sema::check_call(Call* c, const TypePtr& expected) {
         Expr* callee = c->callee.get();
         if (!callee) err("call is missing a callee", c);
 
@@ -150,6 +150,36 @@ namespace muc_detail {
                     struct_ty = st;
                 } else if (lookup_enum_const(nm->ident) != nullptr) {
                     err("`" + nm->ident + "` is an enum member and cannot be called", c);
+                } else if (expected && expected->kind == TypeKind::Sum) {
+                    // Contextual sum construction in a target-typed position: the ternary arms of
+                    // `Option<int> v = c ? Some(7) : None;` have no target type of their own, so the
+                    // ternary's expected type resolves the bare alternative (same rule as
+                    // initialization/assignment, SPEC 10.1.1).
+                    int idx = -1;
+                    for (size_t k = 0; k < expected->sum_names.size(); ++k) {
+                        if (expected->sum_names[k] == nm->ident) {
+                            idx = static_cast<int>(k);
+                            break;
+                        }
+                    }
+                    if (idx < 0) err("undefined function `" + nm->ident + "`", c);
+                    const auto& fs = expected->sum_fields[static_cast<size_t>(idx)];
+                    if (c->args.size() != fs.size()) {
+                        err("alternative `" + nm->ident + "` of `" + expected->str() + "` takes " +
+                                std::to_string(fs.size()) + " value(s), but " +
+                                std::to_string(c->args.size()) + " were given",
+                            c);
+                    }
+                    for (size_t k = 0; k < fs.size(); ++k) {
+                        check_assign(c->args[k].get(), fs[k], "sum payload");
+                    }
+                    nm->kind = "type";
+                    nm->ty = expected;
+                    c->callee_kind = "sum_ctor";
+                    c->sum_ty = expected;
+                    c->sum_alt = idx;
+                    c->ty = expected;
+                    return expected;
                 } else {
                     err("undefined function `" + nm->ident + "`", c);
                 }

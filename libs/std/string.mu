@@ -9,6 +9,8 @@
 
 public unit std.string;
 
+use std.exception;
+
 public struct String {
 private:
     byte* p;
@@ -74,8 +76,13 @@ public:
 
     // ---------------------------------------------------------------- element access and comparison
 
-    // `s[i]`: byte access (bounds are a user responsibility until the bounds policy is settled, 8.2)
+    // `s[i]`: byte access, bounds-checked like `T[]` (SPEC 3.7: indexing is bounds-checked). The
+    // check is written in the library rather than emitted by the compiler, so `--bounds=off` does
+    // not remove it: a byte past the buffer is a heap read, not a value worth exposing.
     byte operator[](isize i) {
+        if i < 0 or i >= n {
+            throw new BoundsError(i, n, 0);
+        }
         return p[i];
     }
 
@@ -121,6 +128,12 @@ public:
     // the trailing bytes after the range, so `cstr()` could expose them (#32); out-of-range
     // arguments are clamped to the source length instead of producing a read past the buffer (#33).
     String sub(isize start, isize count) {
+        if start < 0 {
+            start = 0;
+        }
+        if count < 0 {
+            count = 0;
+        }
         if start > n {
             start = n;
         }

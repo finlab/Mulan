@@ -1,8 +1,10 @@
 # Default mode: atomic reference counting (relaxed add, release sub, acquire fence on the final
 # release) and the weak-registry spin lock. `single_thread_rc` pins the same program compiled with
 # `--single-thread`, where all of these are gone.
+# The registry is sharded: the lock is one slot of the `mu_weak_locks` array.
 + ^define .*@main\(
 + atomicrmw add ptr
 + atomicrmw sub ptr
 + fence acquire
-+ atomicrmw xchg ptr @mu_weak_lock
++ atomicrmw xchg ptr %
++ @mu_weak_locks

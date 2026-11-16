@@ -472,16 +472,23 @@ struct Emitter {
                                  const TypePtr& dstTy);
 
     // ------------------------------------------------------------ weak registry
-    GlobalVariable* weakHeadGlobal();
-    GlobalVariable* weakLockGlobal();
+    // Shards: each owns a list head and a spin lock. Registration, unregistration and death-notify
+    // all pick the shard from the target address, so a node always lives in its target's shard.
+    static constexpr unsigned kWeakShards = 64;
 
-    void emitWeakLock(IRBuilder<>& hb);
+    GlobalVariable* weakHeadsGlobal();
+    GlobalVariable* weakLocksGlobal();
 
-    void emitWeakUnlock(IRBuilder<>& hb);
+    // GEP to the head (or lock) slot of the shard that owns `target`: `(target >> 4) & (N - 1)`.
+    Value* weakShardSlot(IRBuilder<>& hb, GlobalVariable* arr, LType* elemTy, Value* target);
 
-    // Branches to `emptyBB` when the global weak list is null (nothing to walk, so the lock can be
+    void emitWeakLock(IRBuilder<>& hb, Value* lockSlot);
+
+    void emitWeakUnlock(IRBuilder<>& hb, Value* lockSlot);
+
+    // Branches to `emptyBB` when the shard's list is null (nothing to walk, so the lock can be
     // skipped) and to `busyBB` otherwise. See `mu_rt_weak_unreg` for why this matters (#18).
-    void emitWeakEmptyCheck(IRBuilder<>& hb, BasicBlock* emptyBB, BasicBlock* busyBB);
+    void emitWeakEmptyCheck(IRBuilder<>& hb, Value* headSlot, BasicBlock* emptyBB, BasicBlock* busyBB);
 
     Function* ensureWeakReg();
 

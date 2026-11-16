@@ -47,7 +47,7 @@ double as_double(const V& v) { return v.k == VK::Float ? v.f : static_cast<doubl
 // members in this order, and sema checks it (see check_target_unit).
 const std::vector<std::string> kOs = {"Windows", "Linux", "MacOS"};
 const std::vector<std::string> kArch = {"X86_64", "AArch64"};
-const std::vector<std::string> kAbi = {"Msvc", "Ucrt", "Gnu", "None"};
+const std::vector<std::string> kAbi = {"Msvc", "Ucrt", "Gnu", "Musl", "None"};
 const std::vector<std::string> kEndian = {"Little", "Big"};
 
 int index_of(const std::vector<std::string>& v, const std::string& s) {

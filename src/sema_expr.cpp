@@ -167,7 +167,7 @@ namespace muc_detail {
 
         if (auto ne = dynamic_cast<NewExpr*>(e)) return check_new(ne);
 
-        if (auto c = dynamic_cast<Call*>(e)) return check_call(c);
+        if (auto c = dynamic_cast<Call*>(e)) return check_call(c, expected);
 
         if (auto sz = dynamic_cast<SizeofExpr*>(e)) {
             TypePtr t;
@@ -213,7 +213,7 @@ namespace muc_detail {
             TypePtr t = check_expr(ln->seq.get());
             if (ln->dim) {
                 TypePtr dt = check_expr(ln->dim.get());
-                if (!is_integer(dt)) err("dimension of `len(seq, k)` must be an integer", ln->dim.get());
+                if (!is_integer(dt)) err("dimension of `a.length(k)` must be an integer", ln->dim.get());
                 auto il = dynamic_cast<IntLit*>(ln->dim.get());
                 if (t && t->kind == TypeKind::Array) {
                     if (!il) err("dimension argument of a static array must be an integer literal", ln->dim.get());
@@ -232,7 +232,7 @@ namespace muc_detail {
                             ln->dim.get());
                     }
                 } else if (t && t->kind != TypeKind::Array) {
-                    err("`len(seq, k)` can only be used on a multidimensional array", ln->dim.get());
+                    err("`a.length(k)` can only be used on a multidimensional array", ln->dim.get());
                 }
             }
             if (t && (t->kind == TypeKind::Array || t->kind == TypeKind::Slice)) {
@@ -811,6 +811,20 @@ namespace muc_detail {
             e->sym = imp_ec;
             return imp_ec->ty;
         }
+        // Contextual construction in a target-typed position: the ternary arms of a sum initialization
+        // (`Option<int> v = c ? pick : None;`) and every other place that passes an expected type
+        // (a `return None;`, an argument). Initialization and assignment resolve the same form in
+        // `check_assign`; this catches the positions that only know the target through `expected`.
+        if (expected && expected->kind == TypeKind::Sum) {
+            for (size_t k = 0; k < expected->sum_names.size(); ++k) {
+                if (expected->sum_names[k] != e->ident) continue;
+                if (!expected->sum_fields[k].empty()) break;  // a payload alternative needs a call
+                e->kind = "sum_unit";
+                e->sum_ty = expected;
+                e->sum_alt = static_cast<int>(k);
+                return (e->ty = expected);
+            }
+        }
         err("undefined identifier `" + e->ident + "`", e);
     }
 
@@ -1149,6 +1163,21 @@ namespace muc_detail {
         const std::string& op = e->op;
 
         if (op == "and" || op == "or") {
+            // A binding `is` must be the whole condition (SPEC 10.1.1): the binding does not reach the
+            // other operand, and "undefined identifier v" would send the reader looking for a scoping
+            // bug. Name the rule and the nested rewrite instead.
+            auto bind_is = [](Expr* x) -> IsExpr* {
+                auto* is = dynamic_cast<IsExpr*>(x);
+                return (is && !is->binds.empty()) ? is : nullptr;
+            };
+            if (IsExpr* bad = bind_is(e->left.get())) {
+                err("a binding `is` must be the whole condition; write `if o is Some(v) { if v > 0 { ... } }`",
+                    bad);
+            }
+            if (IsExpr* bad = bind_is(e->right.get())) {
+                err("a binding `is` must be the whole condition; write `if o is Some(v) { if v > 0 { ... } }`",
+                    bad);
+            }
             check_cond_type(e->left.get(), "`and`/`or`");
             check_cond_type(e->right.get(), "`and`/`or`");
             return t_bool();

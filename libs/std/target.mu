@@ -11,7 +11,7 @@ public unit std.target;
 
 public enum OS { Windows, Linux, MacOS }
 public enum Arch { X86_64, AArch64 }
-public enum Abi { Msvc, Ucrt, Gnu, None }
+public enum Abi { Msvc, Ucrt, Gnu, Musl, None }
 public enum Endian { Little, Big }
 
 public const OS os = OS.Windows;

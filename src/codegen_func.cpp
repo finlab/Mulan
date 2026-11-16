@@ -351,10 +351,15 @@ namespace muc_detail {
         delegateTy->setBody({ptrTy(), ptrTy()}, false);  // {code, env}
         weakNodeTy = LStruct::create(ctx, "mu_weak_node");
         weakNodeTy->setBody({ptrTy(), ptrTy(), ptrTy()}, false);
-        new GlobalVariable(*mod, ptrTy(), /*isConstant=*/false, GlobalValue::InternalLinkage,
-                           Constant::getNullValue(ptrTy()), "mu_weak_head");
-        new GlobalVariable(*mod, i32(), /*isConstant=*/false, GlobalValue::InternalLinkage,
-                           ConstantInt::get(i32(), 0), "mu_weak_lock");
+        // The weak registry is sharded by target address: every shard has its own list and its own
+        // spin lock, so unregistering walks O(W / kWeakShards) nodes and threads that touch different
+        // targets do not serialise on one cache line (#18). The object layout is untouched.
+        auto* weakHeadsTy = llvm::ArrayType::get(ptrTy(), kWeakShards);
+        new GlobalVariable(*mod, weakHeadsTy, /*isConstant=*/false, GlobalValue::InternalLinkage,
+                           Constant::getNullValue(weakHeadsTy), "mu_weak_heads");
+        auto* weakLocksTy = llvm::ArrayType::get(i32(), kWeakShards);
+        new GlobalVariable(*mod, weakLocksTy, /*isConstant=*/false, GlobalValue::InternalLinkage,
+                           Constant::getNullValue(weakLocksTy), "mu_weak_locks");
 
         // build the struct types first (fields may reference each other; pointers are opaque ptr, so they do not recurse)
         for (auto& u : prog.units) {

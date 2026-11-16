@@ -56,7 +56,7 @@ int main() {
 
     sum = 0;
     for i, x in 10..=12 {
-        sum += i * x;
+        sum += (i * x) as int;
     }
     if sum == 35 {
         puts("index ok");

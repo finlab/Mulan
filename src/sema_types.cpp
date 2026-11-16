@@ -785,6 +785,18 @@ namespace muc_detail {
     void Sema::check_func(FuncDecl* f) {
         if (!f->rty) err("function `" + f->name + "` is missing its return type", f);
         if (f->is_operator) check_operator_decl(f);
+        // A function body is checked in a clean control-flow context. Generic bodies are checked
+        // lazily at the instantiation site (sema_generic.cpp), which may sit inside a `para` section
+        // or a lambda; without this save/clear/restore every `return` in the body would be judged
+        // against the caller's para/lambda context ("return cannot leave a `para` section").
+        auto saved_para = std::move(para_stack_);
+        auto saved_lambda = std::move(lambda_stack_);
+        const bool saved_pf_body = in_para_for_body_;
+        const int saved_pf_depth = para_for_body_depth_;
+        para_stack_.clear();
+        lambda_stack_.clear();
+        in_para_for_body_ = false;
+        para_for_body_depth_ = 0;
         cur_func_ = f;
         cur_ret_ = f->rty;
         cur_name_ = f->name;
@@ -826,5 +838,9 @@ namespace muc_detail {
         cur_ret_ = nullptr;
         cur_name_.clear();
         this_local_.clear();
+        para_stack_ = std::move(saved_para);
+        lambda_stack_ = std::move(saved_lambda);
+        in_para_for_body_ = saved_pf_body;
+        para_for_body_depth_ = saved_pf_depth;
     }
 }  // namespace muc_detail

@@ -124,8 +124,9 @@ using ArgPack = Emitter::ArgPack;
                 if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
                 return;
             }
-            if (ty->kind == TypeKind::Struct && needsCleanup(ty)) {
-                // borrowed source: retain field by field; owned source (a call result / a construction result): ownership transfer
+            if ((ty->kind == TypeKind::Struct || ty->kind == TypeKind::Sum) && needsCleanup(ty)) {
+                // borrowed source: retain field by field (a sum retains its active payload);
+                // owned source (a call result / a construction result): ownership transfer
                 storeValue(v, addr, ty, unaligned);
                 if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
                 return;
@@ -367,7 +368,12 @@ using ArgPack = Emitter::ArgPack;
                 TypePtr tty = as->target->ty;
                 if (!weakTarget && tty && needsCleanup(tty) &&
                     (tty->kind == TypeKind::Array || tty->kind == TypeKind::Struct ||
-                     tty->kind == TypeKind::Slice || tty->kind == TypeKind::Delegate)) {
+                     tty->kind == TypeKind::Slice || tty->kind == TypeKind::Delegate ||
+                     tty->kind == TypeKind::Sum)) {
+                    // `Sum` belongs here too: a sum value owns its active payload, so the assignment
+                    // must release the old payload and retain the new one (SPEC decision #55). The
+                    // retain happens on the copied temporary first, so `h = h` cannot free the value
+                    // it is about to store.
                     auto* tmp = entryAlloca(lt(tty), "val.tmp", alignOf(tty));
                     b.CreateStore(nv, tmp);
                     if (!convOwns(as->value.get(), tty)) emitRetainValue(tmp, tty);
@@ -517,11 +523,15 @@ using ArgPack = Emitter::ArgPack;
             Value* hiV = convertTo(eval(re->hi.get()), re->hi->ty, vt);
             const bool down = s->step_val < 0;
             Value* stepV = ConstantInt::get(lt(vt), static_cast<uint64_t>(s->step_val));
-            b.CreateStore(lo, varSlot);
+            // The iteration counter lives in a hidden slot: the loop variable is a per-iteration copy,
+            // so writing it in the body cannot skip or repeat elements (`for i in 0..5 { i = 4; }`
+            // still visits all five values), matching the value-binding rule of sequence for-in.
+            Value* cntSlot = entryAlloca(lt(vt), "for.range.counter", alignOf(vt));
+            b.CreateStore(lo, cntSlot);
             if (idxSlot) b.CreateStore(ConstantInt::get(cast<IntegerType>(lt(Type::make_prim("isize"))), 0), idxSlot);
             b.CreateBr(condBB);
             b.SetInsertPoint(condBB);
-            Value* cur = b.CreateLoad(lt(vt), varSlot);
+            Value* cur = b.CreateLoad(lt(vt), cntSlot);
             Value* cmp = nullptr;
             if (!down) {
                 cmp = re->inclusive ? b.CreateICmpSLE(cur, hiV) : b.CreateICmpSLT(cur, hiV);
@@ -530,6 +540,7 @@ using ArgPack = Emitter::ArgPack;
             }
             b.CreateCondBr(cmp, bodyBB2, endBB);
             b.SetInsertPoint(bodyBB2);
+            b.CreateStore(b.CreateLoad(lt(vt), cntSlot), varSlot);
             loops.push_back({incBB, endBB});
             loopScopeDepth.push_back(refScopes.size());
             if (paraSpawn) emitParaForSpawnItem(varSlot); else block(s->body.get());
@@ -537,8 +548,8 @@ using ArgPack = Emitter::ArgPack;
             loops.pop_back();
             if (!hasTerm(b.GetInsertBlock())) b.CreateBr(incBB);
             b.SetInsertPoint(incBB);
-            Value* c2 = b.CreateLoad(lt(vt), varSlot);
-            b.CreateStore(b.CreateAdd(c2, stepV), varSlot);
+            Value* c2 = b.CreateLoad(lt(vt), cntSlot);
+            b.CreateStore(b.CreateAdd(c2, stepV), cntSlot);
             if (idxSlot) {
                 TypePtr us = Type::make_prim("isize");
                 Value* iv = b.CreateLoad(lt(us), idxSlot);
@@ -751,11 +762,14 @@ using ArgPack = Emitter::ArgPack;
             }
             return cond;
         }
-        Value* objv = eval(e->obj.get());
-        Value* dp = b.CreateGEP(i8(), objv, ConstantInt::get(i64(), 8));
-        Value* desc = b.CreateLoad(ptrTy(), dp);
-        Value* cond = emitDescMatches(desc, descOf(e->test_ty));
-        if (!e->bind_locals.empty()) b.CreateStore(objv, slotFor(e->bind_locals[0]));
+        // `is` on a class/interface value is a safe runtime test (SPEC 10.1.2): a null receiver
+        // matches nothing, and an interface value is a `{obj*, desc*}` aggregate, so the object
+        // pointer is taken first. Both are exactly the `as` lowering, so reuse it: `x is C` is
+        // `x as C != null`, and the optional binding is that non-null pointer.
+        Value* srcv = eval(e->obj.get());
+        Value* cast = emitDowncast(srcv, e->obj->ty, e->test_ty);
+        Value* cond = b.CreateICmpNE(cast, Constant::getNullValue(ptrTy()));
+        if (!e->bind_locals.empty()) b.CreateStore(cast, slotFor(e->bind_locals[0]));
         return cond;
     }
 
