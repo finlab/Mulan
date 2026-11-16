@@ -1,0 +1,7 @@
+# Default mode: reference counting is atomic (the retain at the call site and the release when the
+# handle dies), and the final release is followed by an acquire fence.
+# `single_thread_rc.mu` asserts the same program compiled with `--single-thread` has none of these.
++ ^define .*@main\(
++ atomicrmw add ptr
++ atomicrmw sub ptr
++ fence acquire

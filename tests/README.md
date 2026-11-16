@@ -94,7 +94,8 @@ Notes per kind:
 
 - **Must-fail (`tests/errors/`)**: `tests/errors/<name>.mu` plus `tests/errors/<name>.err`; each
   non-empty, non-`#` line of the `.err` file is a substring that must appear in the diagnostics, so
-  one case can pin several messages. Names starting with `lib_` are dependency **libraries** of
+  one case can pin several messages; an `@ <args>` line adds compiler options (for example
+  `@ --single-thread`, for diagnostics that only appear under a flag). Names starting with `lib_` are dependency **libraries** of
   multi-unit cases, not cases; helper units with dotted unit names live in subdirectories
   (`tests/errors/vislib/secret.mu`), which keeps them out of the `*.mu` glob.
 - **Check (`tests/check/`)**: only the semantic checker runs — visibility across units and
@@ -113,6 +114,10 @@ Notes per kind:
 
 The table below lists the **run cases** (`tests/cases/` plus the runnable examples); must-fail,
 check, ir and C ABI cases are described in the *Directory layout* section.
+
+`tests/bench/` holds small, hand-run benchmarks (not collected by the runner). Build and run them
+directly, e.g. `build\muc.exe build tests/bench/rc_new.mu --run` versus the same with
+`--single-thread`; each file's header explains what it measures.
 
 | Case | Coverage |
 |---|---|

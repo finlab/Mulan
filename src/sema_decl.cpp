@@ -225,6 +225,16 @@ namespace muc_detail {
                             "` is only visible within its library; cross-library use requires `public unit`",
                         use.get());
                 }
+                // `std.thread` / `std.task` are the threading runtime: with `--single-thread` the RC
+                // operations are plain loads/stores, so touching either unit is an error rather than
+                // a silent data race. The library's own units (`std.*`) are exempt.
+                if (single_thread_ && u->name.compare(0, 4, "std.") != 0 &&
+                    (use->unit_name == "std.thread" || use->unit_name.compare(0, 11, "std.thread.") == 0 ||
+                     use->unit_name == "std.task" || use->unit_name.compare(0, 9, "std.task.") == 0)) {
+                    err("unit `" + use->unit_name + "` needs atomic reference counting; " +
+                            "threading cannot be used with `--single-thread`",
+                        use.get());
+                }
             }
         }
     }
@@ -1056,8 +1066,8 @@ namespace muc_detail {
             }
         }
     }
-Sema::Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry)
-    : units_(std::move(units)), entry_(std::move(entry)) {}
+Sema::Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool single_thread)
+    : units_(std::move(units)), entry_(std::move(entry)), single_thread_(single_thread) {}
 
 Program Sema::run() {
     collect();

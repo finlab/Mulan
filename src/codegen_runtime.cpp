@@ -289,13 +289,19 @@ namespace muc_detail {
         b.SetInsertPoint(bodyBB);
         Value* rcp = b.CreateGEP(i8(), h, ConstantInt::get(i64(), kArrRc));
         // Release decrement + acquire fence before freeing: same rule as class objects (the array
-        // header can be shared across tasks/threads just like a class handle).
-        Value* old = b.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, rcp,
-                                       ConstantInt::get(i64(), 1), MaybeAlign(8),
-                                       llvm::AtomicOrdering::Release);
+        // header can be shared across tasks/threads just like a class handle). `--single-thread`
+        // drops both, like mu_rt_release.
+        Value* old = nullptr;
+        if (singleThread) {
+            old = b.CreateLoad(i64(), rcp);
+            b.CreateStore(b.CreateSub(old, ConstantInt::get(i64(), 1)), rcp);
+        } else {
+            old = b.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, rcp, ConstantInt::get(i64(), 1),
+                                    MaybeAlign(8), llvm::AtomicOrdering::Release);
+        }
         b.CreateCondBr(b.CreateICmpEQ(old, ConstantInt::get(i64(), 1)), destroyBB, doneBB);
         b.SetInsertPoint(destroyBB);
-        b.CreateFence(llvm::AtomicOrdering::Acquire);
+        if (!singleThread) b.CreateFence(llvm::AtomicOrdering::Acquire);
         b.CreateCall(ensureSliceFree(sliceTy->elem, sliceTy->rank), {h});
         b.CreateBr(doneBB);
         b.SetInsertPoint(doneBB);

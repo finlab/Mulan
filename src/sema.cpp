@@ -13,8 +13,9 @@ std::string mangle(const std::string& unit, const std::string& name) {
     return "mu$" + unit + "$" + name;
 }
 
-Program analyze(std::vector<std::unique_ptr<Unit>> units, const std::string& entry) {
-    muc_detail::Sema sema(std::move(units), entry);
+Program analyze(std::vector<std::unique_ptr<Unit>> units, const std::string& entry,
+                bool single_thread) {
+    muc_detail::Sema sema(std::move(units), entry, single_thread);
     return sema.run();
 }
 

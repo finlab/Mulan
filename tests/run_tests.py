@@ -498,12 +498,19 @@ def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
     """The case must be rejected; every .err line substring must appear in the diagnostics."""
     if not case.spec.is_file():
         return False, f"missing expectation file {case.spec} (one required error substring per line)"
-    wanted = [
-        ln.strip()
-        for ln in case.spec.read_text(encoding="utf-8", errors="replace").splitlines()
-        if ln.strip() and not ln.strip().startswith("#")
-    ]
-    cmd = resolve_compiler() + ["check", str(case.src.relative_to(ROOT))]
+    # `@ <args>` lines add compiler options (same convention as the run and IR cases), so a
+    # diagnostic that only appears under a flag (for example `--single-thread`) can be pinned.
+    wanted: list[str] = []
+    extra: list[str] = []
+    for raw in case.spec.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("@"):
+            extra += shlex.split(line[1:].strip())
+            continue
+        wanted.append(line)
+    cmd = resolve_compiler() + ["check", str(case.src.relative_to(ROOT))] + extra
     try:
         r = subprocess.run(
             cmd, cwd=ROOT, capture_output=True, text=True,

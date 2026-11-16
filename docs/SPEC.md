@@ -2045,7 +2045,9 @@ dynamic array T[,]:  { i64 rc, i64 d0, i64 d1, ..., data... }
 - Separate from raw memory: `alloc/free/realloc` manage raw memory and `new` is only for class; the two must not be used interchangeably.
 - Objects may be shared across threads; the destructor runs on the thread that releases the last reference and must be thread-safe.
 - Construction failure (malloc returns null) currently calls `abort()` directly.
-- An optional `--single-thread` build can use a non-atomic fast path (that build forbids cross-thread use; pending).
+- An optional `--single-thread` build emits reference counting without atomics (plain loads and stores,
+  no acquire fence); that build rejects `para`, `para for` and `std.thread` / `std.task` at compile time,
+  so no object is ever shared. The default build keeps atomic RC.
 - There is no resource release mechanism other than a user destructor; destructors are covered in 3.13.
 
 ---
@@ -2388,7 +2390,7 @@ switch v {
 | 71 | Interop between class and C | Passing to `extern` is forbidden; use a struct + alloc across languages |
 | 72 | Arrays of class | Decided: both static `Cat[N]` and dynamic `Cat[]` are supported (RC per element) |
 | 73 | `sizeof`/`alignof` on a class | Decided (implemented): a class takes the handle size (8), an interface takes the interface value size (16); the object size is not exposed |
-| 74 | Multithreaded reference counting | Decided (see 94): atomic RC (relaxed increments, release decrement + acquire fence), objects may be shared across threads; the `--single-thread` non-atomic fast path is still undecided |
+| 74 | Multithreaded reference counting | Decided (see 94): atomic RC (relaxed increments, release decrement + acquire fence), objects may be shared across threads; the `--single-thread` opt-in build drops the atomics and rejects concurrency constructs (`para`, `para for`, `std.thread` / `std.task`) |
 | 75 | User destructor `deinit` | Not provided under that name: user destructors are written `~T()` and are implemented (see 3.13 / #92); fields are released in reverse declaration order |
 | 76 | Inheritance model | Decided: single inheritance + multiple interface implementations; no multiple inheritance (see 3.9/3.10) |
 | 77 | Virtual methods | Decided: virtual by default; overrides/implementations are written `override` |
@@ -2401,7 +2403,7 @@ switch v {
 | 84 | Interface value layout | Decided: `{obj*, class_desc*}`, two words; `null` is supported |
 | 85 | Arrays/dynamic arrays of class | Supported; the Widget tree still recommends `first_child/next_sibling` |
 | 86 | `sizeof`/`alignof` on a class | Decided (implemented): same as #73 (class=8, interface=16) |
-| 87 | Multithreaded RC | Decided (same as 94): atomic RC (relaxed increments, release decrement + acquire fence); the thread-local heap scheme has been rejected |
+| 87 | Multithreaded RC | Decided (same as 94): atomic RC (relaxed increments, release decrement + acquire fence); the thread-local heap scheme has been rejected; `--single-thread` is an opt-in non-atomic build that forbids concurrency (see 74) |
 | 88 | Name mangling | Decided (injective): `mu$<unit>$<name>$<param>...`; components are separated by `$`, every literal `_` is doubled and every other non-alphanumeric byte is `_XX` (uppercase hex), so no two declarations share a symbol; `extern` keeps the original name; `main` is special |
 | 89 | Unary `~` overloading | Allowed (`operator~`, 1 parameter) |
 | 90 | Static arrays of class | Decided: allowed (forbidden for structs); retain/release per element |

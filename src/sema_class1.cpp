@@ -817,6 +817,12 @@ namespace muc_detail {
     }
 
     void Sema::check_para(ParaStmt* p) {
+        if (single_thread_) {
+            // `--single-thread` drops the atomics from reference counting, so a second thread would
+            // race on every shared object: reject instead of silently generating a data race.
+            err("`para` needs atomic reference counting; it cannot be used with `--single-thread`", p);
+            return;
+        }
         p->captures.clear();
         for (auto& sec : p->sections) {
             ParaCtx ctx;
@@ -838,6 +844,10 @@ namespace muc_detail {
     }
 
     void Sema::check_para_for(ParaForStmt* p) {
+        if (single_thread_) {
+            err("`para for` needs atomic reference counting; it cannot be used with `--single-thread`", p);
+            return;
+        }
         ForInStmt* f = p->loop.get();
         if (!f) return;
         if (f->has_idx) {

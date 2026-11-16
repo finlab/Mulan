@@ -390,10 +390,17 @@ bool is_zero_literal(Init* init) {
         hb.CreateCondBr(hb.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), done, inc);
         hb.SetInsertPoint(inc);
         auto* rc = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 0));
-        // Relaxed is correct for increments: they only have to be atomic. Ordering is provided by
-        // the release decrement plus the acquire fence on the final release (see ensureRelease).
-        hb.CreateAtomicRMW(llvm::AtomicRMWInst::Add, rc, ConstantInt::get(i64(), 1),
-                           MaybeAlign(8), llvm::AtomicOrdering::Monotonic);
+        if (singleThread) {
+            // `--single-thread`: no other thread exists to observe the counter, so a plain load/add
+            // is enough (the ordering notes below only apply to the atomic form).
+            auto* cur = hb.CreateLoad(i64(), rc);
+            hb.CreateStore(hb.CreateAdd(cur, ConstantInt::get(i64(), 1)), rc);
+        } else {
+            // Relaxed is correct for increments: they only have to be atomic. Ordering is provided
+            // by the release decrement plus the acquire fence on the final release (see ensureRelease).
+            hb.CreateAtomicRMW(llvm::AtomicRMWInst::Add, rc, ConstantInt::get(i64(), 1),
+                               MaybeAlign(8), llvm::AtomicOrdering::Monotonic);
+        }
         hb.CreateBr(done);
         hb.SetInsertPoint(done);
         hb.CreateRetVoid();
@@ -416,15 +423,26 @@ bool is_zero_literal(Init* init) {
         hb.CreateCondBr(hb.CreateICmpEQ(p, Constant::getNullValue(ptrTy())), done, body);
         hb.SetInsertPoint(body);
         auto* rc = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 0));
-        // Release: every write this thread made before dropping the reference must be visible to
-        // the thread that performs the final release (SPEC 3.17 / 8.3, the Arc pattern).
-        auto* old = hb.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, rc, ConstantInt::get(i64(), 1),
-                                       MaybeAlign(8), llvm::AtomicOrdering::Release);
+        Value* old = nullptr;
+        if (singleThread) {
+            // `--single-thread`: plain load/sub/store; nothing is shared, so the release store and the
+            // acquire fence below have nothing to order against.
+            auto* cur = hb.CreateLoad(i64(), rc);
+            old = cur;
+            hb.CreateStore(hb.CreateSub(cur, ConstantInt::get(i64(), 1)), rc);
+        } else {
+            // Release: every write this thread made before dropping the reference must be visible to
+            // the thread that performs the final release (SPEC 3.17 / 8.3, the Arc pattern).
+            old = hb.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, rc, ConstantInt::get(i64(), 1),
+                                     MaybeAlign(8), llvm::AtomicOrdering::Release);
+        }
         hb.CreateCondBr(hb.CreateICmpEQ(old, ConstantInt::get(i64(), 1)), destroy, done);
         hb.SetInsertPoint(destroy);
-        // Acquire fence: pairs with the other threads' release decrements, so the destructor sees
-        // everything they wrote before dropping their references.
-        hb.CreateFence(llvm::AtomicOrdering::Acquire);
+        if (!singleThread) {
+            // Acquire fence: pairs with the other threads' release decrements, so the destructor sees
+            // everything they wrote before dropping their references.
+            hb.CreateFence(llvm::AtomicOrdering::Acquire);
+        }
         auto* descp = hb.CreateGEP(i8(), p, ConstantInt::get(i64(), 8));
         auto* desc = hb.CreateLoad(ptrTy(), descp);
         auto* dfnp = hb.CreateGEP(i8(), desc, ConstantInt::get(i64(), 8));

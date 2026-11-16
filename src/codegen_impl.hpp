@@ -127,6 +127,8 @@ struct Emitter {
     Program& prog;
     bool wantDebug = false;
     bool boundsCheck = true;
+    // `--single-thread`: reference counting without atomics (see EmitOptions::single_thread).
+    bool singleThread = false;
     // Symbol names that stay externally visible in the executable target (`--export`). Everything
     // else defined here is internalized before optimization: an executable has no consumers.
     std::set<std::string> exports;

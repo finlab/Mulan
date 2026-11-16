@@ -40,8 +40,11 @@ struct Program {
 
 std::string mangle(const std::string& unit, const std::string& name);
 
-// Throws SemaError on failure
-Program analyze(std::vector<std::unique_ptr<Unit>> units, const std::string& entry);
+// Throws SemaError on failure.
+// `single_thread` mirrors `--single-thread`: reference counting is emitted without atomics, so any
+// use of concurrency (`para`, `para for`, `std.thread` / `std.task`) is a static error.
+Program analyze(std::vector<std::unique_ptr<Unit>> units, const std::string& entry,
+                bool single_thread = false);
 
 // For codegen: convert a Type into Mulan source syntax
 std::string type_str(const TypePtr& t);

@@ -27,6 +27,28 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 149 — 2026-11-16
+
+**`--single-thread`: opt-in non-atomic reference counting (#19).**
+
+- `muc build --single-thread` (accepted by `muc check` as well) emits the retain/release helpers and the
+  slice-buffer release as plain loads and stores: no `atomicrmw`, no acquire fence. Default builds keep
+  atomic RC (relaxed increments, release decrement + acquire fence).
+- The mode is only sound if nothing is shared, so concurrency becomes a compile error instead of a
+  warning: `para`, `para for`, and `use std.thread` / `use std.task` are rejected with
+  *"needs atomic reference counting"* (the library's own `std.*` units are exempt, so `std.thread`
+  itself still compiles).
+- Explicitness rule: the flag never changes default semantics — a program compiled without it behaves
+  exactly as before, which `tests/ir/atomic_rc` pins (`+ atomicrmw ... / + fence acquire`).
+- Benchmark `tests/bench/rc_new.mu` (20M × `new Node` + drop at the end of the scope, best of 3,
+  Windows x64 / MinGW LLVM O2): **32.9 ns/object** atomic vs **26.8 ns/object** `--single-thread`
+  (≈18% faster, 6.1 ns saved per object), against 33.4 ns measured for 0.0.128 in the issue.
+- Tests: `single_thread_rc` (run, semantics with weak + array release), `single_thread_para`,
+  `single_thread_para_for`, `single_thread_std_thread` (must-fail), `single_thread_rc` / `atomic_rc`
+  (ir, the atomic and non-atomic forms of the same program).
+
+**Tests**: 624/624 (211 run + 382 must-fail + 21 check + 7 ir + 3 c abi).
+
 #### build 148 — 2026-11-16
 
 **Two follow-up reports (#40, #41).**

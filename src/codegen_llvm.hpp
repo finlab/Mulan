@@ -22,6 +22,9 @@ struct EmitOptions {
     std::vector<std::string> extra_exports;
     // LLVM target triple (`--target`); empty selects the host triple.
     std::string target;
+    // `--single-thread`: reference counting drops the atomics (and the acquire fence on the final
+    // release). Only the front-end may accept this: concurrency use is a compile error there.
+    bool single_thread = false;
 };
 
 // Emit textual IR (debug / --emit-ir).

@@ -56,6 +56,8 @@ build options:
   --emit-ir <path> also write the generated LLVM IR to <path>
   -g, --debug      emit DWARF debug info (line tables / function scopes)
   --bounds=on|off  subscript bounds checks for managed sequences (default: on)
+  --single-thread  reference counting without atomics: `para`, `para for` and
+                   `std.thread` / `std.task` become compile errors (default: off)
   --cc <name>      linker driver (default: $CC, else gcc)
   --link <obj>     extra object file for the link step (repeatable), e.g. a C shim
                    compiled with the same compiler
@@ -582,6 +584,7 @@ struct BuildArgs {
     bool run = false;
     bool debug = false;
     bool bounds = true;  // emit subscript bounds checks for managed sequences (--bounds=off disables)
+    bool single_thread = false;  // --single-thread: non-atomic reference counting
     bool verbose = false;
 };
 
@@ -616,6 +619,7 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "-g" || a == "--debug") b.debug = true;
         else if (a == "--bounds=on") b.bounds = true;
         else if (a == "--bounds=off") b.bounds = false;
+        else if (a == "--single-thread") b.single_thread = true;
         else throw MuError("unknown option `" + a + "`");
         ++i;
     }
@@ -629,6 +633,7 @@ static int cmd_check(const std::vector<std::string>& args) {
     std::string platform;
     std::vector<std::string> dirs;
     bool verbose = false;
+    bool single_thread = false;
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
         auto need = [&](const char* what) {
@@ -639,6 +644,7 @@ static int cmd_check(const std::vector<std::string>& args) {
         else if (a == "--os") os = need("--os");
         else if (a == "--platform") platform = need("--platform");
         else if (a == "-v" || a == "--verbose") verbose = true;
+        else if (a == "--single-thread") single_thread = true;
         else if (!a.empty() && a[0] == '-') throw MuError("unknown option `" + a + "`");
         else if (entry.empty()) entry = a;
         else throw MuError("unexpected argument `" + a + "`");
@@ -650,7 +656,7 @@ static int cmd_check(const std::vector<std::string>& args) {
     std::string entry_name;
     auto units = load_units(entry, dirs, entry_name, platform.empty() ? os : platform, verbose);
     size_t n = units.size();
-    auto prog = analyze(std::move(units), entry_name);
+    auto prog = analyze(std::move(units), entry_name, single_thread);
     std::cout << "ok: " << n << " units, semantic checks passed\n";
     return 0;
 }
@@ -691,7 +697,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     }
     std::string entry_name;
     auto units = load_units(ba.entry, ba.dirs, entry_name, target_spec, ba.verbose);
-    auto prog = analyze(std::move(units), entry_name);
+    auto prog = analyze(std::move(units), entry_name, ba.single_thread);
 
     fs::path entry_p(ba.entry);
     std::string base = entry_p.stem().string();
@@ -717,6 +723,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     eo.export_mode = ba.export_mode;
     eo.extra_exports = ba.exports;
     eo.target = ba.target;
+    eo.single_thread = ba.single_thread;
     {
         std::ofstream f(ir_path, std::ios::binary);
         if (!f) throw MuError("cannot write " + ir_path.string());

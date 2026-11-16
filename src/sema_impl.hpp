@@ -75,7 +75,7 @@ inline EnumConst* intern_enum_const(const std::string& unit, const std::string& 
 
 class Sema {
 public:
-    Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry);
+    Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool single_thread = false);
 
     Program run();
 
@@ -93,6 +93,8 @@ private:
 
     std::vector<std::unique_ptr<Unit>> units_;
     std::string entry_;
+    // `--single-thread`: reference counting is non-atomic, so concurrency constructs are rejected.
+    bool single_thread_ = false;
     std::unordered_map<std::string, UnitInfo> infos_;
     Unit* cur_ = nullptr;
     FuncDecl* cur_func_ = nullptr;
