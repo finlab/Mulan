@@ -763,11 +763,11 @@ class Button : Widget {
 ### 3.10 Interfaces `interface`
 
 ```c
-interface IEnumerable {
+interface IIterable {
     IEnumerator get_iterator();
 }
 
-interface IList : IEnumerable, IObject {      // an interface may inherit multiple interfaces
+interface IList : IIterable, IObject {      // an interface may inherit multiple interfaces
     int count();
     void add(int x);
     bool is_empty() { return count() == 0; }  // default method
@@ -788,10 +788,10 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
 - Interface references are strong references: copying is +1, overwriting is -1; `weak` is only supported for class fields, and **interfaces do not support `weak` (not done in phase one)**.
 - An interface cannot be used as a parameter of an `extern` C function.
 - **Generic interfaces are real interfaces** (0.0.108): `interface ISeq<T>` instantiates on use, and an instantiated
-  interface (`IIterator<int>`, `IEnumerable<int>`) can be implemented by a class (`class Cursor : IIterator<int>`),
-  implemented by a generic class through its parameter (`class Src<T> : IEnumerable<T>`), used as a **value type**
+  interface (`IIterator<int>`, `IIterable<int>`) can be implemented by a class (`class Cursor : IIterator<int>`),
+  implemented by a generic class through its parameter (`class Src<T> : IIterable<T>`), used as a **value type**
   (16-byte `{obj, desc}`, dispatch through the itable), a return type, a field/local type, a constraint
-  (`T: IEnumerable<int>`) and an `as` downcast target. Interface inheritance may be generic
+  (`T: IIterable<int>`) and an `as` downcast target. Interface inheritance may be generic
   (`interface Derived<T> : Base<T>`); each level is an interface value of its own type. What stays closed is the
   *value type → interface value* direction: a `struct` cannot be handed out as an interface value (that is boxing,
   3.15.8), so a struct container returns a **class** cursor.
@@ -811,7 +811,7 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
     so such a method must be implemented explicitly.
 - `for-in` does not depend on interfaces for the **static** path: a container with `iterator()` and a struct cursor
   is iterated with static dispatch and zero allocation (6.4.2). A cursor that is an **interface value**
-  (`IIterator<T>`, the shape `IEnumerable<T>` returns) is iterated through the itable — same loop, dynamic dispatch,
+  (`IIterator<T>`, the shape `IIterable<T>` returns) is iterated through the itable — same loop, dynamic dispatch,
   one RC-managed 16-byte local.
 
 ### 3.11 Methods, Overloading and Operators
@@ -865,6 +865,15 @@ struct Vec {
 - **Member operators** (`implemented 0.0.87`) are allowed **inside a `struct` only** and are always static-dispatch (never virtual): a class operator would be virtual by default, which would break `==` identity and add dispatch cost, so classes keep the free-function form (a member operator written in a class body is a compile error). The receiver is the implicit `this`, so `s[i]` / `s == t` cost no copy and no retain/release; the parameter list is the free form minus the receiver (binary 1, unary 0, `[]` 1, `[]=` 2) and a member operator wins over a free function with the same signature.
 - An operator function is an ordinary function and may be placed in any unit; a duplicate definition or a resolution ambiguity → compile error.
 - When `!=` is undefined it is derived as `not (a == b)`; for a class this means identity inequality.
+- **A derived comparison evaluates its operands right-to-left** when the derivation swaps them
+  (`>` and `<=`), because the receiver becomes the other operand. Combined with the previous item,
+  `a != b` is `!(a == b)` and `a >= b` is `!(a < b)` keep the source order.
+- The **ordering family is derived from `operator<`** when the operator itself is not declared:
+  `a > b` ⟺ `b < a`, `a <= b` ⟺ `!(b < a)`, `a >= b` ⟺ `!(a < b)`. A declared operator always wins,
+  so a type keeps control when it needs the native semantics (floats with NaN) or wants to avoid the
+  extra call. Deriving `<=` this way is only correct for a **total order**; the contract `IOrder`
+  (3.15.9) promises exactly that, and a float set containing NaN is not totally ordered — floats
+  carry their own `<=`, so derivation never applies to them.
 - Unary `~` (bitwise NOT) may be overloaded (`operator~`, 1 parameter).
 - Precedence/associativity are unchanged.
 
@@ -1062,7 +1071,7 @@ T: A | B  →  type set is the union (wider)  →  available members of T are th
   through elements (`c[i] = v`) without an `operator[]=` or a second contract. A built-in block (`T[]`)
   satisfies the value form: its `length()` and subscript are compiler-lowered, so they count as members.
 - Therefore **built-in types satisfy interfaces at zero cost**: `int` satisfies `Self operator+(Self, Self)` thanks to the built-in `+`.
-  The ready-made contracts (`IAddable`, `IOrdered`, `INumber`, …) live in `std.interfaces` (3.15.9).
+  The ready-made contracts (`IAdd`, `IOrder`, `INumber`, …) live in `std.interfaces` (3.15.9).
 
 **Exact matching, no implicit conversion**: constraint checking performs no implicit widening and no overload "best candidate" selection.
 `Money operator+(Money, long)` does not satisfy `Self operator+(Self, Self)`.
@@ -1076,7 +1085,7 @@ when an open branch (`IComparable`) is mixed with a concrete type, the member se
 The **diagnostic** must state what is missing, for example:
 
 ```
-type `Money` does not satisfy `IAddable` for type parameter `T`: no `operator+` accepting `(Money, Money)`
+type `Money` does not satisfy `IAdd` for type parameter `T`: no `operator+` accepting `(Money, Money)`
 ```
 
 #### 3.15.6 `Self`
@@ -1122,28 +1131,32 @@ interface of the `ref I` form can be reconsidered (see backlog U33 "Final Decisi
 
 #### 3.15.9 Predeclared contracts (`std.interfaces`)
 
-The predeclared contracts (`IIterator<T>`, `IEnumerable<T>`, `IIndexable<T>`, `IEquatable`,
-`IOrdered`, `IAddable` … `INumber`) are ordinary `interface` declarations in `std.interfaces`, a
+The predeclared contracts (`IIterator<T>`, `IIterable<T>`, `IIndex<T>`, `IEqual`,
+`IOrder`, `IAdd` … `INumber`) are ordinary `interface` declarations in `std.interfaces`, a
 library unit loaded implicitly. The member tables — which signatures each contract requires and which
 types satisfy it — are library content:
 [docs/StdLibSPEC.md](file:///D:/dev/mu_lan/docs/StdLibSPEC.md) §6.2. The language rules,
 unchanged:
 
 - A type satisfies a contract **structurally** (3.15): providing the members with exactly the
-  required signatures is enough; declaring it (`struct Money : IAddable`) checks the same shape at the
+  required signatures is enough; declaring it (`struct Money : IAdd`) checks the same shape at the
   definition site and is optional.
 - The constraint checker recognises only `+ - * / %` and the comparison operators as built-in
   arithmetic/comparison operators, so there is deliberately no bitwise contract. A **subscript** is
   declarable and satisfiable (3.15.9), which is what lets generic container algorithms be written; it
   is not an arithmetic operator and does not participate in `INumber`.
   Because a subscript carries a capability (read or read-write) that a single operator expresses only
-  through its return type, the library ships it as a **pair**: `IIndexable<T>` declares
+  through its return type, the library ships it as a **pair**: `IIndex<T>` declares
   `T operator[](Self c, isize i)` (read — satisfied by a value or a `ref` implementation) and
-  `IMutableIndexable<T> : IIndexable<T>` declares `ref T operator[](Self c, isize i)` (read-write —
+  `IIndexMut<T> : IIndex<T>` declares `ref T operator[](Self c, isize i)` (read-write —
   satisfied only by a `ref` implementation). A generic body that writes through an element — including
   `for ref x in c` — must be constrained on the mutable one.
 - User value types satisfy these contracts through `operator` members or free `operator` functions in
-  a visible unit; `class` equality stays identity, so a `class` does not satisfy `IEquatable`.
+  a visible unit; `class` equality stays identity, so a `class` does not satisfy `IEqual`.
+- **Each comparison contract demands only the operator that the compiler can derive the rest from**:
+  `IEqual` requires `==` (and `!=` is derived, 3.11), `IOrder : IEqual` requires `<` (and `>`, `<=`,
+  `>=` are derived). A type that declares the derived ones directly still satisfies the contract, and
+  its declarations win. `IOrder` promises a **total order** — the derived `<=` is `!(b < a)`.
 
 ### 3.16 Function types and lambdas (implemented in 0.0.84)
 
@@ -1789,7 +1802,7 @@ class List { Iter iterator() { ... } }
 - The cursor is a struct returned by value: zero allocation, static dispatch, inlinable; with class/interface fields it does per-field RC according to U24,
   cleaning up at loop exit / `break` / `return`.
 - A cursor may instead be an **interface value** (`IIterator<T>`, 0.0.108): the loop then dispatches `next()`/`current()`
-  through the itable. This is the dynamic channel — it is what `IEnumerable<T>` returns, because an interface value
+  through the itable. This is the dynamic channel — it is what `IIterable<T>` returns, because an interface value
   cannot hold a struct (no boxing). The loop holds one RC-managed local; the element type is still
   `current()`'s return type.
 - The cursor form does not support `for ref` (`current()` returns a value); mutable iteration goes through the index form (`[]` returning `ref T`) or `for i, x`.
@@ -1798,9 +1811,9 @@ class List { Iter iterator() { ... } }
   is required and none is consulted; the element type is the return type of the cursor's `current()`.
   Interfaces in `std.interfaces` make the contract explicit at the definition site but are optional:
   - the cursor may declare `: IIterator<T>` — checked against `bool next()` / `T current()`;
-  - the container may declare `: IEnumerable<T>` — checked against `IIterator<T> iterator()`.
-  `IEnumerable<T>` is an ordinary generic interface (0.0.108): a class implements it by returning a class
-  cursor as `IIterator<T>`, `for-in` iterates that value, and `T: IEnumerable<int>` works as a constraint.
+  - the container may declare `: IIterable<T>` — checked against `IIterator<T> iterator()`.
+  `IIterable<T>` is an ordinary generic interface (0.0.108): a class implements it by returning a class
+  cursor as `IIterator<T>`, `for-in` iterates that value, and `T: IIterable<int>` works as a constraint.
 
 #### 6.4.3 Resolution order and diagnostics
 
@@ -2460,7 +2473,7 @@ switch v {
 | 107 | Unit-level `const` referencing other `const`s/enum members | Implemented (0.0.59): the compile-time constant evaluator supports referencing unit-level `const`s, enum members, and type-level `const` members, and supports forward references; `const int B = A + 1;` and `const int C = sizeof(int) as int;` are legal; cyclic dependencies/division by zero are errors (see 3.7.2) |
 | 108 | Type-level `const` constants (`const` members) | Decided (0.0.59): `const T NAME = <const-expr>;` inside a struct/class body, semantically a compile-time constant with no instance storage; accessed via `Type.NAME` / as a bare name inside a type method body / through the base-class chain; `obj.NAME`, `this.NAME`, assignment and taking the address are all errors; not allowed in unions/interfaces (see 3.7.1) |
 | 109 | Bit-fields | Decided (0.0.62): **explicitly not done**. No C-style `int x : 3;` is provided, nor is any Zig/Rust-style explicit bit-width syntax; the allocation order and cross-unit boundaries are implementation-defined, which conflicts with predictable layout. Alternatives: mask+shift / `byte[N]`+offset / `packed`+accessors / a C shim (see 3.4) |
-| 110 | A generic interface as a value type / a value type as an interface value | **Split (0.0.108).** (a) *Generic interface as a value type*: **implemented** — `IIterator<int> x`, `class C : IIterator<int>`, `class Src<T> : IEnumerable<T>`, interface-valued returns/fields/locals, `T: IEnumerable<int>` constraints, `as` downcasts; two words `{obj, desc}`, itable slots keyed by the concrete signature, no boxing. (b) *Value type → interface value*: **still explicitly not done** (0.0.75 decision stands) — a struct would have to be boxed, so `Animal a = cat;` is a compile error and `struct S : I` is a compile-time contract only |
+| 110 | A generic interface as a value type / a value type as an interface value | **Split (0.0.108).** (a) *Generic interface as a value type*: **implemented** — `IIterator<int> x`, `class C : IIterator<int>`, `class Src<T> : IIterable<T>`, interface-valued returns/fields/locals, `T: IIterable<int>` constraints, `as` downcasts; two words `{obj, desc}`, itable slots keyed by the concrete signature, no boxing. (b) *Value type → interface value*: **still explicitly not done** (0.0.75 decision stands) — a struct would have to be boxed, so `Animal a = cat;` is a compile error and `struct S : I` is a compile-time contract only |
 | 111 | `const` members in generic types / generic interface inheritance | **Generic interface inheritance implemented (0.0.108)**: `interface Derived<T> : Base<T>` instantiates per level and both levels are interface values of their own type. Still an error: `const` members in generic structs/classes (not wired up) |
 | 112 | Type alias `type A = B;` | Decided (0.0.62): `type` is a **contextual keyword** (it is parsed as an alias only at the start of a declaration, `type Ident =`; elsewhere it is still an identifier, which protects the `type` field of C-interop structs); each declaration declares one alias; aliases are transparent (not newtypes) (see 4.5) |
 | 113 | Range extensions `..=` / `step` / reverse order | Decided (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`); reverse order relies on an **explicit negative step**, `a..b` does not reverse automatically; `step 0` is a compile error; the step size is limited to compile-time constants (see 6.4) |

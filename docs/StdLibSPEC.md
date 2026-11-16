@@ -64,7 +64,7 @@ that matter for the layer model:
 | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | L1 | no | the ISO headers, one unit per header, in the separate `cstd` library; one implementation per platform under `libs/cstd/platform/<os>/` (`windows` = MSVC CRT, `linux` = glibc) | §5, §7 |
 | `std.string` | L2 | **yes** | `String`: `length`, `is_empty`, `operator[]`, `==`, `sub`, `concat`, `find`, `trim`, `starts_with`, `ends_with`, `cstr`, `strlen` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
 | `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `bounds_fail` | §6.1 |
-| `std.interfaces` | L3 | **yes** | `IIterator<T>`, `IEnumerable<T>`, `IIndexable<T>`, `IEquatable`, `IOrdered`, `IAddable` … | §6.2 |
+| `std.interfaces` | L3 | **yes** | `IIterator<T>`, `IIterable<T>`, `IIndex<T>`, `IEqual`, `IOrder`, `IAdd` … | §6.2 |
 | `std.task` | L3 | **yes** | `muc_para_*` (compiler entry points), `set_max_live_tasks`, `set_task_stack`, `set_carrier_limit`, `live_task_count`, `carrier_count`, `TaskLimitError` | §6.4 |
 | `std.thread` | L3 | **yes** | `Thread`, `thread_start/join/detach`, `thread_sleep`, `monotonic_ms`, `Mutex`, `CondVar`, `WAIT_INFINITE` | §6.5 |
 
@@ -157,19 +157,23 @@ declaration checking the same shape, `class` equality staying identity — is SP
 | Interface | Members | Satisfied by |
 |---|---|---|
 | `IIterator<T>` | `bool next()`, `T current()` | a cursor for `for-in` (SPEC 6.4.2) |
-| `IEnumerable<T>` | `IIterator<T> iterator()` | a container |
-| `IIndexable<T>` | `isize length()`, `T operator[](Self c, isize i)` | a readable container; satisfied by a member `T operator[](isize)`, a free `T operator[](C, isize)`, a `ref T` implementation (a borrow is usable as a value), or the built-in block subscript |
-| `IMutableIndexable<T> : IIndexable<T>` | also `ref T operator[](Self c, isize i)` | a writable container; satisfied only by a `ref` implementation (or the built-in block subscript). Required by a generic body that writes through an element, including `for ref` |
-| `IEquatable` | `==`, `!=` | numbers, pointers, a value type with those operators |
-| `IOrdered : IEquatable` | `<`, `<=`, `>`, `>=` (plus equality) | numbers, pointers, enums, a value type with those operators |
-| `IAddable` / `ISubtractable` / `IMultipliable` / `IDivisible` / `IModulable` | the binary `+ - * / %` returning `Self` | numbers (`%` is `frem` for floats) |
-| `INegatable` | unary `-` | numbers |
-| `INumber` | the arithmetic bundle (`IAddable` … `IOrdered`, C# generic-math shape) | numbers; not enums |
+| `IIterable<T>` | `IIterator<T> iterator()` | a container |
+| `IIndex<T>` | `isize length()`, `T operator[](Self c, isize i)` | a readable container; satisfied by a member `T operator[](isize)`, a free `T operator[](C, isize)`, a `ref T` implementation (a borrow is usable as a value), or the built-in block subscript |
+| `IIndexMut<T> : IIndex<T>` | also `ref T operator[](Self c, isize i)` | a writable container; satisfied only by a `ref` implementation (or the built-in block subscript). Required by a generic body that writes through an element, including `for ref` |
+| `IEqual` | `==` (`!=` is derived, SPEC 3.11) | numbers, pointers, a value type with those operators |
+| `IOrder : IEqual` | `<` (`>`, `<=`, `>=` are derived from it) | numbers, pointers, enums, a value type with those operators; promises a **total order** |
+| `IAdd` / `ISub` / `IMul` / `IDiv` / `IMod` | the binary `+ - * / %` returning `Self` | numbers (`%` is `frem` for floats) |
+| `INeg` | unary `-` | numbers |
+| `INumber` | the arithmetic bundle (`IAdd` … `IOrder`, C# generic-math shape) | numbers; not enums |
 
+- Each contract asks only for the operator the compiler can derive the rest from: `IEqual` needs `==`,
+  `IOrder` needs `<`. A type that also declares `!=` / `>` / `<=` / `>=` still satisfies the contract,
+  and its own operator wins over the derived one (that is how a type keeps the native semantics or
+  avoids the extra call).
 - There is deliberately **no bitwise contract**: the constraint checker recognises only
   `+ - * / %` and the comparison operators as built-in operators.
 - User value types satisfy these contracts through `operator` members or free `operator` functions in
-  a visible unit; `class` equality stays identity, so a `class` does not satisfy `IEquatable`.
+  a visible unit; `class` equality stays identity, so a `class` does not satisfy `IEqual`.
 
 ### 6.3 `std.string`
 
