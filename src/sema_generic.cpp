@@ -589,7 +589,9 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     const auto& methods = is_struct ? sd->methods : cd->methods;
     ty->methods.clear();
     for (auto& m : methods) {
-        if (m->ret) m->rty = resolve_type(m->ret.get(), tmpl_unit_ptr);
+        // `ref T` returns must survive instantiation: resolving only the spec turns the borrow back
+        // into a plain value, so every call copies and writes to that copy are lost.
+        if (m->ret) resolve_method_ret(m.get(), tmpl_unit_ptr);
         m->pty.clear();
         for (auto& p : m->params) {
             m->pty.push_back(decay_param_type(resolve_type(p->spec.get(), tmpl_unit_ptr)));

@@ -207,6 +207,50 @@ namespace muc_detail {
             b.CreateStore(dims[i],
                           b.CreateGEP(i8(), h, ConstantInt::get(i64(), 8ULL * (1 + i))));
         }
+        // Element construction (agents/value-semantics.md §7): `new T[n]` runs the default constructor of
+        // every element. Zeroing already covers POD fields and the handles, so only a type with a
+        // constructor to run reaches this loop. A throwing constructor releases the elements built so far
+        // and the block before unwinding continues (SPEC 3.14 partial construction); the element that
+        // failed is released by the ctor-progress cleanup, not here. Order on that path is prefix first,
+        // then the failed element — observable only in destructor side effects of a throwing ctor.
+        if (!uninit && elem->needs_ctor()) {
+            Value* data = sliceDataPtr(h, rank);
+            Value* count = sliceTotalCount(h, rank);
+            AllocaInst* idx = entryAlloca(i64(), "arr.ctor.i");
+            b.CreateStore(ConstantInt::get(i64(), 0), idx);
+            BasicBlock* condBB = BasicBlock::Create(ctx, "arr.ctor.cond", curFn);
+            BasicBlock* bodyBB = BasicBlock::Create(ctx, "arr.ctor.body", curFn);
+            BasicBlock* doneBB = BasicBlock::Create(ctx, "arr.ctor.done", curFn);
+            b.CreateBr(condBB);
+            b.SetInsertPoint(condBB);
+            Value* i0 = b.CreateLoad(i64(), idx);
+            b.CreateCondBr(b.CreateICmpULT(i0, count), bodyBB, doneBB);
+            b.SetInsertPoint(bodyBB);
+            Value* i1 = b.CreateLoad(i64(), idx);
+            Value* pe = b.CreateGEP(lt(elem), data, i1);
+            emitCtorGlue(pe, elem, false, [&] {
+                AllocaInst* j = entryAlloca(i64(), "arr.ctor.j");
+                b.CreateStore(i1, j);
+                BasicBlock* rcBB = BasicBlock::Create(ctx, "arr.ctor.rc", curFn);
+                BasicBlock* rbBB = BasicBlock::Create(ctx, "arr.ctor.rb", curFn);
+                BasicBlock* reBB = BasicBlock::Create(ctx, "arr.ctor.re", curFn);
+                b.CreateBr(rcBB);
+                b.SetInsertPoint(rcBB);
+                Value* j0 = b.CreateLoad(i64(), j);
+                b.CreateCondBr(b.CreateICmpUGT(j0, ConstantInt::get(i64(), 0)), rbBB, reBB);
+                b.SetInsertPoint(rbBB);
+                Value* j1 = b.CreateLoad(i64(), j);
+                Value* jm = b.CreateSub(j1, ConstantInt::get(i64(), 1));
+                b.CreateStore(jm, j);
+                emitReleaseValue(b.CreateGEP(lt(elem), data, jm), elem);
+                b.CreateBr(rcBB);
+                b.SetInsertPoint(reBB);
+                b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {h});
+            });
+            b.CreateStore(b.CreateAdd(i1, ConstantInt::get(i64(), 1)), idx);
+            b.CreateBr(condBB);
+            b.SetInsertPoint(doneBB);
+        }
         return h;
     }
 
@@ -801,7 +845,8 @@ namespace muc_detail {
     // A sequence of subobject constructions opens a `CtorProgress` entry: an exception leaving it releases
     // the completed subobjects and the one being built (see emitCtorProgressCleanup). A user constructor
     // does that for its own members, so this only covers the inline sequences built here.
-    void Emitter::emitCtorGlue(Value* addr, const TypePtr& ty, bool unaligned) {
+    void Emitter::emitCtorGlue(Value* addr, const TypePtr& ty, bool unaligned,
+                               const std::function<void()>& onThrow) {
         if (!ty || !ty->needs_ctor()) return;
         if (ty->kind == TypeKind::Struct) {
             if (ty->has_default_ctor()) {
@@ -812,7 +857,7 @@ namespace muc_detail {
                 b.CreateCall(ctor, {addr});
                 // PERF: unconditional check - the may-throw summary is per callee and a constructor tree
                 // can mix throwing and non-throwing members.
-                emitCheckPending();
+                emitCheckPendingWith(onThrow);
                 return;
             }
             const size_t mark = ctorProgress.size();
@@ -824,7 +869,7 @@ namespace muc_detail {
                 if (f.weak || !f.type || !f.type->needs_ctor()) continue;
                 setCtorProgressNext(entry, i);
                 emitCtorGlue(fieldAddr(addr, ty, static_cast<int>(i)), f.type,
-                             unaligned || ty->is_packed);
+                             unaligned || ty->is_packed, onThrow);
             }
             ctorProgress.resize(mark);
             return;
@@ -842,7 +887,7 @@ namespace muc_detail {
                                                    ConstantInt::get(i32(), 0),
                                                    ConstantInt::get(i64(), i)});
                 setCtorProgressNext(entry, i);
-                emitCtorGlue(ep, ty->elem, unaligned);
+                emitCtorGlue(ep, ty->elem, unaligned, onThrow);
             }
             ctorProgress.resize(mark);
         }

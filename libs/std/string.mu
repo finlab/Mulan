@@ -16,6 +16,10 @@ private:
     byte[] owner;
 
 public:
+    // An empty string (the zero value). A parameterless constructor is what `string s;` and
+    // `new string[n]` construct elements with (SPEC 3.3, agents/value-semantics.md §7).
+    String() {}
+
     // construct from a NUL-terminated C string (copies it, does not hold c).
     // `implicit`: `string s = "literal";` and `string s = cstr;` (3.6)
     implicit String(const char* c) {

@@ -123,6 +123,8 @@ static TypePtr make_sum(const std::string& unit, const std::string& name,
     // Value-semantics predicate family (authoritative definition: agents/value-semantics.md §1-§2).
     // All of them recurse through the field/element/payload structure; none of them is cached.
     bool needs_dtor() const;          // destroying the value is observable (RC release or a user destructor)
+    bool needs_ctor_glue() const;     // a nested value declares a user destructor, so the host's copy/move glue
+                                      // cannot reproduce it: the host must declare its own copy/move constructor
     bool trivially_copyable() const;  // a bitwise copy is correct: no user destructor, no RC handle
     bool is_pod() const;              // trivially copyable and no user constructor, so construction is a memset
     bool copyable() const;            // may be copied by value: `class` copies its handle, a struct copies its fields

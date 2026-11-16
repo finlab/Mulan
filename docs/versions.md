@@ -27,6 +27,64 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 164 — 2026-11-17
+
+**A generic `ref T` return keeps the borrow at instantiation.**
+
+- `instantiate_generic` resolved a method's return type with `resolve_type`, which silently drops
+  `ret_ref`: the instantiated `MethodSig` promised a plain value, so every call was typed as a value
+  (`by_ref == false`) and returned a copy — `cell.at().x = 5` wrote to that copy and the field never
+  changed (a generic method also could not be used as a `ref` receiver). The signature now goes through
+  `resolve_method_ret`, the path the non-generic declarations already use (the generic interface
+  instantiation in the same function did the same).
+- The instantiation-time check comes with it: `ref T` instantiated with a non-borrowable argument
+  (a class reference, or a value that owns something) is now rejected instead of silently degrading to
+  a value return. Regression cases: `tests/cases/generic_ref_ret`,
+  `tests/errors/ref_generic_ret_rc`.
+- Full suite: 684/684 (232 run, 416 must-fail, 23 check, 1 warning, 9 ir, 3 c abi).
+
+#### build 163 — 2026-11-17
+
+**`new T[n]` constructs its elements (`ctor_glue` for dynamic arrays).**
+
+- `new T[n]` now runs the parameterless constructor of every element, in a runtime loop emitted in
+  `emitSliceAlloc`. Zeroing already covered POD fields and the handles, so the loop only exists for
+  element types that have a constructor to run. A throwing constructor destroys the elements built so
+  far (reverse order), frees the block and resumes unwinding; the element that failed is released by the
+  existing ctor-progress cleanup (`tests/cases/slice_ctor_throw`).
+- An element type that declares constructors but **no parameterless one** is now rejected:
+  `new T[n] default-constructs every element, but struct 'S' has no parameterless constructor`
+  (C++ refuses the same way). `std.string.String` gained `String() {}` — the zero value, which is what
+  `string s;` and `new string[n]` were missing.
+- `emitCtorGlue` takes an optional throw-cleanup callback so the per-element check can release the
+  prefix; `tests/cases/struct_dtor_elem` now also asserts that elements are constructed (`x == 7`).
+- Full suite: 682/682 (231 run, 415 must-fail, 23 check, 1 warning, 9 ir, 3 c abi).
+
+#### build 162 — 2026-11-17
+
+**Destructible structs are dynamic array elements; a host that contains one must declare its own copy/move constructor.**
+
+- A struct with a **user destructor is a valid `T[]` element**: destruction is per element (already
+  implemented) and the block is zeroed. The stale gates are gone from `sema_types.cpp` (the `T[]` type
+  form) and `sema_call.cpp` (the `new T[n]` form); `tests/errors/dyn_dtor_elem` became the run case
+  `tests/cases/struct_dtor_elem`.
+- **Fixed a silent shallow copy** (`Holder b = a;` where `Holder` contains a value with a user
+  destructor): the host copy byte-copied the field without invoking its copy constructor, so two owners
+  freed the same block (reproduced as a double `free`). `Type::copyable()` / `Type::movable()` now treat
+  a nested value that declares a destructor (directly, or through a struct / fixed-size array field) as
+  requiring the host's **own** copy/move constructor — the compiler's glue reproduces reference-counted
+  handles but never invokes a nested user constructor. Without one it is a compile error, with the
+  rule-of-three diagnostic. Regression cases: `tests/errors/struct_dtor_copy_ctor`,
+  `tests/errors/struct_dtor_move_host`.
+- `ptr()` and `uninit new T[n]` now reject an element whose destruction is observable **through
+  nesting**, not only when the destructor is declared directly (`Type::needs_dtor()` instead of
+  `has_dtor`) — that is what the raw-pointer and undefined-block paths actually bypass.
+- **Same fix on the assignment path**: `b = a` used copy-and-swap only when the target type declared the
+  destructor *itself*; a host whose field declares it fell through to the generic byte copy (another
+  double free). The predicate is now `Type::needs_ctor_glue()` there too. Run case:
+  `tests/cases/struct_dtor_assign_host`.
+- Full suite: 681/681 (230 run, 415 must-fail, 23 check, 1 warning, 9 ir, 3 c abi).
+
 #### build 161 — 2026-11-17
 
 **`operator[]` must be a member of the type it indexes.**

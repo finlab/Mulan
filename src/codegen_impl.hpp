@@ -508,7 +508,8 @@ struct Emitter {
     // Run the user constructors an implicit construction has to invoke (struct default constructor,
     // recursively through fields and array elements). Zeroing is the caller's job; a POD value emits
     // nothing, so `int[1000] a;` stays free.
-    void emitCtorGlue(Value* addr, const TypePtr& ty, bool unaligned = false);
+    void emitCtorGlue(Value* addr, const TypePtr& ty, bool unaligned = false,
+                      const std::function<void()>& onThrow = {});
 
     // Debug aid (MUC_VERIFY_MEM=1): report writes that run past a stack slot. LLVM's verifier accepts an
     // over-wide store — it is UB, not invalid IR — and this class of bug surfaces only as "the optimizer

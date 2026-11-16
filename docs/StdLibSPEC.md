@@ -62,7 +62,7 @@ that matter for the layer model:
 |---|---|---|---|---|
 | `std.ctypes` | L0 | no | `c_char` … `c_voidp` | §5, §7 |
 | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | L1 | no | the ISO headers, one unit per header, in the separate `cstd` library; one implementation per platform under `libs/cstd/platform/<os>/` (`windows` = MSVC CRT, `linux` = glibc) | §5, §7 |
-| `std.string` | L2 | **yes** | `String`: `length`, `is_empty`, `operator[]`, `==`, `sub`, `concat`, `find`, `trim`, `starts_with`, `ends_with`, `cstr`, `strlen` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
+| `std.string` | L2 | **yes** | `String`: `String()` (empty; the zero value), `String(const char*)` (implicit, copies), `length`, `is_empty`, `operator[]`, `==`, `sub`, `concat`, `find`, `trim`, `starts_with`, `ends_with`, `cstr`, `strlen` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
 | `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `bounds_fail` | §6.1 |
 | `std.interfaces` | L3 | **yes** | `IIterator<T>`, `IIterable<T>`, `IIndex<T>`, `IEqual`, `IOrder`, `IAdd` … | §6.2 |
 | `std.task` | L3 | **yes** | `muc_para_*` (compiler entry points), `set_max_live_tasks`, `set_task_stack`, `set_carrier_limit`, `live_task_count`, `carrier_count`, `TaskLimitError` | §6.4 |

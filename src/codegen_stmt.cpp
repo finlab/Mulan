@@ -328,10 +328,12 @@ using ArgPack = Emitter::ArgPack;
                 }
             }
             const bool una = unalignedExpr(as->target.get());
-            // A type with a user destructor assigns through copy-and-swap, before the value is coerced
-            // (coercing would already consume a `move` RHS) — agents/value-semantics.md §8.11.
+            // A type that needs copy/move glue assigns through copy-and-swap, before the value is coerced
+            // (coercing would already consume a `move` RHS) — agents/value-semantics.md §8.11. `has_dtor`
+            // alone is not enough: a host whose *field* declares the destructor must use its own copy
+            // constructor as well, otherwise the generic path byte-copies the field (two owners).
             if (as->op == "=" && as->target->ty && as->target->ty->kind == TypeKind::Struct &&
-                as->target->ty->has_dtor) {
+                as->target->ty->needs_ctor_glue()) {
                 emitAssignSwap(addr, as->value.get(), as->target->ty);
                 return;
             }

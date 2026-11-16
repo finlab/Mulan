@@ -1,0 +1,1 @@
+struct_dtor_elem ok

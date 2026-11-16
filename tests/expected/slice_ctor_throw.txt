@@ -1,0 +1,2 @@
+caught live=0 built=3 dtors=2
+slice_ctor_throw ok

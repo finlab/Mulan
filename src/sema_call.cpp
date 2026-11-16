@@ -926,6 +926,25 @@ namespace muc_detail {
             e);
     }
 
+    // `new T[n]` default-constructs every element (agents/value-semantics.md §7). A struct that declares
+    // constructors but no parameterless one has nothing to call, so the allocation is rejected — C++
+    // refuses the same way. A struct with a parameterless constructor owns its own member step, so its
+    // fields are not inspected; anything without user constructors recurses through fields and elements.
+    static TypePtr missing_default_ctor(const TypePtr& t) {
+        if (!t) return nullptr;
+        if (t->kind == TypeKind::Struct) {
+            if (t->has_default_ctor()) return nullptr;
+            if (!t->ctors.empty()) return t;
+            for (const auto& f : t->fields) {
+                if (f.weak || !f.type) continue;
+                if (TypePtr bad = missing_default_ctor(f.type)) return bad;
+            }
+            return nullptr;
+        }
+        if (t->kind == TypeKind::Array) return missing_default_ctor(t->elem);
+        return nullptr;
+    }
+
     TypePtr Sema::check_new(NewExpr* ne) {        TypePtr t = resolve_type(ne->type.get(), cur_);
         if (ne->is_array) {
             if (is_void(t)) err("dynamic array element cannot be void", ne);
@@ -944,8 +963,13 @@ namespace muc_detail {
             }
             // A struct with a destructor is a legal element: destruction is implemented (`dtor_glue`
             // runs per element) and the allocation zeroes the block, which the language guarantees is a
-            // valid destructible state (SPEC 3.13 zero-value safety). Element *construction* still runs
-            // no user constructor (ctor_glue is pending, agents/value-semantics.md §4).
+            // valid destructible state (SPEC 3.13 zero-value safety). Element construction runs the
+            // default constructor of every element (ctor_glue, agents/value-semantics.md §7).
+            if (TypePtr bad = missing_default_ctor(t)) {
+                err("`new T[n]` default-constructs every element, but struct `" + bad->str() +
+                        "` has no parameterless constructor",
+                    ne);
+            }
             // `uninit` leaves the element block undefined, so the elements must not need the zero
             // value to be valid: a reference-holding or destructible element would corrupt RC.
             if (ne->uninit &&

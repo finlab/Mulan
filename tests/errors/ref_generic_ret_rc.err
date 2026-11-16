@@ -1,0 +1,2 @@
+cannot be returned by `ref` (borrows are limited to non-reference-counted values)
+while instantiating `Cell<Node>`

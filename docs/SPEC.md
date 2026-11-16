@@ -228,18 +228,23 @@ where  move  typeof
   - **`uninit`**: `uninit new T[n]` leaves the element area undefined (reading an element before writing
     it is UB, 8.2). The header — reference count, length, dimensions — is always valid, so `length()`
     and the bounds check keep working. The element type must be **trivial**: no `class` / `interface` /
-    `string` / `T[]` field (directly or nested) and no user destructor; otherwise the program is
-    rejected, because a non-zero handle would corrupt the reference count at release time.
+    `string` / `T[]` field (directly or nested) and no user destructor (directly or nested, through a
+    struct or fixed-size array field); otherwise the program is rejected, because a non-zero handle would
+    corrupt the reference count at release time.
   - **`ptr()`**: the address of element 0 as `T*` (`const T*` for a `const` block); a null handle
     yields a null pointer. It borrows the block, so the operand must be a variable or a field
     (binding a temporary first is required). It requires a **trivial** element type for the same reason
-    as `uninit`: a raw write would bypass the element's retain/release. `ptr` is a method, not a field
+    as `uninit` (a destructible element included): a raw write would bypass the element's retain/release
+    and its destructor. `ptr` is a method, not a field
     (`x.ptr` is an error).
   - Assignment/argument passing copies the **handle** (O(1)), sharing the same array; destroyed when the reference count reaches zero;
     if the element type holds class/interface references, release element by element.
   - Element types: scalars, enums, pointers, structs (including reference fields and user destructors),
-    class/interface references; a struct with a user destructor is not yet a valid dynamic array element
-    (`new T[n]` element construction is unimplemented — see "structs with user destructors", 3.13).
+    class/interface references. A struct with a user destructor is a valid element: `new T[n]` **runs the
+    parameterless constructor of every element** and releasing the block destroys every element. A struct
+    that declares constructors but no parameterless one cannot be an element of `new T[n]` (there is
+    nothing to call); `{ … }` initialization and `new C[n]` for a class element are the exceptions
+    (the latter yields null handles).
   - `s.length()`: 0 for a null handle; `s[i]` indexing (bounds-checked, see below); `for x in s` iterates over the elements.
   - `for ref x in s` can write to a shared array; **not allowed when the element is a class/interface** (the element is a handle, iterate with value binding);
     `string` also cannot use `for ref` (immutable).
@@ -356,17 +361,18 @@ struct Point {
   - Structs with reference fields may be unit-level variables (they are destroyed by the exit
     sequence, 9.1);
   - `extern C` signature recursive check: structs containing class/interface cannot be C parameters/return values;
-  - Structs with **user destructors** may be fields of structs/classes and elements of fixed-size arrays:
-    construction and destruction recurse through fields and elements, in declaration/index order
+  - Structs with **user destructors** may be fields of structs/classes, elements of fixed-size arrays and
+    elements of dynamic arrays: construction and destruction recurse through fields and elements, in
+    declaration/index order
     (`agents/value-semantics.md` §4). Whether such a struct can be **copied / assigned / passed /
     returned by value** is governed by the rule of three: it must declare a copy constructor
     `T(const ref T other)` (0.0.138) and, for moves, `T(move T other)` (0.0.137) — then all four work
     through those constructors (assignment is synthesized as copy-and-swap); without them it is a
     "cannot copy" compile error, because a byte copy would double free (see the copy/move/`swap` items
-    below). It still **cannot be a dynamic array element** (`new T[n]` element construction is
-    unimplemented); use a pointer in that position. A struct that *contains* one inherits these
-    restrictions unless it declares its own copy/move constructors.
-    They may be unit-level variables (9.1);
+    below). A struct that *contains* one does **not** inherit the constructors of its field: the
+    compiler's copy and move reproduce reference-counted handles, they never invoke a nested user
+    constructor, so such a host is copyable/movable only when it declares its own copy/move constructor
+    (build 162). They may be unit-level variables (9.1);
 - `sizeof(S)` is available; pure-value struct assignment has byte-copy semantics, and copies of structs with reference fields get RC operations inserted by the compiler.
 - Fields also support multiple names sharing a type: `int x, y;`; the type-first fixed-size array form is also allowed, e.g. `char[20] name;`.
 - **Move semantics (implemented, 0.0.137)**: `move x` transfers ownership out of a local variable or
@@ -400,7 +406,8 @@ struct Point {
 - **Copy construction and assignment (implemented, 0.0.138; `const ref` source in 0.0.139-0.0.140)**:
   `T(const ref T other)` declares the copy constructor (`ref`/`const ref` parameters on a constructor are accepted only
   for that form, and the source is read-only — `ref T` reports that a copy must not modify its source);
-  `nocopy` forbids it. For a type with a user destructor, **assignment is synthesized as copy-and-swap**:
+  `nocopy` forbids it. For a type with a user destructor — or with a field/array element that declares
+  one, which is what `needs_ctor_glue` means — **assignment is synthesized as copy-and-swap**:
   `b = a` copy-constructs into a temporary, swaps the byte blocks and destroys the temporary (the old
   value); `b = move a` does the same with the move constructor. A throwing copy constructor therefore
   leaves the destination untouched, and self-assignment is safe without an identity check. Value types must

@@ -358,13 +358,31 @@ bool Type::is_pod() const {
     }
 }
 
-// A nested value whose destruction is observable owns a resource the compiler does not understand, so it
+// A nested value that declares a user destructor owns a resource the compiler does not understand, so it
 // cannot ride on the host's copy/move glue: that glue reproduces reference-counted handles field by field
 // but never invokes a user constructor of a nested value (agents/value-semantics.md §3). Handles
-// (class / interface / delegate / slice) are unaffected: they are copied by retaining, not by running a
-// constructor. The host must declare its own copy/move constructor (rule of three, §8.1).
-static bool needs_ctor_glue(const TypePtr& t) {
-    return t && t->needs_dtor() && (t->kind == TypeKind::Struct || t->kind == TypeKind::Array);
+// (class / interface / delegate / slice) and reference-counted fields are unaffected: they are copied by
+// retaining, not by running a constructor. The host must declare its own copy/move constructor
+// (rule of three, §8.1) and assign through copy-and-swap.
+bool Type::needs_ctor_glue() const {
+    switch (kind) {
+        case TypeKind::Struct:
+            if (has_dtor) return true;
+            for (const auto& f : fields) {
+                if (f.weak) continue;
+                if (f.type && f.type->needs_ctor_glue()) return true;
+            }
+            return false;
+        case TypeKind::Array: return elem && elem->needs_ctor_glue();
+        case TypeKind::Sum:
+            for (const auto& f : sum_fields) {
+                for (const auto& ft : f) {
+                    if (ft && ft->needs_ctor_glue()) return true;
+                }
+            }
+            return false;
+        default: return false;
+    }
 }
 
 // The copy axis is independent of the destruction axis: a struct with RC fields needs destruction but is
@@ -379,12 +397,12 @@ bool Type::copyable() const {
             for (const auto& f : fields) {
                 if (f.weak) continue;
                 if (!f.type) continue;
-                if (needs_ctor_glue(f.type)) return false;
+                if (f.type->needs_ctor_glue()) return false;
                 if (!f.type->copyable()) return false;
             }
             return true;
         case TypeKind::Array:
-            if (needs_ctor_glue(elem)) return false;
+            if (elem && elem->needs_ctor_glue()) return false;
             return elem && elem->copyable();
         case TypeKind::Sum:
             for (const auto& f : sum_fields) {
@@ -416,12 +434,12 @@ bool Type::movable() const {
             for (const auto& f : fields) {
                 if (f.weak) continue;
                 if (!f.type) continue;
-                if (needs_ctor_glue(f.type)) return false;
+                if (f.type->needs_ctor_glue()) return false;
                 if (!f.type->movable()) return false;
             }
             return true;
         case TypeKind::Array:
-            if (needs_ctor_glue(elem)) return false;
+            if (elem && elem->needs_ctor_glue()) return false;
             return elem && elem->movable();
         case TypeKind::Sum:
             for (const auto& f : sum_fields) {
