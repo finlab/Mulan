@@ -31,6 +31,12 @@ namespace muc_detail {
                 if (!spec->args.empty()) {
                     return instantiate_generic(spec, u);
                 }
+                // A constrained generic body is checked at its definition with each type parameter
+                // bound to a witness type (build 156); the binding shadows normal lookup.
+                if (!type_bind_.empty()) {
+                    auto bound = type_bind_.find(spec->name);
+                    if (bound != type_bind_.end()) return bound->second;
+                }
                 TypePtr t = resolve_named_type(spec->name, u, spec);
                 // C model: const on a prim needs its own type node (the prim factory has a singleton cache, so it cannot be mutated in place)
                 if (spec->is_const && t && t->kind == TypeKind::Prim) {

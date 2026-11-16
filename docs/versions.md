@@ -27,6 +27,33 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 156 — 2026-11-16
+
+**A constrained generic body is checked at its definition, against a witness of its contract.**
+
+- Until now a generic body was only checked when instantiated, i.e. one concrete type argument at a
+  time. A body could therefore use more than its constraint promises: with `T: IRead<int>` (a
+  value-returning subscript) the statement `c[0] = 5` compiled whenever the argument type happened to
+  return a `ref` subscript, and the first type that returned a value hit a compile error inside
+  library code. "It compiles" did not mean "it works for every `T`".
+- The body of a generic function whose type parameters are all constrained by a conjunction of
+  interfaces is now also checked once, at its definition, with each parameter bound to a **witness
+  type** that carries exactly the constraint's members (methods and operators, `Self` mapped to the
+  witness, a `ref` return kept as a borrow). The body is checked as written — no clone, no
+  substitution, no emission — so a use the contract does not grant is reported at the definition site
+  with the ordinary diagnostic (`cannot assign through a subscript: operator[] must return ref T`,
+  `has no field v`).
+- Unconstrained type parameters and `A | B` bounds are not witnessed (there is no single member set);
+  those bodies keep the previous behaviour. A witness never reaches codegen: it is only a checking
+  device.
+- Fixed on the way: a **generic interface** dropped `ref` on a method return (`m->ret_ref` was ignored
+  when the instance's signature was built), so `ref T operator[](Self c, isize i)` promised a value.
+  It now goes through the same `make_borrow_ret` path as a non-generic interface.
+- New cases: `contract_body_write` and `contract_body_field` (must-fail, both reported at the
+  definition), `contract_body_generic_call` (run: a constrained generic calling another one).
+  `member_op_iface` no longer reaches into a field of the type parameter — that was the very
+  permissiveness this change removes. Full suite: 643/643 with `MUC_VERIFY_MEM=1`.
+
 #### build 155 — 2026-11-16
 
 **Short contract names, and the ordering family derived from `operator<`.**

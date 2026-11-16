@@ -367,7 +367,10 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             ity->interfaces.push_back(bt);
         }
         for (auto& m : id->methods) {
-            if (m->ret) m->rty = resolve_type(m->ret.get(), tmpl_unit_ptr);
+            // `ref T` returns matter here: a generic interface that declares a (ref) subscript must
+            // keep it, otherwise the contract promises a value and the borrow is silently dropped.
+            m->rty = make_borrow_ret(m->ret.get(), m->ret_ref, m.get(), tmpl_unit_ptr,
+                                     "method `" + m->name + "`");
             m->pty.clear();
             for (auto& p : m->params) {
                 m->pty.push_back(decay_param_type(resolve_type(p->spec.get(), tmpl_unit_ptr)));
@@ -958,6 +961,128 @@ void Sema::check_bound(const TypePtr& t, const TypeParam& p, Unit* u, const Node
         } else {
             err(msg);
         }
+    }
+}
+
+// ---------------------------------------------------------------- contract checking (build 156)
+//
+// A generic body is only checked when it is instantiated, i.e. against one concrete type argument at
+// a time. That let a body use more than its constraint promises: `void w<T: IRead>(T c) { c[0] = 5; }`
+// compiled whenever the argument type happened to return a `ref` subscript, and failed for the first
+// type that returned a value. The fix is to check the body once at the definition, against a
+// *witness* type that carries exactly the members the constraint declares — no more, no less.
+
+void Sema::add_contract_members(const TypePtr& witness, const TypePtr& iface) {
+    if (!iface || iface->kind != TypeKind::Interface) return;
+    // An interface may list the inherited members itself (`IMutableIndexable` carries both its own
+    // `ref T operator[]` and the inherited value one), so the same signature can arrive twice. Keep a
+    // single entry, preferring the `ref` return: a borrow satisfies the value form, never the reverse.
+    auto same_params = [](const MethodSig& a, const MethodSig& b) {
+        if (a.name != b.name || a.params.size() != b.params.size()) return false;
+        for (size_t i = 0; i < a.params.size(); ++i) {
+            if (!same_type(a.params[i], b.params[i])) return false;
+        }
+        return true;
+    };
+    auto returns_ref = [](const MethodSig& s) { return s.ret && s.ret->kind == TypeKind::Ref; };
+    for (const auto& m : iface->methods) {
+        MethodSig sig = m;
+        sig.owner = witness;
+        sig.is_public = true;  // an interface member is visible wherever the interface is
+        // `Self` positions become the witness. For an operator the first `Self` operand is the
+        // receiver, and a member operator takes it as the implicit `this`, so it is dropped.
+        std::vector<TypePtr> params;
+        for (size_t i = 0; i < sig.params.size(); ++i) {
+            const bool is_self = i < sig.params_self.size() && sig.params_self[i];
+            if (sig.is_operator && i == 0 && is_self) continue;  // receiver
+            params.push_back(is_self ? witness : sig.params[i]);
+        }
+        sig.params = params;
+        sig.params_self.assign(params.size(), false);
+        sig.ret = sig.ret_self ? witness : sig.ret;
+        sig.ret_self = false;
+        bool merged = false;
+        for (auto& existing : witness->methods) {
+            if (!same_params(existing, sig)) continue;
+            if (!returns_ref(existing) && returns_ref(sig)) existing.ret = sig.ret;
+            merged = true;
+            break;
+        }
+        if (!merged) witness->methods.push_back(sig);
+    }
+    for (const auto& base : iface->interfaces) add_contract_members(witness, base);
+}
+
+TypePtr Sema::make_contract_witness(const TypeParam& tp, Unit* u, const std::string& owner) {
+    // Only a conjunction of interfaces can be witnessed: an unconstrained parameter grants nothing
+    // (nothing to check against yet), and `A | B` has no single member set.
+    if (tp.bounds.empty() || tp.op == TypeParam::Op::Or) return nullptr;
+    TypePtr witness = Type::make_struct(u ? u->name : std::string(), "$witness." + owner + "." + tp.name);
+    for (const auto& bound : tp.bounds) {
+        TypePtr bt = resolve_type(bound.get(), u);
+        if (!bt || bt->kind != TypeKind::Interface) return nullptr;
+        add_contract_members(witness, bt);
+    }
+    return witness;
+}
+
+void Sema::check_generic_contracts() {
+    std::vector<std::pair<std::string, FuncDecl*>> todo;
+    for (auto& kv : generic_templates_) {
+        if (auto* fn = dynamic_cast<FuncDecl*>(kv.second)) {
+            if (fn->type_params.empty() || contract_checked_.count(fn)) continue;
+            todo.push_back({kv.first, fn});
+        }
+    }
+    // Stable order: the template map is unordered, and a diagnostic should not depend on hash order.
+    std::sort(todo.begin(), todo.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    for (auto& [key, fn] : todo) {
+        std::string unit_name, name;
+        split_qualified(key, unit_name, name);
+        Unit* tmpl_unit = nullptr;
+        auto info = infos_.find(unit_name);
+        if (info != infos_.end()) tmpl_unit = info->second.unit;
+        if (!tmpl_unit) continue;
+
+        std::vector<TypePtr> witnesses;
+        for (const auto& tp : fn->type_params) {
+            TypePtr w = make_contract_witness(tp, tmpl_unit, fn->name);
+            if (!w) {
+                witnesses.clear();
+                break;
+            }
+            witnesses.push_back(w);
+        }
+        if (witnesses.empty()) continue;  // nothing to check this one against
+        contract_checked_.insert(fn);
+
+        auto saved_bind = type_bind_;
+        auto saved_cur = cur_;
+        for (size_t i = 0; i < fn->type_params.size(); ++i) {
+            type_bind_[fn->type_params[i].name] = witnesses[i];
+        }
+        cur_ = tmpl_unit;
+        recover([&] {
+            // A template's signature is normally resolved per instantiation; resolve it here against
+            // the witnesses. The results are overwritten when a real instantiation clones the
+            // template (`instantiate_func` clears and re-resolves `pty`/`rty`).
+            fn->rty = resolve_type(fn->ret.get(), tmpl_unit);
+            fn->pty.clear();
+            fn->pty_ref.clear();
+            fn->pty_cref.clear();
+            for (auto& p : fn->params) {
+                TypePtr pt = resolve_type(p->spec.get(), tmpl_unit);
+                if (!p->by_ref) pt = decay_param_type(pt);
+                fn->pty.push_back(pt);
+                fn->pty_ref.push_back(p->by_ref);
+                fn->pty_cref.push_back(p->by_ref && p->is_const);
+            }
+            check_func(fn);
+        });
+        cur_ = saved_cur;
+        type_bind_ = std::move(saved_bind);
     }
 }
 

@@ -1088,6 +1088,9 @@ Program Sema::run() {
         }
     }
     for (auto& u : units_) check_unit(u.get());
+    // A constrained generic body is checked at its definition (build 156), after every unit's own
+    // bodies: the constraint types must be fully resolved by then.
+    check_generic_contracts();
     if (!errors_.empty()) throw MuErrorList(std::move(errors_));
     check_entry();
 

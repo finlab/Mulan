@@ -191,6 +191,12 @@ private:
     // larger type argument (`Deep<T>` → `Deep<Box<T>>` → ...) never repeats a key, so the exact-key
     // guard cannot see it; the depth limit turns that into a diagnostic instead of a stack overflow.
     int generic_depth_ = 0;
+    // Contract checking (build 156): while the body of a constrained generic function is checked at
+    // its definition, each type parameter is bound to a witness type that carries exactly the
+    // members the constraint promises. `resolve_type` consults this map before normal lookup, so the
+    // template body can be checked as written — no clone, no substitution, no emission.
+    std::unordered_map<std::string, TypePtr> type_bind_;
+    std::unordered_set<const FuncDecl*> contract_checked_;
     static constexpr int kGenericDepthLimit = 256;
     std::vector<std::unique_ptr<Decl>> generic_decls_;          // instantiation products (lifetime)
     std::vector<std::unique_ptr<Decl>> synth_decls_;            // synthesized lambda environment classes (lifetime)
@@ -293,6 +299,10 @@ private:
     // Structural constraint check (U34 M3b): whether `t` satisfies every bound of `p` (`&` requires all / `|` requires any)
     void check_bound(const TypePtr& t, const TypeParam& p, Unit* u, const Node* at);
     bool satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::string* why);
+    // Contract checking at the definition site (build 156)
+    TypePtr make_contract_witness(const TypeParam& tp, Unit* u, const std::string& owner);
+    void add_contract_members(const TypePtr& witness, const TypePtr& iface);
+    void check_generic_contracts();
 
     // Find a type by name in the given unit; with require_pub only public declarations are returned.
     TypePtr find_type_named(const std::string& unit, const std::string& name,
