@@ -26,8 +26,8 @@ int main() {
     if z.cstr()[0] != 0 { return 7; }
     if z.sub(0, 5).length() != 0 { return 8; }
 
-    // offsets are `long`, so a valid match is never confused with -1
-    long pos = s.find("cde");
+    // offsets are `isize`, so a valid match is never confused with -1
+    isize pos = s.find("cde");
     if pos != 2 { return 9; }
     if s.find("zz") != -1 { return 10; }
 

@@ -44,6 +44,7 @@ const std::unordered_set<std::string>& keywords() {
         "switch",
         "para",     "ref",      "break",    "continue", "return", "true",     "false",    "null",
         "as",       "sizeof",   "alignof", "offsetof", "len",     "alloc",    "realloc",  "free",
+        "uninit",
         "void",     "bool",     "byte",    "char",     "short",
         "ushort",   "int",      "uint",    "long",    "ulong",    "float",    "double",
         "usize",    "isize",    "and",     "or",       "not",

@@ -10,11 +10,15 @@
 namespace muc_detail {
 
     // ------------------------------------------------------------ dynamic arrays (T[] / T[,])
-    // rank 1: { i64 rc; i64 len; i64 cap; data... }
+    // rank 1: { i64 rc; i64 len; data... }
     // rank r>=2: { i64 rc; i64 d0; ... d(r-1); data... }
+    // There is no capacity field: a dynamic array never grows, so its length is its capacity.
 
+    // PERF: the header is padded to 16 bytes, so element data is 16-byte aligned for every
+    // supported element alignment (`alignof` above 16 is not a guarantee, SPEC 3.8).
     uint64_t Emitter::sliceDataOffset(int rank) {
-        return rank <= 1 ? 24 : 8ULL * (1 + rank);
+        const uint64_t raw = 8ULL * (1 + (rank <= 1 ? 1 : static_cast<uint64_t>(rank)));
+        return (raw + 15ULL) & ~15ULL;
     }
 
     Value* Emitter::sliceDataPtr(Value* h, int rank) {
@@ -36,7 +40,7 @@ namespace muc_detail {
     // Cold path of the bounds check: call std.exception.bounds_fail(index, length, axis), which throws.
     void Emitter::emitBoundsFail(Value* index, Value* length, Value* axis) {
         FunctionCallee callee = mod->getOrInsertFunction(
-            mangle_unit("std.exception", "bounds__fail") + "$usize$usize$usize",
+            mangle_unit("std.exception", "bounds__fail") + "$isize$isize$isize",
             FunctionType::get(LType::getVoidTy(ctx), {i64(), i64(), i64()}, false));
         b.CreateCall(callee, {index, length, axis});
         // `bounds_fail` always throws: unwind through the current handler on the cold path.
@@ -134,8 +138,10 @@ namespace muc_detail {
         return phi;
     }
 
-    // Allocate a dynamic array and zero it; dims holds the size of each dimension
-    Value* Emitter::emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem) {
+    // Allocate a dynamic array; dims holds the size of each dimension. Unless `uninit` is set the
+    // whole block is zeroed (SPEC 3.3): a null handle is load-bearing for reference elements, and
+    // `calloc` lets libc skip the zeroing entirely when the pages come fresh from the OS.
+    Value* Emitter::emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem, bool uninit) {
         int rank = static_cast<int>(dims.size());
         uint64_t es = sizeOf(elem);
         // INVARIANT: every dimension is a non-negative i64 and the byte count does not overflow.
@@ -183,7 +189,9 @@ namespace muc_detail {
         b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(sizeOkBB);
-        Value* h = b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {bytes});
+        Value* h = uninit ? b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {bytes})
+                          : b.CreateCall(libFn("calloc", ptrTy(), {i64(), i64()}),
+                                         {ConstantInt::get(i64(), 1), bytes});
         BasicBlock* okBB = BasicBlock::Create(ctx, "arr.ok", curFn);
         BasicBlock* failBB = BasicBlock::Create(ctx, "arr.fail", curFn);
         b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), failBB, okBB);
@@ -191,17 +199,13 @@ namespace muc_detail {
         b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(okBB);
-        b.CreateMemSet(h, ConstantInt::get(i8(), 0), bytes, MaybeAlign(8));
+        // `calloc` already zeroed the block; the header fields are written below either way, so an
+        // `uninit` block only leaves the element data undefined.
         b.CreateStore(ConstantInt::get(i64(), 1),
                       b.CreateGEP(i8(), h, ConstantInt::get(i64(), kArrRc)));
         for (int i = 0; i < rank; ++i) {
             b.CreateStore(dims[i],
                           b.CreateGEP(i8(), h, ConstantInt::get(i64(), 8ULL * (1 + i))));
-        }
-        if (rank == 1) {
-            // reserve cap, to make a future append growth easier
-            b.CreateStore(dims[0],
-                          b.CreateGEP(i8(), h, ConstantInt::get(i64(), 16)));
         }
         return h;
     }

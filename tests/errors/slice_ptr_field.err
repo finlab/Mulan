@@ -1,0 +1,1 @@
+`ptr` is a method on a dynamic array: write `x.ptr()`

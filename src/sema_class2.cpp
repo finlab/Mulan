@@ -708,22 +708,22 @@ namespace muc_detail {
     }
 
     void Sema::resolve_index_shape(ForInStmt* s, const TypePtr& st) {
-        TypePtr us = Type::make_prim("usize");
+        TypePtr us = Type::make_prim("isize");
         const MethodSig* len = find_method(st, "length", 0);
         if (!len) {
             err("`for-in` cannot iterate " + st->str() +
-                    ": the indexed form requires a method `length() -> usize` (none found)",
+                    ": the indexed form requires a method `length() -> isize` (none found)",
                 s->seq.get());
         }
         if (!same_type(len->ret, us)) {
-            err("`" + st->str() + "::length()` must return `usize` (found `" +
+            err("`" + st->str() + "::length()` must return `isize` (found `" +
                     (len->ret ? len->ret->str() : "void") + "`）",
                 s->seq.get());
         }
 
         FuncDecl* picked = nullptr;
         std::string saw_index;
-        // A member `operator[](usize)` on the struct takes precedence (borrowed receiver, no copy/RC).
+        // A member `operator[](isize)` on the struct takes precedence (borrowed receiver, no copy/RC).
         const MethodSig* picked_m = nullptr;
         for (const auto& m : st->methods) {
             if (!m.is_operator || m.name != "operator[]" || m.params.size() != 1) continue;
@@ -733,7 +733,7 @@ namespace muc_detail {
                 continue;
             }
             if (picked_m) {
-                err("`" + st->str() + "` has more than one `operator[](usize)` overload; `for-in` cannot choose one",
+                err("`" + st->str() + "` has more than one `operator[](isize)` overload; `for-in` cannot choose one",
                     s->seq.get());
             }
             picked_m = &m;
@@ -758,16 +758,16 @@ namespace muc_detail {
             }
             if (picked) {
                 err("`" + st->str() + "` has more than one `operator[](`" + st->str() +
-                        ", usize)` overload; `for-in` cannot choose one",
+                        ", isize)` overload; `for-in` cannot choose one",
                     s->seq.get());
             }
             picked = c;
         }
         if (!picked) {
             std::string msg = "`for-in` cannot iterate " + st->str() + ": the indexed form also requires `operator[](" +
-                              st->str() + ", usize) -> T`";
+                              st->str() + ", isize) -> T`";
             if (!saw_index.empty()) {
-                msg += "(the `operator[]` found takes index type `" + saw_index + "`; `usize` is required)";
+                msg += "(the `operator[]` found takes index type `" + saw_index + "`; `isize` is required)";
             }
             err(msg, s->seq.get());
         }
@@ -828,8 +828,8 @@ namespace muc_detail {
                 }
             } else {
                 err("`for-in` cannot iterate " + st->str() +
-                        " (supported: range, array, slice; user types must provide `length() -> usize` and "
-                        "`operator[](usize) -> T`）",
+                        " (supported: range, array, slice; user types must provide `length() -> isize` and "
+                        "`operator[](isize) -> T`）",
                     s->seq.get());
             }
             s->seq_ty = st;
@@ -877,7 +877,7 @@ namespace muc_detail {
         s->lvar = std::move(lv);
 
         if (s->has_idx) {
-            TypePtr us = Type::make_prim("usize");
+            TypePtr us = Type::make_prim("isize");
             auto ilv = std::make_unique<LocalVar>();
             ilv->name = s->idx_name;
             ilv->rty = us;

@@ -12,19 +12,19 @@ public unit std.string;
 public struct String {
 private:
     byte* p;
-    usize n;
+    isize n;
     byte[] owner;
 
 public:
     // construct from a NUL-terminated C string (copies it, does not hold c).
     // `implicit`: `string s = "literal";` and `string s = cstr;` (3.6)
     implicit String(const char* c) {
-        usize count = 0;
+        isize count = 0;
         while c[count] != 0 {
             count += 1;
         }
         byte[] buf = new byte[count + 1];
-        usize i = 0;
+        isize i = 0;
         while i < count {
             buf[i] = c[i] as byte;
             i += 1;
@@ -37,7 +37,7 @@ public:
 
     // ---------------------------------------------------------------- basic info
 
-    usize length() {
+    isize length() {
         return n;
     }
 
@@ -49,9 +49,10 @@ public:
         return n == 0;
     }
 
-    // out of range returns 0 (can be changed to panic in debug builds)
-    byte at(usize i) {
-        if i >= n {
+    // Out of range returns 0. `at` is the clamping accessor; the subscript below stays unchecked
+    // (C-shaped raw access), so this one has to reject negatives explicitly now that the index is signed.
+    byte at(isize i) {
+        if i < 0 or i >= n {
             return 0;
         }
         return p[i];
@@ -70,7 +71,7 @@ public:
     // ---------------------------------------------------------------- element access and comparison
 
     // `s[i]`: byte access (bounds are a user responsibility until the bounds policy is settled, 8.2)
-    byte operator[](usize i) {
+    byte operator[](isize i) {
         return p[i];
     }
 
@@ -78,7 +79,7 @@ public:
         if n != o.n {
             return false;
         }
-        usize i = 0;
+        isize i = 0;
         while i < n {
             if p[i] != o.p[i] {
                 return false;
@@ -90,7 +91,7 @@ public:
 
     // compare with a NUL-terminated C string (literals): `s == "abc"`
     bool operator==(const char* c) {
-        usize i = 0;
+        isize i = 0;
         while i < n {
             if c[i] == 0 or p[i] != (c[i] as byte) {
                 return false;
@@ -115,7 +116,7 @@ public:
     // A substring copies into its own NUL-terminated buffer. A view into the source would share
     // the trailing bytes after the range, so `cstr()` could expose them (#32); out-of-range
     // arguments are clamped to the source length instead of producing a read past the buffer (#33).
-    String sub(usize start, usize count) {
+    String sub(isize start, isize count) {
         if start > n {
             start = n;
         }
@@ -123,7 +124,7 @@ public:
             count = n - start;
         }
         byte[] buf = new byte[count + 1];
-        usize i = 0;
+        isize i = 0;
         while i < count {
             buf[i] = p[i + start];
             i += 1;
@@ -137,14 +138,14 @@ public:
     }
 
     String concat(String other) {
-        usize total = n + other.n;
+        isize total = n + other.n;
         byte[] buf = new byte[total + 1];
-        usize i = 0;
+        isize i = 0;
         while i < n {
             buf[i] = p[i];
             i += 1;
         }
-        usize j = 0;
+        isize j = 0;
         while j < other.n {
             buf[n + j] = other.p[j];
             j += 1;
@@ -162,16 +163,16 @@ public:
     // returns the byte offset of the first occurrence, or -1 if not found.
     // `long` represents every offset on the supported 64-bit targets; `int` could turn a match
     // beyond 2^31-1 into a negative value indistinguishable from "not found" (#34).
-    long find(String needle) {
+    isize find(String needle) {
         if needle.n == 0 {
             return 0;
         }
         if needle.n > n {
             return -1;
         }
-        usize i = 0;
+        isize i = 0;
         while i + needle.n <= n {
-            usize j = 0;
+            isize j = 0;
             bool same = true;
             while j < needle.n {
                 if p[i + j] != needle.p[j] {
@@ -181,7 +182,7 @@ public:
                 j += 1;
             }
             if same {
-                return i as long;
+                return i;
             }
             i += 1;
         }
@@ -192,7 +193,7 @@ public:
         if prefix.n > n {
             return false;
         }
-        usize i = 0;
+        isize i = 0;
         while i < prefix.n {
             if p[i] != prefix.p[i] {
                 return false;
@@ -206,8 +207,8 @@ public:
         if suffix.n > n {
             return false;
         }
-        usize off = n - suffix.n;
-        usize i = 0;
+        isize off = n - suffix.n;
+        isize i = 0;
         while i < suffix.n {
             if p[off + i] != suffix.p[i] {
                 return false;
@@ -220,11 +221,11 @@ public:
     // ---------------------------------------------------------------- trimming
 
     String trim() {
-        usize start = 0;
+        isize start = 0;
         while start < n and is_space_byte(p[start]) {
             start += 1;
         }
-        usize stop = n;
+        isize stop = n;
         while stop > start and is_space_byte(p[stop - 1]) {
             stop -= 1;
         }
@@ -251,8 +252,8 @@ public String operator+(const char* c, String s) {
 
 // Byte length of a NUL-terminated C string: the compiler has no builtin `len` for pointers,
 // so a literal's length is `strlen(literal)` (or convert to `string` and use `length()`).
-public usize strlen(const char* c) {
-    usize i = 0;
+public isize strlen(const char* c) {
+    isize i = 0;
     while c[i] != 0 {
         i += 1;
     }

@@ -166,8 +166,6 @@ namespace muc_detail {
                         err("a static array has no `length()`: use `sizeof(a) / sizeof(a[0])`", c);
                     }
                     if (c->args.size() > 1) err("`length()` takes at most one argument (the axis)", c);
-                    if (ot->rank == 1 && !c->args.empty())
-                        err("a one-dimensional sequence has no axis: write `x.length()`", c);
                     if (!c->args.empty()) {
                         TypePtr at = check_expr(c->args[0].get());
                         if (!is_integer(at))
@@ -187,7 +185,24 @@ namespace muc_detail {
                         }
                     }
                     c->callee_kind = "slice_length";
-                    return Type::make_prim("usize");
+                    return Type::make_prim("isize");
+                }
+            }
+            // `.ptr()` on a built-in managed sequence: the data pointer (C interop, SPEC 3.3).
+            if (m->name == "ptr") {
+                TypePtr ot = check_expr(obj);
+                if (ot && ot->kind == TypeKind::Slice) {
+                    if (!c->args.empty()) err("`ptr()` takes no arguments", c);
+                    if (!is_lvalue(obj))
+                        err("`ptr()` borrows the buffer; the operand must be a variable or a field (bind the temporary first)", c);
+                    if (has_ref_fields(ot->elem) || (ot->elem->kind == TypeKind::Struct && ot->elem->has_dtor)) {
+                        err("`" + ot->elem->str() +
+                                "` is not a trivial element type: `ptr()` is not available, because a raw write "
+                                "would bypass the retain/release of the element",
+                            c);
+                    }
+                    c->callee_kind = "slice_ptr";
+                    return Type::make_ptr(ot->elem, ot->is_const);
                 }
             }
             // super.method(...)
@@ -887,6 +902,13 @@ namespace muc_detail {
             if (t->kind == TypeKind::Struct && t->has_dtor) {
                 err("struct `" + t->str() +
                         "` has a destructor and cannot be a dynamic array element (element construction and destruction are not implemented)",
+                    ne);
+            }
+            // `uninit` leaves the element block undefined, so the elements must not need the zero
+            // value to be valid: a reference-holding or destructible element would corrupt RC.
+            if (ne->uninit && (has_ref_fields(t) || (t->kind == TypeKind::Struct && t->has_dtor))) {
+                err("`uninit` requires a trivial element type: `" + t->str() +
+                        "` holds a reference or has a destructor",
                     ne);
             }
             if (!ne->args.empty() || !ne->named.empty()) {

@@ -224,9 +224,9 @@ using ArgPack = Emitter::ArgPack;
         if (ne->is_array) {
             std::vector<Value*> dims;
             for (auto& d : ne->dims) {
-                dims.push_back(convertTo(eval(d.get()), d->ty, Type::make_prim("usize")));
+                dims.push_back(convertTo(eval(d.get()), d->ty, Type::make_prim("isize")));
             }
-            return emitSliceAlloc(dims, ne->elem_ty);
+            return emitSliceAlloc(dims, ne->elem_ty, ne->uninit);
         }
         TypePtr cls = ne->class_ty;
         uint64_t sz = objectSize(cls);
@@ -315,19 +315,37 @@ using ArgPack = Emitter::ArgPack;
                 return emitSliceDim(h, static_cast<int>(il->value));
             }
             Value* axisV = convertTo(eval(c->args[0].get()), c->args[0]->ty,
-                                     Type::make_prim("usize"));
+                                     Type::make_prim("isize"));
             return emitSliceDimDynamic(h, axisV, st->rank);
+        }
+        if (c->callee_kind == "slice_ptr") {
+            // `x.ptr()`: a null handle yields a null pointer, otherwise the element data area.
+            auto* m = dynamic_cast<Member*>(c->callee.get());
+            Value* h = eval(m->obj.get());
+            BasicBlock* from = b.GetInsertBlock();
+            BasicBlock* nn = BasicBlock::Create(ctx, "ptr.nn", curFn);
+            BasicBlock* done = BasicBlock::Create(ctx, "ptr.done", curFn);
+            b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), done, nn);
+            b.SetInsertPoint(nn);
+            Value* data = sliceDataPtr(h, m->obj->ty->rank);
+            BasicBlock* nnEnd = b.GetInsertBlock();
+            b.CreateBr(done);
+            b.SetInsertPoint(done);
+            auto* phi = b.CreatePHI(ptrTy(), 2);
+            phi->addIncoming(Constant::getNullValue(ptrTy()), from);
+            phi->addIncoming(data, nnEnd);
+            return phi;
         }
         if (c->callee_kind == "builtin") {
             if (c->builtin == "alloc") {
                 Value* n = convertTo(eval(c->args[0].get()), c->args[0]->ty,
-                                     Type::make_prim("usize"));
+                                     Type::make_prim("isize"));
                 return b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {n});
             }
             if (c->builtin == "realloc") {
                 Value* p = eval(c->args[0].get());
                 Value* n = convertTo(eval(c->args[1].get()), c->args[1]->ty,
-                                     Type::make_prim("usize"));
+                                     Type::make_prim("isize"));
                 return b.CreateCall(libFn("realloc", ptrTy(), {ptrTy(), i64()}), {p, n});
             }
             if (c->builtin == "free") {
@@ -746,23 +764,6 @@ using ArgPack = Emitter::ArgPack;
                                                 FunctionType::get(lt((*f)->rty), ptys, (*f)->is_varargs))
                     .getCallee();
             }
-            if (m->kind == "slice_ptr") {
-                // `buffer.ptr`: null handle -> null pointer, otherwise the element data area.
-                Value* h = eval(m->obj.get());
-                BasicBlock* from = b.GetInsertBlock();
-                BasicBlock* nn = BasicBlock::Create(ctx, "ptr.nn", curFn);
-                BasicBlock* done = BasicBlock::Create(ctx, "ptr.done", curFn);
-                b.CreateCondBr(b.CreateICmpEQ(h, Constant::getNullValue(ptrTy())), done, nn);
-                b.SetInsertPoint(nn);
-                Value* data = sliceDataPtr(h, m->obj->ty->rank);
-                BasicBlock* nnEnd = b.GetInsertBlock();
-                b.CreateBr(done);
-                b.SetInsertPoint(done);
-                auto* phi = b.CreatePHI(ptrTy(), 2);
-                phi->addIncoming(Constant::getNullValue(ptrTy()), from);
-                phi->addIncoming(data, nnEnd);
-                return phi;
-            }
             if (m->kind == "field" && m->obj->ty && m->obj->ty->kind == TypeKind::Class) {
                 Value* p = eval(m->obj.get());
                 Value* addr = fieldAddr(p, m->obj->ty, m->field_index);
@@ -776,7 +777,7 @@ using ArgPack = Emitter::ArgPack;
             if (ix->get_method) {
                 std::vector<Value*> idxVals;
                 for (auto& ie : ix->indices)
-                    idxVals.push_back(convertTo(eval(ie.get()), ie->ty, Type::make_prim("usize")));
+                    idxVals.push_back(convertTo(eval(ie.get()), ie->ty, Type::make_prim("isize")));
                 Value* r = emitMemberIndex(ix->get_method, addrOf(ix->base.get()), idxVals);
                 if (ix->by_ref) return loadAt(lt(e->ty), r, unalignedExpr(e));
                 return r;
@@ -838,7 +839,7 @@ using ArgPack = Emitter::ArgPack;
                     axis = static_cast<int>(il->value);
                 } else if (st->kind == TypeKind::Slice && st->rank > 1) {
                     axisV = convertTo(eval(v->dim.get()), v->dim->ty,
-                                      Type::make_prim("usize"));
+                                      Type::make_prim("isize"));
                 } else {
                     fail("the `len(seq, k)` axis of a static or one-dimensional array must be an integer literal",
                          v->dim->line, v->dim->col);

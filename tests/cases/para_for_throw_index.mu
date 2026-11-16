@@ -9,11 +9,11 @@ use std.thread;
 
 struct Vec {
     public int[8] data;
-    public usize n;
-    public usize length() { return n; }
+    public isize n;
+    public isize length() { return n; }
 }
 
-int operator[](Vec v, usize i) {
+int operator[](Vec v, isize i) {
     if i == 3 {
         throw new Exception("index failed");
     }

@@ -34,7 +34,7 @@ int main() {
     _aligned_free(block);
     int case_ok = _stricmp("AbC", "abc") == 0 ? 1 : 0;
 
-    c_size total = sizeof(io_refs) + sizeof(stdlib_refs) + sizeof(string_refs) + sizeof(errno_refs);
+    c_size total = (sizeof(io_refs) + sizeof(stdlib_refs) + sizeof(string_refs) + sizeof(errno_refs)) as c_size;
     printf("windows-only ok=%d refs=%zu\n", case_ok, total / sizeof(void*));
     return 0;
 }

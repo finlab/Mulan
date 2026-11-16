@@ -79,12 +79,12 @@ int main() {
 
     // C interop: qsort with a named comparator
     int[] xs = {5, 3, 9, 1, 4};
-    qsort(&xs[0], xs.length(), sizeof(int), ascending);
+    qsort(&xs[0], xs.length() as usize, sizeof(int) as usize, ascending);
     print_int(xs[0]); putchar(' '); print_int(xs[4]); putchar('\n');  // 1 9
 
     // C interop: qsort with a lambda comparator
     int[] ys = {2, 8, 6};
-    qsort(&ys[0], ys.length(), sizeof(int),
+    qsort(&ys[0], ys.length() as usize, sizeof(int) as usize,
           (const void* a, const void* b) => *(b as const int*) - *(a as const int*));
     print_int(ys[0]); putchar(' '); print_int(ys[2]); putchar('\n');  // 8 2
 

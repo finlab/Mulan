@@ -104,18 +104,18 @@ int main() {
     char upper = toupper('a') as char;
 
     // ---------------------------------------------------------------- stdlib
-    int* block = malloc(sizeof(int) * 3) as int*;
+    int* block = malloc((sizeof(int) * 3) as c_size) as int*;
     block[0] = 3;
     block[1] = 1;
     block[2] = 2;
-    qsort(block, 3, sizeof(int), compare_int);
+    qsort(block, 3, sizeof(int) as c_size, compare_int);
     int sorted_ok = block[0] == 1 and block[1] == 2 and block[2] == 3 ? 1 : 0;
     free(block);
 
-    int* key = malloc(sizeof(int)) as int*;
+    int* key = malloc(sizeof(int) as c_size) as int*;
     key[0] = 2;
     int[3] sorted = {1, 2, 3};
-    int* hit = bsearch(key, &sorted[0], 3, sizeof(int), compare_int) as int*;
+    int* hit = bsearch(key, &sorted[0], 3, sizeof(int) as c_size, compare_int) as int*;
     int bsearch_ok = hit != null and *hit == 2 ? 1 : 0;
     free(key);
 

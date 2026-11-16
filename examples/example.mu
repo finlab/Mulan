@@ -50,7 +50,7 @@ int count_down(int n) {
 }
 
 // const int*: no writes through p; interface contract only, no optimization promise.
-int sum_ptr(const int* p, usize n) {
+int sum_ptr(const int* p, isize n) {
     int s = 0;
     for i in 0..n {
         s += p[i];

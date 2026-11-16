@@ -246,6 +246,7 @@ struct NewExpr : Expr {
     std::vector<ExprPtr> args;
     std::vector<std::pair<std::string, ExprPtr>> named;
     bool is_array = false;  // new T[..]
+    bool uninit = false;    // `uninit new T[n]`: the element block is not zeroed (trivial elements only)
     std::vector<ExprPtr> dims;  // the size of each dimension of the rectangle (runtime expressions)
     int jagged_rank = 0;        // new T[m][]: how many more T[] levels the outer part wraps
     // sema

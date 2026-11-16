@@ -4,37 +4,37 @@ unit ref_return;
 extern int puts(const char* s);
 
 struct Vec {
-    usize n;
+    isize n;
     int* data;
 
-    usize length() { return n; }
-    ref int at(usize i) { return data[i]; }
+    isize length() { return n; }
+    ref int at(isize i) { return data[i]; }
 }
 
 // borrowed receiver + borrowed return: writes through to the caller's storage (inline storage containers too)
 struct Small {
     int[4] v;
 
-    usize length() { return 4; }
-    ref int at(usize i) { return v[i]; }
+    isize length() { return 4; }
+    ref int at(isize i) { return v[i]; }
 }
 
-ref int operator[](ref Vec v, usize i) { return v.data[i]; }
-ref int operator[](ref Small s, usize i) { return s.v[i]; }
-ref const int peek(ref const Vec v, usize i) { return v.data[i]; }
+ref int operator[](ref Vec v, isize i) { return v.data[i]; }
+ref int operator[](ref Small s, isize i) { return s.v[i]; }
+ref const int peek(ref const Vec v, isize i) { return v.data[i]; }
 
 void bump(ref int x) { x += 1; }
 
 struct P { int x, y; }
 
 struct PVec {
-    usize n;
+    isize n;
     P* data;
 
-    usize length() { return n; }
+    isize length() { return n; }
 }
 
-ref P operator[](ref PVec v, usize i) { return v.data[i]; }
+ref P operator[](ref PVec v, isize i) { return v.data[i]; }
 
 int main() {
     int[4] a = {1, 2, 3, 4};

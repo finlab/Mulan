@@ -38,9 +38,9 @@ T bar<T: int| long |string>(T a, T b) {
 struct Vec<T> {
     T[] data;
 
-    usize length() { return data.length(); }
+    isize length() { return data.length(); }
 
-    T at(usize i) { return data[i]; }
+    T at(isize i) { return data[i]; }
 }
 
 // ---------- Generic free functions ----------

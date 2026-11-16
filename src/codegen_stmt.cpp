@@ -310,7 +310,7 @@ using ArgPack = Emitter::ArgPack;
                 auto* ix = dynamic_cast<Index*>(as->target.get());
                 emitMemberIndexSet(as->set_method, addrOf(ix->base.get()),
                                    convertTo(eval(ix->indices[0].get()), ix->indices[0]->ty,
-                                             Type::make_prim("usize")),
+                                             Type::make_prim("isize")),
                                    as->value.get());
                 return;
             }
@@ -516,7 +516,7 @@ using ArgPack = Emitter::ArgPack;
             const bool down = s->step_val < 0;
             Value* stepV = ConstantInt::get(lt(vt), static_cast<uint64_t>(s->step_val));
             b.CreateStore(lo, varSlot);
-            if (idxSlot) b.CreateStore(ConstantInt::get(cast<IntegerType>(lt(Type::make_prim("usize"))), 0), idxSlot);
+            if (idxSlot) b.CreateStore(ConstantInt::get(cast<IntegerType>(lt(Type::make_prim("isize"))), 0), idxSlot);
             b.CreateBr(condBB);
             b.SetInsertPoint(condBB);
             Value* cur = b.CreateLoad(lt(vt), varSlot);
@@ -538,7 +538,7 @@ using ArgPack = Emitter::ArgPack;
             Value* c2 = b.CreateLoad(lt(vt), varSlot);
             b.CreateStore(b.CreateAdd(c2, stepV), varSlot);
             if (idxSlot) {
-                TypePtr us = Type::make_prim("usize");
+                TypePtr us = Type::make_prim("isize");
                 Value* iv = b.CreateLoad(lt(us), idxSlot);
                 b.CreateStore(b.CreateAdd(iv, ConstantInt::get(cast<IntegerType>(lt(us)), 1)), idxSlot);
             }
@@ -616,9 +616,9 @@ using ArgPack = Emitter::ArgPack;
             return;
         }
 
-        // index form (SPEC 6.4.1): length() once + operator[](C, usize) each iteration
+        // index form (SPEC 6.4.1): length() once + operator[](C, isize) each iteration
         if (s->loop_kind == "index") {
-            TypePtr us = Type::make_prim("usize");
+            TypePtr us = Type::make_prim("isize");
             Value* recv =
                 (sty->kind == TypeKind::Class) ? b.CreateLoad(lt(sty), seqAddr) : seqAddr;
             Value* n = emitMethodCallVals(s->len_sig, recv, sty, {}, s);

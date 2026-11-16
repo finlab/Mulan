@@ -706,7 +706,7 @@ namespace muc_detail {
             if (!sz->spec) return false;  // `sizeof expr`: a value expression is not a compile-time constant
             TypePtr t = resolve_type(sz->spec.get(), cur_);
             if (!t || is_void(t)) return false;
-            out.ty = Type::make_prim("usize");
+            out.ty = Type::make_prim("isize");
             if (sz->which == "offsetof") {
                 int idx = -1;
                 if (t->kind != TypeKind::Struct) return false;

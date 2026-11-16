@@ -76,7 +76,7 @@ int main() {
 
     // C callback
     int[] ys = {8, 2, 6};
-    qsort(&ys[0], ys.length(), sizeof(int),
+    qsort(&ys[0], ys.length() as usize, sizeof(int) as usize,
           (const void* a, const void* b) => *(a as const int*) - *(b as const int*));
     print_int(ys[0]); putchar(' '); print_int(ys[1]); putchar(' '); print_int(ys[2]); putchar('\n');
     // 2 6 8

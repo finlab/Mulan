@@ -205,7 +205,7 @@ static bool is_numeric(const TypePtr& t) {
                 // `operator[]` returns a borrow: the call result is the element address
                 std::vector<Value*> idxVals;
                 for (auto& ie : ix->indices)
-                    idxVals.push_back(convertTo(eval(ie.get()), ie->ty, Type::make_prim("usize")));
+                    idxVals.push_back(convertTo(eval(ie.get()), ie->ty, Type::make_prim("isize")));
                 if (ix->get_method) {
                     return emitMemberIndex(ix->get_method, addrOf(ix->base.get()), idxVals);
                 }
@@ -217,7 +217,7 @@ static bool is_numeric(const TypePtr& t) {
             std::vector<Value*> idxs;
             for (auto& ie : ix->indices) {
                 idxs.push_back(convertTo(eval(ie.get()), ie->ty,
-                                         Type::make_prim("usize"), ix->line, ix->col));
+                                         Type::make_prim("isize"), ix->line, ix->col));
             }
             if (bt->kind == TypeKind::Array) {
                 Value* addr = addrOf(ix->base.get());

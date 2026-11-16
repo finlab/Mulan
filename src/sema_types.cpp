@@ -26,16 +26,7 @@ namespace muc_detail {
                     return cur_class_;
                 }
                 if (spec->name == "buffer") {
-                    if (spec->args.size() != 1)
-                        err_ts("`buffer<T>` takes exactly one type argument", spec);
-                    TypePtr elem = resolve_type(spec->args[0].get(), u);
-                    if (is_void(elem)) err_ts("buffer element cannot be void", spec);
-                    if (noncopyable_struct(elem)) {
-                        err_ts("struct `" + elem->str() +
-                                   "` has a destructor and cannot be a buffer element",
-                               spec);
-                    }
-                    return Type::make_slice(elem, spec->is_const, 1);
+                    err_ts("`buffer<T>` is no longer a type: write `T[]` (the built-in fixed-size heap block)", spec);
                 }
                 if (!spec->args.empty()) {
                     return instantiate_generic(spec, u);

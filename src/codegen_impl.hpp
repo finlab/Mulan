@@ -454,8 +454,9 @@ struct Emitter {
     // total element count (a null handle yields 0)
     Value* emitSliceTotal(Value* h, int rank);
 
-    // Allocate a dynamic array and zero it; dims holds the size of each dimension
-    Value* emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem);
+    // Allocate a dynamic array; `uninit` leaves the element block uninitialized (sema restricts it
+    // to trivial element types), otherwise the block is zeroed.
+    Value* emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem, bool uninit = false);
 
     Value* emitDynArrayAlloc(Value* n, const TypePtr& elem);
 

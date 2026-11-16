@@ -1,10 +1,10 @@
 unit forin_badidx;
 
-// the index of operator[] must be usize (written as int here, no narrowing conversion)
+// the index of operator[] must be isize (written as int here, no narrowing conversion)
 struct Vec {
     int[4] data;
-    usize n;
-    usize length() { return n; }
+    isize n;
+    isize length() { return n; }
 }
 
 int operator[](Vec v, int i) { return v.data[i]; }

@@ -6,9 +6,9 @@ extern int puts(const char* s);
 struct Vec<T> {
     T[] data;
 
-    usize length() { return data.length(); }
+    isize length() { return data.length(); }
 
-    T at(usize i) { return data[i]; }
+    T at(isize i) { return data[i]; }
 
     void fill(T v) {
         for ref x in data { x = v; }
@@ -25,7 +25,7 @@ int main() {
     Vec<int> v = {new int[3]};
     v.fill(7);
     int s = v.at(0) + v.at(1) + v.at(2);
-    usize n = v.length();
+    isize n = v.length();
 
     Wrap<int> w = {21};
     int d = w.twice();

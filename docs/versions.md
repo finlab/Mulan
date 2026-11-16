@@ -27,6 +27,32 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 151 — 2026-11-16
+
+**Dynamic arrays are a built-in type with a fixed length; `isize` is the index/length type.**
+
+- `T[]` / `T[,]` / `T[,,]` are now **built-in** (`{rc,len,data}`, no capacity field): the length is
+  fixed for the lifetime of the block, so nothing reallocates and an element address stays valid
+  until the handle is released. A library container (`Array<T>`) becomes a wrapper that adds methods.
+  The `buffer<T>` name is removed (using it is an error pointing at `T[]`).
+- Built-in members are only `length()` / `operator[]` / `ptr()`. `ptr` is now a **method** (`x.ptr()`,
+  the field form is rejected), returns `const T*` for a `const` block, and requires a **trivial**
+  element type: a raw write through it would bypass an element's retain/release.
+- `new T[n]` still zeroes the element block, but it now goes through `calloc`, so libc can skip the
+  zeroing for a fresh mapping. `uninit new T[n]` opts out of the zeroing and is accepted only for
+  trivial element types; the header stays valid either way. The 8-byte `cap` field of rank-1 blocks
+  is gone, and the data offset is padded to 16 bytes, so every supported element alignment is a
+  multiple of the offset.
+- **`isize` replaces `usize` for lengths, indices and byte sizes**: `length()`, subscripts, the
+  `for i, x` ordinal, `find` offsets, `sizeof`/`alignof`/`offsetof` and the `alloc`/`realloc` byte
+  counts. `usize` stays for unsigned arithmetic and the C-facing `cstd.*` sizes, where an explicit
+  `as` is now required (e.g. `malloc(sizeof(T) as c_size)`). The bounds check is unchanged: a single
+  unsigned compare catches a negative index on the cold path.
+- `length(axis)` is accepted at rank 1 too (`length()` ≡ `length(0)`), and a runtime axis is checked.
+- New cases: `slice_zero_init`, `slice_uninit`, `slice_ptr`; new must-fail cases
+  `slice_uninit_ref`, `slice_ptr_nontrivial`, `slice_ptr_field`, `slice_ptr_const`,
+  `slice_axis_rank1`, `buffer_removed`. Full suite: 632/632 with `MUC_VERIFY_MEM=1`.
+
 #### build 150 — 2026-11-16
 
 **Weak registry: empty-list fast path, and no spin lock under `--single-thread` (#18, partial).**

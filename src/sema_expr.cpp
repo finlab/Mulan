@@ -213,7 +213,7 @@ namespace muc_detail {
             } else {
                 sz->cval = sz->which == "alignof" ? type_align(t) : type_size(t);
             }
-            e->ty = Type::make_prim("usize");
+            e->ty = Type::make_prim("isize");
             return e->ty;
         }
 
@@ -244,7 +244,7 @@ namespace muc_detail {
                 }
             }
             if (t && (t->kind == TypeKind::Array || t->kind == TypeKind::Slice)) {
-                return Type::make_prim("usize");
+                return Type::make_prim("isize");
             }
             err("`len` does not support " + (t ? t->str() : "void"), e);
         }
@@ -971,14 +971,10 @@ namespace muc_detail {
         }
 
         TypePtr ot = check_expr(obj);
-        // `buffer<T>.ptr` / `T[].ptr`: the data pointer of a managed sequence (C interop, SPEC 3.3).
-        // The pointer borrows the buffer, so the operand must be a stable object.
+        // A dynamic array exposes its data pointer through the method `ptr()` (SPEC 3.3), not a field:
+        // the call form keeps `x.ptr` from reading like state, and sema checks the element type there.
         if (ot && ot->kind == TypeKind::Slice && e->name == "ptr") {
-            if (!is_lvalue(obj)) {
-                err("`.ptr` borrows the buffer; the operand must be a variable or a field (bind the temporary first)", e);
-            }
-            e->kind = "slice_ptr";
-            return Type::make_ptr(ot->elem);
+            err("`ptr` is a method on a dynamic array: write `x.ptr()`", e);
         }
         if (ot && (ot->kind == TypeKind::Struct || ot->kind == TypeKind::Class)) {
             TypePtr ft = ot->field_type(e->name);

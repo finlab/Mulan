@@ -22,11 +22,11 @@ public:
 // (`T[]` / `buffer<T>`); `--bounds=off` removes the check.
 public class BoundsError : Exception {
 public:
-    usize index;
-    usize length;
-    usize axis;
+    isize index;
+    isize length;
+    isize axis;
 
-    BoundsError(usize idx, usize total, usize ax) {
+    BoundsError(isize idx, isize total, isize ax) {
         index = idx;
         length = total;
         axis = ax;
@@ -34,6 +34,6 @@ public:
 }
 
 // Cold path of the bounds check: the compiler calls this with the offending index.
-public void bounds_fail(usize index, usize length, usize axis) {
+public void bounds_fail(isize index, isize length, isize axis) {
     throw new BoundsError(index, length, axis);
 }

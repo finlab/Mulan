@@ -4,16 +4,16 @@ unit generic_iface;
 extern int puts(const char* s);
 
 interface ISeq<T> {
-    usize length();
-    T at(usize i);
+    isize length();
+    T at(isize i);
 }
 
 struct Vec {
     int[] data;
 
-    usize length() { return data.length(); }
+    isize length() { return data.length(); }
 
-    int at(usize i) { return data[i]; }
+    int at(isize i) { return data[i]; }
 }
 
 int sum_all<T: ISeq<int>>(T seq) {

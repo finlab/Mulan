@@ -7,8 +7,8 @@ extern int puts(const char* s);
 struct Vec {
     int[3] data;
     int count;
-    usize length() { return count as usize; }
-    ref int operator[](usize i) { return data[i]; }
+    isize length() { return count as isize; }
+    ref int operator[](isize i) { return data[i]; }
 }
 
 int main() {

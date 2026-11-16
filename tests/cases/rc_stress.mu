@@ -32,7 +32,7 @@ struct Slot { Node n; }
 
 void producer(void* arg) {
     for i in 0..ROUNDS {
-        Slot* s = calloc(1, sizeof(Slot)) as Slot*;
+        Slot* s = calloc(1, sizeof(Slot) as usize) as Slot*;
         (*s).n = new Node();
         mutex_lock(g_m);
         while g_slot != null {

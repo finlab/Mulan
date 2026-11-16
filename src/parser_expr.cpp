@@ -593,9 +593,15 @@ ExprPtr Parser::parse_mul() {
 ExprPtr Parser::parse_unary() {
     NestGuard guard(*this, "expression");
     const Token t = peek();
+    const bool uninit = at_kw("uninit");
+    if (uninit) {
+        advance();
+        if (!at_kw("new")) throw err_at("`uninit` must be followed by `new`", peek());
+    }
     if (at_kw("new")) {
         advance();
         auto ne = std::make_unique<NewExpr>();
+        ne->uninit = uninit;
         ne->type = parse_type_base();
         ne->line = t.line;
         ne->col = t.col;
@@ -645,6 +651,7 @@ ExprPtr Parser::parse_unary() {
             if (!ne->args.empty() && !ne->named.empty())
                 throw err_at("positional and named arguments cannot be mixed", t);
         }
+        if (uninit) throw err_at("`uninit` applies only to dynamic arrays (`uninit new T[n]`)", t);
         return parse_postfix_tail(std::move(ne));
     }
     if (at_op("!")) {

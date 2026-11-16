@@ -12,9 +12,9 @@ use std.string;
 // in any unit (SPEC 3.11), so a program can supply the ordering itself; the
 // comparison below is lexicographic over the bytes.
 bool operator<(String a, String b) {
-    usize n = a.length();
+    isize n = a.length();
     if b.length() < n { n = b.length(); }
-    usize i = 0;
+    isize i = 0;
     while i < n {
         if a[i] != b[i] { return a[i] < b[i]; }
         i += 1;

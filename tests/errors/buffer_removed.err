@@ -1,0 +1,1 @@
+`buffer<T>` is no longer a type: write `T[]`

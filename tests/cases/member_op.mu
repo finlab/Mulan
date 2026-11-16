@@ -16,7 +16,7 @@ struct Vec2 {
     int x;
     int y;
 
-    int operator[](usize i) {
+    int operator[](isize i) {
         if i == 0 { return x; }
         return y;
     }
@@ -34,15 +34,15 @@ struct Vec2 {
 // index-form for-in through a member operator[] (borrowed receiver: no copy per iteration)
 struct Bag {
     int[4] data;
-    usize n;
-    usize length() { return n; }
-    int operator[](usize i) { return data[i]; }
+    isize n;
+    isize length() { return n; }
+    int operator[](isize i) { return data[i]; }
 }
 
 // write form: `operator[]` returns `ref T`, so `acc[i] = v` writes through the borrow
 struct Acc {
     int[2] data;
-    ref int operator[](usize i) { return data[i]; }
+    ref int operator[](isize i) { return data[i]; }
 }
 
 Vec2 make(int x, int y) { Vec2 v = {x, y}; return v; }
