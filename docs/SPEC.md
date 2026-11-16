@@ -1079,6 +1079,15 @@ T: A | B  →  type set is the union (wider)  →  available members of T are th
 
 **Open branches do not enumerate implementors**: when checking interface members, only the declared signatures of the interface are used; all implementing types are not traversed.
 
+**The body is checked against the contract (build 156)**: a generic function whose type parameters are
+all constrained by a conjunction of interfaces is checked twice — once at its **definition**, with each
+type parameter bound to a *witness* that carries exactly the constraint's members, and once per
+instantiation as before. The definition-time check is what makes "it compiles" mean "it works for every
+`T` that satisfies the contract": a body may use only the members the contract declares, so writing
+through a value subscript, or reaching into a field of the type parameter, is reported at the
+definition rather than at the first instantiation that happens to differ. Unconstrained parameters and
+`A | B` bounds are not witnessed (there is no single member set) and keep instantiation-time checking.
+
 **Members of `|`**: the body of a function with `T: int | long` may only use operations common to both (arithmetic, comparison, assignment);
 when an open branch (`IComparable`) is mixed with a concrete type, the member set is usually empty; this is a semantic necessity, not a defect.
 
