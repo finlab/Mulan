@@ -83,6 +83,15 @@
   内联成员步骤也登记 unwind 清理（构造进度条目带 owner + partial destroy，或复用回调栈）；顺序必须是
   先构造进度清理、再销毁对象（字段先归零，避免重复跑用户析构体）。
 
+- [ ] codegen — **把 `move` 作为返回值跨函数传出时返回值内容损坏**（2026-11-16 实测，build 145 与 146 均复现）：
+  `R take(R v) { return move v; }` + `R b = take(move tmp);` 之后 `b.p[0]` 是垃圾值
+  （`ctors=3 dtors=2` 计数本身正常，未见 double free）；而同作用域内 `R b = move a;` 正确。
+  基线 worktree（HEAD a552f73 / build 145）同样损坏 → 既有 bug，不是 #21/#23 改动引入。
+  另：子 agent 报告过「值传递带用户析构 struct 实参被 callee 与 caller 双重释放」的变体，
+  但复现用例未触发 double free，需先构造出精确复现再定位。方向：检查 `prepareReturn` 对 struct 的
+  `valueOwned(e)` 快速路径、`invoke` 的 sret/coerce 路径（8 字节 struct 走寄存器返回时的打包），
+  以及 `take` 形参的 `ownParams` 与 caller `releaseTemps` 的所有权交界。
+
 - [ ] 文档 — **`AGENTS.md` 的测试命令缺 `MUC_CMD`**（2026-11-15 实测）：文档写
   `python tests/run_tests.py`，但 `muc` 不在 PATH 上，直接跑会 576 个用例全部
   `cannot execute compiler \`muc\``。实际用法是 `$env:MUC_CMD="build/muc.exe"; python tests/run_tests.py`
