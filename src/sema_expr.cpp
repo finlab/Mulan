@@ -134,7 +134,7 @@ namespace muc_detail {
                 }
                 std::vector<Expr*> call_args{ix->base.get()};
                 for (auto& ie : ix->indices) call_args.push_back(ie.get());
-                auto f = choose_overload(cands, call_args, "operator[]", e);
+                auto f = choose_overload(cands, call_args, "operator[]", e, /*check_ref=*/true);
                 ix->get_func = f;
                 ix->by_ref = is_borrow_type(f->rty);
                 ix->ref_const = ix->by_ref && f->rty->is_const;
@@ -1084,7 +1084,7 @@ namespace muc_detail {
                 if (unary.empty()) {
                     err("type `" + t->str() + "` has no unary `~` operator overload", e);
                 }
-                auto f = choose_overload(unary, {e->operand.get()}, "operator~", e);
+                auto f = choose_overload(unary, {e->operand.get()}, "operator~", e, /*check_ref=*/true);
                 e->op_func = f;
                 return f->rty;
             }
@@ -1108,7 +1108,7 @@ namespace muc_detail {
                 if (unary.empty()) {
                     err("type `" + t->str() + "` has no unary `" + e->op + "` operator overload", e);
                 }
-                auto f = choose_overload(unary, {e->operand.get()}, "operator" + e->op, e);
+                auto f = choose_overload(unary, {e->operand.get()}, "operator" + e->op, e, /*check_ref=*/true);
                 e->op_func = f;
                 return f->rty;
             }
@@ -1191,7 +1191,9 @@ namespace muc_detail {
             if (op != "==" && op != "!=") {
                 if (const MethodSig* mm = find_member_operator(lt, "operator" + op, {e->right.get()}, e)) {
                     e->op_method = mm;
-                    return mm->ret;
+                    e->by_ref = is_borrow_type(mm->ret);
+                    e->ref_const = e->by_ref && mm->ret->is_const;
+                    return referent_of(mm->ret);
                 }
                 auto cands = collect_operators(op, {lt, rt});
                 // Ordering family derived from `operator<`, the same way `!=` is derived from `==`:
@@ -1215,7 +1217,7 @@ namespace muc_detail {
                     }
                     auto lesses = collect_operators("<", {recvTy, argTy});
                     if (!lesses.empty()) {
-                        e->op_func = choose_overload(lesses, {recv, arg}, "operator<", e);
+                        e->op_func = choose_overload(lesses, {recv, arg}, "operator<", e, /*check_ref=*/true);
                         e->swap_operands = backwards;
                         e->negate_result = negate;
                         return e->op_func->rty;
@@ -1230,9 +1232,11 @@ namespace muc_detail {
                         e);
                 }
                 auto f = choose_overload(cands, {e->left.get(), e->right.get()},
-                                         "operator" + op, e);
+                                         "operator" + op, e, /*check_ref=*/true);
                 e->op_func = f;
-                return f->rty;
+                e->by_ref = is_borrow_type(f->rty);
+                e->ref_const = e->by_ref && f->rty->is_const;
+                return referent_of(f->rty);
             }
         }
 
@@ -1375,7 +1379,7 @@ namespace muc_detail {
                 if (cands.empty() && op == "!=") {
                     auto eqs = collect_operators("==", {lt, rt});
                     if (!eqs.empty()) {
-                        e->op_func = choose_overload(eqs, {e->left.get(), e->right.get()}, "operator==", e);
+                        e->op_func = choose_overload(eqs, {e->left.get(), e->right.get()}, "operator==", e, /*check_ref=*/true);
                         e->negate_result = true;
                         return t_bool();
                     }
@@ -1386,7 +1390,7 @@ namespace muc_detail {
                         e);
                 }
                 auto f = choose_overload(cands, {e->left.get(), e->right.get()},
-                                         "operator" + op, e);
+                                         "operator" + op, e, /*check_ref=*/true);
                 e->op_func = f;
                 return f->rty;
             }

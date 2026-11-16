@@ -445,6 +445,9 @@ namespace muc_detail {
                     if (auto* bi = dynamic_cast<Index*>(a); bi && bi->by_ref && bi->ref_const) {
                         err("cannot bind a readonly (`ref const`) borrow to a mutable `ref` parameter", a);
                     }
+                    if (auto* bb = dynamic_cast<Binary*>(a); bb && bb->by_ref && bb->ref_const) {
+                        err("cannot bind a readonly (`ref const`) borrow to a mutable `ref` parameter", a);
+                    }
                 }
                 continue;
             }
@@ -601,17 +604,49 @@ namespace muc_detail {
 
     FuncDecl* Sema::choose_overload(const std::vector<FuncDecl*>& cands,
                               const std::vector<Expr*>& args, const std::string& what,
-                              Node* at) {
+                              Node* at, bool check_ref) {
         std::vector<TypePtr> atys;
         for (auto* a : args) atys.push_back(check_expr(a));
 
         std::vector<FuncDecl*> ok;
         std::vector<std::vector<int>> ranks;
+        size_t ref_reject = static_cast<size_t>(-1);
         for (auto* f : cands) {
             if (f->is_varargs ? f->pty.size() > args.size() : f->pty.size() != args.size()) continue;
             std::vector<int> r;
             bool good = true;
             for (size_t i = 0; i < f->pty.size(); ++i) {
+                // A `ref` parameter is feasible only for an addressable argument of exactly the
+                // declared type: no conversion, no temporaries, and a mutable borrow never binds a
+                // readonly one. This mirrors `check_call`; without it an operator call would accept
+                // a temporary and the callee would hold a dangling borrow.
+                if (check_ref && i < f->pty_ref.size() && f->pty_ref[i]) {
+                    Expr* a = args[i];
+                    if (!is_lvalue(a) && !is_borrow_expr(a)) {
+                        good = false;
+                        ref_reject = i;
+                        break;
+                    }
+                    if (!same_type(atys[i], f->pty[i])) { good = false; break; }
+                    const bool is_cref = i < f->pty_cref.size() && f->pty_cref[i];
+                    if (!is_cref) {
+                        if (root_is_const(a)) { good = false; break; }
+                        if (auto* bc = dynamic_cast<Call*>(a); bc && bc->by_ref && bc->ref_const) {
+                            good = false;
+                            break;
+                        }
+                        if (auto* bi = dynamic_cast<Index*>(a); bi && bi->by_ref && bi->ref_const) {
+                            good = false;
+                            break;
+                        }
+                        if (auto* bb = dynamic_cast<Binary*>(a); bb && bb->by_ref && bb->ref_const) {
+                            good = false;
+                            break;
+                        }
+                    }
+                    r.push_back(0);
+                    continue;
+                }
                 int k = rank_arg(args[i], atys[i], f->pty[i]);
                 if (k < 0) { good = false; break; }
                 r.push_back(k);
@@ -619,6 +654,11 @@ namespace muc_detail {
             if (good) { ok.push_back(f); ranks.push_back(std::move(r)); }
         }
         if (ok.empty()) {
+            if (ref_reject != static_cast<size_t>(-1)) {
+                err("argument " + std::to_string(ref_reject + 1) + " of `" + what +
+                        "` must be an addressable variable: a `ref` parameter borrows the caller's storage",
+                    at);
+            }
             if (cands.size() == 1 && cands[0]->pty.size() == args.size()) {
                 for (size_t i = 0; i < args.size(); ++i) {
                     check_assign(args[i], cands[0]->pty[i], what + " argument");

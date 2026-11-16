@@ -1,0 +1,3 @@
+@ --strict
+warning: generic function `unused` is never instantiated
+`T` is unconstrained, so its body is never checked

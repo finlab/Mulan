@@ -713,6 +713,13 @@ namespace muc_detail {
         }
         if (!has_user) err("operators require at least one struct or class operand", f);
 
+        // A `ref` return is a borrow of the receiver (chained calls pass it on). That only makes
+        // sense for a binary operator; unary and `[]=` forms have no receiver to hand out.
+        const bool unary_form = sym == "~" || (unary_or_binary && n == 1);
+        if (f->ret_ref && (unary_form || sym == "[]=")) {
+            err("a unary operator cannot return a borrow (`ref`); return the value", f);
+        }
+
         if (sym == "==" || sym == "!=") {
             for (auto& p : f->pty) {
                 if (p->kind == TypeKind::Class || p->kind == TypeKind::Interface) {
@@ -771,6 +778,9 @@ namespace muc_detail {
         if ((sym == "==" || sym == "!=" || sym == "<" || sym == "<=" || sym == ">" || sym == ">=") &&
             !(m->rty && m->rty->kind == TypeKind::Prim && m->rty->name == "bool")) {
             bad("comparison operators must return `bool`");
+        }
+        if (m->ret_ref && (sym == "~" || ((sym == "-" || sym == "+") && m->pty.empty()))) {
+            bad("a unary operator cannot return a borrow (`ref`); return the value");
         }
         for (auto& p : m->pty) {
             if (is_void(p)) bad("operator parameter cannot be void");

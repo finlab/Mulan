@@ -810,7 +810,11 @@ using ArgPack = Emitter::ArgPack;
             Value* x = eval(v->operand.get());
             return b.CreateXor(x, ConstantInt::get(i1(), 1));
         }
-        if (auto v = dynamic_cast<Binary*>(e)) return evalBinary(v);
+        if (auto v = dynamic_cast<Binary*>(e)) {
+            Value* r = evalBinary(v);
+            if (v->by_ref) return loadAt(lt(e->ty), r, false);
+            return r;
+        }
         if (auto v = dynamic_cast<Ternary*>(e)) return evalTernary(v);
         if (auto v = dynamic_cast<Cast*>(e)) {
             TypePtr from = v->expr->ty;

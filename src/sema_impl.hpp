@@ -75,7 +75,8 @@ inline EnumConst* intern_enum_const(const std::string& unit, const std::string& 
 
 class Sema {
 public:
-    Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool single_thread = false);
+    Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool single_thread = false,
+         bool strict = false);
 
     Program run();
 
@@ -197,6 +198,13 @@ private:
     // template body can be checked as written — no clone, no substitution, no emission.
     std::unordered_map<std::string, TypePtr> type_bind_;
     std::unordered_set<const FuncDecl*> contract_checked_;
+    // Templates that actually produced an instance (used by `--strict` to report unchecked bodies).
+    std::unordered_set<Decl*> instantiated_templates_;
+    // `--strict`: warn about a generic that is never instantiated, so its body was never checked.
+    bool strict_ = false;
+    // Innermost-last stack of "while instantiating ..." lines; every diagnostic raised while the
+    // stack is non-empty carries them (see `err`). Mutable because diagnostics are `const` members.
+    mutable std::vector<std::string> instantiation_notes_;
     static constexpr int kGenericDepthLimit = 256;
     std::vector<std::unique_ptr<Decl>> generic_decls_;          // instantiation products (lifetime)
     std::vector<std::unique_ptr<Decl>> synth_decls_;            // synthesized lambda environment classes (lifetime)
@@ -210,6 +218,9 @@ private:
 
     // TypeSpec is not a Node (it carries its own line/col), so it gets a separate error entry point.
     [[noreturn]] void err_ts(const std::string& msg, const TypeSpec* spec) const;
+
+    // Rendered instantiation chain for a diagnostic (innermost first); empty when none is active.
+    std::string inst_notes_text() const;
 
     UnitInfo& info();
 
@@ -303,6 +314,8 @@ private:
     TypePtr make_contract_witness(const TypeParam& tp, Unit* u, const std::string& owner);
     void add_contract_members(const TypePtr& witness, const TypePtr& iface);
     void check_generic_contracts();
+    // `--strict`: report generic templates that were never instantiated (their bodies were not checked).
+    void warn_uninstantiated_generics();
 
     // Find a type by name in the given unit; with require_pub only public declarations are returned.
     TypePtr find_type_named(const std::string& unit, const std::string& name,
@@ -428,6 +441,11 @@ private:
     void check_class(ClassDecl* c);
 
     void check_interface(InterfaceDecl* itf);
+
+    // Validate an interface operator declaration and record its receiver borrow mode on `sig`.
+    // Shared by the regular pass and generic-interface instantiation (templates are not checked
+    // until they are instantiated).
+    void init_interface_operator(MethodDecl* m, MethodSig& sig, const std::string& iface_name);
 
     static bool class_has_concrete(const TypePtr& cls, const MethodSig& req);
 
@@ -673,7 +691,7 @@ private:
 
     FuncDecl* choose_overload(const std::vector<FuncDecl*>& cands,
                               const std::vector<Expr*>& args, const std::string& what,
-                              Node* at);
+                              Node* at, bool check_ref = false);
 
     // Only collect methods along the class chain (interface default methods do not participate in super calls)
     void collect_class_methods(const TypePtr& t, const std::string& name,

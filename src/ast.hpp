@@ -162,6 +162,10 @@ struct Binary : Expr {
     const MethodSig* op_method = nullptr;     // sema: member operator on a struct (borrowed receiver)
     bool negate_result = false;               // sema: `a != b` implemented through `operator==` (the result is negated)
     bool swap_operands = false;               // sema: `a > b` derived as `b < a` (the other operand is the receiver)
+    // sema: the operator returns a borrow (`ref T operator<<(...)`) — the expression denotes the
+    // borrowed storage, like a `ref T f()` call, and its type is the referent.
+    bool by_ref = false;
+    bool ref_const = false;
 };
 
 struct Cast : Expr {

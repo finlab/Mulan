@@ -78,12 +78,16 @@ struct MuError : std::runtime_error {
     int line = 0;
     int col = 0;
     std::string filename;
+    // Extra lines appended after the source snippet (instantiation chain, hints). They are kept out
+    // of `msg` so the location prefix and the snippet stay attached to the primary message.
+    std::string notes;
 
-    MuError(std::string m, int l = 0, int c = 0, std::string f = "")
-        : std::runtime_error(format(m, l, c, f)),
-          msg(std::move(m)), line(l), col(c), filename(std::move(f)) {}
+    MuError(std::string m, int l = 0, int c = 0, std::string f = "", std::string n = "")
+        : std::runtime_error(format(m, l, c, f, n)),
+          msg(std::move(m)), line(l), col(c), filename(std::move(f)), notes(std::move(n)) {}
 
-    static std::string format(const std::string& m, int l, int c, const std::string& f) {
+    static std::string format(const std::string& m, int l, int c, const std::string& f,
+                              const std::string& notes = "") {
         std::string loc;
         if (!f.empty()) loc += f;
         if (l > 0) {
@@ -97,6 +101,7 @@ struct MuError : std::runtime_error {
         // appends the source line and caret when position information is available (omitted if the source file cannot be read)
         const std::string snippet = mu_detail::render_snippet(f, l, c);
         if (!snippet.empty()) out += "\n" + snippet;
+        if (!notes.empty()) out += notes;
         return out;
     }
 };

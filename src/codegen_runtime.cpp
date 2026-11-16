@@ -1026,7 +1026,7 @@ namespace muc_detail {
         // a capturing lambda materializes a fresh environment (rc = 1), so its value is owned; a
         // non-capturing lambda is a bare function address and carries no ownership either way
         if (dynamic_cast<Lambda*>(e)) return true;
-        if (auto b = dynamic_cast<Binary*>(e); b && b->op_func) return true;
+        if (auto b = dynamic_cast<Binary*>(e); b && b->op_func && !b->by_ref) return true;
         if (dynamic_cast<Ternary*>(e)) return true;  // the result slot is already materialized with owned semantics
         if (auto u = dynamic_cast<Unary*>(e); u && u->op_func) return true;
         if (auto ix = dynamic_cast<Index*>(e); ix && ix->get_func) return true;

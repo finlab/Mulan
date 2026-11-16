@@ -780,6 +780,15 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
 - `interface`, like `class`/`struct`, is a unit-level type declaration; it has no fields and no constructors, only methods (which may have default implementations).
 - A class may implement multiple interfaces: in the `:` list there is **at most one class, and it must come first**; the rest are interfaces.
 - Interface methods are abstract and virtual by default; write `override` when implementing them.
+- **Operator members are static contract members** (`Self operator+(Self a, Self b);`): they have no vtable
+  slot, are resolved at the call site, and never make an implementor abstract — an interface may therefore
+  carry both ordinary methods and operators (`interface IBoth { int area(); Self operator+(Self, Self); }`).
+  The receiver is the first operand and must be spelled `Self`; the operands after it are any types
+  (`Self operator<<(Self b, byte c)`, `Self operator*(Self a, int k)`, `bool operator<(Self a, int b)`).
+  The receiver may borrow: `ref Self` (mutate in place) or `ref const Self` (read-only). A `ref Self`
+  receiver needs a free `operator` whose first parameter is `ref` (or a struct member operator, whose
+  `this` is borrowed); a `ref const Self` receiver needs a free `ref const` (or by-value) first parameter,
+  because there are no `const` methods.
 - A default method may only call interface methods and cannot access fields; when two interfaces provide default implementations with the same signature, the class must explicitly override them, otherwise it is a compile error (a default declared on a derived interface refines the base interface's default and wins).
 - An interface value is laid out as two machine words `{object pointer, class descriptor pointer}`; it may be `null`.
 - Conversions: `class → interface` is implicit; `interface A → interface B` (A inherits B) is a static conversion;
@@ -864,6 +873,21 @@ struct Vec {
 - An operator must have at least one struct/class operand; built-in types cannot be redefined.
 - **Member operators** (`implemented 0.0.87`) are allowed **inside a `struct` only** and are always static-dispatch (never virtual): a class operator would be virtual by default, which would break `==` identity and add dispatch cost, so classes keep the free-function form (a member operator written in a class body is a compile error). The receiver is the implicit `this`, so `s[i]` / `s == t` cost no copy and no retain/release; the parameter list is the free form minus the receiver (binary 1, unary 0, `[]` 1, `[]=` 2) and a member operator wins over a free function with the same signature.
 - An operator function is an ordinary function and may be placed in any unit; a duplicate definition or a resolution ambiguity → compile error.
+- **Compound assignment is not an overloadable operator** (`+=`, `-=`, `*=`, `<<=`, … are absent from the
+  table above, and `x++` / `x--` are statement-only). For a numeric or pointer target — including a `ref`
+  subscript whose element is numeric — it is a built-in in-place operation (evaluated once). For a **user
+  type** (struct / class / interface) it is sugar: `x op= y` is rewritten as `x = x op y` and uses
+  `operator<op>`, so the same operator set applies and `x++` needs an `operator+` that can consume `1`.
+  The left side must be side-effect free to re-evaluate — a name, a field, or a subscript whose indices
+  contain no calls — because the rewrite spells it twice; an impure target is a compile error that asks
+  for the update to be written out.
+- **Operator parameters may be `ref` / `ref const`** (free functions only): the receiver is the first
+  operand, so `Buf operator<<(ref Buf b, byte c)` mutates the caller's value. A mutable `ref` argument must
+  be an addressable lvalue and binds no conversion; a readonly borrow never binds a mutable `ref`.
+- **An operator may return `ref T`** (`ref Buf operator<<(ref Buf b, byte c) { ... return b; }`): the result
+  denotes the borrowed storage (same rules as `ref T f()`), so chained calls (`b << 1 << 2`) pass the borrow
+  on instead of a temporary, while `Buf x = b << 1` copies the borrowed value. Borrowable types only
+  (3.8: no reference-counted fields).
 - When `!=` is undefined it is derived as `not (a == b)`; for a class this means identity inequality.
 - **A derived comparison evaluates its operands right-to-left** when the derivation swaps them
   (`>` and `<=`), because the receiver becomes the other operand. Combined with the previous item,
@@ -1060,7 +1084,23 @@ T: A | B  →  type set is the union (wider)  →  available members of T are th
 **Structural satisfaction (important)**: `T: I` **does not require** `T` to declare `: I`; it only checks whether the shapes match:
 
 - Method members: `T` has a method with the same name and exactly the same parameter types and return type (looked up along the base class chain and in interface default methods).
-- Operator members: an operator that accepts `(T, T)` and returns `T` exists — a **built-in operator or an `operator` free function of a visible unit**.
+- Operator members: the **receiver is the first operand and must be `Self`**; the operands after it are
+  matched **as declared**, exactly (a stream `Self operator<<(Self b, byte c)`, a scaled arithmetic
+  `Self operator*(Self a, int k)`, a comparison `bool operator<(Self a, int b)`). An implementation is a
+  built-in operator when every operand is the type itself (`T`), or an `operator` free function / a struct
+  member operator of a visible unit. A **subscript** is the same shape (`T operator[](Self c, isize i)`);
+  its index is never `Self`.
+- **A `ref` receiver** declares that the operator mutates the receiver in place:
+  `Self operator<<(ref Self b, byte c)` (mutable) or `Self operator<<(ref const Self b, byte c)`
+  (read-only). Satisfaction requires a matching implementation form: a mutable `ref Self` needs a free
+  `operator` whose first parameter is `ref`, or a struct member operator (its `this` is borrowed); a
+  by-value implementation only touches a copy and does not satisfy it. A `ref const Self` is satisfied by
+  a free `ref const` (or by-value) first parameter; a member operator does not qualify, because `this` is
+  writable and there are no `const` methods. Only the receiver may be a `ref` parameter in an interface
+  operator declaration; the remaining operands are ordinary values.
+- A `ref T` return satisfies a declared `T` (a borrow is usable as a value), and a declared `ref T` needs a
+  `ref` implementation — the same rule as the subscript above. In an interface declaration only
+  `operator[]` may return a borrow: the witness type has no receiver storage to hand out.
 - **Subscript members are asymmetric**: `operator[]` takes the receiver plus an index or key, so only the
   *receiver* operand has to be `Self`; the operands after it may be any type. A signature must therefore
   spell the receiver explicitly (`T operator[](Self c, isize i)`), because an interface member has no
@@ -1087,6 +1127,13 @@ instantiation as before. The definition-time check is what makes "it compiles" m
 through a value subscript, or reaching into a field of the type parameter, is reported at the
 definition rather than at the first instantiation that happens to differ. Unconstrained parameters and
 `A | B` bounds are not witnessed (there is no single member set) and keep instantiation-time checking.
+
+**Diagnosing an instantiation-time failure**: a diagnostic raised inside an expanded body carries the
+instantiation chain (`while instantiating \`pick<int>\` at file:line:col`) and, when a parameter is
+unconstrained, a hint that the body was not checked at the definition and that a constraint would move
+the check there. `muc check --strict` (also accepted by `build`) additionally warns about a generic
+that is **never instantiated**: its body is never checked, so a broken template cannot pass silently.
+`--strict` is opt-in because a library may legitimately ship generics for its users to instantiate.
 
 **Members of `|`**: the body of a function with `T: int | long` may only use operations common to both (arithmetic, comparison, assignment);
 when an open branch (`IComparable`) is mixed with a concrete type, the member set is usually empty; this is a semantic necessity, not a defect.

@@ -43,6 +43,7 @@ CASES_DIR = ROOT / "tests" / "cases"
 EXPECTED_DIR = ROOT / "tests" / "expected"
 ERRORS_DIR = ROOT / "tests" / "errors"
 CHECKS_DIR = ROOT / "tests" / "check"
+WARN_DIR = ROOT / "tests" / "warnings"
 IR_DIR = ROOT / "tests" / "ir"
 ABI_DIR = ROOT / "tests" / "abi"
 BUILD_DIR = ROOT / "build" / "tests"
@@ -240,6 +241,26 @@ def collect_check_cases() -> list[CheckCase]:
     # Files starting with lib_ are dependency libraries for multi-unit tests, not cases themselves
     return [CheckCase(s.stem, s) for s in sorted(CHECKS_DIR.glob("*.mu"))
             if not s.stem.startswith("lib_")]
+
+
+class WarnCase:
+    """A case that must compile (exit 0) and print the expected warning lines.
+
+    The spec is one expected substring per line plus `@ <args>` lines (for example `@ --strict`);
+    `#` is a comment. Warnings are stderr-only, so they never fail a normal build.
+    """
+
+    def __init__(self, name: str, src: Path, spec: Path) -> None:
+        self.name = name
+        self.src = src
+        self.spec = spec
+
+
+def collect_warn_cases() -> list[WarnCase]:
+    if not WARN_DIR.is_dir():
+        return []
+    return [WarnCase(s.stem, s, WARN_DIR / f"{s.stem}.warn")
+            for s in sorted(WARN_DIR.glob("*.mu"))]
 
 
 class IrCase:
@@ -535,6 +556,52 @@ def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
     return True, "ok"
 
 
+def run_warn_case(case: WarnCase, verbose: bool) -> tuple[bool, str]:
+    """The case must compile successfully; every .warn line is a substring that must be printed."""
+    if not case.spec.is_file():
+        return False, f"missing expectation file {case.spec} (one required warning substring per line)"
+    wanted: list[str] = []
+    extra: list[str] = []
+    for raw in case.spec.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("@"):
+            extra += shlex.split(line[1:].strip())
+            continue
+        wanted.append(line)
+    cmd = resolve_compiler() + ["check", str(case.src.relative_to(ROOT))] + extra
+    try:
+        r = subprocess.run(
+            cmd, cwd=ROOT, capture_output=True, text=True,
+            errors="replace", timeout=RUN_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"timeout (>{RUN_TIMEOUT}s): " + " ".join(cmd)
+    except OSError as e:
+        return False, f"cannot execute compiler `{cmd[0]}` ({e})"
+
+    text = (r.stderr or "") + "\n" + (r.stdout or "")
+    if r.returncode != 0:
+        lines = ["the compiler rejected this program (a warning case must compile and exit 0)",
+                 "  command: " + " ".join(cmd), "  output:"]
+        lines += ["    " + ln for ln in text.strip().splitlines()[:10]]
+        if verbose:
+            lines.append("  --- full stderr ---")
+            lines += ["  " + ln for ln in (r.stderr or "").splitlines()]
+        return False, "\n".join(lines)
+    missing = [w for w in wanted if w not in text]
+    if missing:
+        lines = ["warnings are missing expected keywords: " + ", ".join(repr(m) for m in missing),
+                 "  actual output:"]
+        lines += ["    " + ln for ln in text.strip().splitlines()[:10]]
+        if verbose:
+            lines.append("  --- full stderr ---")
+            lines += ["  " + ln for ln in (r.stderr or "").splitlines()]
+        return False, "\n".join(lines)
+    return True, "ok"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Mulan regression test runner")
     ap.add_argument("--filter", help="only run cases whose name contains this substring")
@@ -545,12 +612,14 @@ def main(argv: list[str] | None = None) -> int:
     cases = collect_cases()
     err_cases = collect_error_cases()
     check_cases = collect_check_cases()
+    warn_cases = collect_warn_cases()
     ir_cases = collect_ir_cases()
     abi_cases = collect_abi_cases()
     if args.filter:
         cases = [c for c in cases if args.filter in c.name]
         err_cases = [c for c in err_cases if args.filter in c.name]
         check_cases = [c for c in check_cases if args.filter in c.name]
+        warn_cases = [c for c in warn_cases if args.filter in c.name]
         ir_cases = [c for c in ir_cases if args.filter in c.name]
         abi_cases = [c for c in abi_cases if args.filter in c.name]
 
@@ -566,12 +635,15 @@ def main(argv: list[str] | None = None) -> int:
 
     cases = fence(cases, lambda c: c.expected)
     err_cases = fence(err_cases, lambda c: c.spec)
+    warn_cases = fence(warn_cases, lambda c: c.spec)
     ir_cases = fence(ir_cases, lambda c: c.spec)
     abi_cases = fence(abi_cases, lambda c: c.expected)
-    if not cases and not err_cases and not check_cases and not ir_cases and not abi_cases:
+    if (not cases and not err_cases and not check_cases and not warn_cases
+            and not ir_cases and not abi_cases):
         print(f"no cases match `{args.filter}`")
         return 1
-    total = len(cases) + len(err_cases) + len(check_cases) + len(ir_cases) + len(abi_cases)
+    total = (len(cases) + len(err_cases) + len(check_cases) + len(warn_cases)
+             + len(ir_cases) + len(abi_cases))
 
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -612,6 +684,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL {case.name} (check)")
             print(msg)
 
+    for case in warn_cases:
+        ok, msg = run_warn_case(case, args.verbose)
+        if ok:
+            passed.append(case.name)
+            print(f"PASS {case.name} (warning)")
+        else:
+            failed.append(case.name)
+            print(f"FAIL {case.name} (warning)")
+            print(msg)
+
     for case in ir_cases:
         artifacts.append(ROOT / "build" / (case.src.stem + ".o"))
         artifacts.append(BUILD_DIR / (case.name + (".exe" if sys.platform == "win32" else "")))
@@ -641,8 +723,8 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(f"passed {len(passed)} / {total}")
     print(f"  ({len(cases)} run cases, {len(err_cases)} must-fail cases, "
-          f"{len(check_cases)} check cases, {len(ir_cases)} ir cases, "
-          f"{len(abi_cases)} c abi cases)")
+          f"{len(check_cases)} check cases, {len(warn_cases)} warning cases, "
+          f"{len(ir_cases)} ir cases, {len(abi_cases)} c abi cases)")
     if skipped:
         print(f"  skipped on {host_os()}: " + ", ".join(skipped))
     if failed:

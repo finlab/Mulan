@@ -58,6 +58,7 @@ build options:
   --bounds=on|off  subscript bounds checks for managed sequences (default: on)
   --single-thread  reference counting without atomics: `para`, `para for` and
                    `std.thread` / `std.task` become compile errors (default: off)
+  --strict         warn about a generic that is never instantiated (its body is never checked)
   --cc <name>      linker driver (default: $CC, else gcc)
   --link <obj>     extra object file for the link step (repeatable), e.g. a C shim
                    compiled with the same compiler
@@ -77,6 +78,7 @@ build options:
 check options:
   --os <os>        check the program against another platform's units (any host)
   --platform <spec>  check against `os[-arch[-abi]]` (e.g. windows-x86_64-ucrt)
+  --strict         warn about a generic that is never instantiated (its body is never checked)
   -I <dir>         extra unit search directory (repeatable)
   -v, --verbose    print the resolved file of every unit
 
@@ -585,6 +587,7 @@ struct BuildArgs {
     bool debug = false;
     bool bounds = true;  // emit subscript bounds checks for managed sequences (--bounds=off disables)
     bool single_thread = false;  // --single-thread: non-atomic reference counting
+    bool strict = false;  // --strict: warn about generics that are never instantiated
     bool verbose = false;
 };
 
@@ -620,6 +623,7 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "--bounds=on") b.bounds = true;
         else if (a == "--bounds=off") b.bounds = false;
         else if (a == "--single-thread") b.single_thread = true;
+        else if (a == "--strict") b.strict = true;
         else throw MuError("unknown option `" + a + "`");
         ++i;
     }
@@ -634,6 +638,7 @@ static int cmd_check(const std::vector<std::string>& args) {
     std::vector<std::string> dirs;
     bool verbose = false;
     bool single_thread = false;
+    bool strict = false;
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
         auto need = [&](const char* what) {
@@ -645,6 +650,7 @@ static int cmd_check(const std::vector<std::string>& args) {
         else if (a == "--platform") platform = need("--platform");
         else if (a == "-v" || a == "--verbose") verbose = true;
         else if (a == "--single-thread") single_thread = true;
+        else if (a == "--strict") strict = true;
         else if (!a.empty() && a[0] == '-') throw MuError("unknown option `" + a + "`");
         else if (entry.empty()) entry = a;
         else throw MuError("unexpected argument `" + a + "`");
@@ -656,7 +662,7 @@ static int cmd_check(const std::vector<std::string>& args) {
     std::string entry_name;
     auto units = load_units(entry, dirs, entry_name, platform.empty() ? os : platform, verbose);
     size_t n = units.size();
-    auto prog = analyze(std::move(units), entry_name, single_thread);
+    auto prog = analyze(std::move(units), entry_name, single_thread, strict);
     std::cout << "ok: " << n << " units, semantic checks passed\n";
     return 0;
 }
@@ -697,7 +703,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     }
     std::string entry_name;
     auto units = load_units(ba.entry, ba.dirs, entry_name, target_spec, ba.verbose);
-    auto prog = analyze(std::move(units), entry_name, ba.single_thread);
+    auto prog = analyze(std::move(units), entry_name, ba.single_thread, ba.strict);
 
     fs::path entry_p(ba.entry);
     std::string base = entry_p.stem().string();

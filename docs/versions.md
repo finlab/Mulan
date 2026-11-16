@@ -27,6 +27,42 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 157 — 2026-11-16
+
+**Contract operators with mixed operands and `ref` receivers; compound assignment on user types.**
+
+- A contract operator no longer requires **every** operand to be `Self`. The receiver (the first
+  operand) must be `Self`; the rest are matched exactly as declared. `Self operator<<(Self b, byte c)`
+  (a stream), `Self operator*(Self a, int k)` (scaled arithmetic) and `bool operator<(Self a, int b)`
+  are now expressible; the built-in block still only answers the all-`Self` form. The old rule was
+  written for `Self op Self` and already had a subscript-shaped exception.
+- A contract operator receiver may borrow: `ref Self` (mutate in place) or `ref const Self`
+  (read-only). A mutable `ref Self` is satisfied by a free `operator` with a `ref` first parameter or
+  by a struct member operator (its `this` is borrowed); a by-value implementation touches only a copy
+  and is rejected. A `ref const Self` accepts a free `ref const` (or by-value) first parameter and
+  rejects a member operator (there are no `const` methods). Only the receiver may be a `ref`
+  parameter; interface **methods** still do not take `ref` parameters.
+- Interface operator members are compile-time only in both directions now: they get no itable slot
+  and do not make a class abstract, so an interface may mix ordinary methods with operators.
+- `x op= y` and the statement forms `x++` / `x--` now work on user types by rewriting to
+  `x = x op y` (the operator set is 3.11's; `x++` lowers to `x += 1` first). The rewrite spells the
+  target twice, so the left side must be side-effect free; a numeric/pointer target keeps the
+  in-place codegen path (evaluated once). `String +=` works as a consequence.
+- Operator calls now check `ref` arguments during overload resolution (addressable lvalue, no
+  conversion, no readonly-to-mutable binding). This fixes a latent crash: a chained `ref`-receiver
+  operator used to accept the previous result (a temporary) and generate a dangling borrow.
+- An operator may return `ref T`; the result is a borrow (chained `b << 1 << 2` works for borrowable
+  types, and `Buf x = b << 1` copies the value). Generic contracts (`IOut<int>`) are validated the
+  same way when they are instantiated: receiver first, `ref` only on the receiver, borrow returns only
+  for `operator[]`.
+- Instantiation-time diagnostics now carry the chain (`while instantiating \`pick<int>\` at
+  file:line:col`) and, for an unconstrained type parameter, a hint that the body was not checked at its
+  definition and how a constraint would move the check there. `--strict` (on `check` and `build`)
+  reports generics that are never instantiated, whose bodies are therefore never checked.
+- The instantiation guard is exception-safe: a failed body no longer leaves the recursion set or the
+  instance cache populated, so the diagnostics that follow do not turn into a bogus "recursive
+  generic instantiation".
+
 #### build 156 — 2026-11-16
 
 **A constrained generic body is checked at its definition, against a witness of its contract.**

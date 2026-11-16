@@ -598,7 +598,9 @@ namespace muc_detail {
                                       int depth) {
         if (!t || depth > 256) return;
         for (auto& m : t->methods) {
-            if (m.is_abstract) out.push_back(m);
+            // Operators are compile-time-only contract members: they have no vtable slot and are
+            // resolved statically, so an interface operator never makes an implementor abstract.
+            if (m.is_abstract && !m.is_operator) out.push_back(m);
         }
         if (t->kind == TypeKind::Class && t->base) {
             collect_abstract_reqs(t->base, out, depth + 1);

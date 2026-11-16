@@ -1,0 +1,1 @@
+compound assign ok

@@ -1,0 +1,4 @@
+type int has no member `n`
+while instantiating `pick<int>`
+while instantiating `outer<int>`
+unconstrained, so the definition is checked only when it is instantiated

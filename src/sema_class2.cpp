@@ -4,7 +4,49 @@
 // This file holds class / interface checking (part 2) (definitions of Sema members).
 #include "sema_impl.hpp"
 
+#include "ast_clone.hpp"
+
 namespace muc_detail {
+
+    // Whether re-evaluating the expression is observably free of side effects. Used by the
+    // compound-assignment rewrite on user types, which spells the target twice (`x = x op y`).
+    static bool pure_expr(const Expr* e) {
+        if (!e) return false;
+        if (dynamic_cast<const IntLit*>(e) || dynamic_cast<const FloatLit*>(e) ||
+            dynamic_cast<const CharLit*>(e) || dynamic_cast<const StringLit*>(e) ||
+            dynamic_cast<const BoolLit*>(e) || dynamic_cast<const NullLit*>(e)) {
+            return true;
+        }
+        if (dynamic_cast<const Name*>(e)) return true;
+        if (auto* m = dynamic_cast<const Member*>(e)) return pure_expr(m->obj.get());
+        if (auto* ix = dynamic_cast<const Index*>(e)) {
+            if (!pure_expr(ix->base.get())) return false;
+            for (const auto& i : ix->indices) {
+                if (!pure_expr(i.get())) return false;
+            }
+            return true;
+        }
+        if (auto* u = dynamic_cast<const Unary*>(e)) {
+            if (u->op == "-" || u->op == "+" || u->op == "~" || u->op == "*") {
+                return pure_expr(u->operand.get());
+            }
+            return false;
+        }
+        if (auto* b = dynamic_cast<const Binary*>(e)) {
+            return pure_expr(b->left.get()) && pure_expr(b->right.get());
+        }
+        if (auto* c = dynamic_cast<const Cast*>(e)) return pure_expr(c->expr.get());
+        return false;
+    }
+
+    static bool pure_lvalue(const Expr* e) {
+        if (!e) return false;
+        if (dynamic_cast<const Name*>(e)) return true;
+        if (auto* m = dynamic_cast<const Member*>(e)) return pure_expr(m->obj.get());
+        if (dynamic_cast<const Index*>(e)) return pure_expr(e);
+        if (auto* u = dynamic_cast<const Unary*>(e)) return u->op == "*" && pure_expr(u->operand.get());
+        return false;
+    }
 
     void Sema::check_aggregate(InitAggregate* init, const TypePtr& ty, const std::string& what) {
         auto& items = init->items;
@@ -279,6 +321,33 @@ namespace muc_detail {
                 s);
         }
         const std::string op = s->op.empty() ? std::string() : s->op.substr(0, s->op.size() - 1);
+        // Compound assignment on a user type is sugar for `x = x op y`: there is no `operator+=`,
+        // so resolve `op` exactly as the binary expression would and store the result. The target is
+        // rewritten as a *clone* on the right, which is why it must be side-effect free; a numeric
+        // target keeps the in-place loop in codegen (evaluated once, no operator lookup).
+        if (is_user_type(tt)) {
+            if (!pure_lvalue(s->target.get())) {
+                err("`" + s->op + "` on `" + tt->str() + "` is rewritten as `x = x " + op +
+                        " y`, so the left side must be a name, a field, or a subscript with "
+                        "side-effect-free indices; write the update explicitly if it must be "
+                        "evaluated once",
+                    s);
+            }
+            auto bin = std::make_unique<Binary>();
+            bin->op = op;
+            bin->line = s->line;
+            bin->col = s->col;
+            bin->left = clone_expr(*s->target);
+            bin->right = std::move(s->value);
+            // Install the rewrite before checking: a diagnostic leaves the statement well-formed
+            // (`x = x op y`), never with a null operand, so a later clone/re-check cannot crash.
+            s->op = "=";
+            s->value = std::move(bin);
+            auto* lowered = static_cast<Binary*>(s->value.get());
+            lowered->ty = check_binary(lowered);
+            check_assign(lowered, tt, "assignment");
+            return;
+        }
         TypePtr vt = check_expr(s->value.get(), tt);
         if (op == "<<" || op == ">>") {
             if (!is_integer(tt) || !is_integer(vt)) err("`both sides of `" + s->op + "` must be integers", s);
@@ -406,6 +475,7 @@ namespace muc_detail {
     bool Sema::is_borrow_expr(Expr* e) {
         if (auto* c = dynamic_cast<Call*>(e)) return c->by_ref;
         if (auto* ix = dynamic_cast<Index*>(e)) return ix->by_ref;
+        if (auto* b = dynamic_cast<Binary*>(e)) return b->by_ref;
         return false;
     }
 

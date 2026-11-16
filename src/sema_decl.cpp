@@ -9,7 +9,7 @@ namespace muc_detail {
     [[noreturn]] void Sema::err(const std::string& msg, const Node* node) const {
         const int line = node ? node->line : 0;
         const int col = node ? node->col : 0;
-        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string());
+        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string(), inst_notes_text());
     }
 
     void Sema::warn(const std::string& msg, const Node* node) const {
@@ -22,7 +22,17 @@ namespace muc_detail {
     [[noreturn]] void Sema::err_ts(const std::string& msg, const TypeSpec* spec) const {
         const int line = spec ? spec->line : 0;
         const int col = spec ? spec->col : 0;
-        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string());
+        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string(), inst_notes_text());
+    }
+
+    std::string Sema::inst_notes_text() const {
+        // Innermost instantiation first: the reader asked for the outermost call, but the body that
+        // failed is the innermost one, so the chain reads "error → who expanded it → who expanded that".
+        std::string notes;
+        for (auto it = instantiation_notes_.rbegin(); it != instantiation_notes_.rend(); ++it) {
+            notes += "\n" + *it;
+        }
+        return notes;
     }
 
     UnitInfo& Sema::info() { return infos_.at(cur_->name); }
@@ -905,6 +915,7 @@ namespace muc_detail {
                 sig.is_operator = m->is_operator;
                 sig.ret_self = m->ret && m->ret->is_self;
                 for (auto& p : m->params) sig.params_self.push_back(p->spec && p->spec->is_self);
+                if (m->is_operator) init_interface_operator(m.get(), sig, itf->name);
                 itf->ty->methods.push_back(std::move(sig));
                 m->cname = method_cname(u->name, itf->name, m->name, m->pty);
             }
@@ -1066,8 +1077,10 @@ namespace muc_detail {
             }
         }
     }
-Sema::Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool single_thread)
-    : units_(std::move(units)), entry_(std::move(entry)), single_thread_(single_thread) {}
+Sema::Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool single_thread,
+           bool strict)
+    : units_(std::move(units)), entry_(std::move(entry)), single_thread_(single_thread),
+      strict_(strict) {}
 
 Program Sema::run() {
     collect();
@@ -1091,6 +1104,7 @@ Program Sema::run() {
     // A constrained generic body is checked at its definition (build 156), after every unit's own
     // bodies: the constraint types must be fully resolved by then.
     check_generic_contracts();
+    if (strict_) warn_uninstantiated_generics();
     if (!errors_.empty()) throw MuErrorList(std::move(errors_));
     check_entry();
 
@@ -1116,5 +1130,36 @@ Program Sema::run() {
     prog.entry = entry_;
     return prog;
 }
+
+    void Sema::init_interface_operator(MethodDecl* m, MethodSig& sig, const std::string& iface_name) {
+        // The receiver is the first operand: an interface member has no `this`, so `Self` is the only
+        // way to say the operator applies to the implementor. Only that operand may borrow (the rest
+        // are ordinary operands, e.g. the byte of a stream).
+        if (m->params.empty() || !m->params[0]->spec || !m->params[0]->spec->is_self) {
+            err("interface `" + iface_name +
+                    "`: an operator must spell its receiver as the first `Self` operand "
+                    "(write `T operator" + m->name.substr(8) + "(Self c, ...)`)",
+                m);
+        }
+        for (size_t i = 1; i < m->params.size(); ++i) {
+            if (m->params[i]->by_ref) {
+                err("interface `" + iface_name +
+                        "`: only the receiver (the first operand) may be a `ref` parameter",
+                    m->params[i].get());
+            }
+        }
+        // The witness type has no storage, so a borrow return can only mean "the element the
+        // subscription exposes"; every other operator must return a value.
+        if (m->ret_ref && m->name != "operator[]") {
+            err("interface `" + iface_name +
+                    "`: only `operator[]` may return a borrow; another operator's receiver is a value, "
+                    "not storage",
+                m);
+        }
+        if (!m->params.empty()) {
+            sig.recv_ref = m->params[0]->by_ref;
+            sig.recv_cref = sig.recv_ref && m->params[0]->is_const;
+        }
+    }
 
 }  // namespace muc_detail

@@ -22,6 +22,9 @@ namespace muc_detail {
                 auto itf = dynamic_cast<InterfaceDecl*>(d.get());
                 if (!itf || !itf->ty) continue;
                 for (auto& m : itf->ty->methods) {
+                    // Operators are static-only contract members: no itable slot (a `ref` receiver
+                    // could not travel through a vtable, and dispatch is not the point).
+                    if (m.is_operator) continue;
                     std::string k = sigKey(m);
                     if (islotIndex.count(k)) continue;
                     islotIndex[k] = static_cast<int>(islotSigs.size());

@@ -17,6 +17,83 @@ namespace muc_detail {
 
 namespace {
 
+// Keeps the "being instantiated" set exception-safe: a diagnostic thrown from inside the expansion
+// must not leave the key behind, or a later use reports a bogus recursive instantiation.
+struct BusyGuard {
+    std::unordered_set<std::string>& busy;
+    std::string key;
+    BusyGuard(std::unordered_set<std::string>& b, std::string k) : busy(b), key(std::move(k)) {
+        busy.insert(key);
+    }
+    ~BusyGuard() { busy.erase(key); }
+    BusyGuard(const BusyGuard&) = delete;
+    BusyGuard& operator=(const BusyGuard&) = delete;
+};
+
+// RAII frame for the instantiation chain. The stack is only rendered when a diagnostic fires, so a
+// successful instantiation pays nothing beyond a small string.
+struct InstNoteGuard {
+    std::vector<std::string>& notes;
+    InstNoteGuard(std::vector<std::string>& n, std::string text) : notes(n) {
+        notes.push_back(std::move(text));
+    }
+    ~InstNoteGuard() { notes.pop_back(); }
+    InstNoteGuard(const InstNoteGuard&) = delete;
+    InstNoteGuard& operator=(const InstNoteGuard&) = delete;
+};
+
+// A type parameter is checked at the definition only when it has a conjunction of interface bounds;
+// a bare `<T>` and an `A | B` union stay instantiation-time (3.15.5).
+bool param_checked_at_definition(const TypeParam& tp) {
+    return !tp.bounds.empty() && tp.op != TypeParam::Op::Or;
+}
+
+// `T`, `U` (only the parameters that are not checked at the definition).
+std::string definition_unchecked_names(const std::vector<TypeParam>& tps) {
+    std::string out;
+    for (const auto& tp : tps) {
+        if (param_checked_at_definition(tp)) continue;
+        if (!out.empty()) out += ", ";
+        out += "`" + tp.name + "`";
+    }
+    return out;
+}
+
+size_t definition_unchecked_count(const std::vector<TypeParam>& tps) {
+    size_t n = 0;
+    for (const auto& tp : tps) {
+        if (!param_checked_at_definition(tp)) ++n;
+    }
+    return n;
+}
+
+// The "why did this fail only now?" explanation for an unchecked parameter.
+std::string unchecked_hint(const std::vector<TypeParam>& tps) {
+    const std::string names = definition_unchecked_names(tps);
+    if (names.empty()) return {};
+    std::string first;
+    for (const auto& tp : tps) {
+        if (!param_checked_at_definition(tp)) {
+            first = tp.name;
+            break;
+        }
+    }
+    return " — " + names + (definition_unchecked_count(tps) == 1 ? " is" : " are") +
+           " unconstrained, so the definition is checked only when it is instantiated; add a "
+           "constraint (for example `" + first + ": IAdd` for `+`, `" + first +
+           ": IOrder` for comparisons) to check it at the definition";
+}
+
+// Attach the hint to the outermost unchecked frame only: a nested chain would otherwise repeat the
+// same explanation on every line.
+std::string unchecked_hint_once(const std::vector<TypeParam>& tps,
+                                const std::vector<std::string>& notes) {
+    for (const auto& n : notes) {
+        if (n.find("unconstrained, so the definition") != std::string::npos) return {};
+    }
+    return unchecked_hint(tps);
+}
+
 // Type syntax → canonical display name (`[const] Box<Vec<int[]>>`), used for `Type::name` and the instance cache key.
 std::string canon_spec(const TypeSpec& s) {
     std::string prefix = s.is_const ? "const " : "";
@@ -190,6 +267,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         ~DepthGuard() { --d; }
     } depth_guard{generic_depth_};
     generic_busy_.insert(key);
+    BusyGuard busy_guard{generic_busy_, key};
 
     auto* sd_tmpl = dynamic_cast<StructDecl*>(tmpl_decl);
     auto* cd_tmpl = dynamic_cast<ClassDecl*>(tmpl_decl);
@@ -202,6 +280,14 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         sm_tmpl ? sm_tmpl->type_params
                 : (sd_tmpl ? sd_tmpl->type_params
                            : (cd_tmpl ? cd_tmpl->type_params : id_tmpl->type_params));
+    // Every diagnostic raised below now carries the use site and, for an unchecked parameter, the
+    // reason it could not be reported at the definition.
+    InstNoteGuard inst_note(
+        instantiation_notes_,
+        "  while instantiating `" + display + "` (requested at " +
+            (u ? u->filename : std::string()) + ":" + std::to_string(spec->line) + ":" +
+            std::to_string(spec->col) + ")" + unchecked_hint_once(tps, instantiation_notes_));
+    instantiated_templates_.insert(tmpl_decl);
     if (tps.size() != spec->args.size()) {
         err_ts("generic `" + base + "` expects " + std::to_string(tps.size()) +
                    " type argument(s) but got " + std::to_string(spec->args.size()),
@@ -332,7 +418,6 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         ty->sum_layout = std::move(layout);
         generic_insts_[key] = ty;
         infos_[tmpl_unit].sums[display] = sm;
-        generic_busy_.erase(key);
         generic_decls_.push_back(std::move(clone));
         return ty;
     }
@@ -386,6 +471,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             sig.is_operator = m->is_operator;
             sig.ret_self = m->ret && m->ret->is_self;
             for (auto& p : m->params) sig.params_self.push_back(p->spec && p->spec->is_self);
+            if (m->is_operator) init_interface_operator(m.get(), sig, display);
             ity->methods.push_back(std::move(sig));
             m->cname = method_cname(tmpl_unit, display, m->name, m->pty);
         }
@@ -395,7 +481,6 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         id->ty = ity;
         generic_insts_[key] = ity;
         infos_[tmpl_unit].interfaces[display] = id;
-        generic_busy_.erase(key);
 
         // Default method body check (same context save/restore as other types)
         {
@@ -551,7 +636,6 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     } else {
         infos_[tmpl_unit].classes[display] = cd;
     }
-    generic_busy_.erase(key);  // this instance may appear again inside method bodies (recursion)
 
     // Check method bodies (same context save/restore as check_struct / check_class)
     {
@@ -657,6 +741,14 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
         err("recursive generic instantiation of `" + display + "`", c);
     }
     generic_busy_.insert(key);
+    BusyGuard busy_guard{generic_busy_, key};
+    // The instantiation chain + "why only now" hint for an unchecked parameter.
+    InstNoteGuard inst_note(
+        instantiation_notes_,
+        "  while instantiating `" + display + "` at " + (u ? u->filename : std::string()) + ":" +
+            std::to_string(c->line) + ":" + std::to_string(c->col) +
+            unchecked_hint_once(tmpl->type_params, instantiation_notes_));
+    instantiated_templates_.insert(tmpl);
 
     std::unique_ptr<Decl> clone = clone_decl(*tmpl);
     auto* fn = static_cast<FuncDecl*>(clone.get());
@@ -694,51 +786,60 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     if (info_it != infos_.end()) tu = info_it->second.unit;
     cur_ = tu;
 
-    // Instantiated functions bypass resolve_unit_types, so their signatures are resolved here
-    fn->rty = resolve_type(fn->ret.get(), tu);
-    fn->pty.clear();
-    fn->pty_ref.clear();
-    fn->pty_cref.clear();
-    for (auto& p : fn->params) {
-        TypePtr pt = resolve_type(p->spec.get(), tu);
-        if (!p->by_ref) pt = decay_param_type(pt);
-        // The `ref`-legality rule (a borrow may not alias a value that owns something) has to be
-        // re-applied here: a type parameter is resolved only at instantiation, and without this check
-        // the call compiled and then corrupted the heap (the value at the borrow was reference-counted
-        // twice, or a slice handle was atomically bumped in place).
-        if (p->by_ref && !borrowable_type(pt)) {
-            std::string why = "it holds a reference-counted field or has a destructor";
-            if (pt && pt->kind == TypeKind::Slice) why = "a managed sequence is a reference-counted handle";
-            else if (pt && pt->kind == TypeKind::Struct && pt->is_union) why = "a union cannot be borrowed";
-            err("instantiating `" + fn->name + "` with `" + (pt ? pt->str() : "void") +
-                    "` makes parameter `" + p->name + "` a `ref` borrow, and that type cannot be borrowed: " +
-                    why,
-                p.get());
+    auto restore_context = [&] {
+        scopes_ = std::move(saved_scopes);
+        auto_groups_ = std::move(saved_autos);
+        this_local_ = std::move(saved_this);
+        cur_func_ = saved_func;
+        cur_ret_ = saved_ret;
+        cur_name_ = std::move(saved_name);
+        cur_class_ = saved_class;
+        loop_depth_ = saved_loop;
+        in_ctor_ = saved_in_ctor;
+        in_dtor_ = saved_in_dtor;
+        super_ok_ = saved_super;
+        direct_init_expr_ = saved_direct;
+        cur_ = saved_cur;
+    };
+
+    try {
+        // Instantiated functions bypass resolve_unit_types, so their signatures are resolved here
+        fn->rty = resolve_type(fn->ret.get(), tu);
+        fn->pty.clear();
+        fn->pty_ref.clear();
+        fn->pty_cref.clear();
+        for (auto& p : fn->params) {
+            TypePtr pt = resolve_type(p->spec.get(), tu);
+            if (!p->by_ref) pt = decay_param_type(pt);
+            // The `ref`-legality rule (a borrow may not alias a value that owns something) has to be
+            // re-applied here: a type parameter is resolved only at instantiation, and without this check
+            // the call compiled and then corrupted the heap (the value at the borrow was reference-counted
+            // twice, or a slice handle was atomically bumped in place).
+            if (p->by_ref && !borrowable_type(pt)) {
+                std::string why = "it holds a reference-counted field or has a destructor";
+                if (pt && pt->kind == TypeKind::Slice) why = "a managed sequence is a reference-counted handle";
+                else if (pt && pt->kind == TypeKind::Struct && pt->is_union) why = "a union cannot be borrowed";
+                err("instantiating `" + fn->name + "` with `" + (pt ? pt->str() : "void") +
+                        "` makes parameter `" + p->name + "` a `ref` borrow, and that type cannot be borrowed: " +
+                        why,
+                    p.get());
+            }
+            fn->pty.push_back(pt);
+            fn->pty_ref.push_back(p->by_ref);
+            fn->pty_cref.push_back(p->by_ref && p->is_const);
         }
-        fn->pty.push_back(pt);
-        fn->pty_ref.push_back(p->by_ref);
-        fn->pty_cref.push_back(p->by_ref && p->is_const);
+
+        check_func(fn);
+        if (fn->cname.empty()) fn->cname = func_cname(tmpl_unit, fn);
+    } catch (...) {
+        // A diagnostic must not leave a half-checked instance cached or the caller's check context
+        // displaced: the compiler may keep going (up to the error cap) and check more declarations.
+        restore_context();
+        generic_func_insts_.erase(key);
+        throw;
     }
 
-    check_func(fn);
-    if (fn->cname.empty()) fn->cname = func_cname(tmpl_unit, fn);
-
-    // Restore the context
-    scopes_ = std::move(saved_scopes);
-    auto_groups_ = std::move(saved_autos);
-    this_local_ = std::move(saved_this);
-    cur_func_ = saved_func;
-    cur_ret_ = saved_ret;
-    cur_name_ = std::move(saved_name);
-    cur_class_ = saved_class;
-    loop_depth_ = saved_loop;
-    in_ctor_ = saved_in_ctor;
-    in_dtor_ = saved_in_dtor;
-    super_ok_ = saved_super;
-    direct_init_expr_ = saved_direct;
-    cur_ = saved_cur;
-
-    generic_busy_.erase(key);
+    restore_context();
     return fn;
 }
 
@@ -820,38 +921,36 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
             }
             continue;
         }
-        // Operator members: after Self substitution the operands must be `t` — except a subscript,
-        // which is asymmetric by nature: the receiver is `Self` and what follows it is an index or a
-        // key, never `Self`. Requiring every operand to be `Self` made `operator[]` undeclarable in
-        // practice (it type-checked, then failed satisfaction for every type).
+        // Operator members: the receiver is the first operand and must be `Self` (an interface member
+        // has no `this`, so that is the only way to name the implementor). The operands after it are
+        // compared exactly as declared: a stream (`Self operator<<(Self b, byte c)`) or a scaled
+        // arithmetic (`Self operator*(Self a, int k)`) is as legitimate as `Self op Self`. This is
+        // the same asymmetry `operator[]` always had (its index is never `Self`).
         const bool is_subscript = sig->name == "operator[]" || sig->name == "operator[]=";
+        if (sig->params_self.empty() || !sig->params_self[0]) {
+            if (why) {
+                *why = "an operator declared in an interface must spell the receiver as the first `Self` "
+                       "operand (write `T " + sig->name + "(Self c, ...)`)";
+            }
+            return false;
+        }
         std::vector<TypePtr> want;
         for (size_t i = 0; i < sig->params.size(); ++i) {
             want.push_back((i < sig->params_self.size() && sig->params_self[i]) ? t : sig->params[i]);
         }
         const TypePtr want_ret = sig->ret_self ? t : sig->ret;
+        // Whether every operand is the implementor type; only the built-in arithmetic block requires
+        // that (a built-in `+` has no mixed form).
         bool all_t = !want.empty();
         for (size_t i = 0; i < want.size(); ++i) {
-            if (same_type(want[i], t)) continue;
-            if (is_subscript && i > 0) continue;  // the index operand
-            all_t = false;
-        }
-        if (!all_t) {
-            if (why) {
-                if (is_subscript) {
-                    *why = "a subscript declared in an interface needs the receiver as the first `Self` "
-                           "operand (write `T operator[](Self c, isize i)`); a member spelling has no receiver";
-                } else {
-                    *why = "operator `" + sig->name + "` must take `Self` operands";
-                }
-            }
-            return false;
+            if (!same_type(want[i], t)) all_t = false;
         }
 
-        // Built-in operators (note: enum does not participate in arithmetic)
+        // Built-in operators (note: enum does not participate in arithmetic). The built-in block is
+        // `T op T`, so a contract with a different second operand (`Self * int`) is not satisfied by it.
         bool builtin = false;
         if (is_arith_op(sig->name) && t->is_numeric() && t->kind != TypeKind::Enum &&
-            same_type(want_ret, t)) {
+            same_type(want_ret, t) && all_t) {
             builtin = true;
         }
         if (is_cmp_op(sig->name) &&
@@ -882,6 +981,18 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
                         ok = false;
                         break;
                     }
+                    if (i != 0 || !sig->recv_ref) continue;
+                    // A receiver declared `ref Self` must be able to mutate the caller's value: a
+                    // by-value implementation would only touch a copy. A `ref const Self` receiver
+                    // promises read-only use, which a by-value copy also honors.
+                    const bool impl_ref = i < f->pty_ref.size() && f->pty_ref[i];
+                    const bool impl_cref = i < f->pty_cref.size() && f->pty_cref[i];
+                    if (!impl_ref) {
+                        if (!sig->recv_cref) { ok = false; break; }
+                    } else if (!sig->recv_cref && impl_cref) {
+                        ok = false;
+                        break;
+                    }
                 }
                 if (ok) found = true;
             }
@@ -897,8 +1008,11 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
         }
         if (!found && std_info()) try_unit(*std_info(), true);
         // Member operator on a value type: the receiver is the implicit `this`, so the declared parameter
-        // list is the interface signature minus its first operand.
-        if (!found && (t->kind == TypeKind::Struct || t->kind == TypeKind::Class)) {
+        // list is the interface signature minus its first operand. `this` is a writable borrow, which
+        // satisfies both a by-value receiver and a mutable `ref Self` one; a `ref const Self` contract
+        // is not satisfied (there are no `const` methods, so `this` could still write).
+        if (!found && !(sig->recv_ref && sig->recv_cref) &&
+            (t->kind == TypeKind::Struct || t->kind == TypeKind::Class)) {
             for (const auto& m : t->methods) {
                 if (!m.is_operator || m.name != sig->name) continue;
                 if (m.params.size() + 1 != want.size()) continue;
@@ -922,6 +1036,13 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
                     sigdesc += want[i] ? want[i]->str() : "void";
                 }
                 *why = "no `" + sig->name + "` accepting `(" + sigdesc + ")`";
+                if (sig->recv_ref) {
+                    *why += sig->recv_cref
+                                ? "; a `ref const Self` receiver needs an implementation whose first "
+                                  "parameter is `ref const` (there are no `const` member operators)"
+                                : "; a `ref Self` receiver needs an implementation whose first parameter "
+                                  "is `ref` (a member operator qualifies, its `this` is borrowed)";
+                }
             }
             return false;
         }
@@ -1001,6 +1122,10 @@ void Sema::add_contract_members(const TypePtr& witness, const TypePtr& iface) {
         sig.params_self.assign(params.size(), false);
         sig.ret = sig.ret_self ? witness : sig.ret;
         sig.ret_self = false;
+        // The receiver is gone (it is the witness itself / the future `this`), so its borrow mode
+        // has no meaning in the witness's member signature.
+        sig.recv_ref = false;
+        sig.recv_cref = false;
         bool merged = false;
         for (auto& existing : witness->methods) {
             if (!same_params(existing, sig)) continue;
@@ -1024,6 +1149,41 @@ TypePtr Sema::make_contract_witness(const TypeParam& tp, Unit* u, const std::str
         add_contract_members(witness, bt);
     }
     return witness;
+}
+
+void Sema::warn_uninstantiated_generics() {
+    for (auto& u : units_) {
+        cur_ = u.get();
+        for (auto& d : u->templates) {
+            // Sum types have no body, and an interface's default methods are a separate story; the
+            // hint is about bodies/members that are only checked when the template is used.
+            std::string kind, name, what;
+            if (auto* f = dynamic_cast<FuncDecl*>(d.get())) {
+                kind = "function";
+                name = f->name;
+                what = "its body is never checked";
+            } else if (auto* s = dynamic_cast<StructDecl*>(d.get())) {
+                kind = "struct";
+                name = s->name;
+                what = "its member bodies are never checked";
+            } else if (auto* c = dynamic_cast<ClassDecl*>(d.get())) {
+                kind = "class";
+                name = c->name;
+                what = "its member bodies are never checked";
+            } else {
+                continue;
+            }
+            if (d->type_params.empty()) continue;
+            const std::string names = definition_unchecked_names(d->type_params);
+            if (names.empty()) continue;  // every parameter is checked at the definition
+            if (instantiated_templates_.count(d.get())) continue;
+            warn("generic " + kind + " `" + name + "` is never instantiated; " + names +
+                     (definition_unchecked_count(d->type_params) == 1 ? " is" : " are") +
+                     " unconstrained, so " + what +
+                     " (add a constraint to check it at the definition)",
+                 d.get());
+        }
+    }
 }
 
 void Sema::check_generic_contracts() {

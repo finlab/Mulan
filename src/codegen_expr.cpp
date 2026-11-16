@@ -261,6 +261,10 @@ static bool is_numeric(const TypePtr& t) {
                 return evalCall(c);
             }
         }
+        if (auto b = dynamic_cast<Binary*>(e)) {
+            // `ref T operator<<(...)`: the operator call result is the borrowed address
+            if (b->by_ref) return evalBinary(b);
+        }
         // other expressions: evaluate into a temporary first
         Value* v = eval(e);
         auto* tmp = entryAlloca(v->getType(), "tmp", e->ty ? alignOf(e->ty) : 0);

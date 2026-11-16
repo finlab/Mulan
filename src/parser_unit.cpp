@@ -888,7 +888,9 @@ std::unique_ptr<MethodDecl> Parser::parse_interface_operator(TypeSpecPtr ret, bo
     m->is_operator = true;
     m->line = tk.line;
     m->col = tk.col;
-    m->params = parse_params();
+    // An interface operator has no `this`, so the receiver is the first operand and may borrow it:
+    // `Self operator<<(ref Self b, byte c)`. The borrow is only allowed on the receiver (checked by sema).
+    m->params = parse_params(nullptr, /*allow_ref=*/true);
     semicolon();
     return m;
 }
