@@ -136,7 +136,6 @@ struct Analysis {
             return;
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
-            if (ix->get_func) addDep(it, ix->get_func->cname);
             visitExpr(ix->base.get(), it);
             for (auto& idx : ix->indices) visitExpr(idx.get(), it);
             return;
@@ -222,7 +221,7 @@ struct Analysis {
         if (auto fs = dynamic_cast<ForInStmt*>(s)) {
             visitExpr(fs->seq.get(), it);
             visitExpr(fs->step.get(), it);
-            if (fs->idx_fn) addDep(it, fs->idx_fn->cname);
+            if (fs->idx_method) addDep(it, method_key(fs->idx_method));
             if (fs->len_sig) {
                 if (fs->len_sig->owner && fs->len_sig->owner->kind == TypeKind::Struct) {
                     addDep(it, method_key(fs->len_sig));

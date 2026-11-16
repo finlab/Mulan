@@ -36,6 +36,11 @@ bool ident_start(int ch) {
 
 bool ident_cont(int ch) { return ident_start(ch) || is_digit(ch); }
 
+// SPEC 2.5: identifiers reserved for future extensions. They are not keywords (nothing parses them
+// yet), but using one as a name would break later — so they are rejected at the point they appear
+// as an identifier. `move` graduated to a real keyword, so it is not in this list.
+bool reserved_word(const std::string& s) { return s == "where" || s == "typeof"; }
+
 // keyword table (KEYWORDS in lexer.py)
 const std::unordered_set<std::string>& keywords() {
     static const std::unordered_set<std::string> kws = {
@@ -49,7 +54,7 @@ const std::unordered_set<std::string>& keywords() {
         "ushort",   "int",      "uint",    "long",    "ulong",    "float",    "double",
         "usize",    "isize",    "and",     "or",       "not",
         "class",    "interface", "new",    "del",     "weak",     "this",     "super",
-        "override", "operator",  "packed",   "union",    "nocopy",   "move",     "swap",
+        "override", "virtual",  "operator",  "packed",   "union",    "nocopy",   "move",     "swap",
         "try",      "catch",     "throw",    "finally",
     };
     return kws;
@@ -222,6 +227,10 @@ private:
             std::size_t start = i_;
             while (i_ < n_ && ident_cont(peek())) adv();
             tok.text = src_.substr(start, i_ - start);
+            if (reserved_word(tok.text)) {
+                throw MuError("`" + tok.text + "` is reserved for a future extension and cannot be used as an "
+                              "identifier (SPEC 2.5)", tok.line, tok.col);
+            }
             tok.kind = keywords().count(tok.text) != 0 ? TokKind::Kw : TokKind::Ident;
             return tok;
         }

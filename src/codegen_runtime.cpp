@@ -373,9 +373,10 @@ namespace muc_detail {
 
     void Emitter::emitWeakEmptyCheck(IRBuilder<>& hb, BasicBlock* emptyBB, BasicBlock* busyBB) {
         // Acquire: pairs with the release store of `mu_rt_weak_reg`, so a non-null head also makes the
-        // node it points at visible.
+        // node it points at visible. Under `--single-thread` nothing else can touch the registry, so
+        // the ordering (and the atomic itself) has nothing to order against.
         auto* head = hb.CreateAlignedLoad(ptrTy(), weakHeadGlobal(), MaybeAlign(8));
-        head->setAtomic(llvm::AtomicOrdering::Acquire);
+        if (!singleThread) head->setAtomic(llvm::AtomicOrdering::Acquire);
         hb.CreateCondBr(hb.CreateICmpEQ(head, Constant::getNullValue(ptrTy())), emptyBB, busyBB);
     }
 
@@ -417,11 +418,15 @@ namespace muc_detail {
         auto* rmNode = BasicBlock::Create(ctx, "rm.node", fn);
         auto* removed = BasicBlock::Create(ctx, "removed", fn);
         auto* keep = BasicBlock::Create(ctx, "keep", fn);
-        auto* done = BasicBlock::Create(ctx, "done", fn);
+        // Two distinct exits: the registry was empty (no lock held) and the locked path, which must
+        // release the spin lock. Sharing one block made the empty path execute an unlock it never
+        // took — an `xchg 0` on a global cache line, on every object destruction.
+        auto* emptyDone = BasicBlock::Create(ctx, "weak.empty", fn);
+        auto* lockedDone = BasicBlock::Create(ctx, "weak.done", fn);
 
         hb.SetInsertPoint(entry);
         auto* lockBB = BasicBlock::Create(ctx, "weak.lock", fn);
-        emitWeakEmptyCheck(hb, done, lockBB);
+        emitWeakEmptyCheck(hb, emptyDone, lockBB);
         hb.SetInsertPoint(lockBB);
         emitWeakLock(hb);
         auto* curS = hb.CreateAlloca(ptrTy());
@@ -432,7 +437,7 @@ namespace muc_detail {
 
         hb.SetInsertPoint(loop);
         auto* cur = hb.CreateLoad(ptrTy(), curS);
-        hb.CreateCondBr(hb.CreateICmpEQ(cur, Constant::getNullValue(ptrTy())), done, body);
+        hb.CreateCondBr(hb.CreateICmpEQ(cur, Constant::getNullValue(ptrTy())), lockedDone, body);
 
         hb.SetInsertPoint(body);
         auto* f = hb.CreateLoad(ptrTy(), hb.CreateStructGEP(weakNodeTy, cur, 1));
@@ -458,8 +463,11 @@ namespace muc_detail {
         hb.CreateStore(nxt, curS);
         hb.CreateBr(loop);
 
-        hb.SetInsertPoint(done);
+        hb.SetInsertPoint(lockedDone);
         emitWeakUnlock(hb);
+        hb.CreateRetVoid();
+
+        hb.SetInsertPoint(emptyDone);
         hb.CreateRetVoid();
         weakUnregFn = fn;
         return fn;
@@ -482,11 +490,12 @@ namespace muc_detail {
         auto* rmNode = BasicBlock::Create(ctx, "rm.node", fn);
         auto* removed = BasicBlock::Create(ctx, "removed", fn);
         auto* keep = BasicBlock::Create(ctx, "keep", fn);
-        auto* done = BasicBlock::Create(ctx, "done", fn);
+        auto* emptyDone = BasicBlock::Create(ctx, "weak.empty", fn);
+        auto* lockedDone = BasicBlock::Create(ctx, "weak.done", fn);
 
         hb.SetInsertPoint(entry);
         auto* lockBB = BasicBlock::Create(ctx, "weak.lock", fn);
-        emitWeakEmptyCheck(hb, done, lockBB);
+        emitWeakEmptyCheck(hb, emptyDone, lockBB);
         hb.SetInsertPoint(lockBB);
         emitWeakLock(hb);
         auto* curS = hb.CreateAlloca(ptrTy());
@@ -497,7 +506,7 @@ namespace muc_detail {
 
         hb.SetInsertPoint(loop);
         auto* cur = hb.CreateLoad(ptrTy(), curS);
-        hb.CreateCondBr(hb.CreateICmpEQ(cur, Constant::getNullValue(ptrTy())), done, body);
+        hb.CreateCondBr(hb.CreateICmpEQ(cur, Constant::getNullValue(ptrTy())), lockedDone, body);
 
         hb.SetInsertPoint(body);
         auto* target = hb.CreateLoad(ptrTy(), hb.CreateStructGEP(weakNodeTy, cur, 0));
@@ -532,8 +541,11 @@ namespace muc_detail {
         hb.CreateStore(nxt, curS);
         hb.CreateBr(loop);
 
-        hb.SetInsertPoint(done);
+        hb.SetInsertPoint(lockedDone);
         emitWeakUnlock(hb);
+        hb.CreateRetVoid();
+
+        hb.SetInsertPoint(emptyDone);
         hb.CreateRetVoid();
         weakNotifyFn = fn;
         return fn;
@@ -1029,7 +1041,6 @@ namespace muc_detail {
         if (auto b = dynamic_cast<Binary*>(e); b && b->op_func && !b->by_ref) return true;
         if (dynamic_cast<Ternary*>(e)) return true;  // the result slot is already materialized with owned semantics
         if (auto u = dynamic_cast<Unary*>(e); u && u->op_func) return true;
-        if (auto ix = dynamic_cast<Index*>(e); ix && ix->get_func) return true;
         if (auto c = dynamic_cast<Cast*>(e)) return valueOwned(c->expr.get());
         return false;
     }

@@ -195,7 +195,9 @@ namespace muc_detail {
                     if (!c->args.empty()) err("`ptr()` takes no arguments", c);
                     if (!is_lvalue(obj))
                         err("`ptr()` borrows the buffer; the operand must be a variable or a field (bind the temporary first)", c);
-                    if (has_ref_fields(ot->elem) || (ot->elem->kind == TypeKind::Struct && ot->elem->has_dtor)) {
+                    if (has_ref_fields(ot->elem) ||
+                        ((ot->elem->kind == TypeKind::Struct || ot->elem->kind == TypeKind::Array) &&
+                            ot->elem->needs_dtor())) {
                         err("`" + ot->elem->str() +
                                 "` is not a trivial element type: `ptr()` is not available, because a raw write "
                                 "would bypass the retain/release of the element",
@@ -723,9 +725,10 @@ namespace muc_detail {
 
     const MethodSig* Sema::find_member_operator(const TypePtr& recv, const std::string& name,
                                                 const std::vector<Expr*>& args, Node* at) {
-        // Member operators live on value types only: a class operator would be virtual (operators are
-        // static-dispatch and `==` on a class is identity), so the parser does not accept them there.
-        if (!recv || recv->kind != TypeKind::Struct) return nullptr;
+        // Member operators live on structs (borrowed `this`, static dispatch) and on classes (the
+        // receiver is the handle, also static unless the operator is declared `virtual`). `==`/`!=` on a
+        // class stay identity comparison and cannot be declared as members — the parser rejects them.
+        if (!recv || (recv->kind != TypeKind::Struct && recv->kind != TypeKind::Class)) return nullptr;
         std::vector<const MethodSig*> cands;
         for (const auto& m : recv->methods) {
             if (!m.is_operator || m.name != name) continue;
@@ -939,14 +942,15 @@ namespace muc_detail {
                     err("dynamic array length must not be negative", d.get());
                 }
             }
-            if (t->kind == TypeKind::Struct && t->has_dtor) {
-                err("struct `" + t->str() +
-                        "` has a destructor and cannot be a dynamic array element (element construction and destruction are not implemented)",
-                    ne);
-            }
+            // A struct with a destructor is a legal element: destruction is implemented (`dtor_glue`
+            // runs per element) and the allocation zeroes the block, which the language guarantees is a
+            // valid destructible state (SPEC 3.13 zero-value safety). Element *construction* still runs
+            // no user constructor (ctor_glue is pending, agents/value-semantics.md §4).
             // `uninit` leaves the element block undefined, so the elements must not need the zero
             // value to be valid: a reference-holding or destructible element would corrupt RC.
-            if (ne->uninit && (has_ref_fields(t) || (t->kind == TypeKind::Struct && t->has_dtor))) {
+            if (ne->uninit &&
+                (has_ref_fields(t) ||
+                    ((t->kind == TypeKind::Struct || t->kind == TypeKind::Array) && t->needs_dtor()))) {
                 err("`uninit` requires a trivial element type: `" + t->str() +
                         "` holds a reference or has a destructor",
                     ne);

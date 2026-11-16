@@ -11,13 +11,12 @@ struct Vec {
     public int[8] data;
     public isize n;
     public isize length() { return n; }
-}
-
-int operator[](Vec v, isize i) {
-    if i == 3 {
-        throw new Exception("index failed");
+    public int operator[](isize i) {
+        if i == 3 {
+            throw new Exception("index failed");
+        }
+        return data[i];
     }
-    return v.data[i];
 }
 
 int main() {

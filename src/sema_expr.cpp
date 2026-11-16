@@ -125,20 +125,12 @@ namespace muc_detail {
                 }
                 std::vector<TypePtr> opnds{bt};
                 for (auto& it : its) opnds.push_back(it);
-                auto cands = collect_operators("[]", opnds);
-                if (cands.empty()) {
-                    err("type `" + bt->str() + "` does not support subscripting with " +
-                            std::to_string(n) + " index" + (n == 1 ? "" : "es") +
-                            " (no matching `operator[]`)",
-                        e);
-                }
-                std::vector<Expr*> call_args{ix->base.get()};
-                for (auto& ie : ix->indices) call_args.push_back(ie.get());
-                auto f = choose_overload(cands, call_args, "operator[]", e, /*check_ref=*/true);
-                ix->get_func = f;
-                ix->by_ref = is_borrow_type(f->rty);
-                ix->ref_const = ix->by_ref && f->rty->is_const;
-                return referent_of(f->rty);
+                // The free-function form of `operator[]` is a parse error since build 161 (it copied the
+                // receiver on every element access), so only a member declaration can match here.
+                err("type `" + bt->str() + "` does not support subscripting with " + std::to_string(n) +
+                        " index" + (n == 1 ? "" : "es") + ": declare `operator[](…)` inside `" + bt->str() +
+                        "` (a subscript is always a member operator)",
+                    e);
             }
             err("type " + bt->str() + " cannot be subscripted", e);
         }

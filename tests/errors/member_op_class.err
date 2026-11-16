@@ -1,1 +1,1 @@
-member operators are only allowed in a `struct`
+`==` on a class is always identity comparison and cannot be overloaded

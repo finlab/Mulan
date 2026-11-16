@@ -804,8 +804,14 @@ namespace muc_detail {
                 sig.params = m->pty;
                 sig.is_abstract = !m->body;
                 sig.is_override = m->is_override;
+                // An abstract method has no implementation to name, so it is always virtual; an `override`
+                // stays virtual (a further subclass may override it too) — `check_class` verifies the base
+                // declaration allows that. Everything else needs `virtual` (build 160: static by default).
+                sig.is_virtual = m->is_virtual || m->is_override || !m->body;
                 sig.is_public = m->is_public;
                 sig.owner = c->ty;
+                sig.is_operator = m->is_operator;
+                if (m->is_operator) check_member_operator_sig(m.get(), c->ty);
                 c->ty->methods.push_back(std::move(sig));
                 m->cname = method_cname(u->name, c->name, m->name, m->pty);
                 if (!m->body) c->ty->is_abstract = true;

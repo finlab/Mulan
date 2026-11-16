@@ -202,16 +202,17 @@ static bool is_numeric(const TypePtr& t) {
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
             if (ix->by_ref) {
-                // `operator[]` returns a borrow: the call result is the element address
+                // `operator[]` returns a borrow: the call result is the element address. Only the member
+                // form exists since build 161 (the free-function form copied its receiver per access).
                 std::vector<Value*> idxVals;
-                for (auto& ie : ix->indices)
-                    idxVals.push_back(convertTo(eval(ie.get()), ie->ty, Type::make_prim("isize")));
-                if (ix->get_method) {
-                    return emitMemberIndex(ix->get_method, addrOf(ix->base.get()), idxVals);
+                for (size_t k = 0; k < ix->indices.size(); ++k) {
+                    auto& ie = ix->indices[k];
+                    const TypePtr& want =
+                        k < ix->get_method->params.size() ? ix->get_method->params[k] : nullptr;
+                    idxVals.push_back(want ? convertTo(eval(ie.get()), ie->ty, want)
+                                           : convertTo(eval(ie.get()), ie->ty, Type::make_prim("isize")));
                 }
-                std::vector<Expr*> callArgs{ix->base.get()};
-                for (auto& ie : ix->indices) callArgs.push_back(ie.get());
-                return emitUserCall(ix->get_func, callArgs);
+                return emitMemberIndex(ix->get_method, addrOf(ix->base.get()), idxVals);
             }
             TypePtr bt = ix->base->ty;
             std::vector<Value*> idxs;

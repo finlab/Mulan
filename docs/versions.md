@@ -27,6 +27,94 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 161 — 2026-11-17
+
+**`operator[]` must be a member of the type it indexes.**
+
+- The free-function form `T operator[](C c, isize i)` is now a compile error:
+  `operator[] must be declared inside the type it indexes (a member of the struct or class): the
+  free-function form copies the receiver on every element access`. Build 160 made the member form
+  available on classes, so nothing needs the free form any more — and it was a 50× trap: a class cannot
+  take a `ref` parameter, so the free operator copied the handle per element (one retain/release pair,
+  7.5 ns vs 0.15 ns; `Mulan-Agents/bench/value_vs_class/iteration.mu`).
+- Resolution is now single-form: `for-in`'s index shape and `c[i]` both look only at the member operator,
+  so `Index::get_func` and `ForInStmt::idx_fn` (and their lookup/codegen/may-throw plumbing) are gone.
+  The diagnostics point at the member form: `for-in cannot iterate S: the indexed form requires a member
+  'operator[](isize) -> T' in 'S'`, and a failed subscript says `declare 'operator[](…)' inside 'S'`.
+- A member subscript now converts each index to the operator's **declared** parameter type (it used to
+  force `isize`), which is what lets `int operator[](int i)` and multi-index `operator[](usize, usize)`
+  work as members — previously only the free form could declare a non-`isize` index.
+- Interface `IIndex<T>` / `IIndexMut<T>` are unchanged as contracts; satisfaction no longer has a
+  free-function spelling.
+- Tests: `free_index_op` (must-fail). Migrated to the member form: `class_array`, `forin_index`,
+  `multi_index_op`, `para_for_throw_index`, `ref_return`, `objmodel_basic`, `iface_subscript`, and the
+  must-fail cases `forin_badidx` / `forin_badlen` / `forin_nolen` / `forin_ref` / `index_compound` /
+  `ref_loop_const`.
+- Full suite: 678/678 (228 run, 414 must-fail, 23 check, 1 warning, 9 ir, 3 c abi).
+
+#### build 160 — 2026-11-17
+
+**Methods are static-dispatch by default: `virtual` is opt-in; a class may declare member operators.**
+
+- **`virtual` (new keyword).** A base-class method takes a vtable slot only when declared `virtual` (or
+  abstract, which is implicit). `override` now requires the base declaration to be virtual: replacing a
+  non-virtual method is a compile error naming the declaration to mark
+  (`'A::f' is not virtual: declare it 'virtual' in 'A' before overriding it`), not C++-style silent
+  shadowing. An `override` stays virtual, so a further subclass can replace it again; constructors are
+  never virtual; destructors keep dispatching through the class descriptor. Interfaces are unchanged —
+  their members are reached through the itable, so implementing one needs no `virtual`.
+- **Class member operators.** The parser no longer refuses `operator` inside a `class`. The receiver is
+  the handle (a borrowed `this`), so `c[i]` costs no object copy, and `for x in c` over a class container
+  no longer pays a retain/release pair per element: measured 152 ms → 3 ms for 20 M element accesses
+  (`Mulan-Agents/bench/value_vs_class/iteration.mu`). `==` / `!=` remain identity comparison and are
+  rejected as members. A member operator may be `virtual`; calls then dispatch like any other method.
+- **Vtable layout**: only virtual/abstract methods occupy slots, so a class with no virtual method emits
+  no vtable at all (the descriptor points at null) — `tests/ir/export_surface` had to mark its exported
+  class's method `virtual` to keep asserting that a vtable survives internalization.
+- Why: methods were virtual by default, so every call paid `desc → vtable → slot` plus an indirect call
+  that LLVM could not devirtualize inside loops (build 159's closed-world analysis recovered the calls
+  whose signature no subclass overrides; this makes the intent explicit *and* lets a container's
+  subscript stay static). Container-selection consequences: `agents/stdlib/containers.md` §7/§8.
+- Tests: `class_member_op` (run: member `[]`, member `+`, virtual operator override), `override_nonvirtual`
+  (must-fail), `override_required` / `override_ret_mismatch` updated to declare `virtual` first,
+  `member_op_class` now asserts the `==` rejection, `dispatch_override` / `devirt_dispatch` /
+  `class_ctor_dispatch` / `export_surface` declare `virtual` where they rely on dynamic dispatch.
+- Full suite: 677/677 (228 run, 413 must-fail, 23 check, 1 warning, 9 ir, 3 c abi).
+
+#### build 159 — 2026-11-16
+
+**Closed-world devirtualization; weak notification stops touching the lock when the registry is empty;
+reserved words enforced.**
+
+- **Class method calls no longer pay the vtable when the target is unambiguous.** Mulan is closed-world
+  (no class object crosses the C ABI — `export` refuses class types — the whole program is one module and
+  every vtable is internal), so a call can name its target statically when **no strict subclass of the
+  receiver's static type declares a matching method**. `emitMethodCallVals` now asks
+  `methodDispatchIsStatic` and falls back to the existing direct-call path instead of
+  `load desc → load vtable → load slot → call %fn`. This is what lets LLVM inline the call: a loop of
+  `c.get(i)` over a class container drops from 1.1 ns to 0.15 ns per element (measured,
+  `Mulan-Agents/bench/value_vs_class/iteration.mu`), and whole loops collapse to closed form.
+  Abstract methods and any signature that is overridden somewhere keep the vtable — dispatch semantics
+  are unchanged, only the indirect call disappears.
+- **Weak-registry notification**: `mu_rt_weak_notify` / `mu_rt_weak_unreg` used to jump to a single
+  `done` block that unconditionally released the spin lock, so the "registry is empty" path executed a
+  `xchg 0` on a global cache line — on **every** object destruction. The two exits are now separate
+  (empty → return, locked → unlock → return), and under `--single-thread` the empty check is a plain
+  load instead of an atomic acquire. A program without `weak` fields now emits a destroy function that is
+  just `free` + the user destructor.
+- **SPEC 2.5 reserved words are enforced**: `where` / `typeof` are rejected as identifiers at the lexer
+  with a diagnostic naming the rule (they were documented as reserved but accepted). Tests:
+  `reserved_word_where`, `reserved_word_typeof`.
+- Tests: new `tests/ir/return_inplace` pins that a struct result is constructed in the caller's `sret`
+  slot (`- llvm.memcpy`, `- %ret.struct`); `tests/cases/devirt_dispatch` + `tests/ir/dispatch_override`
+  pin the other half of the devirtualization contract — a signature that some subclass overrides keeps its
+  vtable slot and is never bound statically, so an override still runs through a base-class handle.
+  SPEC 6.4.1 now documents that a **class** container cannot avoid the per-element receiver copy (no
+  member operator, `ref` parameters refuse class types), with the measured numbers and the
+  container-selection rule. SPEC 3.15.7 and 3.16.5 refreshed (generic interfaces as value types, generic
+  `struct S<T> : I`, capturing closures are all implemented).
+- Full suite: 675/675 (227 run, 412 must-fail, 23 check, 1 warning, 9 ir, 3 c abi).
+
 #### build 158 — 2026-11-16
 
 **Compiler directives: `#if` / `#elif` / `#else` / `#error` (SPEC 9.2).**

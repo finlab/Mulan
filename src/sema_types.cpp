@@ -56,11 +56,6 @@ namespace muc_detail {
             case TypeSpec::K::Slice: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
                 if (is_void(elem)) err_ts("dynamic array element cannot be void", spec);
-                if (noncopyable_struct(elem)) {
-                    err_ts("struct `" + elem->str() +
-                               "` has a destructor and cannot be a dynamic array element",
-                           spec);
-                }
                 return Type::make_slice(elem, spec->is_const, spec->rank);
             }
             case TypeSpec::K::Array: {

@@ -31,6 +31,10 @@ struct MethodSig {
     std::vector<TypePtr> params;
     bool is_abstract = false;
     bool is_override = false;
+    // `virtual` (or abstract): the method occupies a vtable slot and calls on a class receiver may
+    // dispatch dynamically. Non-virtual methods never enter the vtable (closed-world devirtualization
+    // in codegen still upgrades virtual calls whose signature no subclass overrides).
+    bool is_virtual = false;
     bool is_public = true;  // the private-by-default is explicitly overridden by class methods; struct/interface methods are always public
     TypePtr owner;  // the class/interface that declares this method (filled by sema)
     // The two forms of interface members (U34 M3):

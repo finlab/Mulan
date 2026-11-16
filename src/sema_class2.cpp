@@ -816,37 +816,18 @@ namespace muc_detail {
             s->idx_method = picked_m;
             return;
         }
-        for (auto* c : collect_operators("[]", {st, us})) {
-            if (c->pty.size() != 2) continue;
-            bool recv_ok = same_type(c->pty[0], st) ||
-                           (c->pty[0] && c->pty[0]->kind == TypeKind::Ptr &&
-                            same_type(c->pty[0]->elem, st));
-            if (!recv_ok) continue;
-            if (!same_type(c->pty[1], us)) {
-                if (saw_index.empty() && c->pty[1]) saw_index = c->pty[1]->str();
-                continue;
-            }
-            if (picked) {
-                err("`" + st->str() + "` has more than one `operator[](`" + st->str() +
-                        ", isize)` overload; `for-in` cannot choose one",
-                    s->seq.get());
-            }
-            picked = c;
-        }
-        if (!picked) {
-            std::string msg = "`for-in` cannot iterate " + st->str() + ": the indexed form also requires `operator[](" +
-                              st->str() + ", isize) -> T`";
+        {
+            // No member `operator[]`: the free-function form was removed in build 161 because it copied
+            // its receiver on every element access (7.5 ns vs 0.15 ns per element).
+            std::string msg = "`for-in` cannot iterate " + st->str() +
+                              ": the indexed form requires a member `operator[](isize) -> T` in `" + st->str() +
+                              "`";
             if (!saw_index.empty()) {
-                msg += "(the `operator[]` found takes index type `" + saw_index + "`; `isize` is required)";
+                msg += " (the `operator[]` found takes index type `" + saw_index +
+                       "`; `isize` is required)";
             }
             err(msg, s->seq.get());
         }
-
-        s->loop_kind = "index";
-        s->seq_ty = st;
-        s->elem_ty = referent_of(picked->rty);
-        s->len_sig = len;
-        s->idx_fn = picked;
     }
 
     void Sema::check_for(ForInStmt* s) {
@@ -908,9 +889,8 @@ namespace muc_detail {
         if (s->by_ref && s->loop_kind == "string") {
             err("`string` is immutable and cannot be iterated with `for ref`", s);
         }
-        // Both spellings of `operator[]` borrow: a member overload (idx_method) and a free function
-        // (idx_fn). resolve_index_shape prefers the member form, so the check has to see both.
-        const TypePtr idx_ret = s->idx_method ? s->idx_method->ret : (s->idx_fn ? s->idx_fn->rty : nullptr);
+        // `for ref` needs the member `operator[]` to return a borrow.
+        const TypePtr idx_ret = s->idx_method ? s->idx_method->ret : nullptr;
         if (s->by_ref && s->loop_kind == "index" && !is_borrow_type(idx_ret)) {
             err("user types do not support `for ref` unless `operator[]` returns `ref T`; use `for i, x` with `c[i] = ...` instead",
                 s->seq.get());

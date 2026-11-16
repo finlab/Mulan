@@ -4,7 +4,7 @@ class A {
     int seen;
     A() { seen = probe(); }
     ~A() { }
-    int probe() { return 1; }
+    virtual int probe() { return 1; }
     int get_seen() { return seen; }
 }
 class B : A {

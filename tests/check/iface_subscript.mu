@@ -15,14 +15,6 @@ struct Member {
     int operator[](isize i) { return d[i]; }
 }
 
-// free-function spelling: the receiver is the first parameter
-struct Free {
-    int[] d;
-
-    isize length() { return d.length(); }
-}
-int operator[](Free f, isize i) { return f.d[i] * 10; }
-
 // a borrow satisfies the declared value return
 struct Borrowed {
     int[] d;
@@ -45,18 +37,12 @@ int main() {
     m.d[0] = 1;
     m.d[1] = 2;
 
-    Free f = {};
-    f.d = new int[2];
-    f.d[0] = 1;
-    f.d[1] = 2;
-
     Borrowed b = {};
     b.d = new int[2];
     b.d[0] = 1;
     b.d[1] = 2;
 
     int a = total<Member>(m);
-    int c = total<Free>(f);
     int e = total<Borrowed>(b);
-    return a * 100 + c * 10 + e;
+    return a * 100 + e;
 }

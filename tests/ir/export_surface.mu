@@ -10,7 +10,7 @@ export class Shape {
 public:
     int side;
     Shape(int n) { side = n; }
-    int area() { return side * side; }
+    virtual int area() { return side * side; }
 }
 
 int main() {

@@ -3,9 +3,8 @@ unit forin_nolen;
 // missing length(): cannot be iterated with for-in
 struct NoLen {
     int x;
+    int operator[](isize i) { return x; }
 }
-
-int operator[](NoLen v, usize i) { return v.x; }
 
 int main() {
     NoLen n = {};

@@ -10,9 +10,8 @@ struct Grid {
 
 struct Table {
     int[2,2] v;
+    ref int operator[](usize i, usize j) { return v[i,j]; }
 }
-
-ref int operator[](ref Table t, usize i, usize j) { return t.v[i,j]; }
 
 int main() {
     Grid g;

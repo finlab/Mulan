@@ -2,23 +2,21 @@ unit forin_index;
 
 extern int puts(const char* s);
 
-// index form: length() -> isize + operator[](C, isize)
+// index form: length() -> isize + a member operator[](isize)
 struct Vec {
     int[4] data;
     isize n;
     isize length() { return n; }
+    int operator[](isize i) { return data[i]; }
 }
-
-int operator[](Vec v, isize i) { return v.data[i]; }
 
 class List {
     int[4] data;
     isize n;
     List() { n = 0; }
     isize length() { return n; }
+    int operator[](isize i) { return data[i]; }
 }
-
-int operator[](List l, isize i) { return l.data[i]; }
 
 Vec make() {
     Vec v = {};

@@ -498,7 +498,13 @@ namespace muc_detail {
             }
 
             const MethodSig* base_sig = nullptr;
-            if (c->ty->base) base_sig = find_sig(c->ty->base, sig);
+            bool base_from_class = false;
+            if (c->ty->base) {
+                if (auto s = find_sig(c->ty->base, sig)) {
+                    base_sig = s;
+                    base_from_class = true;
+                }
+            }
             if (!base_sig) {
                 for (auto& i : c->ty->interfaces) {
                     if (auto s = find_sig(i, sig)) {
@@ -508,6 +514,15 @@ namespace muc_detail {
                 }
             }
             if (base_sig) {
+                // Methods are static-dispatch by default (build 160): a base method only takes part in
+                // dynamic dispatch when it was declared `virtual` (or is abstract). Interface members are
+                // reached through the itable and need no `virtual`.
+                if (base_from_class && !base_sig->is_virtual) {
+                    err("`" + base_sig->owner->str() + "::" + sig.name +
+                            "` is not virtual: declare it `virtual` in `" + base_sig->owner->str() +
+                            "` before overriding it (methods are static-dispatch by default)",
+                        m.get());
+                }
                 if (!m->is_override) {
                     err("overriding or implementing a base class method requires `override`", m.get());
                 }

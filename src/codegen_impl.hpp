@@ -735,6 +735,15 @@ struct Emitter {
 
     int slotOf(const TypePtr& t, const MethodSig* sig);
 
+    // ------------------------------------------------------------ closed-world devirtualization
+    // Mulan classes are closed-world: no class object crosses the C ABI (`export` refuses class
+    // parameters/returns), the whole program is in one module and every vtable is internal, so the
+    // set of possible dynamic types at any call site is known. A call can therefore name its target
+    // statically when no strict subclass of the receiver's static type declares a matching method.
+    std::vector<TypePtr> allClasses;  // every Class type in the program (generic instances included)
+    void collectClassTypes();
+    bool methodDispatchIsStatic(const TypePtr& recvTy, const MethodSig* sig);
+
     FunctionCallee methodFn(const MethodSig* sig);
 
     GlobalVariable* emitVtable(const TypePtr& cls);

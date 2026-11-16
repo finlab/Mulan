@@ -158,7 +158,7 @@ declaration checking the same shape, `class` equality staying identity — is SP
 |---|---|---|
 | `IIterator<T>` | `bool next()`, `T current()` | a cursor for `for-in` (SPEC 6.4.2) |
 | `IIterable<T>` | `IIterator<T> iterator()` | a container |
-| `IIndex<T>` | `isize length()`, `T operator[](Self c, isize i)` | a readable container; satisfied by a member `T operator[](isize)`, a free `T operator[](C, isize)`, a `ref T` implementation (a borrow is usable as a value), or the built-in block subscript |
+| `IIndex<T>` | `isize length()`, `T operator[](Self c, isize i)` | a readable container; satisfied by a member `T operator[](isize)` (subscripts are member-only since build 161), a `ref T` implementation (a borrow is usable as a value), or the built-in block subscript |
 | `IIndexMut<T> : IIndex<T>` | also `ref T operator[](Self c, isize i)` | a writable container; satisfied only by a `ref` implementation (or the built-in block subscript). Required by a generic body that writes through an element, including `for ref` |
 | `IEqual` | `==` (`!=` is derived, SPEC 3.11) | numbers, pointers, a value type with those operators |
 | `IOrder : IEqual` | `<` (`>`, `<=`, `>=` are derived from it) | numbers, pointers, enums, a value type with those operators; promises a **total order** |

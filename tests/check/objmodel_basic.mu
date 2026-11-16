@@ -12,9 +12,8 @@ class Vec {
     Vec() { data = new int[3]; data[0] = 0; data[1] = 0; data[2] = 0; }
     ~Vec() { }
     int get(int i) { return data[i]; }
+    ref int operator[](int i) { return data[i]; }
 }
-
-ref int operator[](Vec v, int i) { return v.data[i]; }
 
 int f(int a) { return 1; }
 int f(long a) { return 2; }

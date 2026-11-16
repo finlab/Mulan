@@ -5,9 +5,8 @@ struct Vec {
     int* data;
 
     isize length() { return n; }
+    ref const int operator[](isize i) { return data[i]; }
 }
-
-ref const int operator[](ref const Vec v, isize i) { return v.data[i]; }
 
 int main() {
     int[2] a = {1, 2};

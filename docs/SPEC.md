@@ -753,7 +753,7 @@ class Button : Widget {
 
 - **Only single inheritance is allowed**: `class D : B`; `B` is a class (for interfaces see 3.10).
 - Field layout: base class fields come first, derived fields after; field names must be unique along the whole inheritance chain (shadowing is not allowed).
-- Methods are **virtual by default**; overriding a base class virtual method must use `override`, and the signature must match exactly.
+- Methods are **static-dispatch by default** (build 160); a base class method that subclasses may replace must be declared `virtual`, and the replacement is written `override` with a signature that matches exactly. Overriding a non-virtual method is a compile error (methods are never silently shadowed).
 - Same name with a different signature → overload (see 3.11), not an override.
 - A class with unimplemented methods (declared only, without a body) is an **abstract class** and cannot be `new`ed; no `abstract` keyword is introduced.
 - An abstract class may have constructors, for derived classes to call via `super(...)`.
@@ -832,7 +832,7 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
 - Fields can be accessed directly inside a method; `this` cannot be rebound.
 - **No `const` methods are provided** (decided not to do, see 12 table 98): methods have no read-only/mutable distinction, `this` is always writable;
   use a read-only `interface` when read-only must be expressed at an API boundary.
-- Methods are virtual by default; `override` must have a signature identical to the base class/interface method.
+- Methods are **static-dispatch by default** (build 160): `virtual` marks a method a subclass may replace, and `override` must have a signature identical to the base class/interface method. A subclass may not redeclare a non-virtual base method (compile error, not silent shadowing).
 
 **Overloading** (free functions, methods, constructors, operators):
 
@@ -846,7 +846,7 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
 - The same signature must use `override`; a different signature is an overload.
 - `extern` C functions do not participate in overload resolution; neither does `main`.
 
-**Operator overloading** (free functions, plus member operators on a `struct`):
+**Operator overloading** (free functions, plus member operators on a `struct` or `class`):
 
 ```c
 // free function form
@@ -868,12 +868,22 @@ struct Vec {
 | Unary `-` | Yes | |
 | `< <= > >=` | Yes | Must return `bool` |
 | `& \| ^ << >>` | Yes | Bitwise operations |
-| `[]` | Yes | **Read and write through one operator**: `T operator[](C c, I i)` reads; `ref T operator[](C c, I i)` returns a borrow, so `c[i]` is a writable lvalue (`c[i] = v`, `c[i] += v`, `for ref` all work). **`operator[]=` was removed (0.0.101)**: a computed setter with no storage to borrow is no longer expressible |
+| `[]` | Yes | **Read and write through one member operator**: `T operator[](I i)` reads; `ref T operator[](I i)` returns a borrow, so `c[i]` is a writable lvalue (`c[i] = v`, `c[i] += v`, `for ref` all work). **Member-only since build 161** — the free-function form `T operator[](C c, I i)` is a compile error (it copied the receiver per element access). **`operator[]=` was removed (0.0.101)**: a computed setter with no storage to borrow is no longer expressible |
 | `== !=` | struct only | A class's `==` is fixed as identity comparison and cannot be overloaded; a struct that does not define `==` is not comparable |
 | `()` `=` `&& \|\|` `as/new` | No | Conflicts with the built-in semantics |
 
 - An operator must have at least one struct/class operand; built-in types cannot be redefined.
-- **Member operators** (`implemented 0.0.87`) are allowed **inside a `struct` only** and are always static-dispatch (never virtual): a class operator would be virtual by default, which would break `==` identity and add dispatch cost, so classes keep the free-function form (a member operator written in a class body is a compile error). The receiver is the implicit `this`, so `s[i]` / `s == t` cost no copy and no retain/release; the parameter list is the free form minus the receiver (binary 1, unary 0, `[]` 1, `[]=` 2) and a member operator wins over a free function with the same signature.
+- **Member operators** (`implemented 0.0.87`; allowed in a `class` since build 160) are static-dispatch unless
+  declared `virtual`. The receiver is the implicit `this`: a `struct`'s `this` is the object address, a
+  `class`'s `this` is the handle, so `s[i]` / `s == t` / `c[i]` cost no copy and no retain/release. The
+  parameter list is the free form minus the receiver (binary 1, unary 0, `[]` 1) and a member operator wins
+  over a free function with the same signature. **`==` / `!=` are the exception for a class**: they stay
+  identity comparison and are rejected as members (overloading them would make `a == b` mean two different
+  things for the same type depending on the static type).
+  > Why a class member operator matters: the free-function form copies its receiver on every call, and a
+  > class cannot take a `ref` parameter, so `for x in c` over a class container with a free `operator[]`
+  > costs one retain/release pair per element (measured 7.5 ns vs 0.15 ns/element; see
+  > `agents/stdlib/containers.md`). The member form removes that entirely.
 - An operator function is an ordinary function and may be placed in any unit; a duplicate definition or a resolution ambiguity → compile error.
 - **Compound assignment is not an overloadable operator** (`+=`, `-=`, `*=`, `<<=`, … are absent from the
   table above, and `x++` / `x--` are statement-only). For a numeric or pointer target — including a `ref`
@@ -1106,8 +1116,9 @@ T: A | B  →  type set is the union (wider)  →  available members of T are th
 - **Subscript members are asymmetric**: `operator[]` takes the receiver plus an index or key, so only the
   *receiver* operand has to be `Self`; the operands after it may be any type. A signature must therefore
   spell the receiver explicitly (`T operator[](Self c, isize i)`), because an interface member has no
-  `this`. A container satisfies it with either spelling — a member `T operator[](isize)` (the receiver is
-  the implicit `this`) or a free `T operator[](C, isize)` — and a `ref T` implementation satisfies the
+  `this`. A container satisfies it with a member `T operator[](isize)` (the receiver is the implicit
+  `this`; the free-function spelling is a compile error since build 161), and a `ref T` implementation
+  satisfies the
   declared `T`, since a borrow is usable as a value. A contract may declare the return as `ref T`
   instead, and then only a `ref` implementation satisfies it — that is what lets a generic body write
   through elements (`c[i] = v`) without an `operator[]=` or a second contract. A built-in block (`T[]`)
@@ -1154,15 +1165,18 @@ type `Money` does not satisfy `IAdd` for type parameter `T`: no `operator+` acce
 - `Self` may only be used bare (`Self x`); nesting is not supported yet (`Self[]`).
 - `auto` is not used as a substitute: `auto` is a deduction placeholder and `Self` is a dependent type; the semantics of the two are orthogonal.
 
-#### 3.15.7 Current limitations (0.0.72)
+#### 3.15.7 Current limitations (updated 2026-11-16, build 159)
 
 | Limitation | Description |
 |---|---|
-| A generic interface is **only usable as a constraint** | `ISeq<int>` may be used in a `T:` constraint; it **cannot be used as the type of a variable/field** (explicitly not done; the rationale is given below) |
-| A generic struct/class does not support interface base classes | `struct S<T> : I` is currently an error, pending U33 and M5b |
 | A generic struct/class does not support `const` members | Type-level compile-time constants are not wired up yet |
-| A generic interface does not support inheritance | `interface IList<T> : ISeq<T>` is currently an error |
 | Not supported | Method-level generics, type argument deduction, associated types, specialization, generic `extern`, generic type aliases |
+
+Lifted since 0.0.72 (kept here so the old table's rows are not misread as current): a generic interface is
+a **usable value type** (`IIterator<int>` as a local/field/return type, dispatch through the itable,
+0.0.108); a generic struct/class **can** implement interfaces (`struct S<T> : I`, 0.0.119/0.0.120); a
+generic interface **can** inherit (`interface IList<T> : ISeq<T>`); `Self[]`/`Self`-typed members work
+as constraints.
 
 #### 3.15.8 Why there is no "value type as an interface value"
 
@@ -1421,10 +1435,10 @@ by the matching `)` followed by `=>`), the `Func` type kind (canonical spelling 
 value, lambda lowering and single-pass result-type inference), and codegen (`ptr` + an indirect call; each lambda is a
 hidden `FuncDecl` emitted with the unit).
 
-Not implemented: capturing closures (the `delegate` type exists since 0.0.109 — 3.16.1a — but its environment
-is always null until capture analysis lands), method values, generic function values
-(`max2<int>` as a value), and anonymous function types in declaration positions (a unit-level variable, a local
-declaration and a return type must name the type with `type` first).
+Not implemented: method values, generic function values (`max2<int>` as a value), and anonymous function
+types in declaration positions (a unit-level variable, a local declaration and a return type must name the
+type with `type` first). Capturing closures **are** implemented since 0.0.110 (single-field environments,
+immediate-invocation stack environments; `[weak x]` captures since 0.0.130) — see 3.16.1a.
 
 ### 3.17 Concurrency: `para`, `thread`
 
@@ -1828,7 +1842,8 @@ int operator[](Vec v, isize i) { return v.data[i]; }   // free-function operator
 
 - Conditions (all must hold):
   - a method `length() -> isize`;
-  - `operator[](isize) -> T`, either a **member operator** on the container or a free-function operator `operator[](C, isize) -> T` (3.11).
+  - `operator[](isize) -> T`, a **member operator** on the container (3.11 — the free-function form was
+    removed in build 161).
 - Signatures are matched **exactly** on `isize`: `operator[](C, int)` does not qualify (no narrowing conversion); on error the actual signature is reported.
 - Lowering: `isize n = c.length();` (evaluated only once) → `for (isize i = 0; i < n; ++i) { T x = c[i]; ... }`.
 - The element type is the return type of `operator[]` (if it returns `ref T`, the element type is `T`); **proxy/reference wrappers are not recognized**
@@ -1836,8 +1851,13 @@ int operator[](Vec v, isize i) { return v.data[i]; }   // free-function operator
 - `length()` must equal the number of valid indices of `[]`; a mismatch is a user error (debug bounds checks catch it).
 - In `for i, x`, `i` is the real `isize` index.
 - `for ref` requires `operator[]` to return `ref T` (the element is then addressable); when `[]` returns a value, use `for i, x` + `c[i] = ...`.
-- **Copy cost**: with the free-function form, `C` is copied on every iteration (reference fields retained/released field by field); write it as
-  `ref C` or, better, define the operator as a **member** (`T operator[](isize i)`), whose borrowed `this` makes every iteration a plain indexed load.
+- **Copy cost**: a subscript is **always a member operator** (6.4.1, build 161), whose receiver is the
+  implicit `this`: the object address for a `struct`, the handle for a `class`. Both are borrowed, so an
+  iteration is a plain indexed load with no copy and no retain/release.
+  > The free-function form `T operator[](C c, isize i)` was **removed** (build 161). A class cannot take a
+  > `ref` parameter, so that form copied the receiver's handle on every element access — one
+  > retain/release pair per element, measured 7.5 ns vs 0.15 ns per element (50x) in
+  > `agents/stdlib/containers.md`. Declaring it is now a compile error.
 - A temporary container (`for x in makeVec()`) is constructed only once and cleaned up at loop exit according to U24.
 
 #### 6.4.2 Cursor form (sequential access; implemented 0.0.96)
@@ -1973,7 +1993,7 @@ int add(int a, int b) {
 - Within the same unit, calling before the definition is allowed (two-pass parsing).
 - Recursion is legal.
 - Function overloading is allowed (rules in 3.11); type-level generics are supported (see 3.15); default arguments, capturing closures, and nested functions are not supported (non-capturing lambdas are provided, see 3.16); variadic parameters are limited to `extern` (see 7.1).
-- Class methods, constructors, and `this` are covered in 3.11/3.12; methods are virtual by default, and an override is marked `override`.
+- Class methods, constructors, and `this` are covered in 3.11/3.12; methods are static by default, `virtual` opts into dynamic dispatch, and an override is marked `override`.
 - Parameters are mutable bindings (phase one); whether they become immutable by default is pending.
 - `extern` declaration:
 
@@ -2545,7 +2565,7 @@ switch v {
 | 74 | Multithreaded reference counting | Decided (see 94): atomic RC (relaxed increments, release decrement + acquire fence), objects may be shared across threads; the `--single-thread` opt-in build drops the atomics and rejects concurrency constructs (`para`, `para for`, `std.thread` / `std.task`) |
 | 75 | User destructor `deinit` | Not provided under that name: user destructors are written `~T()` and are implemented (see 3.13 / #92); fields are released in reverse declaration order |
 | 76 | Inheritance model | Decided: single inheritance + multiple interface implementations; no multiple inheritance (see 3.9/3.10) |
-| 77 | Virtual methods | Decided: virtual by default; overrides/implementations are written `override` |
+| 77 | Virtual methods | **Changed (build 160): static by default.** `virtual` opts a base class method into dynamic dispatch; a replacement is written `override` and requires the base declaration to be virtual (overriding a non-virtual method is an error, not silent shadowing). Rationale: methods were virtual by default, so a plain value-free class paid 3 dependent loads + an indirect call per call site, and LLVM could not devirtualize inside loops; the closed-world analysis alone (build 159) already recovers most of it, but an explicit `virtual` also lets a class member operator stay static and makes the cost visible at the declaration. Constructors are never virtual; destructors always dispatch through the class descriptor. |
 | 78 | Abstract classes | Decided: having unimplemented methods makes a class implicitly abstract and it cannot be `new`ed |
 | 79 | Interface default methods | Decided: allowed; on conflict the class must explicitly override (a default on a derived interface refines the base default); a `struct` implementing an interface materializes the default as an ordinary method (`this` = the struct), see 3.10 |
 | 80 | Constructors | Decided: overloading is allowed; `super(args)` comes first; C++-style dispatch; fields are cleared to zero first |

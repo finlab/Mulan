@@ -481,6 +481,10 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
             advance();
             prefix_override = true;
         }
+        if (at_kw("virtual")) {
+            throw err("`virtual` is only meaningful in a class: a struct has no inheritance, so its methods "
+                      "are always static");
+        }
         bool ret_ref = false;
         TypeSpecPtr spec = parse_return_type(ret_ref);
         if (at_kw("operator")) {
@@ -781,12 +785,26 @@ std::unique_ptr<Decl> Parser::parse_class() {
             continue;
         }
         bool prefix_override = false;
-        if (at_kw("override")) {
+        bool prefix_virtual = false;
+        while (at_kw("override") || at_kw("virtual")) {
+            if (at_kw("override")) {
+                if (prefix_override) throw err("`override` cannot be repeated");
+                prefix_override = true;
+            } else {
+                if (prefix_virtual) throw err("`virtual` cannot be repeated");
+                prefix_virtual = true;
+            }
             advance();
-            prefix_override = true;
+        }
+        if (prefix_override && prefix_virtual) {
+            throw err("`virtual` and `override` cannot be combined: `override` already implies the base method "
+                      "is virtual, and a fresh virtual method is written `virtual` alone");
         }
         const Token t = peek();
         if (t.kind == TokKind::Ident && t.text == cd->name && peek(1).is_op("(")) {
+            if (prefix_override || prefix_virtual) {
+                throw err_at("a constructor is never virtual: construction runs on the concrete class", t);
+            }
             const Token ctor_name = advance();
             cd->ctors.push_back(parse_ctor(ctor_name));
             cd->ctors.back()->is_public = member_pub;
@@ -806,14 +824,28 @@ std::unique_ptr<Decl> Parser::parse_class() {
         TypeSpecPtr spec = parse_return_type(ret_ref);
         if (prefix_weak) spec->weak = true;
         if (at_kw("operator")) {
-            throw err("member operators are only allowed in a `struct`: operators are static dispatch and a class "
-                      "operator would be virtual (write a free function `T operator+(C a, C b)` instead)");
+            if (prefix_weak) {
+                throw err("`weak` can only be used on class fields, not on member operators");
+            }
+            auto op = parse_member_operator(std::move(spec), ret_ref);
+            // A class's `==`/`!=` stays identity comparison (SPEC 3.11): overloading it would make
+            // `a == b` mean two different things for the same type depending on the static type.
+            if (op->name == "operator==" || op->name == "operator!=") {
+                throw err("`==` on a class is always identity comparison and cannot be overloaded; write a free "
+                          "function (`bool same(C a, C b)`) when value equality is wanted");
+            }
+            op->is_override = prefix_override;
+            op->is_virtual = prefix_virtual;
+            op->is_public = member_pub;
+            cd->methods.push_back(std::move(op));
+            continue;
         }
         const Token name_tok = expect_ident("member name");
         if (at_op("(")) {
             if (prefix_weak) throw err_at("`weak` can only be used on fields, not on methods", name_tok);
             auto m = parse_method(std::move(spec), ret_ref, name_tok);
             if (prefix_override) m->is_override = true;
+            if (prefix_virtual) m->is_virtual = true;
             m->is_public = member_pub;
             cd->methods.push_back(std::move(m));
             continue;
@@ -821,6 +853,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
         if (ret_ref) {
             throw err_at("`ref` can only modify a method return type; a field cannot have a reference type", name_tok);
         }
+        if (prefix_virtual) throw err_at("`virtual` can only be used on a method", name_tok);
         if (prefix_override) throw err_at("`override` can only be used on methods", name_tok);
         if (spec->is_const) {
             // type-level compile-time constant: `const T NAME = <const-expr>;`
@@ -898,6 +931,9 @@ std::unique_ptr<Decl> Parser::parse_interface() {
         if (at_kw("const")) {
             throw err("interface `" + id->name + "` does not support const members");
         }
+        // `virtual` on an interface method is redundant (every interface method is abstract), accepted so
+        // that the SPEC's interface examples read naturally.
+        if (at_kw("virtual")) advance();
         bool ret_ref = false;
         TypeSpecPtr spec = parse_return_type(ret_ref);
         if (at_kw("operator")) {
@@ -1002,6 +1038,14 @@ std::unique_ptr<FuncDecl> Parser::parse_operator_func(TypeSpecPtr ret, bool ret_
         sym = advance().text;
     } else {
         throw err("expected operator after `operator`");
+    }
+    if (sym == "[]") {
+        // Build 161: the subscript must be a member of the type it indexes. The free-function form had
+        // to copy its receiver on every element access (a class cannot take a `ref` parameter), which
+        // measured 50x slower in a loop — and the member form takes a borrowed `this`/handle instead.
+        throw err_at("`operator[]` must be declared inside the type it indexes (a member of the `struct` "
+                     "or `class`): the free-function form copies the receiver on every element access",
+                     tk);
     }
 
     auto f = std::make_unique<FuncDecl>();

@@ -15,9 +15,8 @@ class Grid {
     int n;
     Grid() { n = 0; cells[0] = null; cells[1] = null; }
     ~Grid() { }
+    int operator[](int i) { return cells[i].get(); }
 }
-
-int operator[](Grid g, int i) { return g.cells[i].get(); }
 
 int main() {
     Cell[3] cells = {};

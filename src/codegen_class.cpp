@@ -130,17 +130,20 @@ namespace muc_detail {
         auto it = vtabMemo2.find(cls.get());
         if (it != vtabMemo2.end()) return it->second;
         std::vector<const MethodSig*> out;
+        // Only `virtual` (and abstract) methods take a slot: a plain class method is static-dispatch,
+        // so it is reached by a direct call even through a base-class handle (build 160).
+        auto add = [&out](const MethodSig& m) {
+            if (!m.is_virtual && !m.is_abstract) return;
+            for (auto* s : out) {
+                if (same_sig(*s, m)) return;
+            }
+            out.push_back(&m);
+        };
         if (cls->kind == TypeKind::Class && cls->base && cls->base->kind == TypeKind::Class) {
             out = vtableOf(cls->base);
-            for (auto& m : cls->methods) {
-                bool found = false;
-                for (auto* s : out) {
-                    if (same_sig(*s, m)) { found = true; break; }
-                }
-                if (!found) out.push_back(&m);
-            }
+            for (auto& m : cls->methods) add(m);
         } else {
-            for (auto& m : cls->methods) out.push_back(&m);
+            for (auto& m : cls->methods) add(m);
         }
         return vtabMemo2[cls.get()] = std::move(out);
     }
@@ -163,6 +166,43 @@ namespace muc_detail {
             if (same_sig(*v[i], *sig)) return static_cast<int>(i);
         }
         return -1;
+    }
+
+    // Every Class type in the program, generic instantiations included (sema appends those to the
+    // entry unit's decls).
+    void Emitter::collectClassTypes() {
+        allClasses.clear();
+        for (auto& u : prog.units) {
+            for (auto& d : u->decls) {
+                auto* c = dynamic_cast<ClassDecl*>(d.get());
+                if (c && c->ty) allClasses.push_back(c->ty);
+            }
+        }
+    }
+
+    // Closed-world dispatch decision: true when every possible dynamic type of `recvTy` runs the
+    // implementation `sig` names, so the call site can be a direct call instead of
+    // `load desc -> load vtable -> load slot -> call %fn`. Sound because no class object crosses the
+    // C ABI (no `export` of class types) and every vtable is internal to this module.
+    bool Emitter::methodDispatchIsStatic(const TypePtr& recvTy, const MethodSig* sig) {
+        if (!recvTy || recvTy->kind != TypeKind::Class || !sig) return false;
+        if (sig->is_abstract) return false;  // no implementation to name without the vtable
+        if (!findImpl(recvTy, *sig)) return false;
+        for (const auto& cls : allClasses) {
+            if (!cls || cls == recvTy) continue;
+            bool derived = false;
+            for (TypePtr b = cls->base; b; b = b->base) {
+                if (b == recvTy) {
+                    derived = true;
+                    break;
+                }
+            }
+            if (!derived) continue;
+            for (auto& m : cls->methods) {
+                if (same_sig(m, *sig)) return false;  // an override exists somewhere: keep the vtable
+            }
+        }
+        return true;
     }
 
     FunctionCallee Emitter::methodFn(const MethodSig* sig) {

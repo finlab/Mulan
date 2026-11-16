@@ -129,9 +129,9 @@ struct Member : Expr {
 struct Index : Expr {
     ExprPtr base;
     std::vector<ExprPtr> indices;  // a[i] / a[i,j] / a[i,j,k]
-    // sema: the selected function is recorded when subscripting a user type goes through an operator overload
-    FuncDecl* get_func = nullptr;
-    const MethodSig* get_method = nullptr;  // sema: member `operator[]` on a struct (borrowed receiver)
+    // sema: the member `operator[]` of a user type (the free-function form is a parse error since
+    // build 161: it copied the receiver on every element access)
+    const MethodSig* get_method = nullptr;  // borrowed receiver for a struct, the handle for a class
     bool by_ref = false;      // `operator[]` returns a borrow: the expression type is the referent and the value is the element address
     bool ref_const = false;   // whether the borrow is read-only (`ref const T`)
 };
@@ -516,9 +516,8 @@ struct ForInStmt : Stmt {
     TypePtr var_ty;
     TypePtr idx_ty;                      // the i of `for i, x`: usize
     std::unique_ptr<LocalVar> idx_lvar;  // the index variable symbol (codegen uses its cname)
-    const MethodSig* len_sig = nullptr;  // the index form: length() -> usize
-    FuncDecl* idx_fn = nullptr;          // the index form: operator[](C, usize) -> T
-    const MethodSig* idx_method = nullptr;  // the index form: member operator[](usize) -> T
+    const MethodSig* len_sig = nullptr;  // the index form: length() -> isize
+    const MethodSig* idx_method = nullptr;  // the index form: member operator[](isize) -> T
     std::string cname;
     std::unique_ptr<LocalVar> lvar;  // the loop variable symbol (codegen uses its cname/by_ref)
     // cursor form (6.4.2): contract declared in std.interfaces (IIterator<T>)
@@ -614,6 +613,9 @@ struct MethodDecl : Node {
     std::vector<std::unique_ptr<Param>> params;
     std::unique_ptr<Block> body;  // nullptr = an abstract method
     bool is_override = false;
+    // `virtual` on a class method: it gets a vtable slot and subclasses may override it. Methods are
+    // static-dispatch by default (build 160); an abstract method is implicitly virtual.
+    bool is_virtual = false;
     bool is_public = false;  // visible only inside the unit by default
     // sema: materialized from an interface default implementation (U34 M4); the body text belongs to
     // `iface_unit`, so it is re-checked with that unit as the resolution context

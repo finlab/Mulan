@@ -634,10 +634,8 @@ using ArgPack = Emitter::ArgPack;
             b.SetInsertPoint(bodyBB2);
             Value* ci2 = b.CreateLoad(i64(), idx);
             if (idxSlot) b.CreateStore(ci2, idxSlot);
-            Value* ev = s->idx_method ? emitMemberIndex(s->idx_method, seqAddr, {ci2})
-                                      : emitOperatorIndexCall(s->idx_fn, seqAddr, sty, ci2, seqUnaligned);
-            if ((s->idx_method && is_borrow_type(s->idx_method->ret)) ||
-                (s->idx_fn && is_borrow_type(s->idx_fn->rty))) {
+            Value* ev = emitMemberIndex(s->idx_method, seqAddr, {ci2});
+            if (is_borrow_type(s->idx_method->ret)) {
                 // borrowed element: a ref binding stores the pointer; a value binding reads it out on the spot
                 if (s->by_ref) b.CreateStore(ev, varSlot);
                 else b.CreateStore(loadAt(lt(s->elem_ty), ev, false), varSlot);

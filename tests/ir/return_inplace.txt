@@ -1,0 +1,6 @@
+# Returning an aggregate by value constructs it in the caller's hidden pointer (SPEC 7.2/9): the
+# function takes `sret` and writes the fields through it, and no copy out of a local temporary is
+# materialised anywhere in the module.
++ ^define void @"mu\$return_inplace\$make\$isize"\(ptr noalias .*sret\(%mu_return_inplace_Big\)
+- llvm\.memcpy
+- %ret\.struct

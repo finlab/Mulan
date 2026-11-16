@@ -9,6 +9,7 @@ struct Vec {
 
     isize length() { return n; }
     ref int at(isize i) { return data[i]; }
+    ref int operator[](isize i) { return data[i]; }
 }
 
 // borrowed receiver + borrowed return: writes through to the caller's storage (inline storage containers too)
@@ -17,10 +18,9 @@ struct Small {
 
     isize length() { return 4; }
     ref int at(isize i) { return v[i]; }
+    ref int operator[](isize i) { return v[i]; }
 }
 
-ref int operator[](ref Vec v, isize i) { return v.data[i]; }
-ref int operator[](ref Small s, isize i) { return s.v[i]; }
 ref const int peek(ref const Vec v, isize i) { return v.data[i]; }
 
 void bump(ref int x) { x += 1; }
@@ -32,9 +32,8 @@ struct PVec {
     P* data;
 
     isize length() { return n; }
+    ref P operator[](isize i) { return data[i]; }
 }
-
-ref P operator[](ref PVec v, isize i) { return v.data[i]; }
 
 int main() {
     int[4] a = {1, 2, 3, 4};

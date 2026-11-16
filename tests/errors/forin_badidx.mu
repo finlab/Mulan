@@ -5,9 +5,8 @@ struct Vec {
     int[4] data;
     isize n;
     isize length() { return n; }
+    int operator[](int i) { return data[i]; }
 }
-
-int operator[](Vec v, int i) { return v.data[i]; }
 
 int main() {
     Vec v = {};

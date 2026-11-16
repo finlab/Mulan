@@ -1,0 +1,6 @@
+base 10
+derived-as-base 20
+derived 20
+call base 10
+call derived 20
+plain 101

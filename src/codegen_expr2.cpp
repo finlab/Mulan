@@ -48,7 +48,7 @@ using ArgPack = Emitter::ArgPack;
         }
 
         int slot = slotOf(recvTy, sig);
-        if (slot >= 0) {
+        if (slot >= 0 && !methodDispatchIsStatic(recvTy, sig)) {
             Value* dp = b.CreateGEP(i8(), recv, ConstantInt::get(i64(), 8));
             Value* desc = b.CreateLoad(ptrTy(), dp);
             Value* vtp = b.CreateGEP(i8(), desc, ConstantInt::get(i64(), 16));
@@ -104,10 +104,30 @@ using ArgPack = Emitter::ArgPack;
     }
 
     Value* Emitter::emitMemberOp(const MethodSig* sig, Expr* recv, const std::vector<Expr*>& args) {
+        // A class member operator receives the handle (borrowed `this`, so no object copy); a struct one
+        // receives the object address. Dispatch goes through the same path as a method call, so a
+        // `virtual` operator still resolves dynamically.
+        if (recv->ty && recv->ty->kind == TypeKind::Class) {
+            Value* h = eval(recv);
+            const bool owned = ownsReference(recv);
+            ArgPack pack = prepareArgs(args, sig->params);
+            Value* r = emitMethodCallVals(sig, h, recv->ty, pack.vals, recv);
+            releaseTemps(pack);
+            if (owned) emitReleaseRef(h, recv->ty);
+            if (mayThrow.mayThrowMethod(sig, recv->ty)) emitCheckPending();
+            return r;
+        }
         return emitStructMethodCall(sig, addrOf(recv), args);
     }
 
     Value* Emitter::emitMemberIndex(const MethodSig* sig, Value* recvAddr, const std::vector<Value*>& idxVals) {
+        if (sig->owner && sig->owner->kind == TypeKind::Class) {
+            // `recvAddr` is the slot holding the handle; the operator itself takes the handle by value
+            Value* h = b.CreateLoad(ptrTy(), recvAddr);
+            Value* r = emitMethodCallVals(sig, h, sig->owner, idxVals, nullptr);
+            if (mayThrow.mayThrowMethod(sig, sig->owner)) emitCheckPending();
+            return r;
+        }
         std::vector<LType*> pty{ptrTy()};
         for (const auto& p : sig->params) pty.push_back(lt(p));
         FunctionCallee callee = mod->getOrInsertFunction(
@@ -776,16 +796,14 @@ using ArgPack = Emitter::ArgPack;
         if (auto ix = dynamic_cast<Index*>(e)) {
             if (ix->get_method) {
                 std::vector<Value*> idxVals;
-                for (auto& ie : ix->indices)
-                    idxVals.push_back(convertTo(eval(ie.get()), ie->ty, Type::make_prim("isize")));
+                for (size_t k = 0; k < ix->indices.size(); ++k) {
+                    auto& ie = ix->indices[k];
+                    const TypePtr& want =
+                        k < ix->get_method->params.size() ? ix->get_method->params[k] : nullptr;
+                    idxVals.push_back(want ? convertTo(eval(ie.get()), ie->ty, want)
+                                           : convertTo(eval(ie.get()), ie->ty, Type::make_prim("isize")));
+                }
                 Value* r = emitMemberIndex(ix->get_method, addrOf(ix->base.get()), idxVals);
-                if (ix->by_ref) return loadAt(lt(e->ty), r, unalignedExpr(e));
-                return r;
-            }
-            if (ix->get_func) {
-                std::vector<Expr*> callArgs{ix->base.get()};
-                for (auto& ie : ix->indices) callArgs.push_back(ie.get());
-                Value* r = emitUserCall(ix->get_func, callArgs);
                 if (ix->by_ref) return loadAt(lt(e->ty), r, unalignedExpr(e));
                 return r;
             }

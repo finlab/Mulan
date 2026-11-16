@@ -366,6 +366,7 @@ namespace muc_detail {
         }
         // object layout and class descriptors
         buildIfaceSlots();
+        collectClassTypes();  // closed-world devirtualization needs the full class set
         // reserve all descs first (a derived class may reference a base class desc), then fill in the initializers
         for (auto& u : prog.units) {
             curUnit = u->name;

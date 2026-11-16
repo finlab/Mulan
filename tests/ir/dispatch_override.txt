@@ -1,0 +1,8 @@
+# Closed-world devirtualization (build 159) must keep a signature's vtable entry when some subclass
+# overrides it: the *existence* of the override decides, not the receiver expression. The runtime half of
+# this guarantee is tests/cases/devirt_dispatch.mu (a call through a base handle must run the override).
++ define .*@?"mu\$dispatch_override\$MDerived\$m"
+# the override occupies the vtable slot of the derived class …
++ vt\$Derived" = internal constant .*@?"mu\$dispatch_override\$MDerived\$m"
+# … and the base implementation is never bound statically on a base-class receiver
+- call i32 @?"mu\$dispatch_override\$MBase\$m"
