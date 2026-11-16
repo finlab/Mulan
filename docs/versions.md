@@ -27,6 +27,22 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 167 — 2026-11-17
+
+**Assignment fast path for the identical handle.**
+
+- `b = a` when both already hold the same object is a no-op for the reference count: the lowering now
+  compares the handles and keeps the retain/release pair on the different-pointer arm only (a class
+  handle compares its pointer, an interface value its `{obj, desc}` object field). A loop that
+  re-assigns the same value stops paying two atomics per iteration, and the assignment loop becomes
+  optimizable at all.
+- Regression: `tests/cases/assign_same_rc.mu` (a different source still releases the old value, the
+  same source keeps the count, interface assignment works), `tests/ir/assign_same.(mu|txt)` (the
+  comparison and the two arms are in the emitted IR). Also `tests/errors/reserved_ident.mu` pins the
+  `where` / `typeof` reserved-word rejection that SPEC 2.5 already required.
+
+Full suite: 716/716 (253 run, 425 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 166 — 2026-11-17
 
 **Second audit batch: sum/interface lowering, generic instantiation, contract spelling, diagnostics.**

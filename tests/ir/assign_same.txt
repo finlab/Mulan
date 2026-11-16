@@ -1,0 +1,6 @@
+# The assignment lowering compares the old and the new handle and keeps the retain/release pair on
+# the "different pointer" arm only.
++ ^define .*@main\(
++ assign.same
++ assign.diff
++ atomicrmw sub ptr

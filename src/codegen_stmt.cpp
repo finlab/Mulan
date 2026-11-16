@@ -360,9 +360,30 @@ using ArgPack = Emitter::ArgPack;
                 }
                 if (isRefKind(as->target->ty)) {
                     Value* old = loadAt(lt(as->target->ty), addr, una);
+                    // `b = a` when both already hold the same pointer is a no-op for the count: the
+                    // retain and the release cancel out. Skipping the pair keeps a loop that re-assigns
+                    // the same value from paying two atomics per iteration (the fast path COW strings
+                    // and shared_ptr implementations take).
+                    BasicBlock* sameBB = BasicBlock::Create(ctx, "assign.same", curFn);
+                    BasicBlock* diffBB = BasicBlock::Create(ctx, "assign.diff", curFn);
+                    BasicBlock* doneBB = BasicBlock::Create(ctx, "assign.done", curFn);
+                    // An interface value is a `{obj, desc}` aggregate: the object pointer decides
+                    // identity (`pnv`/`pold`), and the copy path treats the pair as one handle.
+                    Value* cmpOld = old;
+                    Value* cmpNew = nv;
+                    if (as->target->ty->kind == TypeKind::Interface) {
+                        cmpOld = b.CreateExtractValue(old, {0});
+                        cmpNew = b.CreateExtractValue(nv, {0});
+                    }
+                    b.CreateCondBr(b.CreateICmpEQ(cmpOld, cmpNew), sameBB, diffBB);
+                    b.SetInsertPoint(diffBB);
                     if (!ownsReference(as->value.get())) emitRetainRef(nv, as->target->ty);
                     emitReleaseRef(old, as->target->ty);
                     storeAt(nv, addr, una);
+                    b.CreateBr(doneBB);
+                    b.SetInsertPoint(sameBB);
+                    b.CreateBr(doneBB);
+                    b.SetInsertPoint(doneBB);
                     return;
                 }
                 TypePtr tty = as->target->ty;
