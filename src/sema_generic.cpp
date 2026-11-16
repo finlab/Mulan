@@ -699,6 +699,19 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     for (auto& p : fn->params) {
         TypePtr pt = resolve_type(p->spec.get(), tu);
         if (!p->by_ref) pt = decay_param_type(pt);
+        // The `ref`-legality rule (a borrow may not alias a value that owns something) has to be
+        // re-applied here: a type parameter is resolved only at instantiation, and without this check
+        // the call compiled and then corrupted the heap (the value at the borrow was reference-counted
+        // twice, or a slice handle was atomically bumped in place).
+        if (p->by_ref && !borrowable_type(pt)) {
+            std::string why = "it holds a reference-counted field or has a destructor";
+            if (pt && pt->kind == TypeKind::Slice) why = "a managed sequence is a reference-counted handle";
+            else if (pt && pt->kind == TypeKind::Struct && pt->is_union) why = "a union cannot be borrowed";
+            err("instantiating `" + fn->name + "` with `" + (pt ? pt->str() : "void") +
+                    "` makes parameter `" + p->name + "` a `ref` borrow, and that type cannot be borrowed: " +
+                    why,
+                p.get());
+        }
         fn->pty.push_back(pt);
         fn->pty_ref.push_back(p->by_ref);
         fn->pty_cref.push_back(p->by_ref && p->is_const);
@@ -742,6 +755,13 @@ bool is_arith_op(const std::string& n) {
 // positions in `sig` that come from `Self` are replaced with `self_ty`.
 bool type_has_method(const TypePtr& t, const MethodSig& sig, const TypePtr& self_ty, int depth = 0) {
     if (!t || depth > 64) return false;
+    // A built-in managed sequence has no declared methods: `length()` is a compiler-lowered accessor
+    // (SPEC 6.4.3). Without this the most common container of all would not satisfy `IIndexable`.
+    if (t->kind == TypeKind::Slice && !sig.is_operator && sig.name == "length" && sig.params.empty() &&
+        sig.ret && sig.ret->kind == TypeKind::Prim &&
+        (sig.ret->name == "isize" || sig.ret->name == "usize")) {
+        return true;
+    }
     for (const auto& m : t->methods) {
         if (m.name != sig.name) continue;
         if (m.params.size() != sig.params.size()) continue;
@@ -797,18 +817,31 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
             }
             continue;
         }
-        // Operator members: after Self substitution all operands must be `t`
+        // Operator members: after Self substitution the operands must be `t` — except a subscript,
+        // which is asymmetric by nature: the receiver is `Self` and what follows it is an index or a
+        // key, never `Self`. Requiring every operand to be `Self` made `operator[]` undeclarable in
+        // practice (it type-checked, then failed satisfaction for every type).
+        const bool is_subscript = sig->name == "operator[]" || sig->name == "operator[]=";
         std::vector<TypePtr> want;
         for (size_t i = 0; i < sig->params.size(); ++i) {
             want.push_back((i < sig->params_self.size() && sig->params_self[i]) ? t : sig->params[i]);
         }
         const TypePtr want_ret = sig->ret_self ? t : sig->ret;
         bool all_t = !want.empty();
-        for (const auto& p : want) {
-            if (!same_type(p, t)) all_t = false;
+        for (size_t i = 0; i < want.size(); ++i) {
+            if (same_type(want[i], t)) continue;
+            if (is_subscript && i > 0) continue;  // the index operand
+            all_t = false;
         }
         if (!all_t) {
-            if (why) *why = "operator `" + sig->name + "` must take `Self` operands";
+            if (why) {
+                if (is_subscript) {
+                    *why = "a subscript declared in an interface needs the receiver as the first `Self` "
+                           "operand (write `T operator[](Self c, isize i)`); a member spelling has no receiver";
+                } else {
+                    *why = "operator `" + sig->name + "` must take `Self` operands";
+                }
+            }
             return false;
         }
 
@@ -823,6 +856,12 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
             want_ret->is_bool()) {
             builtin = true;
         }
+        // A built-in block answers the subscript itself: `T[]` with an `isize` index yields its element.
+        if (is_subscript && t->kind == TypeKind::Slice && want.size() == 2 &&
+            same_type(want[1], Type::make_prim("isize")) &&
+            (same_type(want_ret, t->elem) || same_type(referent_of(want_ret), t->elem))) {
+            builtin = true;
+        }
         if (builtin) continue;
 
         // User-defined operators: find a free function with the same signature in a visible unit (exact match, no implicit conversion)
@@ -833,7 +872,7 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
             for (FuncDecl* f : it->second) {
                 if (need_pub && !f->is_public) continue;
                 if (f->pty.size() != want.size()) continue;
-                if (!same_type(f->rty, want_ret)) continue;
+                if (!same_type(f->rty, want_ret) && !same_type(referent_of(f->rty), want_ret)) continue;
                 bool ok = true;
                 for (size_t i = 0; i < want.size(); ++i) {
                     if (!same_type(f->pty[i], want[i])) {
@@ -860,7 +899,8 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
             for (const auto& m : t->methods) {
                 if (!m.is_operator || m.name != sig->name) continue;
                 if (m.params.size() + 1 != want.size()) continue;
-                if (!same_type(m.ret, want_ret)) continue;
+                // `ref T` satisfies a declared `T`: a borrow is usable as a value
+                if (!same_type(m.ret, want_ret) && !same_type(referent_of(m.ret), want_ret)) continue;
                 bool ok = true;
                 for (size_t i = 1; i < want.size(); ++i) {
                     if (!same_type(m.params[i - 1], want[i])) {
@@ -873,7 +913,12 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
         }
         if (!found) {
             if (why) {
-                *why = "no `" + sig->name + "` accepting `(" + t->str() + ", " + t->str() + ")`";
+                std::string sigdesc;
+                for (size_t i = 0; i < want.size(); ++i) {
+                    if (i) sigdesc += ", ";
+                    sigdesc += want[i] ? want[i]->str() : "void";
+                }
+                *why = "no `" + sig->name + "` accepting `(" + sigdesc + ")`";
             }
             return false;
         }

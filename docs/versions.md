@@ -27,6 +27,47 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 153 — 2026-11-16
+
+**A generic `ref` parameter is checked after substitution, and a `ref` subscript works in a constraint.**
+
+- `ref`-parameter legality ("a borrow may not alias a value that owns something") was only checked for
+  concrete types. A type parameter is resolved at instantiation, so `void f<T>(ref T c)` compiled for a
+  `T` holding a managed sequence and then **corrupted the heap** at run time (the argument was treated
+  as owned: the code emitted `atomicrmw add` against the address of the handle instead of the block, and
+  the caller's handle was mangled). The check now runs in `instantiate_generic` with a diagnostic naming
+  the parameter, the offending type and the reason (reference-counted field / union / managed sequence).
+- A constraint can declare a **`ref` subscript** (`ref T operator[](Self c, isize i)`), a `ref`
+  implementation satisfies it, and a generic body can therefore write through the elements:
+  `c[i] = v` now type-checks and stores into the caller's block. The container is passed **by value**
+  (the handle is shared), which is what a generic algorithm needs — no `ref` borrow of the container is
+  required, and the language keeps refusing one for a type that owns a block.
+- New cases: `ref_generic_rc` (must-fail), `iface_ref_subscript` (run). Full suite: 636/636 with
+  `MUC_VERIFY_MEM=1`.
+
+#### build 152 — 2026-11-16
+
+**A subscript is declarable in a constraint, so `IIndexable<T>` can actually constrain generic code.**
+
+- `operator[]` / `operator[]=` are asymmetric: only the **receiver** operand has to be `Self`, the
+  operands after it (an index, a key) may be any type. The old rule demanded that every operand be
+  `Self`, which is exactly wrong for a subscript — an interface could declare it, but **no type could
+  ever satisfy it**, so `IIndexable` silently lacked its subscript half.
+- An interface member has no `this`, so the signature must spell the receiver:
+  `T operator[](Self c, isize i)`. A container satisfies it with either spelling — a member
+  `T operator[](isize)` or a free `T operator[](C, isize)` — and a `ref T` implementation now
+  satisfies the declared `T` (a borrow is usable as a value). The same relaxation applies to
+  free `operator` functions.
+- Built-in managed sequences count as satisfying the method half: `T[]` has no declared methods (its
+  `length()` is compiler-lowered), so `T[]` now satisfies `IIndexable<T>` through the built-in
+  subscript. Generic algorithms can therefore accept a block and a container alike.
+- A member spelling inside an interface now gets a diagnostic that says to write the `Self` receiver.
+- `std.interfaces.IIndexable<T>` declares `T operator[](Self c, isize i)`.
+- New cases: `iface_subscript` (check), `iface_indexable` (run, covers a member container, the shipped
+  contract and `int[]`). Full suite: 634/634 with `MUC_VERIFY_MEM=1`.
+- Still open: a constraint cannot express a **`ref`-returning** subscript, so `for ref` is unavailable
+  inside a generic body over `IIndexable` (recorded in the internal interfaces record).
+
 #### build 151 — 2026-11-16
 
 **Dynamic arrays are a built-in type with a fixed length; `isize` is the index/length type.**

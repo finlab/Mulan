@@ -31,15 +31,17 @@ public interface IIterator<T> {
     T current();
 }
 
-// Index form (SPEC 6.4.1): the container half is `isize length()` plus a subscript. The subscript
-// half stays structural because an interface cannot declare `operator[]` — either a member
-// `T operator[](isize i)` (preferred: the receiver is borrowed) or a free function
-// `T operator[](C, isize)`; `for ref` additionally requires the subscript to return `ref T`.
+// Index form (SPEC 6.4.1): the container half is `isize length()` plus a subscript. The subscript is
+// declared as a static signature with the receiver spelled `Self` — an interface member has no `this`,
+// so `T operator[](isize i)` alone would mean "an operator taking only an index". A container satisfies
+// it with either spelling: a member `T operator[](isize i)` (preferred: the receiver is borrowed) or a
+// free function `T operator[](C, isize)`; `ref T` satisfies the declared `T` (`for ref` needs it).
 //
 // A type that also provides `iterator()` supports the cursor form as well; the cursor form wins
 // (SPEC 6.4.3).
 public interface IIndexable<T> {
     isize length();
+    T operator[](Self c, isize i);
 }
 
 // The container half of the cursor form: the element type is the interface's type argument, and the
