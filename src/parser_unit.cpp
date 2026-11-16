@@ -44,6 +44,8 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         Token export_tok = tk;
         // layout modifiers (packed / align(N)): same category as public/private, any order, composable
         bool packed = false;
+        bool nocopy = false;
+        Token nocopy_tok = tk;
         ExprPtr align_expr;
         bool has_layout = false;
         Token layout_tok = tk;
@@ -69,6 +71,15 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 advance();
                 continue;
             }
+            // `nocopy` is not a layout modifier: it only changes the copy semantics, so it is rejected
+            // everywhere a value type cannot appear rather than lumped in with `packed` / `align(N)`.
+            if (at_kw("nocopy")) {
+                if (nocopy) throw err_at("duplicate modifier `nocopy`", peek());
+                nocopy = true;
+                nocopy_tok = peek();
+                advance();
+                continue;
+            }
             // `align` keeps its identifier identity; only the `align(` form is a layout modifier (contextual keyword)
             if (peek().kind == TokKind::Ident && peek().text == "align" && peek(1).is_op("(")) {
                 if (align_expr) throw err_at("duplicate layout modifier `align(...)`", peek());
@@ -87,6 +98,11 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             throw err_at("`export` implies `public`; `private` cannot be combined with `export`", export_tok);
         }
         if (is_export) is_pub = true;
+        // `nocopy` only makes sense on a value type: a class is a heap handle (copying it shares), an
+        // interface has no storage, a union is copied by bits, and the rest are not type declarations.
+        if (nocopy && !(at_kw("struct") || at_kw("union"))) {
+            throw err_at("`nocopy` can only modify a `struct` declaration", nocopy_tok);
+        }
 
         if (at_kw("use")) {
             if (is_pub) throw err_at("`public` cannot be used with `use`", tk);
@@ -221,12 +237,14 @@ std::unique_ptr<Unit> Parser::parse_unit() {
 
         if (at_kw("struct") || at_kw("union")) {
             const bool is_union = at_kw("union");
+            if (nocopy && is_union) throw err_at("`union` does not support `nocopy` (a union is copied by bits)", nocopy_tok);
             auto d = parse_struct(is_union);
             d->is_public = is_pub;
             d->is_export = is_export;
             if (auto* sd = dynamic_cast<StructDecl*>(d.get())) {
                 sd->is_packed = packed;
                 sd->is_union = is_union;
+                sd->nocopy = nocopy;
                 sd->align_expr = std::move(align_expr);
             }
             unit->decls.push_back(std::move(d));
@@ -654,7 +672,7 @@ std::unique_ptr<CtorDecl> Parser::parse_ctor(const Token& name_tok) {
     auto c = std::make_unique<CtorDecl>();
     c->line = name_tok.line;
     c->col = name_tok.col;
-    c->params = parse_params();
+    c->params = parse_params(nullptr, /*allow_ref=*/true, /*allow_move=*/true);
     c->body = parse_block();
     return c;
 }

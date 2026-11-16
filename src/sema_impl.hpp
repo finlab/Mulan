@@ -154,6 +154,28 @@ private:
     bool in_para_for_body_ = false;
     int para_for_body_depth_ = 0;
 
+    // ------------------------------------------------------------ `move` (agents/value-semantics.md §8)
+    // Variables whose ownership was transferred: every later use is an error until the variable is
+    // reassigned. The analysis is per function body: `if`/`else` merge the two arms, and a `move` may not
+    // target a variable declared outside the enclosing loop (iteration 2 would reuse a moved value).
+    std::unordered_set<LocalVar*> moved_locals_;
+    std::unordered_map<LocalVar*, int> local_loop_level_;
+    int move_loop_count_ = 0;
+    // Why a value cannot be copied, phrased as the rule rather than the verdict: a destructor is a
+    // declaration that the type owns a resource, so the author has to say how it is duplicated
+    // (agents/value-semantics.md §8.2).
+    std::string noncopyable_reason(const TypePtr& t) const;
+
+    TypePtr check_move(MoveExpr* mv);    // `x = ...` makes a moved variable usable again.
+    void note_assigned_local(const std::string& name);
+    // `swap(a, b)`: two writable places of the same type.
+    TypePtr check_swap(SwapExpr* sw);    // Reset the per-body state when a function/method/constructor/destructor body starts.
+    void begin_move_scope() {
+        moved_locals_.clear();
+        local_loop_level_.clear();
+        move_loop_count_ = 0;
+    }
+
     // True when the expression is rooted at an enclosing value-typed local: a `para` section may not
     // write it, take its address or pass it by `ref` (the storage is the suspended caller's frame).
     bool roots_at_outer_value_local(Expr* e) const;

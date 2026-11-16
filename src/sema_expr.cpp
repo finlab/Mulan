@@ -153,6 +153,10 @@ namespace muc_detail {
             return t_bool();
         }
 
+        if (auto mv = dynamic_cast<MoveExpr*>(e)) return check_move(mv);
+
+        if (auto sw = dynamic_cast<SwapExpr*>(e)) return check_swap(sw);
+
         if (auto b = dynamic_cast<Binary*>(e)) return check_binary(b);
 
         if (auto te = dynamic_cast<Ternary*>(e)) return check_ternary(te, expected);
@@ -303,9 +307,11 @@ namespace muc_detail {
 
         // ---- capture list (U41) ---------------------------------------------------------------
         // `[x]` copies the value into the environment object; `[ref x]` stores its address, so writes
-        // reach the captured variable (the caller keeps it alive; escaping the delegate is UB).
+        // reach the captured variable (the caller keeps it alive; escaping the delegate is UB);
+        // `[weak x]` stores an uncounted reference, so the environment does not keep the object alive.
         std::vector<const LocalVar*> cap_src;
         std::vector<bool> cap_ref;
+        std::vector<bool> cap_weak;
         TypePtr env_ty;
         int this_cap_index = -1;
         TypePtr this_cap_ty;
@@ -313,6 +319,11 @@ namespace muc_detail {
         if (!e->captures.empty()) {
             std::vector<TypePtr> field_types;
             for (auto& cap : e->captures) {
+                if (cap.by_weak && cap.by_ref) {
+                    err("a capture cannot be both `weak` and `ref`: `[weak " + cap.name +
+                            "]` already stores a reference, `[ref …]` hands out storage",
+                        e);
+                }
                 // `para` sections may read enclosing locals but not write them (SPEC 3.17.2), so a
                 // capture that hands out storage (`[ref …]`) is rejected there; `this` is not usable
                 // inside a section at all in v1.
@@ -333,12 +344,19 @@ namespace muc_detail {
                     // `[this]`: the enclosing method's receiver. A class captures the handle (the
                     // environment keeps the object alive); a struct captures a copy, or its address
                     // with `[ref this]` so writes reach the original object (U41 decision).
+                    // `[weak this]` stores the handle uncounted, which is how a callback stored on the
+                    // object itself avoids an RC cycle.
                     if (!cur_class_) {
                         err("`[this]` can only appear in a method, constructor or destructor", e);
                     }
                     if (this_cap_index >= 0) err("`this` is captured more than once", e);
                     TypePtr vt = cur_class_;
                     TypePtr ft = vt;
+                    if (cap.by_weak && vt->kind != TypeKind::Class) {
+                        err("`[weak this]` needs a class receiver: a struct `this` is a value copy and "
+                            "cannot form an RC cycle",
+                            e);
+                    }
                     if (cap.by_ref) {
                         if (vt->kind == TypeKind::Class) {
                             err("`[ref this]` is meaningless for a class: `this` is already a reference; "
@@ -360,6 +378,7 @@ namespace muc_detail {
                     field_types.push_back(ft);
                     cap_src.push_back(nullptr);  // `this` has no enclosing LocalVar to read from
                     cap_ref.push_back(cap.by_ref);
+                    cap_weak.push_back(cap.by_weak);
                     this_cap_index = static_cast<int>(field_types.size() - 1);
                     this_cap_ty = vt;
                     this_cap_ref = cap.by_ref;
@@ -388,6 +407,12 @@ namespace muc_detail {
                 }
                 const TypePtr& vt = lv->rty;
                 TypePtr ft = vt;
+                if (cap.by_weak && vt->kind != TypeKind::Class) {
+                    err("`[weak " + cap.name + "]`: `" + vt->str() +
+                            "` is not a class handle; a weak capture needs a reference-counted class "
+                            "(interfaces do not support `weak` yet)",
+                        e);
+                }
                 if (cap.by_ref) {
                     if (!borrowable_type(vt)) {
                         err("`[ref " + cap.name + "]`: `" + vt->str() +
@@ -405,6 +430,7 @@ namespace muc_detail {
                 field_types.push_back(ft);
                 cap_src.push_back(lv);
                 cap_ref.push_back(cap.by_ref);
+                cap_weak.push_back(cap.by_weak);
             }
             // The environment is a synthesized class with one field per capture: the existing class
             // machinery gives it layout, a descriptor and a destructor that releases RC fields.
@@ -415,6 +441,9 @@ namespace muc_detail {
                 f.name = "c" + std::to_string(i);
                 f.type = field_types[i];
                 f.is_public = false;
+                // `[weak x]`: the environment must not own the object, so the field is a weak reference
+                // (the class destructor only unregisters it, and the target's destroy clears it).
+                f.weak = cap_weak[i];
                 env_ty->fields.push_back(std::move(f));
             }
             auto cd = std::make_unique<ClassDecl>();
@@ -448,6 +477,10 @@ namespace muc_detail {
         e->env_ty = env_ty;
         e->env_src = cap_src;
         e->env_src_ref = cap_ref;
+        e->env_src_weak = cap_weak;
+        for (size_t i = 0; i < cap_weak.size(); ++i) {
+            if (cap_weak[i]) fn->weak_capture_indices.push_back(static_cast<int>(i));
+        }
 
         // A lambda is its own function: no `this`, no outer loop, no enclosing `finally` (and no captures, checked in check_name).
         FuncDecl* saved_func = cur_func_;
@@ -638,6 +671,12 @@ namespace muc_detail {
                 e);
         }
         if (LocalVar* lv = lookup_local(e->ident)) {
+            // A moved value cannot be touched again until it is reassigned
+            // (agents/value-semantics.md §8.4).
+            if (moved_locals_.count(lv)) {
+                err("`" + e->ident + "` was moved and cannot be used again (assign a new value to it first)",
+                    e);
+            }
             // `para` sections capture enclosing locals by reference to the (suspended) caller frame;
             // every enclosing section must record the capture so each level's frame can forward it.
             if (!para_stack_.empty()) {
@@ -1364,5 +1403,70 @@ namespace muc_detail {
         if (dst->kind == TypeKind::Func && src->kind == TypeKind::Ptr) return true;
         if (src->kind == TypeKind::Func && dst->kind == TypeKind::Ptr) return true;
         return false;
+    }
+
+    // `move x`: transfers ownership out of a local variable or parameter
+    // (agents/value-semantics.md §8.3-§8.4). Only a whole name can be moved: a partial move out of a field
+    // or an element would need field-level state, which is what an ownership checker would have to do.
+    TypePtr Sema::check_move(MoveExpr* mv) {
+        // The expression may be visited more than once (argument coercion re-checks its arguments), so
+        // the second visit must not report the value it moved itself as "already moved".
+        if (mv->moved) return mv->ty;
+        auto* nm = dynamic_cast<Name*>(mv->operand.get());
+        if (!nm) {
+            err("`move` needs a variable name: partial moves (`move o.field`, `move a[i]`) are not supported",
+                mv);
+        }
+        LocalVar* lv = lookup_local(nm->ident);
+        if (!lv) {
+            err("`move` can only transfer a local variable or a parameter; `" + nm->ident + "` is not one", mv);
+        }
+        if (lv->is_const) err("cannot move `" + nm->ident + "`: the binding is `const`", mv);
+        if (lv->by_ref) {
+            err("cannot move `" + nm->ident + "`: it is a `ref` borrow, and borrowing never transfers ownership",
+                mv);
+        }
+        TypePtr t = check_expr(nm);  // reports "was moved and cannot be used" when it already happened
+        if (!t) return t;
+        if (!t->movable()) {
+            err("cannot move `" + nm->ident + "`: `" + t->str() + "` is not movable (declare `" + t->str() +
+                    "(move " + t->str() + " other)` to make it movable)",
+                mv);
+        }
+        auto lvl = local_loop_level_.find(lv);
+        if (move_loop_count_ > 0 && lvl != local_loop_level_.end() && lvl->second < move_loop_count_) {
+            err("cannot move `" + nm->ident +
+                    "`: it was declared outside the enclosing loop, so the next iteration would reuse a "
+                    "moved value",
+                mv);
+        }
+        moved_locals_.insert(lv);
+        mv->moved = lv;
+        mv->ty = t;
+        return t;
+    }
+
+    void Sema::note_assigned_local(const std::string& name) {
+        if (LocalVar* lv = lookup_local(name)) moved_locals_.erase(lv);
+    }
+
+    // `swap(a, b)`: exchange the values at two writable places (agents/value-semantics.md §14).
+    // Both sides stay initialized, so this never interacts with the moved tracking.
+    TypePtr Sema::check_swap(SwapExpr* sw) {
+        TypePtr ta = check_expr(sw->a.get());
+        TypePtr tb = check_expr(sw->b.get());
+        if (!ta || !tb) return t_void();
+        if (is_void(ta) || is_void(tb)) err("`swap` cannot exchange `void` values", sw);
+        if (!same_type(ta, tb)) {
+            err("`swap` needs two places of the same type (found `" + ta->str() + "` and `" + tb->str() +
+                    "`)",
+                sw);
+        }
+        if (!is_lvalue(sw->a.get()) || !is_lvalue(sw->b.get())) {
+            err("`swap` needs two writable places (a variable, a field, an element or a dereference)", sw);
+        }
+        check_writable(sw->a.get());
+        check_writable(sw->b.get());
+        return t_void();
     }
 }  // namespace muc_detail

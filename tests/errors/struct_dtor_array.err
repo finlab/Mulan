@@ -1,1 +1,1 @@
-struct `struct_dtor_array.S` has a destructor and cannot be an array element
+initialization: struct `struct_dtor_array.O` cannot be copied by value: it contains a value that owns a resource; declare `struct_dtor_array.O(const ref struct_dtor_array.O other)`, or borrow it as `const ref struct_dtor_array.O`

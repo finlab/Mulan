@@ -14,6 +14,7 @@ namespace muc_detail {
         auto_groups_.clear();
         scopes_.emplace_back();
         loop_depth_ = 0;
+        begin_move_scope();
         cur_class_ = cls;
         cur_ret_ = ret;
         cur_name_ = name;
@@ -49,6 +50,9 @@ namespace muc_detail {
             lv->name = params[i]->name;
             lv->rty = pty[i];
             lv->is_const = params[i]->is_const;
+            // A `move` parameter is a borrow the constructor may steal from: the caller zeroes the source
+            // afterwards, so the parameter must never destroy it (agents/value-semantics.md §8.3).
+            lv->by_ref = params[i]->by_ref || params[i]->by_move;
             lv->line = params[i]->line;
             lv->col = params[i]->col;
             declare_local(lv.get());
@@ -461,7 +465,13 @@ namespace muc_detail {
         std::unordered_set<std::string> ctor_keys;
         for (auto& ctor : sd->ctors) {
             std::string key;
-            for (auto& p : ctor->pty) key += p->str() + ",";
+            // The parameter mode is part of the signature: `T(ref T)` and `T(move T)` are different
+            // constructors, so `ref`/`move` must appear in the key.
+            for (size_t i = 0; i < ctor->pty.size(); ++i) {
+                const Param* p = i < ctor->params.size() ? ctor->params[i].get() : nullptr;
+                key += (p && p->by_move ? std::string("move ") : p && p->by_ref ? std::string("ref ") : std::string()) +
+                       ctor->pty[i]->str() + ",";
+            }
             if (!ctor_keys.insert(key).second) {
                 err("duplicate constructor signature in struct `" + sd->name + "`", ctor.get());
             }
@@ -696,6 +706,9 @@ namespace muc_detail {
             check_cond(iff->cond.get(), "if condition");
             // `if x is P(v) { ... }`: the bound names are locals of the then-branch only (SPEC 10.1.2).
             IsExpr* ise = dynamic_cast<IsExpr*>(iff->cond.get());
+            // A `move` inside either arm leaves the variable moved on that path only; after the `if` the
+            // variable counts as moved if *any* arm moved it (may-move analysis).
+            const auto movedAtEntry = moved_locals_;
             push();
             if (ise && !ise->binds.empty()) {
                 for (size_t k = 0; k < ise->binds.size(); ++k) {
@@ -711,6 +724,8 @@ namespace muc_detail {
             }
             check_block(iff->then.get());
             pop();
+            const auto afterThen = moved_locals_;
+            moved_locals_ = movedAtEntry;
             if (iff->els) {
                 if (auto b = dynamic_cast<Block*>(iff->els.get())) {
                     check_block(b);
@@ -718,13 +733,19 @@ namespace muc_detail {
                     check_stmt(iff->els.get());
                 }
             }
+            for (LocalVar* lv : afterThen) moved_locals_.insert(lv);
+            for (LocalVar* lv : movedAtEntry) moved_locals_.insert(lv);
         } else if (auto ws = dynamic_cast<WhileStmt*>(s)) {
             check_cond(ws->cond.get(), "while condition");
             ++loop_depth_;
+            ++move_loop_count_;
             check_block(ws->body.get());
+            --move_loop_count_;
             --loop_depth_;
         } else if (auto fs = dynamic_cast<ForInStmt*>(s)) {
+            ++move_loop_count_;
             check_for(fs);
+            --move_loop_count_;
         } else if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
             check_switch(sw);
         } else if (dynamic_cast<BreakStmt*>(s)) {

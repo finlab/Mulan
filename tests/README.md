@@ -84,8 +84,8 @@ the files currently in the tree (as of 0.0.122); they grow as cases are added.
 
 | Directory | Kind | Cases (as of 0.0.122) | How a case passes |
 |---|---|---|---|
-| `tests/cases/` | **run** | 180, plus every `examples/*.mu` that defines `main` | built and run; stdout and exit code compared against `tests/expected/<name>.txt` |
-| `tests/errors/` | **must-fail** | 350 | `muc check` must reject it, and every line of `tests/errors/<name>.err` must appear in the diagnostics |
+| `tests/cases/` | **run** | 186, plus every `examples/*.mu` that defines `main` | built and run; stdout and exit code compared against `tests/expected/<name>.txt` |
+| `tests/errors/` | **must-fail** | 356 | `muc check` must reject it, and every line of `tests/errors/<name>.err` must appear in the diagnostics |
 | `tests/check/` | **check** | 20 | `muc check` must accept it (sema only; the program never runs) |
 | `tests/ir/` | **ir** | 4 | built with `--emit-ir`; the `+ <regex>` / `- <regex>` lines of `tests/ir/<name>.txt` assert on the optimized IR (see the section above) |
 | `tests/abi/` | **c abi** | 3 | built and run like a run case, but the C shim `tests/abi/<name>.c` is first compiled by the C compiler and `--link`ed into the executable (expected file: `tests/expected/<name>.txt`) |

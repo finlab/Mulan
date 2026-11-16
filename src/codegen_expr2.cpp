@@ -271,7 +271,7 @@ using ArgPack = Emitter::ArgPack;
             b.CreateCall(callee, vals);
             releaseTemps(pack);
             if (mayThrow.mayThrowCname(ctor_cname(cls->unit, cls->name, ne->ctor_pty))) {
-                emitCheckPendingWith([&] { emitRelease(p); });
+                emitCheckPendingWith([&] { emitPartialDestroyCall(p, cls); });
             }
         } else {
             // implicit default construction: call the parameterless constructor declared by the nearest ancestor (it keeps chaining to its own base class)
@@ -288,7 +288,7 @@ using ArgPack = Emitter::ArgPack;
                             FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
                         b.CreateCall(callee, {p});
                         if (mayThrow.mayThrowCname(ctor_cname(b0->unit, b0->name, {}))) {
-                            emitCheckPendingWith([&] { emitRelease(p); });
+                            emitCheckPendingWith([&] { emitPartialDestroyCall(p, cls); });
                         }
                     }
                     break;
@@ -296,6 +296,9 @@ using ArgPack = Emitter::ArgPack;
                 b0 = b0->base;
             }
             storeDesc();  // the ancestor constructor may have overwritten desc, restore it to the final type
+            // This class declares no constructor of its own, so the member step has no constructor body to
+            // hang off: run it here, after the inherited default construction and the descriptor restore.
+            emitMemberInits(p, cls);
         }
         return p;
     }
@@ -398,7 +401,7 @@ using ArgPack = Emitter::ArgPack;
             b.CreateCall(callee, vals);
             releaseTemps(pack);
             if (mayThrow.mayThrowCname(ctor_cname(st->unit, st->name, *cpty))) {
-                emitCheckPendingWith([&] { emitReleaseValue(tmp, st); });
+                emitCheckPendingWith([&] { emitReleasePartialValue(tmp, st); });
             }
             return b.CreateLoad(lt(st), tmp);
         }
@@ -484,6 +487,9 @@ using ArgPack = Emitter::ArgPack;
                 b.CreateCall(callee, vals);
                 releaseTemps(pack);
                 if (mayThrow.mayThrowCname(ctor_cname(base->unit, base->name, pty ? *pty : empty))) {
+                    // The desc still names the base: the allocating caller's partial destroy picks
+                    // the base's partial destructor, and this class's desc is restored below only
+                    // when the base constructor returned normally.
                     emitCheckPending();
                 }
             }
@@ -492,6 +498,9 @@ using ArgPack = Emitter::ArgPack;
                 Value* dp = b.CreateGEP(i8(), p, ConstantInt::get(i64(), 8));
                 b.CreateStore(descOf(curClassTy), dp);
             }
+            // Members are constructed after the base subobject is complete (and after the desc names this
+            // class again), but before the rest of the body.
+            emitMemberInits(curClassTy ? b.CreateLoad(ptrTy(), thisSlot) : nullptr, curClassTy);
             return nullptr;
         }
         if (c->callee_kind == "fnptr" || c->callee_kind == "delegate") {
@@ -615,6 +624,27 @@ using ArgPack = Emitter::ArgPack;
     }
 
     Value* Emitter::eval(Expr* e) {
+        if (auto sw = dynamic_cast<SwapExpr*>(e)) {
+            // A pure byte exchange: no constructor, destructor or reference-count operation runs, which is
+            // both what makes it work for a type whose address must not be taken and why a reference-counted
+            // handle is transferred correctly (the counts do not change).
+            Value* pa = addrOf(sw->a.get());
+            Value* pb = addrOf(sw->b.get());
+            const uint64_t n = sizeOf(sw->a->ty);
+            if (n > 0) {
+                Value* scratch = entryAlloca(llvm::ArrayType::get(i8(), n), "swap.tmp");
+                copyMem(scratch, pa, n);
+                copyMem(pa, pb, n);
+                copyMem(pb, scratch, n);
+            }
+            return Constant::getNullValue(i32());
+        }
+        if (auto mv = dynamic_cast<MoveExpr*>(e)) {
+            TypePtr t = mv->ty;
+            Value* tmp = entryAlloca(lt(t), "move.val", alignOf(t));
+            emitMoveInto(tmp, t, mv);
+            return b.CreateLoad(lt(t), tmp);
+        }
         if (auto ise = dynamic_cast<IsExpr*>(e)) return evalIs(ise);
         if (auto lm = dynamic_cast<Lambda*>(e)) {
             FuncDecl* f = lm->synth;

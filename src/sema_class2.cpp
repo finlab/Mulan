@@ -217,6 +217,10 @@ namespace muc_detail {
     }
 
     void Sema::check_assign_stmt(AssignStmt* s) {
+        // `x = ...` makes a moved variable usable again, so revive it before the target is checked.
+        if (s->op == "=") {
+            if (auto n = dynamic_cast<Name*>(s->target.get())) note_assigned_local(n->ident);
+        }
         if (!is_lvalue(s->target.get())) {
             // The result of a `ref T f()` call is also a writable lvalue (write-through borrow)
             if (auto* c = dynamic_cast<Call*>(s->target.get())) {

@@ -418,11 +418,8 @@ namespace muc_detail {
             if (spec->weak && !is_class_type(ft)) {
                 err("`weak` field must be a class reference (interfaces do not support `weak` yet)", c);
             }
-            if (noncopyable_struct(ft)) {
-                err("struct `" + ft->str() +
-                        "` has a destructor and cannot be used as a field (field destruction is not implemented)",
-                    c);
-            }
+            // A class field of an uncopyable struct is allowed: a class is a reference type, so its "copy"
+            // retains the handle and never copies the field (agents/value-semantics.md §8).
             bool field_pub = false;  // class defaults to private
             if (auto vit = c->field_visibility.find(fname); vit != c->field_visibility.end()) {
                 field_pub = vit->second;
@@ -496,6 +493,7 @@ namespace muc_detail {
                 auto sd = dynamic_cast<StructDecl*>(d.get());
                 if (!sd || !sd->ty) continue;
                 sd->ty->is_packed = sd->is_packed;
+                sd->ty->nocopy = sd->nocopy;
                 if (!sd->align_expr) continue;
                 long long n = 0;
                 if (!eval_const_int(sd->align_expr.get(), n)) {
@@ -582,6 +580,7 @@ namespace muc_detail {
             if (!sd->ty) sd->ty = Type::make_struct(u->name, sd->name);
             sd->ty->is_packed = sd->is_packed;  // align_req is evaluated in check_layouts
             sd->ty->is_union = sd->is_union;
+            sd->ty->nocopy = sd->nocopy;
             const std::string kw = sd->is_union ? "union" : "struct";
             std::vector<Field> fields;
             std::unordered_set<std::string> fnames;
@@ -600,11 +599,8 @@ namespace muc_detail {
                             "`: union members cannot hold values that need reference counting",
                         sd);
                 }
-                if (noncopyable_struct(ft)) {
-                    err("struct `" + ft->str() +
-                            "` has a destructor and cannot be used as a field (field destruction is not implemented)",
-                        sd);
-                }
+                // A struct with a destructor is a legal member: construction, destruction and the
+                // copyability gate are all recursive (agents/value-semantics.md §4).
                 bool field_pub = true;  // struct defaults to public
                 if (auto vit = sd->field_visibility.find(fname);
                     vit != sd->field_visibility.end()) {
@@ -626,9 +622,10 @@ namespace muc_detail {
                     TypePtr pt = resolve_type(p->spec.get(), u);
                     if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
-                    if (noncopyable_struct(pt)) {
+                    if (!p->by_ref && noncopyable_struct(pt) && !pt->movable()) {
                         err("struct `" + pt->str() +
-                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                                "` cannot be passed by value: " + noncopyable_reason(pt) +
+                                (borrowable_type(pt) ? "; take it as `const ref " + pt->str() + "`" : "; declare `" + pt->str() + "(const ref " + pt->str() + " other)`"),
                             p.get());
                     }
                     m->pty.push_back(pt);
@@ -651,11 +648,50 @@ namespace muc_detail {
                 ctor->pty.clear();
                 for (auto& p : ctor->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (p->by_move) {
+                        // `T(move T other)`: the move constructor (agents/value-semantics.md §8.1)
+                        if (ctor->params.size() != 1 || !same_type(pt, sd->ty)) {
+                            err("the move constructor of struct `" + sd->name +
+                                    "` must be written `" + sd->name + "(move " + sd->name +
+                                    " other)` (one parameter of the struct's own type)",
+                                p.get());
+                        }
+                        if (sd->ty->has_move_ctor) {
+                            err("struct `" + sd->name + "` already declares a move constructor", p.get());
+                        }
+                        ctor->is_move = true;
+                        sd->ty->has_move_ctor = true;
+                    }
+                    if (p->by_ref) {
+                        // Only the copy constructor may borrow its argument (agents/value-semantics.md §8.1):
+                        // `T(const ref T other)`. Any other `ref` parameter on a constructor would need the
+                        // argument-passing machinery that constructors do not have.
+                        if (ctor->params.size() != 1 || !same_type(pt, sd->ty)) {
+                            err("a constructor may take a `ref` parameter only as the copy constructor "
+                                "`" + sd->name + "(const ref " + sd->name + " other)`",
+                                p.get());
+                        }
+                        if (!p->is_const) {
+                            err("a copy constructor must not modify its source: write `" + sd->name +
+                                    "(const ref " + sd->name + " other)`",
+                                p.get());
+                        }
+                        if (sd->ty->has_copy_ctor) {
+                            err("struct `" + sd->name + "` already declares a copy constructor", p.get());
+                        }
+                        if (sd->ty->nocopy) {
+                            err("struct `" + sd->name + "` is `nocopy`: it cannot declare a copy constructor",
+                                p.get());
+                        }
+                        ctor->is_copy = true;
+                        sd->ty->has_copy_ctor = true;
+                    }
                     if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
-                    if (noncopyable_struct(pt)) {
+                    if (!p->by_ref && !ctor->is_move && noncopyable_struct(pt) && !pt->movable()) {
                         err("struct `" + pt->str() +
-                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                                "` cannot be passed by value: " + noncopyable_reason(pt) +
+                                (borrowable_type(pt) ? "; take it as `const ref " + pt->str() + "`" : "; declare `" + pt->str() + "(const ref " + pt->str() + " other)`"),
                             p.get());
                     }
                     ctor->pty.push_back(pt);
@@ -674,7 +710,9 @@ namespace muc_detail {
                             ctor.get());
                     }
                 }
-                ctor->cname = ctor_cname(u->name, sd->name, ctor->pty);
+                ctor->cname = ctor->is_move ? move_ctor_cname(u->name, sd->name)
+                                            : ctor->is_copy ? copy_ctor_cname(u->name, sd->name)
+                                                            : ctor_cname(u->name, sd->name, ctor->pty);
                 sd->ty->ctors.push_back(ctor->pty);
                 sd->ty->ctor_is_public.push_back(ctor->is_public);
                 sd->ty->ctor_is_implicit.push_back(ctor->is_implicit);
@@ -731,9 +769,10 @@ namespace muc_detail {
                     TypePtr pt = resolve_type(p->spec.get(), u);
                     if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
-                    if (noncopyable_struct(pt)) {
+                    if (!p->by_ref && noncopyable_struct(pt) && !pt->movable()) {
                         err("struct `" + pt->str() +
-                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                                "` cannot be passed by value: " + noncopyable_reason(pt) +
+                                (borrowable_type(pt) ? "; take it as `const ref " + pt->str() + "`" : "; declare `" + pt->str() + "(const ref " + pt->str() + " other)`"),
                             p.get());
                     }
                     m->pty.push_back(pt);
@@ -754,11 +793,17 @@ namespace muc_detail {
                 ctor->pty.clear();
                 for (auto& p : ctor->params) {
                     TypePtr pt = resolve_type(p->spec.get(), u);
+                    if (p->by_move) {
+                        err("`class` is a reference type: it has no move or copy constructor, so `move` "
+                            "parameters are only meaningful on a struct",
+                            p.get());
+                    }
                     if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
-                    if (noncopyable_struct(pt)) {
+                    if (!p->by_ref && noncopyable_struct(pt) && !pt->movable()) {
                         err("struct `" + pt->str() +
-                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                                "` cannot be passed by value: " + noncopyable_reason(pt) +
+                                (borrowable_type(pt) ? "; take it as `const ref " + pt->str() + "`" : "; declare `" + pt->str() + "(const ref " + pt->str() + " other)`"),
                             p.get());
                     }
                     ctor->pty.push_back(pt);
@@ -832,9 +877,10 @@ namespace muc_detail {
                     TypePtr pt = resolve_type(p->spec.get(), u);
                     if (!p->by_ref) pt = decay_param_type(pt);
                     if (is_void(pt)) err("parameter cannot be void", p.get());
-                    if (noncopyable_struct(pt)) {
+                    if (!p->by_ref && noncopyable_struct(pt) && !pt->movable()) {
                         err("struct `" + pt->str() +
-                                "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                                "` cannot be passed by value: " + noncopyable_reason(pt) +
+                                (borrowable_type(pt) ? "; take it as `const ref " + pt->str() + "`" : "; declare `" + pt->str() + "(const ref " + pt->str() + " other)`"),
                             p.get());
                     }
                     m->pty.push_back(pt);
@@ -878,8 +924,11 @@ namespace muc_detail {
             auto f = dynamic_cast<FuncDecl*>(d.get());
             if (!f) continue;
             f->rty = make_borrow_ret(f->ret.get(), f->ret_ref, f, u, "function `" + f->name + "`");
-            if (noncopyable_struct(referent_of(f->rty))) {
-                err("struct `" + referent_of(f->rty)->str() + "` has a destructor and cannot be returned by value (use a pointer)", f);
+            if (noncopyable_struct(referent_of(f->rty)) && !referent_of(f->rty)->movable()) {
+                err("struct `" + referent_of(f->rty)->str() +
+                        "` cannot be returned by value: " + noncopyable_reason(referent_of(f->rty)) +
+                        "; declare `" + referent_of(f->rty)->str() + "(const ref " + referent_of(f->rty)->str() + " other)` or `" + referent_of(f->rty)->str() + "(move " + referent_of(f->rty)->str() + " other)`" + (borrowable_type(referent_of(f->rty)) ? ", or return a `ref " + referent_of(f->rty)->str() + "` borrow" : ""),
+                    f);
             }
             // `extern` imports a C symbol and `export` publishes one for DLL consumers, so both sides
             // of the boundary must obey the C ABI; a purely internal function keeps the faster one.
@@ -893,9 +942,10 @@ namespace muc_detail {
                 TypePtr pt = resolve_type(p->spec.get(), u);
                 if (!p->by_ref) pt = decay_param_type(pt);
                 if (is_void(pt)) err("parameter `" + p->name + "` cannot be void", p.get());
-                if (noncopyable_struct(pt)) {
+                if (!p->by_ref && noncopyable_struct(pt) && !pt->movable()) {
                     err("struct `" + pt->str() +
-                            "` has a destructor and can only be passed by pointer (passing by value would copy)",
+                            "` cannot be passed by value: " + noncopyable_reason(pt) +
+                                (borrowable_type(pt) ? "; take it as `const ref " + pt->str() + "`" : "; declare `" + pt->str() + "(const ref " + pt->str() + " other)`"),
                         p.get());
                 }
                 if (p->by_ref) {

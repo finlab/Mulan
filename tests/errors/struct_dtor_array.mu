@@ -1,1 +1,1 @@
-unit struct_dtor_array; struct S { int v; S(int x){v=x;} ~S(){} } int main(){ S[2] a = {}; return 0; }
+unit struct_dtor_array; struct S { int v; ~S(){} } struct O { S[2] a; } int main(){ O x; O y = x; return 0; }

@@ -18,7 +18,7 @@ std::string llvm_emit_text(Program& prog, const EmitOptions& opts) {
     llvm::InitializeAllTargets();
     llvm::InitializeAllTargetMCs();
     llvm::InitializeAllAsmPrinters();
-    muc_detail::Emitter em{prog, false, opts.bounds, opts.target};
+    muc_detail::Emitter em{prog, opts.debug, opts.bounds, opts.target};
     em.exportMode = opts.export_mode;
     for (auto& e : opts.extra_exports) em.exports.insert(e);
     em.run();

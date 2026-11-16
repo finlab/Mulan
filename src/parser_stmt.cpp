@@ -27,7 +27,7 @@ static const std::unordered_set<std::string>& assign_ops() {
 
 // ---------------------------------------------------------------- functions
 
-std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool allow_ref) {
+std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool allow_ref, bool allow_move) {
     expect_op("(");
     std::vector<std::unique_ptr<Param>> params;
     bool saw_varargs = false;
@@ -53,8 +53,14 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
                     "parameter must be written as `type name`; each parameter declares its own type, shared types like `int a, b` are not supported",
                     ptok);
             }
-            // `ref` parameter (borrow): `ref T p` / `ref const T p`. `ref` is a binding mode, not a type.
+            // `const ref T p` / `ref const T p`: a read-only borrow. `const ref` is the preferred spelling
+            // (it reads like C++'s `const&`); `ref const` stays accepted.
             bool by_ref = false;
+            bool const_before_ref = false;
+            if (at_kw("const") && peek(1).is_kw("ref")) {
+                advance();  // const
+                const_before_ref = true;
+            }
             if (at_kw("ref")) {
                 if (!allow_ref) {
                     throw err_at("`ref` parameters are only supported on free functions (methods and constructors are not supported yet)",
@@ -63,10 +69,21 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
                 advance();
                 by_ref = true;
             }
+            // `move T p`: the parameter takes over the caller's value. Only a constructor can declare one,
+            // and only as `T(move T other)` (agents/value-semantics.md §8.1).
+            bool by_move = false;
+            if (at_kw("move")) {
+                if (!allow_move) {
+                    throw err_at("`move` parameters are only supported on a constructor, as `T(move T other)`", peek());
+                }
+                advance();
+                by_move = true;
+            }
             TypeSpecPtr spec = parse_type();
             // `const` is the read-only marker of the binding and does not enter the parameter type (same as local declarations):
             // `const Cat c` / `const int x` make the parameter binding read-only; in `const int* p` the const sits on the pointee, so the binding can still be rebound.
-            const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
+            const bool is_const = const_before_ref ||
+                                  (spec->kind == TypeSpec::K::Named && spec->is_const);
             if (is_const) spec->is_const = false;
             std::string pname = expect_ident("parameter name").text;
             auto p = std::make_unique<Param>();
@@ -74,6 +91,7 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
             p->spec = std::move(spec);
             p->is_const = is_const;
             p->by_ref = by_ref;
+            p->by_move = by_move;
             p->line = ptok.line;
             p->col = ptok.col;
             params.push_back(std::move(p));

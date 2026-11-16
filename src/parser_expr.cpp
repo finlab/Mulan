@@ -430,6 +430,16 @@ ExprPtr Parser::parse_and() {
 
 ExprPtr Parser::parse_not() {
     NestGuard guard(*this, "expression");
+    // `move x` binds like a prefix operator, but the operand is restricted to a name (sema checks it):
+    // partial moves are not allowed (agents/value-semantics.md §8.4).
+    if (at_kw("move")) {
+        const Token tok = advance();
+        auto node = std::make_unique<MoveExpr>();
+        node->operand = parse_unary();
+        node->line = tok.line;
+        node->col = tok.col;
+        return node;
+    }
     if (at_kw("not")) {
         const Token tok = advance();
         ExprPtr operand = parse_not();
@@ -705,6 +715,18 @@ ExprPtr Parser::parse_unary() {
         node->col = t.col;
         return parse_postfix_tail(std::move(node));
     }
+    if (at_kw("swap")) {
+        const Token sw = advance();
+        expect_op("(");
+        auto node = std::make_unique<SwapExpr>();
+        node->a = parse_expr();
+        expect_op(",");
+        node->b = parse_expr();
+        expect_op(")");
+        node->line = sw.line;
+        node->col = sw.col;
+        return parse_postfix_tail(std::move(node));
+    }
     if (at_kw("len")) {
         throw err("`len` was removed: use `x.length()` for a managed sequence, or "
                   "`sizeof(a) / sizeof(a[0])` for a static array");
@@ -888,8 +910,8 @@ ExprPtr Parser::parse_lambda() {
     const Token t0 = peek();
     node->line = t0.line;
     node->col = t0.col;
-    // Capture list: `[x, ref y]` (U41). Explicit only: a name used inside the body but not listed is an
-    // error, so the copying cost is visible at the definition site.
+    // Capture list: `[x, ref y, weak z]` (U41). Explicit only: a name used inside the body but not
+    // listed is an error, so the copying cost is visible at the definition site.
     if (at_op("[")) {
         advance();
         if (!at_op("]")) {
@@ -898,9 +920,19 @@ ExprPtr Parser::parse_lambda() {
                 const Token ct = peek();
                 cap.line = ct.line;
                 cap.col = ct.col;
+                if (at_kw("weak")) {
+                    advance();
+                    cap.by_weak = true;
+                }
+                // `[ref weak x]` (the same modifiers the other way round) reaches sema as a pair and is
+                // rejected there with one clear message.
                 if (at_kw("ref")) {
                     advance();
                     cap.by_ref = true;
+                    if (at_kw("weak")) {
+                        advance();
+                        cap.by_weak = true;
+                    }
                 }
                 if (at_kw("this")) {
                     advance();

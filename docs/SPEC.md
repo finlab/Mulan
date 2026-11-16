@@ -218,8 +218,9 @@ where  move  typeof
     allocation (6.6). `length()` is therefore always the number of valid indices (6.4.3).
   - Assignment/argument passing copies the **handle** (O(1)), sharing the same array; destroyed when the reference count reaches zero;
     if the element type holds class/interface references, release element by element.
-  - Element types: scalars, enums, pointers, structs (including reference fields), class/interface references;
-    structs with user destructors are not yet allowed as elements (element construction/destruction rules are undecided).
+  - Element types: scalars, enums, pointers, structs (including reference fields and user destructors),
+    class/interface references; a struct with a user destructor is not yet a valid dynamic array element
+    (`new T[n]` element construction is unimplemented — see "structs with user destructors", 3.13).
   - `s.length()`: 0 for a null handle; `s[i]` indexing (bounds-checked, see below); `for x in s` iterates over the elements.
   - `for ref x in s` can write to a shared array; **not allowed when the element is a class/interface** (the element is a handle, iterate with value binding);
     `string` also cannot use `for ref` (immutable).
@@ -339,11 +340,65 @@ struct Point {
   - Structs with reference fields may be unit-level variables (they are destroyed by the exit
     sequence, 9.1);
   - `extern C` signature recursive check: structs containing class/interface cannot be C parameters/return values;
-  - Structs with **user destructors** still cannot be copied/assigned/passed/returned by value, nor be array elements
-    or fields of other structs/classes (the interaction between user destructors and automatic field RC is to be implemented later); pass them through pointers in those positions.
+  - Structs with **user destructors** may be fields of structs/classes and elements of fixed-size arrays:
+    construction and destruction recurse through fields and elements, in declaration/index order
+    (`agents/value-semantics.md` §4). They still **cannot be copied/assigned/passed/returned by value**
+    (copy construction is unimplemented, so a copy would double free), and they cannot be **dynamic array
+    elements** yet (`new T[n]` element construction is unimplemented); use a pointer in those positions.
+    A struct that *contains* one inherits both restrictions.
     They may be unit-level variables (9.1);
 - `sizeof(S)` is available; pure-value struct assignment has byte-copy semantics, and copies of structs with reference fields get RC operations inserted by the compiler.
 - Fields also support multiple names sharing a type: `int x, y;`; the type-first fixed-size array form is also allowed, e.g. `char[20] name;`.
+- **Move semantics (implemented, 0.0.137)**: `move x` transfers ownership out of a local variable or
+  parameter; `S b = move a;`, `b = move a`, `f(move x)` and `return move x;` are the positions.
+  - Only a whole name may be moved: `move o.field` / `move a[i]` are compile errors. A value type is meant
+    to be small and self-contained; needing to move a single field out of one is the signal that the object
+    should be modelled as a `class` instead (heap entity, reference semantics, shareable). `const` bindings
+    and `ref` borrows cannot be moved.
+  - A type with a user destructor (or `nocopy`) is movable **only** when it declares `T(move T other)`;
+    every other movable type is transferred by the compiler (copy the bytes, zero the source), which is the
+    correct ownership transfer for a reference-counted handle and a plain copy for a scalar.
+  - The move constructor receives its source **by pointer** (like `ref`), so the body steals without the
+    parameter retaining anything; the compiler zeroes the source afterwards and stops destroying it.
+  - **A moved value is out of reach**: any later read, write, borrow, pass or return of that variable is a
+    compile error until a new assignment re-arms it. `if`/`else` merge the two arms; `move` may not target a
+    variable declared outside the enclosing loop; nothing is tracked across functions (a moved value cannot
+    escape except through the transfer points themselves).
+  - Uncopyable-but-movable types may be returned and passed by value; passing a plain lvalue of such a type
+    reports "write `move`".
+
+- **`swap(a, b)` (implemented, 0.0.143)**: exchanges the values at two writable places (a variable, a field,
+  an element or a dereference) with a pure byte exchange — no constructor, destructor or reference-count
+  operation runs. It is built in rather than a library function because it needs the addresses of both places
+  even for types whose address must not be taken (`&` is refused for a struct with reference fields), and
+  because a byte exchange is exactly what a reference-counted handle needs (the counts do not change). Both
+  sides stay initialized, so it never interacts with the moved tracking; `swap(a, a)` is a no-op. It is the
+  primitive a container needs for `remove`/`swap_remove`.
+
+- **Copy construction and assignment (implemented, 0.0.138; `const ref` source in 0.0.139-0.0.140)**:
+  `T(const ref T other)` declares the copy constructor (`ref`/`const ref` parameters on a constructor are accepted only
+  for that form, and the source is read-only — `ref T` reports that a copy must not modify its source);
+  `nocopy` forbids it. For a type with a user destructor, **assignment is synthesized as copy-and-swap**:
+  `b = a` copy-constructs into a temporary, swaps the byte blocks and destroys the temporary (the old
+  value); `b = move a` does the same with the move constructor. A throwing copy constructor therefore
+  leaves the destination untouched, and self-assignment is safe without an identity check. Value types must
+  not store pointers into themselves (the swap is a byte swap) — such types belong to `nocopy`. A
+  user-written `operator=` and the explicit construct form `S(a)` are not available yet.
+
+- **`nocopy` modifier** (**implemented, 0.0.136**): `nocopy struct Handle { int fd; }` declares a value type
+  that must never be copied by value. It is a declaration modifier (same position as `public`/`packed`), and
+  only `struct` accepts it — `class` is a heap handle whose "copy" is a reference-count increment (nothing is
+  duplicated, so it needs no opt-out), `union` is copied by bits, and `interface`/`enum`/`unit`/`extern`
+  reject it outright.
+  - `copyable` becomes false for the type **and for every type that contains it** (the property is
+    recursive): `S b = a;`, `f(s)`, `return s;`, a sum/union payload, and copying an array of it are all
+    compile errors. Borrowing (`ref`), pointer access, field assignment and aggregate initialization are
+    unaffected — they do not copy.
+  - Also refused at the C boundary, because C copies by value.
+  - Motivation: a struct that owns a resource (file descriptor, socket, lock) must not be duplicated by an
+    implicit copy, and a struct without a user destructor is otherwise copyable by definition.
+    `nocopy` + a move constructor is the move-only type (`agents/value-semantics.md` §8.6).
+
 - **Layout modifiers `packed` / `align(N)`** (**implemented, 0.0.42**):
   - Both are **declaration modifiers** (in the same class as `public`/`private`/`const`), written before the `struct` declaration (equally applicable once `union` lands,
     see U14), order does not matter, usable alone or combined: `packed align(8) struct Msg { ... }` and
@@ -613,7 +668,7 @@ class Cat {
 - `const Cat c` (implemented, 0.0.61): a **read-only binding marker** — `c` cannot be rebound, and fields cannot be written directly through `c` (`c.a = 1` is an error).
   It is not a deep read-only view: a copied-out handle is still writable, and calling a method that modifies the object through `c` is also legal (there are no `const` methods, see 3.11).
 - **`ref` is a binding mode, not a storable type** (since 0.0.62; extended in 0.0.63): borrows appear in exactly two places, **parameters** and **return types**,
-  written as the prefix keyword `ref T p` / `ref const T p` / `ref T f()`; **no `T&` type suffix is introduced**. The reason: `&` in this language already is
+  written as the prefix keyword `ref T p` / `const ref T p` (or its older spelling `ref const T p`) / `ref T f()`; **no `T&` type suffix is introduced**. The reason: `&` in this language already is
   the unary address-of operator and the binary bitwise-and operator; modifiers in type position uniformly use a lowercase prefix (`weak`, `const`, `ref`).
   A borrow cannot be the type of a variable, field, or array element (`ref T x;` and `T&[]` are both errors, and the compiler emits a clear diagnostic).
 - The borrow family shares one rule: **not storable** — the results of `for ref x in s`, `ref T p`, and `ref T f()` must not be assigned to another variable or field,
@@ -1110,9 +1165,10 @@ type Op = delegate (int, int) => int;
   environment must be released; pass `.code`/`.env` explicitly as `void*` instead.
 - **Position rules** follow function types: parameters and fields may spell the anonymous form,
   block-/unit-level declarations and return types need `auto` or a `type` alias.
-- **Status (0.0.111)**: the type, the layout, the calling convention, the thunk, the RC plumbing and
-  capturing are in place. A capture list `[x]` / `[ref x]` is **mandatory for every outer variable the
-  body uses** (implicit capture is an error, so the copying cost is visible at the definition site):
+- **Status (0.0.130)**: the type, the layout, the calling convention, the thunk, the RC plumbing and
+  capturing are in place. A capture list `[x]` / `[ref x]` / `[weak x]` is **mandatory for every outer
+  variable the body uses** (implicit capture is an error, so the copying cost is visible at the
+  definition site):
   - `[x]` copies the value into a synthesized environment **class** (one field per capture); a
     reference-counted value (`String`, slice, `class` handle, nested `delegate`) is retained by the
     environment, so the delegate keeps it alive.
@@ -1126,6 +1182,16 @@ type Op = delegate (int, int) => int;
     object's address so writes reach it; on a class it is rejected (the handle already is a
     reference). The body keeps working as usual: `this` and implicit field access resolve through the
     environment.
+  - `[weak x]` / `[weak this]` store an **uncounted** reference: the environment does not keep the
+    object alive. This is how a `class` keeps a callback on itself without an RC cycle
+    (`this.cb = [weak this] () => n;` — the object is destroyed, the destructor runs). Only `class`
+    handles qualify: a `struct` `this` is a value copy (no cycle to break) and an `interface` value
+    has no `weak` form yet. The weak registry clears the slot when the target is destroyed
+    (3.8), so a call on a delegate whose weak capture is already dead **returns the zero value of
+    the return type without running the body** — inside the body every weak capture is therefore
+    live, and no null checks are needed there. The test is a snapshot: a concurrent destruction
+    between the check and a later use of the capture is a data race, exactly like reading a `weak`
+    field.
   - A capturing lambda's value is a `delegate`; a non-capturing one is still a plain `fn`.
   - **`for` bodies**: each iteration captures its own copy with `[x]` (the loop variable is a fresh
     local per iteration). `[ref x]` shares the one variable, so every delegate sees its final value —
@@ -1141,7 +1207,9 @@ type Op = delegate (int, int) => int;
     captured by the enclosing lambda first (`[y]` there, then `[y]` here), otherwise the inner lambda
     would silently read a fresh slot.
   - Statically rejected: capturing the same name twice, capturing a name that is not a local,
-    `[ref ...]` of a reference-containing type, by-value capture of a struct with a destructor, and
+    `[ref ...]` of a reference-containing type, `[weak ...]` of anything but a `class` handle,
+    `[weak ref ...]` (the two modifiers contradict each other), by-value capture of a struct with a
+    destructor, and
     **returning a `[ref ...]` lambda** of frame-owned storage (the variable always dies with the
     call). `[ref]` of caller-owned storage — `this` of a struct method, a `ref` parameter, a
     `for ref` binding — may escape; its lifetime is then the caller's responsibility.

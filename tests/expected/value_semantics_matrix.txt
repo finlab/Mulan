@@ -1,0 +1,2 @@
+buf_live 0 cat_live 0 copies 1 moves 4
+value_semantics_matrix ok

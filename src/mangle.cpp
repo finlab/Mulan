@@ -114,6 +114,21 @@ std::string destroy_cname(const std::string& unit, const std::string& owner) {
     return "mu_" + unit + "_destroy_" + ident_safe(owner);
 }
 
+std::string dtor_partial_cname(const std::string& unit, const std::string& owner) {
+    return "mu_" + unit + "_D_partial_" + ident_safe(owner);
+}
+std::string destroy_partial_cname(const std::string& unit, const std::string& owner) {
+    return "mu_" + unit + "_destroy_partial_" + ident_safe(owner);
+}
+
+std::string move_ctor_cname(const std::string& unit, const std::string& owner) {
+    return "mu_" + unit + "_move_" + ident_safe(owner);
+}
+
+std::string copy_ctor_cname(const std::string& unit, const std::string& owner) {
+    return "mu_" + unit + "_copy_" + ident_safe(owner);
+}
+
 std::string class_desc_name(const std::string& unit, const std::string& owner) {
     return "mu_" + unit + "_desc_" + ident_safe(owner);
 }

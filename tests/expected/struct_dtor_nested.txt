@@ -1,0 +1,2 @@
+ctors 9 dtors 9
+struct_dtor_nested ok

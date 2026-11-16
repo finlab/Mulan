@@ -1,8 +1,20 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Single source of truth for the version: the VERSION file at the repository root (major.minor.build)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MUC_VERSION_RAW)
-string(STRIP "${MUC_VERSION_RAW}" MUC_VERSION)
+# Single source of truth for the version: the VERSION file at the repository root.
+# It records two independent numbers on labelled lines (see docs/versions.md):
+#   version = <major.minor.patch>  release version; changes only on an explicit release
+#   build   = <n>                  monotonic build counter; +1 per compiler-code change
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MUC_VERSION_FILE)
+string(REGEX MATCH "version[ \t]*=[ \t]*([0-9]+\\.[0-9]+\\.[0-9]+)" _muc_v "${MUC_VERSION_FILE}")
+if(NOT CMAKE_MATCH_1)
+  message(FATAL_ERROR "muc: VERSION has no `version = major.minor.patch` line")
+endif()
+set(MUC_VERSION "${CMAKE_MATCH_1}")
+string(REGEX MATCH "build[ \t]*=[ \t]*([0-9]+)" _muc_b "${MUC_VERSION_FILE}")
+if(NOT CMAKE_MATCH_1)
+  message(FATAL_ERROR "muc: VERSION has no `build = <n>` line")
+endif()
+set(MUC_BUILD "${CMAKE_MATCH_1}")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 
@@ -78,7 +90,7 @@ add_executable(muc
 )
 
 separate_arguments(LLVM_DEFS_LIST NATIVE_COMMAND "${LLVM_DEFINITIONS}")
-target_compile_definitions(muc PRIVATE MUC_VERSION="${MUC_VERSION}" ${LLVM_DEFS_LIST})
+target_compile_definitions(muc PRIVATE MUC_VERSION="${MUC_VERSION}" MUC_BUILD="${MUC_BUILD}" ${LLVM_DEFS_LIST})
 target_include_directories(muc SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 
 if(MSVC)

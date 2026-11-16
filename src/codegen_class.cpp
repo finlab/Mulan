@@ -246,7 +246,12 @@ namespace muc_detail {
         size_t i = first;
         for (auto& pl : pls) {
             if (i >= fn->arg_size()) break;
-            auto* slot = entryAlloca(lt(pl->rty), sane(pl->name), alignOf(pl->rty));
+            // A `ref` / `move` parameter's slot holds the *address*, not the value: it must be pointer
+            // sized even when the referent is smaller (storing an 8-byte pointer into a 4-byte alloca is
+            // an out-of-bounds write, i.e. UB that lets the optimizer delete the surrounding code).
+            const bool indirect = pl->by_ref;
+            auto* slot = entryAlloca(indirect ? ptrTy() : lt(pl->rty), sane(pl->name),
+                                     indirect ? 8u : alignOf(pl->rty));
             slots[pl.get()] = slot;
             IRBuilder<>::InsertPointGuard g(b);
             b.SetInsertPoint(bodyBB);
@@ -327,6 +332,9 @@ namespace muc_detail {
                     FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
                 b.CreateCall(baseCtor, {curThis});
                 if (mayThrow.mayThrowCname(ctor_cname(c->ty->base->unit, c->ty->base->name, {}))) {
+                    // Nothing is cleaned up here: the desc is still the base's, so the allocating
+                    // caller's partial destroy dispatches to the base's partial destructor
+                    // (emitDestroyPartialFn). Our own desc is restored only on success.
                     emitCheckPending();
                 }
                 Value* dp2 = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
@@ -334,9 +342,27 @@ namespace muc_detail {
             }
         }
         ownParams(ctor->param_locals);
+        // Members come between base and body. With an explicit `super(...)` the base constructor call is a
+        // statement in the body, and that statement runs the member step itself (codegen_expr2).
+        if (!ctor->has_explicit_super) emitMemberInits(b.CreateLoad(ptrTy(), thisSlot), c->ty);
         block(ctor->body.get());
         popRefScope();
         finishBody(fn, c->name + " constructor");
+    }
+
+    // C++ order: base constructor, then the members in declaration order, then the body. The object was
+    // zero-filled at allocation, and a failing member constructor leaves the rest zeroed, so the
+    // allocating caller's partial destroy releases everything that did get constructed.
+    void Emitter::emitMemberInits(Value* self, const TypePtr& cls) {
+        if (!self || !cls || cls->kind != TypeKind::Class) return;
+        size_t total = cls->fields.size();
+        size_t baseCount = 0;
+        if (cls->base && cls->base->kind == TypeKind::Class) baseCount = cls->base->fields.size();
+        for (size_t i = baseCount; i < total; ++i) {
+            const Field& f = cls->fields[i];
+            if (f.weak || !f.type || !f.type->needs_ctor()) continue;
+            emitCtorGlue(fieldAddr(self, cls, static_cast<int>(i)), f.type);
+        }
     }
 
     void Emitter::emitReleaseValue(Value* addr, const TypePtr& ty, bool unaligned) {
@@ -409,6 +435,22 @@ namespace muc_detail {
                 emitReleaseValue(ep, ty->elem, unaligned);
             }
         }
+    }
+
+    // A constructor that exits by exception leaves the object unfinished: its own user destructor
+    // body must not run, only the already constructed subobjects are released. The remaining fields
+    // are released anyway because destroying a zero value is defined to be a no-op
+    // (value-semantics §6.3), which keeps this path free of a per-field "constructed" flag.
+    void Emitter::emitReleasePartialValue(Value* addr, const TypePtr& ty) {
+        if (!ty) return;
+        if (ty->kind == TypeKind::Struct && ty->needs_cleanup()) {
+            FunctionCallee partial = mod->getOrInsertFunction(
+                dtor_partial_cname(ty->unit, ty->name),
+                FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+            b.CreateCall(partial, {addr});
+            return;
+        }
+        emitReleaseValue(addr, ty);
     }
 
     void Emitter::emitRetainValue(Value* addr, const TypePtr& ty, bool unaligned) {
@@ -541,6 +583,97 @@ namespace muc_detail {
         finishBody(fn, c->name + " destroy function");
     }
 
+    // Releases exactly what a failed constructor call may have constructed: this class's own
+    // fields plus, when the base subobject is complete, the base's full destructor.
+    void Emitter::emitDtorPartial(ClassDecl* c) {
+        resetDebugScope();
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(dtor_partial_cname(c->ty->unit, c->name),
+                                     FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::InternalLinkage);
+        curClassTy = c->ty;
+        beginBody(fn);
+        Value* self = fn->getArg(0);
+        size_t total = c->ty->fields.size();
+        size_t baseCount = 0;
+        if (c->ty->base && c->ty->base->kind == TypeKind::Class) {
+            baseCount = c->ty->base->fields.size();
+        }
+        for (size_t k = total; k > baseCount; --k) {
+            size_t idx = k - 1;
+            Value* fa = fieldAddr(self, c->ty, static_cast<int>(idx));
+            if (c->ty->fields[idx].weak) {
+                b.CreateCall(ensureWeakUnreg(), {fa});
+                continue;
+            }
+            emitReleaseValue(fa, c->ty->fields[idx].type);
+        }
+        if (c->ty->base && c->ty->base->kind == TypeKind::Class) {
+            // Reaching this level means the base constructor returned normally (see
+            // emitDestroyPartialFn), so the base subobject is complete and gets its full destructor.
+            FunctionCallee baseDtor = mod->getOrInsertFunction(
+                dtor_cname(c->ty->base->unit, c->ty->base->name),
+                FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+            b.CreateCall(baseDtor, {self});
+        }
+        finishBody(fn, c->name + " partial destructor");
+    }
+
+    void Emitter::emitDestroyPartialFn(ClassDecl* c) {
+        resetDebugScope();
+        std::string nm = destroy_partial_cname(c->ty->unit, c->name);
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(nm, FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::InternalLinkage);
+        beginBody(fn);
+        Value* p = fn->getArg(0);
+        b.CreateCall(ensureWeakNotify(), {p});
+        // The descriptor is written on constructor entry and restored only after `super(...)`
+        // returns, so it names the deepest constructor frame that was running when the throw
+        // happened: that class's own fields are the ones needing a release, and every ancestor of
+        // it was fully constructed. The failing frame cannot do this itself - the exception may
+        // escape several constructor frames before the allocating caller runs this cleanup.
+        Value* desc = b.CreateLoad(ptrTy(), b.CreateGEP(i8(), p, ConstantInt::get(i64(), 8)));
+        std::vector<TypePtr> chain;
+        for (TypePtr t = c->ty; t && t->kind == TypeKind::Class; t = t->base) chain.push_back(t);
+        BasicBlock* done = BasicBlock::Create(ctx, "partial.done", curFn);
+        for (size_t i = 0; i < chain.size(); ++i) {
+            const TypePtr& lvl = chain[i];
+            FunctionCallee partial = mod->getOrInsertFunction(
+                dtor_partial_cname(lvl->unit, lvl->name),
+                FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+            if (i + 1 == chain.size()) {
+                b.CreateCall(partial, {p});
+                break;
+            }
+            BasicBlock* hit = BasicBlock::Create(ctx, "partial.here", curFn);
+            BasicBlock* next = BasicBlock::Create(ctx, "partial.up", curFn);
+            b.CreateCondBr(b.CreateICmpEQ(desc, descOf(lvl)), hit, next);
+            b.SetInsertPoint(hit);
+            b.CreateCall(partial, {p});
+            b.CreateBr(done);
+            b.SetInsertPoint(next);
+        }
+        b.CreateBr(done);
+        b.SetInsertPoint(done);
+        if (classNeedsAlignedAlloc(c->ty)) {
+            emitAlignedFree(p);
+        } else {
+            b.CreateCall(libFn("free", LType::getVoidTy(ctx), {ptrTy()}), {p});
+        }
+        finishBody(fn, c->name + " partial destroy function");
+    }
+
+    void Emitter::emitPartialDestroyCall(Value* p, const TypePtr& cls) {
+        if (!p || !cls) return;
+        FunctionCallee callee = mod->getOrInsertFunction(
+            destroy_partial_cname(cls->unit, cls->name),
+            FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+        b.CreateCall(callee, {p});
+    }
+
     void Emitter::emitClassDesc(ClassDecl* c) {
         std::string destroyName = destroy_cname(c->ty->unit, c->name);
         FunctionCallee dfn =
@@ -593,7 +726,11 @@ namespace muc_detail {
     void Emitter::emitStructCtor(StructDecl* sd, CtorDecl* ctor) {
         resetDebugScope();
         std::vector<LType*> ptys{ptrTy()};
-        for (auto& t : ctor->pty) ptys.push_back(lt(t));
+        // A move constructor takes the source by pointer (the body steals from it) and the copy constructor
+        // borrows it: both are plain pointers in the signature (agents/value-semantics.md §8.1).
+        for (size_t i = 0; i < ctor->params.size() && i < ctor->pty.size(); ++i) {
+            ptys.push_back((ctor->params[i]->by_ref || ctor->is_move) ? ptrTy() : lt(ctor->pty[i]));
+        }
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(ctor->cname,
                                      FunctionType::get(LType::getVoidTy(ctx), ptys, false))
@@ -606,6 +743,16 @@ namespace muc_detail {
         b.CreateStore(fn->getArg(0), thisSlot);
         bindParams(fn, 1, ctor->param_locals);
         ownParams(ctor->param_locals);
+        // A member with its own default constructor is constructed before the body (C++ order); the body
+        // then assigns whatever it wants on top.
+        {
+            Value* self = b.CreateLoad(ptrTy(), thisSlot);
+            for (size_t i = 0; i < sd->ty->fields.size(); ++i) {
+                const Field& f = sd->ty->fields[i];
+                if (f.weak || !f.type || !f.type->needs_ctor()) continue;
+                emitCtorGlue(fieldAddr(self, sd->ty, static_cast<int>(i)), f.type);
+            }
+        }
         block(ctor->body.get());
         popRefScope();
         finishBody(fn, sd->name + " constructor");
@@ -636,6 +783,26 @@ namespace muc_detail {
                              sd->ty->fields[idx].type, sd->ty->is_packed);
         }
         finishBody(fn, sd->name + " destructor");
+    }
+
+    void Emitter::emitStructDtorPartial(StructDecl* sd) {
+        resetDebugScope();
+        if (!sd->ty || !sd->ty->needs_cleanup()) return;
+        Function* fn = cast<Function>(
+            mod->getOrInsertFunction(dtor_partial_cname(sd->ty->unit, sd->name),
+                                     FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false))
+                .getCallee());
+        fn->setLinkage(GlobalValue::InternalLinkage);
+        curClassTy = sd->ty;
+        beginBody(fn);
+        Value* self = fn->getArg(0);
+        for (size_t k = sd->ty->fields.size(); k > 0; --k) {
+            size_t idx = k - 1;
+            if (sd->ty->fields[idx].weak) continue;
+            emitReleaseValue(fieldAddr(self, sd->ty, static_cast<int>(idx)),
+                             sd->ty->fields[idx].type, sd->ty->is_packed);
+        }
+        finishBody(fn, sd->name + " partial destructor");
     }
 
     void Emitter::emitInterfaceMethod(InterfaceDecl* itf, MethodDecl* m) {

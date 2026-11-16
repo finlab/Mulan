@@ -18,6 +18,8 @@ class C {
     ~C() { live -= 1; }
 }
 
+// The constructor never completed, so `~C` must not run: `live` stays 1.
+
 int main() {
     try {
         C c = new C(7);

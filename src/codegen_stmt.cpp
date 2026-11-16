@@ -58,6 +58,24 @@ using ArgPack = Emitter::ArgPack;
                 storeValue(Constant::getNullValue(lt(ty)), addr, ty);
                 return;
             }
+            // `S b = move a;`: build the value straight into the destination, then leave the source an
+            // empty shell (agents/value-semantics.md §8.3).
+            if (auto mv = dynamic_cast<MoveExpr*>(e)) {
+                emitMoveInto(addr, ty, mv);
+                return;
+            }
+            // `S b = a;` on a type with a user copy constructor: deep copy through it
+            // (agents/value-semantics.md §8.11). A fresh construction (`S(args)`) is handled below, and a
+            // value that is already owned (a call result, `new`, `move x`) is transferred as-is instead of
+            // being copied a second time.
+            if (ty->kind == TypeKind::Struct && ty->has_copy_ctor && !valueOwned(e) &&
+                !(dynamic_cast<Call*>(e) && static_cast<Call*>(e)->callee_kind == "struct_ctor")) {
+                Value* v = coerce(e, ty);
+                Value* src = entryAlloca(lt(ty), "copy.src", alignOf(ty));
+                b.CreateStore(v, src);
+                emitCopyInto(addr, src, ty);
+                return;
+            }
             if (auto call = dynamic_cast<Call*>(e);
                 call && call->callee_kind == "struct_ctor") {
                 TypePtr st = call->ctor;
@@ -122,9 +140,10 @@ using ArgPack = Emitter::ArgPack;
             return;
         }
         if (auto ia = dynamic_cast<InitAggregate*>(init)) {
-            // empty braces `{}`: aggregate zero initialization (equivalent to the old `= 0`)
+            // empty braces `{}`: value-initialization - zero, then run the member constructors
             if (ia->items.empty()) {
                 zeroMem(addr, ty, unaligned);
+                emitCtorGlue(addr, ty, unaligned);
                 return;
             }
             // consistent with C: the parts not covered by the aggregate initialization are zeroed
@@ -145,6 +164,8 @@ using ArgPack = Emitter::ArgPack;
                         slot.emplace_back(static_cast<int>(i), ia->items[i].second.get());
                 }
                 auto* st = cast<LStruct>(lt(ty));
+                // Sema requires every member here, so no member is left to default-initialize
+                // (`tests/errors` locks the "missing initializers" diagnostic).
                 for (auto& [idx, sub] : slot) {
                     Value* fp = fieldSlot(st, ty, addr, idx);
                     initInto(fp, ty->fields[idx].type, sub, unaligned || ty->is_packed);
@@ -169,6 +190,12 @@ using ArgPack = Emitter::ArgPack;
                     Value* p = gep(lt(ty->elem), inner, ConstantInt::get(i64(), i));
                     initInto(p, ty->elem, it.second.get(), unaligned);
                     ++i;
+                }
+                // Elements beyond the initializer are default-initialized.
+                for (; i < ty->array_size; ++i) {
+                    if (!ty->elem || !ty->elem->needs_ctor()) break;
+                    Value* p = gep(lt(ty->elem), inner, ConstantInt::get(i64(), i));
+                    emitCtorGlue(p, ty->elem, unaligned);
                 }
                 return;
             }
@@ -239,27 +266,22 @@ using ArgPack = Emitter::ArgPack;
                 // constructor, or a nested constructor inside an aggregate), release the
                 // zero-initialized/partially constructed local before propagating.
                 if (needsCleanup(lv->rty) && !lv->by_ref) {
-                    emitCheckPendingWith([&] { emitReleaseValue(slot, lv->rty); });
+                    emitCheckPendingWith([&] { emitReleasePartialValue(slot, lv->rty); });
                 }
             } else if (isRefKind(lv->rty)) {
                 b.CreateStore(Constant::getNullValue(lt(lv->rty)), slot);
-            } else if (lv->rty && lv->rty->kind == TypeKind::Struct) {
-                if (!lv->rty->ctors.empty()) {
-                    FunctionCallee ctor = mod->getOrInsertFunction(
-                        ctor_cname(lv->rty->unit, lv->rty->name, {}),
-                        FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
-                    if (lv->rty->needs_cleanup()) zeroMem(slot, lv->rty);
-                    b.CreateCall(ctor, {slot});
-                    if (mayThrow.mayThrowCname(ctor_cname(lv->rty->unit, lv->rty->name, {}))) {
-                        emitCheckPendingWith([&] { emitReleaseValue(slot, lv->rty); });
-                    }
-                } else if (needsCleanup(lv->rty)) {
-                    zeroMem(slot, lv->rty);
+            } else if (lv->rty && !is_void(lv->rty)) {
+                // Zero first whatever may hold an RC handle or a user destructor: releasing a zero value
+                // is defined to be a no-op, which is what makes every failure path safe
+                // (agents/value-semantics.md §6.3). POD values stay uninitialized, as in C++.
+                const bool zeroed = lv->rty->needs_cleanup();
+                if (zeroed) zeroMem(slot, lv->rty);
+                if (lv->rty->needs_ctor()) {
+                    emitCtorGlue(slot, lv->rty);
+                    emitCheckPendingWith([&] {
+                        if (zeroed) emitReleasePartialValue(slot, lv->rty);
+                    });
                 }
-            } else if (lv->rty && lv->rty->kind == TypeKind::Slice) {
-                b.CreateStore(Constant::getNullValue(ptrTy()), slot);
-            } else if (lv->rty && lv->rty->kind == TypeKind::Array && needsCleanup(lv->rty)) {
-                zeroMem(slot, lv->rty);
             }
             if (needsCleanup(lv->rty) && !lv->by_ref) refScopes.back().push_back(lv);
             return;
@@ -299,7 +321,20 @@ using ArgPack = Emitter::ArgPack;
                 return;
             }
             Value* addr = addrOf(as->target.get());
+            // Assigning to a moved variable re-arms it for destruction when the scope ends.
+            if (as->op == "=") {
+                if (auto n = dynamic_cast<Name*>(as->target.get()); n && n->kind == "local") {
+                    if (auto* lvp = std::get_if<LocalVar*>(&n->sym)) noteRevivedLocal(*lvp);
+                }
+            }
             const bool una = unalignedExpr(as->target.get());
+            // A type with a user destructor assigns through copy-and-swap, before the value is coerced
+            // (coercing would already consume a `move` RHS) — agents/value-semantics.md §8.11.
+            if (as->op == "=" && as->target->ty && as->target->ty->kind == TypeKind::Struct &&
+                as->target->ty->has_dtor) {
+                emitAssignSwap(addr, as->value.get(), as->target->ty);
+                return;
+            }
             if (as->op == "=") {
                 Value* nv = coerce(as->value.get(), as->target->ty);
                 bool weakTarget = false;

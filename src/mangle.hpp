@@ -32,6 +32,16 @@ std::string ctor_cname(const std::string& unit, const std::string& owner,
 std::string dtor_cname(const std::string& unit, const std::string& owner);
 // RC destroy entry (user destructor + field release + free), used by the runtime and by exports
 std::string destroy_cname(const std::string& unit, const std::string& owner);
+// Partial destructor: releases the subobjects that are already fully constructed and never runs the
+// object's own user destructor body. Used when a constructor exits by exception (C++ [except.ctor]/2).
+std::string dtor_partial_cname(const std::string& unit, const std::string& owner);
+// Move constructor `T(move T other)`: at most one per type, so it gets a dedicated symbol instead of
+// encoding the parameter mode in the overload mangling.
+std::string move_ctor_cname(const std::string& unit, const std::string& owner);
+// Copy constructor `T(ref T other)`, same reasoning.
+std::string copy_ctor_cname(const std::string& unit, const std::string& owner);
+// Partial destroy entry (release the storage): weak notify + partial destructor + free
+std::string destroy_partial_cname(const std::string& unit, const std::string& owner);
 
 // Global symbols for the class descriptor and vtable
 std::string class_desc_name(const std::string& unit, const std::string& owner);

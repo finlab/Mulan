@@ -69,13 +69,9 @@ namespace muc_detail {
             case TypeSpec::K::Array: {
                 TypePtr elem = resolve_type(spec->elem.get(), u);
                 if (is_void(elem)) err_ts("array element cannot be void", spec);
-                TypePtr base = elem;
-                while (base && base->kind == TypeKind::Array) base = base->elem;
-                if (noncopyable_struct(base)) {
-                    err_ts("struct `" + base->str() +
-                               "` has a destructor and cannot be an array element (array destruction is not implemented)",
-                           spec);
-                }
+                // A struct with a destructor is a legal element: the element constructor and destructor are
+                // recursive (agents/value-semantics.md §5, §6), and copying is what stays banned while the
+                // element type is uncopyable.
                 return Type::make_array(elem, spec->size);
             }
             case TypeSpec::K::Func:
@@ -399,6 +395,9 @@ namespace muc_detail {
         if (sc.count(lv->name)) err("duplicate declaration of `" + lv->name + "`", lv);
         sc[lv->name] = lv;
         if (!para_stack_.empty()) para_stack_.back().declared.insert(lv);
+        // Remember which loop nesting level the declaration belongs to: `move` may not outlive the loop it
+        // appears in (agents/value-semantics.md §8.4).
+        local_loop_level_[lv] = move_loop_count_;
     }
 
     EnumConst* Sema::lookup_enum_const_in(const std::string& unit_name, const std::string& name,
@@ -759,6 +758,7 @@ namespace muc_detail {
         in_finally_ = false;
         scopes_.clear();
         auto_groups_.clear();
+        begin_move_scope();
         scopes_.emplace_back();
         loop_depth_ = 0;
         f->param_locals.clear();

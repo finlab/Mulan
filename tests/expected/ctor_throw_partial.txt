@@ -1,0 +1,7 @@
+class_dtor=0
+value_dtor=0
+value_dtor=0
+base_dtor=100 derived_dtor=0
+base_dtor=100 derived_dtor=0
+class_dtor=1
+ctor_throw_partial ok

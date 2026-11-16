@@ -1,0 +1,2 @@
+copies 3 buffers 0
+copy_assign ok

@@ -313,6 +313,14 @@ static bool is_numeric(const TypePtr& t) {
         for (size_t i = 0; i < lm->env_src.size(); ++i) {
             const LocalVar* src = lm->env_src[i];
             Value* dst = fieldAddr(env, lm->env_ty, static_cast<int>(i));
+            if (lm->env_src_weak[i]) {
+                // `[weak x]` / `[weak this]`: an uncounted reference. The weak registry clears the slot
+                // when the target is destroyed, so the lambda prologue can tell a dead target from a
+                // live one (a weak field is neither retained here nor released by the env destructor).
+                Value* val = src ? loadAt(ptrTy(), slotFor(src), false) : b.CreateLoad(ptrTy(), thisSlot);
+                emitWeakStore(dst, val);
+                continue;
+            }
             if (!src) {
                 // `[this]`: the receiver of the enclosing method. `load(thisSlot)` is the class handle
                 // for a class method and the object address for a struct method.
@@ -428,7 +436,7 @@ static bool is_numeric(const TypePtr& t) {
             b.CreateCall(callee, {tmp, av});
             releaseTemps(pack);
             if (mayThrow.mayThrowCname(c.cname)) {
-                emitCheckPendingWith([&] { emitReleaseValue(tmp, st); });
+                emitCheckPendingWith([&] { emitReleasePartialValue(tmp, st); });
             }
             return b.CreateLoad(lt(st), tmp);
         }

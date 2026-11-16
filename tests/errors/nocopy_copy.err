@@ -1,0 +1,1 @@
+initialization: struct `nocopy_copy.Holder` cannot be copied by value: it contains a value that owns a resource; declare `nocopy_copy.Holder(const ref nocopy_copy.Holder other)`, or borrow it as `const ref nocopy_copy.Holder`

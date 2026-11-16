@@ -147,6 +147,13 @@ struct NotExpr : Expr {  // the not keyword
     ExprPtr operand;
 };
 
+// `move x`: gives up ownership of a local variable or parameter (agents/value-semantics.md §8.3).
+// sema records which declaration was moved so the codegen can zero the slot and stop destroying it.
+struct MoveExpr : Expr {
+    ExprPtr operand;
+    LocalVar* moved = nullptr;  // sema: the local/parameter whose ownership was transferred
+};
+
 struct Binary : Expr {
     std::string op;  // + - * / % << >> & | ^ < <= > >= == != and or
     ExprPtr left;
@@ -199,6 +206,7 @@ struct Lambda : Expr {
     struct Capture {
         std::string name;
         bool by_ref = false;
+        bool by_weak = false;  // `[weak x]`: the environment holds an uncounted (weak) reference
         int line = 0;
         int col = 0;
     };
@@ -211,6 +219,7 @@ struct Lambda : Expr {
     TypePtr env_ty;                        // synthesized environment class (null when not capturing)
     std::vector<const LocalVar*> env_src;  // the outer variable copied/made addressable (the creation site)
     std::vector<bool> env_src_ref;         // whether that capture is `[ref x]`
+    std::vector<bool> env_src_weak;        // whether that capture is `[weak x]`
 };
 
 // `x is Alt(a, b)` / `x is Cat d`: a runtime discrimination test (SPEC 10.1.2). For a sum value the
@@ -260,6 +269,15 @@ struct SizeofExpr : Expr {
 struct Len : Expr {
     ExprPtr seq;
     ExprPtr dim;  // len(a, k): optional dimension
+};
+
+// `swap(a, b)`: exchanges the values at two writable places. Built in rather than a library function
+// because it needs the addresses of both places even for types whose address must not be taken (`&` is
+// refused for a struct with reference fields), and because a byte exchange is exactly right for a
+// reference-counted handle — the counts do not change, so neither retain nor release may run.
+struct SwapExpr : Expr {
+    ExprPtr a;
+    ExprPtr b;
 };
 
 struct RangeExpr : Expr {
@@ -340,6 +358,8 @@ struct Param : Node {
     bool is_const = false;
     // A `ref` parameter borrows the caller's variable (a pointer is passed on the C side) and cannot be stored/returned.
     bool by_ref = false;
+    // A `move` parameter takes over the caller's value: `T(move T other)` is the move constructor.
+    bool by_move = false;
 };
 
 struct GlobalVar : Decl {    std::string name;
@@ -394,6 +414,8 @@ struct StructDecl : Decl {
     std::unique_ptr<DtorDecl> dtor;
     // Layout modifiers
     bool is_packed = false;
+    // `nocopy`: the type must not be copied by value (SPEC 3.13); only meaningful on a struct.
+    bool nocopy = false;
     bool is_union = false;  // a union declaration (layout: all members at offset 0)
     ExprPtr align_expr;  // the N of align(N) (the parser keeps the original expression and sema evaluates it)
     TypePtr ty;  // sema: the struct type (the fields are filled in after the placeholder is created)
@@ -608,6 +630,8 @@ struct CtorDecl : Node {
     std::vector<std::unique_ptr<LocalVar>> param_locals;
     std::string cname;  // the constructor symbol name
     bool has_explicit_super = false;
+    bool is_move = false;  // `T(move T other)`: the move constructor
+    bool is_copy = false;  // `T(ref T other)`: the copy constructor
 };
 
 struct DtorDecl : Node {
@@ -664,6 +688,9 @@ struct FuncDecl : Decl {
     TypePtr this_capture_ty;
     int this_capture_index = -1;
     bool this_capture_ref = false;
+    // Environment fields of `[weak …]` captures, in capture order (the `[weak this]` slot included):
+    // the lambda prologue tests them and returns without running the body when any is null.
+    std::vector<int> weak_capture_indices;
     std::string cname;
     bool is_entry = false;    // the entry unit's `main`: renamed to `mu_main` and called by the generated wrapper
     // The symbol crosses the C boundary in at least one direction (`extern` imports one, `export`

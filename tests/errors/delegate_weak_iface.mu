@@ -1,0 +1,1 @@
+unit delegate_weak_iface; interface I { int f(); } class C : I { public override int f() { return 1; } } type Get = delegate () => int; int main() { I i = new C(); Get g = [weak i] () => 1; return g(); }

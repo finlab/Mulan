@@ -14,6 +14,7 @@ namespace muc_detail {
         diSub = nullptr;
         b.SetCurrentDebugLocation(DebugLoc());
         ab.SetCurrentDebugLocation(DebugLoc());
+        movedLocals.clear();
     }
 
     // SysV classifies each eightbyte as INTEGER or SSE; the backend hands a float-bearing aggregate one
@@ -171,6 +172,30 @@ namespace muc_detail {
                 if (cl && cl->env_index >= 0) lambdaEnvIndex[cl.get()] = cl->env_index;
             }
         }
+        // `[weak …]` captures: the environment holds an uncounted reference and the weak registry clears
+        // the slot when the target is destroyed, so a null slot means the captured object is gone. The
+        // delegate then has no receiver to act on: return before running the body. This also makes every
+        // weak capture non-null inside the body, so no further checks are needed there.
+        BasicBlock* prologueBB = bodyBB;
+        if (lambdaEnvArg && !f->weak_capture_indices.empty()) {
+            Value* dead = Constant::getNullValue(i1());
+            for (int idx : f->weak_capture_indices) {
+                Value* slot = fieldAddr(lambdaEnvArg, f->pty[0], idx);
+                dead = b.CreateOr(dead, b.CreateICmpEQ(b.CreateLoad(ptrTy(), slot),
+                                                       Constant::getNullValue(ptrTy())));
+            }
+            auto* gone = BasicBlock::Create(ctx, "lambda.dead", curFn);
+            auto* live = BasicBlock::Create(ctx, "lambda.live", curFn);
+            b.CreateCondBr(dead, gone, live);
+            b.SetInsertPoint(gone);
+            if (is_void(f->rty)) {
+                b.CreateRetVoid();
+            } else {
+                b.CreateRet(zeroConst(lt(f->rty), f->rty));
+            }
+            prologueBB = live;
+            b.SetInsertPoint(prologueBB);
+        }
         // `[this]` capture: the body's `this` is the environment field. A class field holds the handle;
         // a struct field holds the object value (so `thisSlot` points at that field) or, with
         // `[ref this]`, the object address.
@@ -178,7 +203,7 @@ namespace muc_detail {
             curClassTy = f->this_capture_ty;
             Value* field = fieldAddr(lambdaEnvArg, f->pty[0], f->this_capture_index);
             thisSlot = entryAlloca(ptrTy(), "this");
-            b.SetInsertPoint(bodyBB);
+            b.SetInsertPoint(prologueBB);
             if (f->this_capture_ty->kind == TypeKind::Struct) {
                 if (f->this_capture_ref) {
                     b.CreateStore(b.CreateLoad(ptrTy(), field), thisSlot);  // object address
@@ -277,7 +302,7 @@ namespace muc_detail {
             // LLVM < 23 takes the language as `unsigned`, >= 23 as a `DISourceLanguageName`
             // wrapper class; the plain DWARF enum converts implicitly to both, a cast to either
             // type breaks the other.
-            llvm::dwarf::DW_LANG_C99, diFile, "muc " MUC_VERSION,
+            llvm::dwarf::DW_LANG_C99, diFile, "muc " MUC_VERSION " (build " MUC_BUILD ")",
             /*isOptimized=*/false, "", 0);
     }
 
@@ -313,6 +338,8 @@ namespace muc_detail {
         if (tm) mod->setDataLayout(tm->createDataLayout());
         mod->addModuleFlag(Module::Warning, "mulan.version",
                            llvm::MDString::get(ctx, MUC_VERSION));
+        mod->addModuleFlag(Module::Warning, "mulan.build",
+                           llvm::MDString::get(ctx, MUC_BUILD));
         initDebug();
 
         sliceTy = ptrTy();  // dynamic array handle (header pointer)
@@ -381,6 +408,8 @@ namespace muc_detail {
                     for (auto& ctor : c->ctors) emitCtor(c, ctor.get());
                     emitDtor(c);
                     emitDestroy(c);
+                    emitDtorPartial(c);
+                    emitDestroyPartialFn(c);
                 }
                 auto itf = dynamic_cast<InterfaceDecl*>(d.get());
                 if (itf && itf->ty) {
@@ -391,6 +420,7 @@ namespace muc_detail {
                     for (auto& m : sd->methods) emitStructMethod(sd, m.get());
                     for (auto& ctor : sd->ctors) emitStructCtor(sd, ctor.get());
                     emitStructDtor(sd);
+                    emitStructDtorPartial(sd);
                 }
             }
         }
@@ -437,8 +467,12 @@ namespace muc_detail {
         if (verifyModule(*mod, &os)) {
             throw MuError("LLVM backend: generated module is invalid: " + os.str());
         }
+        // Debug aid: the verifier accepts an over-wide store (that is UB, not invalid IR), and such a bug
+        // only shows up as "the optimizer deleted my code" (agents/llvm-assume-notes.md).
+        if (std::getenv("MUC_VERIFY_MEM")) verifyStackWrites();
 
         // standard -O2 pipeline: lets Str's short methods/operators and the RC helper functions be inlined.
+        
         {
             LoopAnalysisManager LAM;
             FunctionAnalysisManager FAM;

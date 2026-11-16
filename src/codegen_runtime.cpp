@@ -562,6 +562,7 @@ namespace muc_detail {
 
     void Emitter::releaseLocal(const LocalVar* lv) {
         if (!lv || !needsCleanup(lv->rty) || lv->by_ref) return;
+        if (movedLocals.count(lv)) return;  // ownership left with `move x`; the slot is already zeroed
         auto it = slots.find(lv);
         if (it == slots.end()) return;
         
@@ -578,9 +579,194 @@ namespace muc_detail {
         }
     }
 
-    void Emitter::pushRefScope() { refScopes.emplace_back(); }
+    // Build `dst` from `src` and leave `src` an empty shell. A type with a move constructor runs it (the
+    // constructor owns the transfer rules for whatever it holds); every other movable value is transferred
+    // by copying the bytes and zeroing the source, which is exactly right for a handle and harmless for a
+    // scalar (agents/value-semantics.md §8.2-§8.3).
+    void Emitter::emitMoveInto(Value* dst, const TypePtr& ty, MoveExpr* mv) {
+        LocalVar* src = mv->moved;
+        Value* from = addrOf(mv->operand.get());
+        if (ty->kind == TypeKind::Struct && ty->has_move_ctor) {
+            FunctionCallee ctor = mod->getOrInsertFunction(
+                move_ctor_cname(ty->unit, ty->name),
+                FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), ptrTy()}, false));
+            b.CreateCall(ctor, {dst, from});
+            emitCheckPending();  // if the move constructor throws, the source still owns its value
+        } else {
+            storeAt(b.CreateLoad(lt(ty), from), dst, false);
+        }
+        zeroMem(from, ty);
+        noteMovedLocal(src);
+    }
 
-    void Emitter::popRefScope() {
+    // Build `dst` as a deep copy of the object at `src` through the user's copy constructor.
+    void Emitter::emitCopyInto(Value* dst, Value* src, const TypePtr& ty) {
+        FunctionCallee ctor = mod->getOrInsertFunction(
+            copy_ctor_cname(ty->unit, ty->name),
+            FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), ptrTy()}, false));
+        b.CreateCall(ctor, {dst, src});
+        emitCheckPending();
+    }
+
+    // `b = a` for a type with a user destructor: copy-and-swap. The new value is built in a temporary,
+    // the temporaries are swapped byte by byte, and the temporary (which now holds the old value) is
+    // destroyed. A throwing copy constructor therefore leaves the destination untouched, and a source that
+    // aliases the destination is still intact when it is read (agents/value-semantics.md §8.11).
+    void Emitter::emitAssignSwap(Value* dst, Expr* e, const TypePtr& ty) {
+        Value* tmp = entryAlloca(lt(ty), "assign.tmp", alignOf(ty));
+        if (auto mv = dynamic_cast<MoveExpr*>(e)) {
+            emitMoveInto(tmp, ty, mv);
+        } else {
+            Value* v = coerce(e, ty);
+            Value* src = entryAlloca(lt(ty), "assign.src", alignOf(ty));
+            b.CreateStore(v, src);
+            emitCopyInto(tmp, src, ty);
+        }
+        const uint64_t n = sizeOf(ty);
+        if (n > 0) {
+            Value* scratch = entryAlloca(llvm::ArrayType::get(i8(), n), "assign.swap");
+            copyMem(scratch, dst, n);
+            copyMem(dst, tmp, n);
+            copyMem(tmp, scratch, n);
+        }
+        // The temporary now owns the destination's previous value.
+        emitReleaseValue(tmp, ty);
+    }
+
+    // Run the user constructors an implicit construction has to invoke. Zeroing is the caller's job (it
+    // happens whenever the type needs cleanup), so a POD value emits nothing at all and `int[1000] a;`
+    // stays as cheap as it was.
+    //
+    // A constructor that throws leaves the value in whatever state its own partial destroy left it in;
+    // the owner is released by the enclosing cleanup (the local declaration, the class's destroy_partial),
+    // which relies on releasing a zero value being a no-op. No cleanup is emitted here on purpose.
+    void Emitter::emitCtorGlue(Value* addr, const TypePtr& ty, bool unaligned) {
+        if (!ty || !ty->needs_ctor()) return;
+        if (ty->kind == TypeKind::Struct) {
+            if (ty->has_default_ctor()) {
+                const std::vector<TypePtr> noArgs;
+                FunctionCallee ctor = mod->getOrInsertFunction(
+                    ctor_cname(ty->unit, ty->name, noArgs),
+                    FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+                b.CreateCall(ctor, {addr});
+                // PERF: unconditional check - the may-throw summary is per callee and a constructor tree
+                // can mix throwing and non-throwing members.
+                emitCheckPending();
+                return;
+            }
+            for (size_t i = 0; i < ty->fields.size(); ++i) {
+                const Field& f = ty->fields[i];
+                if (f.weak || !f.type || !f.type->needs_ctor()) continue;
+                emitCtorGlue(fieldAddr(addr, ty, static_cast<int>(i)), f.type,
+                             unaligned || ty->is_packed);
+            }
+            return;
+        }
+        if (ty->kind == TypeKind::Array) {
+            // PERF: unrolled because the count is a compile-time constant; switch to a loop if arrays of
+            // constructor-having elements ever show up with a large size.
+            auto* st = cast<LStruct>(lt(ty));
+            for (size_t i = 0; i < ty->array_size; ++i) {
+                Value* ep = b.CreateGEP(st, addr, {ConstantInt::get(i64(), 0),
+                                                   ConstantInt::get(i32(), 0),
+                                                   ConstantInt::get(i64(), i)});
+                emitCtorGlue(ep, ty->elem, unaligned);
+            }
+        }
+    }
+
+    // Record that ownership left this local: `move` zeroes the slot, and the scope must not destroy it.
+    // Re-assigning the variable re-arms it (`noteRevivedLocal`).
+    void Emitter::noteMovedLocal(const LocalVar* lv) {
+        if (!lv) return;
+        movedLocals.insert(lv);
+        for (auto& scope : refScopes) {
+            scope.erase(std::remove(scope.begin(), scope.end(), lv), scope.end());
+        }
+    }
+
+    void Emitter::noteRevivedLocal(const LocalVar* lv) {
+        if (!lv || !movedLocals.count(lv)) return;
+        movedLocals.erase(lv);
+        if (!refScopes.empty() && needsCleanup(lv->rty) && !lv->by_ref) refScopes.back().push_back(lv);
+    }
+
+    // Debug aid (MUC_VERIFY_MEM=1): catch writes that run past a stack slot. The LLVM verifier accepts an
+    // over-wide store (it is UB, not invalid IR), which is why that class of bug only shows up later as
+    // "the optimizer deleted my code". Only an access that provably starts at an alloca is checked, so heap
+    // and parameter memory never produces a false positive.
+    void Emitter::verifyStackWrites() {
+        const llvm::DataLayout& dl = mod->getDataLayout();
+        for (llvm::Function& f : *mod) {
+            if (f.isDeclaration()) continue;
+            std::unordered_map<const llvm::AllocaInst*, uint64_t> size;
+            for (llvm::BasicBlock& bb : f) {
+                for (llvm::Instruction& i : bb) {
+                    auto* ai = llvm::dyn_cast<llvm::AllocaInst>(&i);
+                    if (ai && !ai->isArrayAllocation()) {
+                        size[ai] = dl.getTypeAllocSize(ai->getAllocatedType());
+                    }
+                }
+            }
+            if (size.empty()) continue;
+
+            // Walk a constant GEP / bitcast chain down to the alloca it starts from (null for anything else).
+            auto baseOf = [&](const llvm::Value* p, uint64_t& off) -> const llvm::AllocaInst* {
+                for (;;) {
+                    if (auto* g = llvm::dyn_cast<llvm::GEPOperator>(p)) {
+                        llvm::APInt c(dl.getIndexTypeSizeInBits(g->getType()), 0);
+                        if (!g->accumulateConstantOffset(dl, c)) return nullptr;
+                        if (!c.isNonNegative()) return nullptr;
+                        off += c.getZExtValue();
+                        p = g->getPointerOperand();
+                        continue;
+                    }
+                    if (auto* bc = llvm::dyn_cast<llvm::BitCastOperator>(p)) {
+                        p = bc->getOperand(0);
+                        continue;
+                    }
+                    return llvm::dyn_cast<llvm::AllocaInst>(p);
+                }
+            };
+
+            for (llvm::BasicBlock& bb : f) {
+                for (llvm::Instruction& i : bb) {
+                    const llvm::Value* dst = nullptr;
+                    uint64_t len = 0;
+                    if (auto* st = llvm::dyn_cast<llvm::StoreInst>(&i)) {
+                        dst = st->getPointerOperand();
+                        len = dl.getTypeStoreSize(st->getValueOperand()->getType());
+                    } else if (auto* ms = llvm::dyn_cast<llvm::MemSetInst>(&i)) {
+                        dst = ms->getDest();
+                        auto* c = llvm::dyn_cast<llvm::ConstantInt>(ms->getLength());
+                        if (!c) continue;
+                        len = c->getZExtValue();
+                    } else if (auto* mc = llvm::dyn_cast<llvm::MemCpyInst>(&i)) {
+                        dst = mc->getDest();
+                        auto* c = llvm::dyn_cast<llvm::ConstantInt>(mc->getLength());
+                        if (!c) continue;
+                        len = c->getZExtValue();
+                    } else {
+                        continue;
+                    }
+                    uint64_t off = 0;
+                    const llvm::AllocaInst* ai = baseOf(dst, off);
+                    if (!ai) continue;
+                    auto it = size.find(ai);
+                    if (it == size.end()) continue;
+                    if (off + len > it->second) {
+                        std::string what;
+                        llvm::raw_string_ostream os(what);
+                        os << "stack write out of bounds in `" << f.getName().str() << "`: " << (off + len)
+                           << " bytes at offset " << off << " into a " << it->second << "-byte slot";
+                        throw MuError(os.str());
+                    }
+                }
+            }
+        }
+    }
+
+    void Emitter::pushRefScope() { refScopes.emplace_back(); }    void Emitter::popRefScope() {
         if (refScopes.empty()) return;
         auto scope = refScopes.back();
         if (!hasTerm(b.GetInsertBlock())) {
@@ -631,6 +817,8 @@ namespace muc_detail {
     bool Emitter::valueOwned(Expr* e) {
         if (!e) return false;
         if (dynamic_cast<NewExpr*>(e)) return true;
+        // `move x` hands over the value: the source is zeroed and no longer owns it
+        if (dynamic_cast<MoveExpr*>(e)) return true;
         if (dynamic_cast<Call*>(e)) return true;
         // a capturing lambda materializes a fresh environment (rc = 1), so its value is owned; a
         // non-capturing lambda is a bare function address and carries no ownership either way

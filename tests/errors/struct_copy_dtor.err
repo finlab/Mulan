@@ -1,1 +1,1 @@
-initialization: struct `struct_copy_dtor.S` has a destructor and cannot be
+initialization: struct `struct_copy_dtor.S` cannot be copied by value: it declares a destructor, so it owns a resource; declare `struct_copy_dtor.S(const ref struct_copy_dtor.S other)`

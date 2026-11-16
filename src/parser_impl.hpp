@@ -171,7 +171,8 @@ private:
     std::vector<std::unique_ptr<GlobalVar>> parse_global();
     std::vector<std::unique_ptr<GlobalVar>> parse_global_list(TypeSpecPtr spec, bool is_const);
     std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, bool ret_ref, const Token& tk);
-    std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr, bool allow_ref = false);
+    std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr, bool allow_ref = false,
+                                                     bool allow_move = false);
 
     // ------------------------------------------------------ types
 

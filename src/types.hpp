@@ -61,6 +61,9 @@ struct Type {
     bool has_dtor = false;      // the user declared a destructor (struct/class)
     bool is_packed = false;     // Struct: packed (the fields are tightly packed, with no internal or tail padding, and the default align is 1)
     bool is_union = false;      // Struct: union (all members at offset 0, size = max(member))
+    bool nocopy = false;        // Struct: `nocopy` - the value must never be copied (agents/value-semantics.md §8.6)
+    bool has_move_ctor = false; // Struct: the user declared `T(move T other)`; the type is movable
+    bool has_copy_ctor = false; // Struct: the user declared `T(ref T other)`; the type is copyable
     int align_req = 0;          // Struct: the N of align(N) (0 = unspecified)
     // Func (`(T1, T2) => R`): a one-word function value (C function pointer compatible)
     std::vector<TypePtr> fparams;
@@ -108,6 +111,16 @@ static TypePtr make_sum(const std::string& unit, const std::string& name,
     // Callers that can see a float must take the float branch first.
     bool is_signed() const;
     bool needs_cleanup() const;  // whether the value contains fields that need RC cleanup (recursive)
+    // Value-semantics predicate family (authoritative definition: agents/value-semantics.md §1-§2).
+    // All of them recurse through the field/element/payload structure; none of them is cached.
+    bool needs_dtor() const;          // destroying the value is observable (RC release or a user destructor)
+    bool trivially_copyable() const;  // a bitwise copy is correct: no user destructor, no RC handle
+    bool is_pod() const;              // trivially copyable and no user constructor, so construction is a memset
+    bool copyable() const;            // may be copied by value: `class` copies its handle, a struct copies its fields
+    bool movable() const;             // may be moved: a declared move constructor, or a bit copy that is a legal copy
+    bool has_user_ctor() const;       // the user declared at least one constructor
+    bool has_default_ctor() const;    // ... and one of them takes no arguments
+    bool needs_ctor() const;          // constructing the value implicitly has to run user code
     TypePtr field_type(const std::string& fname) const;  // returns nullptr if it does not exist
     int field_index(const std::string& fname) const;     // returns -1 if it does not exist
 };

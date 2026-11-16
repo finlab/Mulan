@@ -526,9 +526,10 @@ namespace muc_detail {
 
     void Sema::resolve_method_ret(MethodDecl* m, Unit* u) {
         m->rty = make_borrow_ret(m->ret.get(), m->ret_ref, m, u, "method `" + m->name + "`");
-        if (noncopyable_struct(referent_of(m->rty))) {
+        if (noncopyable_struct(referent_of(m->rty)) && !referent_of(m->rty)->movable()) {
             err("struct `" + referent_of(m->rty)->str() +
-                    "` has a destructor and cannot be returned by value (use a pointer)",
+                    "` cannot be returned by value: it is not copyable (it is `nocopy`, or it has a "
+                    "destructor or contains a value that has one); return a pointer",
                 m);
         }
     }

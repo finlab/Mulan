@@ -1,0 +1,1 @@
+a copy constructor must not modify its source: write `Buf(const ref Buf other)`

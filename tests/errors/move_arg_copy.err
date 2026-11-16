@@ -1,0 +1,1 @@
+argument of call to `take`: struct `mv_arg.Buf` cannot be copied by value: it is declared `nocopy`; declare `mv_arg.Buf(const ref mv_arg.Buf other)`, or move it with `move`

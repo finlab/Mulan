@@ -282,7 +282,12 @@ bool Type::is_signed() const {
     return true;  // float / double: no sign bit, callers must not rely on this
 }
 
-bool Type::needs_cleanup() const {
+bool Type::needs_cleanup() const { return needs_dtor(); }
+
+// A value needs destruction exactly when it owns an RC handle or has a user destructor. `trivially_copyable`
+// is the complement of this, except for the kinds that can never be a value at all (Ref / Module / Range /
+// Void), which are non-trivial on purpose so that nothing spreads them across the C boundary by accident.
+bool Type::needs_dtor() const {
     switch (kind) {
         case TypeKind::Class:
         case TypeKind::Interface: return true;
@@ -290,21 +295,149 @@ bool Type::needs_cleanup() const {
             if (has_dtor) return true;
             for (const auto& f : fields) {
                 if (f.weak) continue;
-                if (f.type && f.type->needs_cleanup()) return true;
+                if (f.type && f.type->needs_dtor()) return true;
             }
             return false;
         case TypeKind::Array:
-            return elem && elem->needs_cleanup();
+            return elem && elem->needs_dtor();
         case TypeKind::Slice: return true;  // dynamic array: the handle holds an RC
         case TypeKind::Delegate: return true;  // the environment is an RC object
         case TypeKind::Sum:
             // a sum owns its active payload: cleanup is needed when any alternative needs it
             for (const auto& f : sum_fields) {
                 for (const auto& ft : f) {
-                    if (ft && ft->needs_cleanup()) return true;
+                    if (ft && ft->needs_dtor()) return true;
                 }
             }
             return false;
+        default: return false;
+    }
+}
+
+bool Type::trivially_copyable() const {
+    switch (kind) {
+        case TypeKind::Prim:
+        case TypeKind::Ptr:
+        case TypeKind::Enum:
+        case TypeKind::Func:
+        case TypeKind::Null: return true;
+        case TypeKind::Struct:
+            if (has_dtor) return false;
+            for (const auto& f : fields) {
+                // A weak field is registered in the weak registry by its address, so a bitwise copy
+                // would leave a stale registration behind.
+                if (f.weak) return false;
+                if (f.type && !f.type->trivially_copyable()) return false;
+            }
+            return true;
+        case TypeKind::Array:
+            return elem && elem->trivially_copyable();
+        case TypeKind::Sum:
+            for (const auto& f : sum_fields) {
+                for (const auto& ft : f) {
+                    if (ft && !ft->trivially_copyable()) return false;
+                }
+            }
+            return true;
+        default: return false;  // Slice / Class / Interface / Delegate / Ref / Module / Range / Void
+    }
+}
+
+// Arrays and sums have no constructor of their own, so their triviality comes from the element/payload.
+bool Type::is_pod() const {
+    switch (kind) {
+        case TypeKind::Array: return elem && elem->is_pod();
+        case TypeKind::Sum:
+            for (const auto& f : sum_fields) {
+                for (const auto& ft : f) {
+                    if (ft && !ft->is_pod()) return false;
+                }
+            }
+            return trivially_copyable();
+        default: return trivially_copyable() && ctors.empty();
+    }
+}
+
+// The copy axis is independent of the destruction axis: a struct with RC fields needs destruction but is
+// copyable (the copy retains), while a struct with a user destructor owns nothing the compiler can copy,
+// so it stays uncopyable until copy construction lands (agents/value-semantics.md §8).
+bool Type::copyable() const {
+    switch (kind) {
+        case TypeKind::Struct:
+            if (nocopy) return false;
+            if (has_copy_ctor) return true;  // the user supplies the deep copy (§8.1)
+            if (has_dtor) return false;
+            for (const auto& f : fields) {
+                if (f.weak) continue;
+                if (f.type && !f.type->copyable()) return false;
+            }
+            return true;
+        case TypeKind::Array:
+            return elem && elem->copyable();
+        case TypeKind::Sum:
+            for (const auto& f : sum_fields) {
+                for (const auto& ft : f) {
+                    if (ft && !ft->copyable()) return false;
+                }
+            }
+            return true;
+        default: return true;  // class/interface/delegate/slice copy by retaining; scalars are trivial
+    }
+}
+
+bool Type::has_user_ctor() const { return !ctors.empty(); }
+
+// A value may be moved when the compiler can perform the transfer itself: copy the bytes and zero the
+// source (which is exactly an ownership transfer for a handle, and a harmless copy for a scalar). A type
+// with a user destructor owns something the compiler does not understand, so it must say how to transfer
+// it (`T(move T other)`); `nocopy` opts out of the transfer as well, which is what makes an "immovable"
+// value possible (agents/value-semantics.md §8.2, §8.9).
+bool Type::movable() const {
+    switch (kind) {
+        case TypeKind::Class:
+        case TypeKind::Interface:
+        case TypeKind::Delegate:
+        case TypeKind::Slice: return true;
+        case TypeKind::Struct:
+            if (has_move_ctor) return true;
+            if (has_dtor || nocopy) return false;
+            for (const auto& f : fields) {
+                if (f.weak) continue;
+                if (f.type && !f.type->movable()) return false;
+            }
+            return true;
+        case TypeKind::Array:
+            return elem && elem->movable();
+        case TypeKind::Sum:
+            for (const auto& f : sum_fields) {
+                for (const auto& ft : f) {
+                    if (ft && !ft->movable()) return false;
+                }
+            }
+            return true;
+        default: return true;  // scalars, pointers, enums, function values
+    }
+}bool Type::has_default_ctor() const {
+    for (const auto& p : ctors) {
+        if (p.empty()) return true;
+    }
+    return false;
+}
+
+// The constructor-side dual of `needs_dtor`: constructing the value implicitly has to run a user
+// constructor somewhere inside it. A class field is a handle (null), and a sum/slice/delegate is built by
+// the expression that produces it, so neither contributes.
+bool Type::needs_ctor() const {
+    switch (kind) {
+        case TypeKind::Struct:
+            if (has_default_ctor()) return true;
+            for (const auto& f : fields) {
+                if (f.weak) continue;
+                if (f.type && f.type->needs_ctor()) return true;
+            }
+            return false;
+        case TypeKind::Array:
+            return elem && elem->needs_ctor();
         default: return false;
     }
 }

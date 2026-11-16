@@ -35,6 +35,9 @@ namespace fs = std::filesystem;
 #ifndef MUC_VERSION
 #define MUC_VERSION "0.0.0"
 #endif
+#ifndef MUC_BUILD
+#define MUC_BUILD "0"
+#endif
 
 static const char* USAGE = R"(muc - Mulan language compiler (LLVM backend)
 
@@ -552,7 +555,7 @@ int main(int argc, char** argv) {
     enableUtf8Console();
     std::vector<std::string> args(argv + 1, argv + argc);
     if (!args.empty() && (args[0] == "-V" || args[0] == "--version")) {
-        std::cout << "muc " MUC_VERSION "\n";
+        std::cout << "muc " MUC_VERSION " (build " MUC_BUILD ")\n";
         return 0;
     }
     if (args.empty() || args[0] == "-h" || args[0] == "--help" || args[0] == "help") {

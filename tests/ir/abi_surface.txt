@@ -15,5 +15,6 @@
 + define .*@mu_abi_surface_take_small__S_abi_surface_Small\(i64
 - define .*@mu_abi_surface_take_small__S_abi_surface_Small\(%mu_abi_surface_Small
 # and its 8-byte result travels as one i64 too.
-+ define .*@mu_abi_surface_swap__S_abi_surface_Small\(i64
-- define .*@mu_abi_surface_swap__S_abi_surface_Small\(%mu_abi_surface_Small
++ define .*@mu_abi_surface_flip__S_abi_surface_Small\(i64
+- define .*@mu_abi_surface_flip__S_abi_surface_Small\(%mu_abi_surface_Small
+

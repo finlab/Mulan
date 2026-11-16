@@ -542,8 +542,12 @@ bool is_zero_literal(Init* init) {
         auto it = slots.find(lv);
         if (it != slots.end()) return it->second;
         LType* ty = lt(lv->rty);
-        if (lv->by_ref) ty = ptrTy();
-        auto* a = entryAlloca(ty, sane(lv->name), alignOf(lv->rty));
+        uint64_t align = alignOf(lv->rty);
+        if (lv->by_ref) {
+            ty = ptrTy();
+            align = 8;
+        }
+        auto* a = entryAlloca(ty, sane(lv->name), align);
         slots[lv] = a;
         if (dib && diSub) {
             const unsigned line = lv->line > 0 ? static_cast<unsigned>(lv->line) : 1u;

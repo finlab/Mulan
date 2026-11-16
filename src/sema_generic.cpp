@@ -427,6 +427,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     if (is_struct) {
         ty->is_packed = sd->is_packed;
         ty->is_union = sd->is_union;
+        ty->nocopy = sd->nocopy;
     }
 
     Unit* saved_cur = cur_;
@@ -467,10 +468,20 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         bool pub = is_struct;
         auto vit = field_vis.find(f.first);
         if (vit != field_vis.end()) pub = vit->second;
+        // `weak` is a property of the field spec, not of the type: the instantiation must carry it over,
+        // otherwise a `weak` field silently becomes an owning reference (the target is kept alive and
+        // never nulled). Same rules as the non-generic path in `resolve_class_fields`.
+        if (f.second->weak && is_struct) {
+            err_ts("`weak` can only be used on class fields", f.second.get());
+        }
+        if (f.second->weak && !is_class_type(ft)) {
+            err_ts("`weak` field must be a class reference (interfaces do not support `weak` yet)",
+                   f.second.get());
+        }
         Field fld;
         fld.name = f.first;
         fld.type = ft;
-        fld.weak = false;
+        fld.weak = f.second->weak;
         fld.is_public = pub;
         ty->fields.push_back(std::move(fld));
     }

@@ -35,7 +35,7 @@ void add_to(int* p, int d) {
     *p += d;
 }
 
-void swap(int* a, int* b) {
+void exchange_ptrs(int* a, int* b) {
     int t = *a;
     *a = *b;
     *b = t;
@@ -63,7 +63,7 @@ int main() {
     // ---------- pointer parameters ----------
     add_to(&x, 7);
     print_int(x); putchar('\n');     // 27
-    swap(&x, &y);
+    exchange_ptrs(&x, &y);
     print_int(x); putchar(' ');      // 20
     print_int(y); putchar('\n');     // 27
 
@@ -107,3 +107,4 @@ int main() {
 
     return 0;
 }
+

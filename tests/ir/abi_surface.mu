@@ -28,7 +28,7 @@ export Pair make_pair(long a, long b) {
 
 export long take_wide(Wide w) { return w.a + w.b + w.c; }
 
-export Small swap(Small s) {
+export Small flip(Small s) {
     Small r = { a = s.b, b = s.a };
     return r;
 }
@@ -38,3 +38,4 @@ export long take_small(Small s) { return s.a * 10 + s.b; }
 int main() {
     return 0;
 }
+

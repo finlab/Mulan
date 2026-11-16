@@ -1,0 +1,2 @@
+moves 1 live 1
+move_ctor ok

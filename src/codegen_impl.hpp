@@ -105,6 +105,9 @@ using LArray = llvm::ArrayType;
 #ifndef MUC_VERSION
 #define MUC_VERSION "0.0.0"
 #endif
+#ifndef MUC_BUILD
+#define MUC_BUILD "0"
+#endif
 
 namespace muc_detail {
 
@@ -462,8 +465,35 @@ struct Emitter {
     // whether the value's lifetime needs RC cleanup (including recursive struct/array fields)
     static bool needsCleanup(const TypePtr& t);
 
+    // Run the user constructors an implicit construction has to invoke (struct default constructor,
+    // recursively through fields and array elements). Zeroing is the caller's job; a POD value emits
+    // nothing, so `int[1000] a;` stays free.
+    void emitCtorGlue(Value* addr, const TypePtr& ty, bool unaligned = false);
+
+    // Debug aid (MUC_VERIFY_MEM=1): report writes that run past a stack slot. LLVM's verifier accepts an
+    // over-wide store — it is UB, not invalid IR — and this class of bug surfaces only as "the optimizer
+    // deleted my code" (agents/llvm-assume-notes.md).
+    void verifyStackWrites();
+
+    // Build `dst` from the variable `move` names, then leave the source an empty shell.
+    void emitMoveInto(Value* dst, const TypePtr& ty, MoveExpr* mv);
+
+    // Build `dst` as a deep copy of `src` through the copy constructor `T(ref T other)`.
+    void emitCopyInto(Value* dst, Value* src, const TypePtr& ty);
+
+    // `dst = value` for a type with a user destructor: synthesized copy-and-swap / move-and-swap.
+    void emitAssignSwap(Value* dst, Expr* e, const TypePtr& ty);
+
+    // The member-initialization step of a class constructor (C++ order: base, members, body).
+    void emitMemberInits(Value* self, const TypePtr& cls);
+
     void releaseLocal(const LocalVar* lv);
 
+    // Variables whose ownership was moved out (`move x`): they are zeroed by the move and must not be
+    // destroyed by the scope, until a new assignment re-arms them (agents/value-semantics.md §8.3).
+    std::unordered_set<const LocalVar*> movedLocals;
+    void noteMovedLocal(const LocalVar* lv);
+    void noteRevivedLocal(const LocalVar* lv);
     void pushRefScope();
 
     void popRefScope();
@@ -590,8 +620,7 @@ struct Emitter {
 
 
     // ------------------------------------------------------------ statements
-    // Access alignment: fields/elements on a packed struct chain only guarantee 1-byte alignment, so the align of load/store
-    // must be explicitly lowered to 1, otherwise LLVM generates incorrect unaligned accesses according to the pointer type's alignment.
+    // Access alignment: fields/elements on a packed struct chain only guarantee 1-byte alignment, so the align of load/store    // must be explicitly lowered to 1, otherwise LLVM generates incorrect unaligned accesses according to the pointer type's alignment.
     void storeAt(Value* v, Value* addr, bool unaligned = false);
 
     Value* loadAt(LType* ty, Value* addr, bool unaligned = false);
@@ -670,11 +699,22 @@ struct Emitter {
 
     void emitReleaseValue(Value* addr, const TypePtr& ty, bool unaligned = false);
 
+    // Release a value that may not have been fully constructed (a constructor threw): a struct's
+    // own user destructor body must not run, so its partial destructor is called instead.
+    void emitReleasePartialValue(Value* addr, const TypePtr& ty);
+
     void emitRetainValue(Value* addr, const TypePtr& ty, bool unaligned = false);
 
     void emitDtor(ClassDecl* c);
 
     void emitDestroy(ClassDecl* c);
+
+    void emitDtorPartial(ClassDecl* c);
+
+    void emitDestroyPartialFn(ClassDecl* c);
+
+    // Call site helper: free a class object whose constructor failed.
+    void emitPartialDestroyCall(Value* p, const TypePtr& cls);
 
     void emitClassDesc(ClassDecl* c);
 
@@ -683,6 +723,8 @@ struct Emitter {
     void emitStructCtor(StructDecl* sd, CtorDecl* ctor);
 
     void emitStructDtor(StructDecl* sd);
+
+    void emitStructDtorPartial(StructDecl* sd);
 
     void emitInterfaceMethod(InterfaceDecl* itf, MethodDecl* m);
 

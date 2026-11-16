@@ -79,14 +79,31 @@ namespace muc_detail {
         return t->name == "char" || t->name == "byte";
     }
 
+    // Copyability is recursive: a struct that contains an uncopyable struct is uncopyable itself,
+    // so a host type cannot silently regain the ability to copy an owned value
+    // (agents/value-semantics.md §2).
     bool Sema::noncopyable_struct(const TypePtr& t) {
-        return t && t->kind == TypeKind::Struct && t->has_dtor;
+        return t && t->kind == TypeKind::Struct && !t->copyable();
+    }
+
+    std::string Sema::noncopyable_reason(const TypePtr& t) const {
+        if (!t) return "it is not copyable";
+        if (t->kind == TypeKind::Struct) {
+            if (t->nocopy) return "it is declared `nocopy`";
+            if (t->has_dtor) return "it declares a destructor, so it owns a resource";
+            return "it contains a value that owns a resource";
+        }
+        return "it is not copyable";
     }
 
     TypePtr Sema::check_assign(Expr* e, const TypePtr& dst, const std::string& what) {
-        if (noncopyable_struct(dst)) {
-            err(what + ": struct `" + dst->str() +
-                    "` has a destructor and cannot be copied by value (use a pointer or an explicit clone)",
+        // `move x` is the sanctioned way to produce an uncopyable value: `check_move` already verified
+        // that the type is movable.
+        if (noncopyable_struct(dst) && !dynamic_cast<MoveExpr*>(e)) {
+            err(what + ": struct `" + dst->str() + "` cannot be copied by value: " +
+                    noncopyable_reason(dst) + "; declare `" + dst->str() + "(const ref " + dst->str() +
+                    " other)`" + (dst->movable() ? ", or move it with `move`" : "") +
+                    (borrowable_type(dst) ? ", or borrow it as `const ref " + dst->str() + "`" : ""),
                 e);
         }
         // Contextual alternative (SPEC 10.1.1): when the target is a sum type, a bare alternative name
