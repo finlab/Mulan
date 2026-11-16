@@ -368,6 +368,14 @@ namespace muc_detail {
             for (auto& fs : alt.fields) {
                 TypePtr ft = resolve_type(fs.get(), u);
                 if (is_void(ft)) err("payload of alternative `" + alt.name + "` cannot be `void`", sd);
+                // A payload stored by value cannot contain the sum itself: `type H = Holds(H) | None`
+                // has no finite layout. `resolve_type` returns the same Type object, so identity is
+                // enough (a pointer to the sum is fine and is the documented way to recurse).
+                if (ft.get() == sd->ty.get()) {
+                    err("payload of alternative `" + alt.name + "` would make sum `" + sd->name +
+                            "` infinitely large (store a pointer or a class handle instead)",
+                        sd);
+                }
                 if (noncopyable_struct(ft)) {
                     err("payload of alternative `" + alt.name + "` is struct `" + ft->str() +
                             "`, which has a destructor and cannot be stored by value in a sum (use a "

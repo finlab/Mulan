@@ -27,6 +27,38 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 166 — 2026-11-17
+
+**Second audit batch: sum/interface lowering, generic instantiation, contract spelling, diagnostics.**
+
+- Sum equality with every alternative a unit value compares the tags directly; the lowering used to
+  emit an empty switch and then a branch into the terminated block (invalid IR).
+- `String(const char*)` treats a null source as the empty string, matching `cstr()`; `getenv` and
+  other C APIs that may return null no longer crash through the implicit conversion.
+- A generic type may refer to the instance being defined through a pointer or a borrow
+  (`Node<T>* next`, `Box(const ref Box<T>)`): the instantiator registers the in-progress handle
+  (`Type::in_progress`) before resolving the body, and a value payload that contains the sum itself
+  is rejected as infinitely large (`sum_self_payload`) instead of killing the compiler in layout.
+- Generic instantiation keeps the semantic flags the clone table used to drop: `virtual` on methods
+  (a subclass `override` is accepted after instantiation), `is_implicit` / `is_move` / `is_copy` on
+  constructors (the copy/move constructors get their own symbol and mark the type copyable/movable).
+- A member operator satisfies an interface operator whose receiver is spelled `Self`
+  (`int operator[](Self, isize)` ≡ `int operator[](isize)`) for classes too; a plain method's `Self`
+  stays a parameter type (SPEC 3.15.6), so `less(Self other)` keeps matching `less(Box<T> other)`.
+- A bare sum alternative wins over a same-named user function when the target type is that sum
+  (`Option<int> o = Some(3);`), while the function still serves its non-sum call sites.
+- `#if` checks enum identity like ordinary code: `os == Endian.Little` is now an error instead of
+  matching on raw member values.
+- The runtime settings reject values they cannot apply: `set_max_live_tasks(0)` is the documented
+  kill switch, a negative count and an unusable `set_task_stack` pair throw.
+- `-I` directories that shadow a `std.*` unit print a warning naming the file (the precedence is
+  unchanged).
+
+Tests: `sum_unit_eq`, `string_null_ctor`, `generic_selfref`, `generic_virtual`, `alt_shadow_both`,
+`class_iface_index`, `contract_self_method`, `task_settings` (run); `sum_self_payload`,
+`if_cross_enum` (must-fail); `tests/cli/std_shadow.py`.
+Full suite: 713/713 (252 run, 424 must-fail, 24 check, 1 warning, 9 ir, 3 c abi).
+
 #### build 165 — 2026-11-17
 
 **审计 issue 批量修复（is 判别、复合赋值窄化、sum 载荷 RC、字符串边界、诊断与 CLI）。**

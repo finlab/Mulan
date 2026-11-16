@@ -73,6 +73,10 @@ struct Type {
     bool nocopy = false;        // Struct: `nocopy` - the value must never be copied (agents/value-semantics.md §8.6)
     bool has_move_ctor = false; // Struct: the user declared `T(move T other)`; the type is movable
     bool has_copy_ctor = false; // Struct: the user declared `T(ref T other)`; the type is copyable
+    // A generic instance whose body is still being built: `Node<T>` registers the handle before its
+    // fields are resolved, so `Node<T>* next` can refer to the type being defined (a C-style
+    // incomplete type). Only pointer/borrow positions are legal while this is set.
+    bool in_progress = false;
     int align_req = 0;          // Struct: the N of align(N) (0 = unspecified)
     // Func (`(T1, T2) => R`): a one-word function value (C function pointer compatible)
     std::vector<TypePtr> fparams;

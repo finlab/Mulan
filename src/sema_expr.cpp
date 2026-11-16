@@ -1188,8 +1188,7 @@ namespace muc_detail {
         // resolved from the left side's type (contextual construction, SPEC 10.1.1).
         if (lt && lt->kind == TypeKind::Sum) {
             if (auto nm = dynamic_cast<Name*>(e->right.get());
-                nm && nm->kind.empty() && lookup_local(nm->ident) == nullptr &&
-                info().funcs.find(nm->ident) == info().funcs.end()) {
+                nm && nm->kind.empty() && lookup_local(nm->ident) == nullptr) {
                 for (size_t k = 0; k < lt->sum_names.size(); ++k) {
                     if (lt->sum_names[k] == nm->ident && lt->sum_fields[k].empty()) {
                         nm->kind = "sum_unit";

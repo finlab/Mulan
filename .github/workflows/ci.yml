@@ -58,6 +58,7 @@ jobs:
           export MUC_CMD="$PWD/build/muc.exe"
           python tests/cli/target_platform.py
           python tests/cli/build_args.py
+python tests/cli/std_shadow.py
 
   build-test-linux:
     name: build & test (Ubuntu, LLVM dev)
@@ -92,3 +93,4 @@ jobs:
           export MUC_CMD="$PWD/build/muc"
           python3 tests/cli/target_platform.py
           python3 tests/cli/build_args.py
+python3 tests/cli/std_shadow.py

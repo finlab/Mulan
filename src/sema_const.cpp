@@ -117,7 +117,11 @@ namespace muc_detail {
                 return -1;
             };
             auto name_is_free = [&](const std::string& nm) {
-                return lookup_local(nm) == nullptr && info().funcs.find(nm) == info().funcs.end();
+                // A local variable still wins (a name in scope is a value, not an alternative). A user
+                // function of the same name does not: the target type is this sum, so `Some(3)` has to
+                // construct here (`check_call` follows the same rule) while the function keeps serving
+                // every non-sum target.
+                return lookup_local(nm) == nullptr;
             };
             if (auto call = dynamic_cast<Call*>(e); call && call->callee_kind.empty()) {
                 if (auto nm = dynamic_cast<Name*>(call->callee.get());

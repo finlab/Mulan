@@ -455,7 +455,13 @@ std::unique_ptr<MethodDecl> clone_method(const MethodDecl& m) {
     r->params = clone_params(m.params);
     r->body = m.body ? clone_block(*m.body) : nullptr;
     r->is_override = m.is_override;
+    // `mk` starts from a default-constructed node, so every semantic flag has to be copied by hand:
+    // losing `is_virtual` made a generic class's virtual method static after instantiation and the
+    // subclass's `override` was rejected.
+    r->is_virtual = m.is_virtual;
     r->is_public = m.is_public;
+    r->from_iface_default = m.from_iface_default;
+    r->iface_unit = m.iface_unit;
     return r;
 }
 
@@ -464,6 +470,9 @@ std::unique_ptr<CtorDecl> clone_ctor(const CtorDecl& c) {
     r->params = clone_params(c.params);
     r->body = c.body ? clone_block(*c.body) : nullptr;
     r->is_public = c.is_public;
+    r->is_implicit = c.is_implicit;
+    r->is_move = c.is_move;
+    r->is_copy = c.is_copy;
     return r;
 }
 

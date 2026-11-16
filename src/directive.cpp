@@ -20,6 +20,9 @@ struct V {
     VK k = VK::Int;
     long long i = 0;
     double f = 0;
+    // The enum a value came from (`OS`, `Arch`, `Abi`, `Endian`), empty for plain numbers and bools.
+    // `#if` follows the same rule as ordinary code: enum values compare only with the same enum.
+    std::string enum_ns;
 };
 
 V vint(long long x) {
@@ -108,6 +111,14 @@ bool eval_binary(const Binary& b, V& out, std::string& why) {
         if (!need_bool(l, op.c_str(), why) || !need_bool(r, op.c_str(), why)) return false;
         out = vbool(op == "and" ? (l.i && r.i) : (l.i || r.i));
         return true;
+    }
+    if ((!l.enum_ns.empty() || !r.enum_ns.empty()) && l.enum_ns != r.enum_ns) {
+        // Ordinary code rejects this too ("enum `OS` can only be compared ... with values of the same
+        // enum type"); without the check `os == Endian.Little` silently matched on raw member index.
+        why = "`#if` compares " + (l.enum_ns.empty() ? "an integer" : l.enum_ns) + " with " +
+              (r.enum_ns.empty() ? "an integer" : r.enum_ns) +
+              "; enum values can only be compared with values of the same enum type";
+        return false;
     }
     if (op == "==" || op == "!=") {
         bool eq;
@@ -206,6 +217,11 @@ bool eval(const Expr& e, V& out, std::string& why) {
         }
         if (p->ident == "debug" || p->ident == "bounds" || p->ident == "single_thread") out = vbool(v != 0);
         else out = vint(v);
+        // The build constants keep the identity of their enum so comparisons can check it.
+        if (p->ident == "os") out.enum_ns = "OS";
+        else if (p->ident == "arch") out.enum_ns = "Arch";
+        else if (p->ident == "abi") out.enum_ns = "Abi";
+        else if (p->ident == "endian") out.enum_ns = "Endian";
         return true;
     }
     if (const auto* p = dynamic_cast<const Member*>(&e)) {
@@ -221,6 +237,7 @@ bool eval(const Expr& e, V& out, std::string& why) {
             return false;
         }
         out = vint(idx);
+        out.enum_ns = base->ident;
         return true;
     }
     if (const auto* p = dynamic_cast<const NotExpr*>(&e)) {

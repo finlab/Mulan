@@ -24,7 +24,12 @@ public:
 
     // construct from a NUL-terminated C string (copies it, does not hold c).
     // `implicit`: `string s = "literal";` and `string s = cstr;` (3.6)
+    // A null `c` is the empty string: C APIs such as `getenv` return null, and dereferencing it
+    // here would crash where `cstr()` already treats null as `""` (the two directions agree).
     implicit String(const char* c) {
+        if c == null {
+            return;
+        }
         isize count = 0;
         while c[count] != 0 {
             count += 1;

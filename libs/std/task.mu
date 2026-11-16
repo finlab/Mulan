@@ -17,6 +17,7 @@ public unit std.task;
 
 use std.thread.backend;
 use std.thread;
+use std.exception;
 
 // ---------------------------------------------------------------- public surface
 
@@ -462,22 +463,29 @@ public void muc_para_group_join_free(void* p) {
 
 // ---------------------------------------------------------------- runtime settings
 
+// A runtime setting, not a per-region parameter. 0 is the documented kill switch: every further
+// `para` start is refused (TaskLimitError); a negative count is a caller bug and throws.
 public void set_max_live_tasks(int n) {
-    lock_sched();
-    if (n > 0) {
-        max_live_tasks = n as usize;
+    if (n < 0) {
+        throw new Exception("set_max_live_tasks: the cap must be >= 0");
     }
+    lock_sched();
+    max_live_tasks = n as usize;
     unlock_sched();
 }
 
+// The fiber stack has to be usable: a zero commit and a reserve smaller than the commit are caller
+// bugs, not values to ignore (the old code kept the previous setting without saying so).
 public void set_task_stack(usize commit, usize reserve) {
+    if commit == 0 {
+        throw new Exception("set_task_stack: commit must be > 0");
+    }
+    if reserve < commit {
+        throw new Exception("set_task_stack: reserve must be >= commit");
+    }
     lock_sched();
-    if (commit > 0) {
-        stack_commit = commit;
-    }
-    if (reserve >= commit) {
-        stack_reserve = reserve;
-    }
+    stack_commit = commit;
+    stack_reserve = reserve;
     unlock_sched();
 }
 

@@ -61,9 +61,37 @@ namespace muc_detail {
     }
 
     bool Sema::same_sig(const MethodSig& a, const MethodSig& b) {
-        if (a.name != b.name || a.params.size() != b.params.size()) return false;
+        if (a.name != b.name) return false;
+        // Only an **operator**'s first `Self` operand is the receiver (SPEC 3.11: "the receiver is the
+        // first operand and must be spelled `Self`"); a member operator takes it as the implicit
+        // `this`, so the two parameter lists differ by exactly that entry. A plain method's `Self` is
+        // an ordinary parameter type (SPEC 3.15.6, `bool less(Self other)`), so it must never be
+        // dropped — the implementor spells it out too.
+        auto receiver_at = [](const MethodSig& s) -> int {
+            if (!s.is_operator) return -1;
+            if (s.params_self.size() > s.params.size()) return -2;
+            for (size_t i = 0; i < s.params_self.size(); ++i) {
+                if (s.params_self[i]) return i == 0 ? 0 : -2;
+            }
+            return -1;
+        };
+        const int ra = receiver_at(a);
+        const int rb = receiver_at(b);
+        if (ra == -2 || rb == -2) return false;  // the receiver must be the first operand
+        const bool drop_a = ra == 0 && rb < 0 && b.params.size() + 1 == a.params.size();
+        const bool drop_b = rb == 0 && ra < 0 && a.params.size() + 1 == b.params.size();
+        std::vector<const TypePtr*> av, bv;
         for (size_t i = 0; i < a.params.size(); ++i) {
-            if (!same_type(a.params[i], b.params[i])) return false;
+            if (drop_a && i == 0) continue;
+            av.push_back(&a.params[i]);
+        }
+        for (size_t i = 0; i < b.params.size(); ++i) {
+            if (drop_b && i == 0) continue;
+            bv.push_back(&b.params[i]);
+        }
+        if (av.size() != bv.size()) return false;
+        for (size_t i = 0; i < av.size(); ++i) {
+            if (!same_type(*av[i], *bv[i])) return false;
         }
         return true;
     }

@@ -357,23 +357,35 @@ static bool is_numeric(const TypePtr& t) {
     Value* Emitter::emitSumEquals(const std::string& op, Value* la, Value* ra, const TypePtr& st) {
         Value* ltag = loadAt(i32(), fieldAddr(la, st->sum_layout, 0), false);
         Value* rtag = loadAt(i32(), fieldAddr(ra, st->sum_layout, 0), false);
+        auto* res = entryAlloca(i1(), "sum.eq");
+        Value* tagsEq = b.CreateICmpEQ(ltag, rtag);
+        b.CreateStore(tagsEq, res);
+        bool any_payload = false;
+        for (const auto& fs : st->sum_fields) {
+            if (!fs.empty()) {
+                any_payload = true;
+                break;
+            }
+        }
+        if (!any_payload) {
+            // Every alternative is a unit value: the tags decide. There is no switch to emit — an
+            // empty one still leaves a block, and branching after it put a terminator in the middle
+            // of a basic block ("Terminator found in the middle of a basic block").
+            Value* v = b.CreateLoad(i1(), res);
+            return op == "!=" ? b.CreateNot(v) : v;
+        }
         // payload addresses are computed before the branch: nothing may be inserted into `swBB` after
         // the switch terminates it
         Value* lpay = fieldAddr(la, st->sum_layout, 1);
         Value* rpay = fieldAddr(ra, st->sum_layout, 1);
-        auto* res = entryAlloca(i1(), "sum.eq");
-        Value* tagsEq = b.CreateICmpEQ(ltag, rtag);
-        b.CreateStore(tagsEq, res);
         BasicBlock* swBB = BasicBlock::Create(ctx, "sum.cmp", curFn);
         BasicBlock* done = BasicBlock::Create(ctx, "sum.cmp.done", curFn);
         b.CreateCondBr(tagsEq, swBB, done);
         b.SetInsertPoint(swBB);
         auto* sw = b.CreateSwitch(ltag, done, static_cast<unsigned>(st->sum_fields.size()));
-        size_t cases = 0;
         for (size_t i = 0; i < st->sum_fields.size(); ++i) {
             const auto& fs = st->sum_fields[i];
             if (fs.empty()) continue;
-            cases++;
             BasicBlock* bb = BasicBlock::Create(ctx, "sum.cmp.alt", curFn);
             sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), static_cast<int>(i))), bb);
             b.SetInsertPoint(bb);
@@ -399,7 +411,6 @@ static bool is_numeric(const TypePtr& t) {
             b.CreateStore(eq, res);
             b.CreateBr(done);
         }
-        if (cases == 0) b.CreateBr(done);  // every alternative is a unit value: the tags decide
         b.SetInsertPoint(done);
         Value* v = b.CreateLoad(i1(), res);
         return op == "!=" ? b.CreateNot(v) : v;

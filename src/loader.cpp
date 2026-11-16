@@ -317,6 +317,17 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
     for (auto& d : search_dirs) add_unique(dirs, d);
     add_default_lib_dirs(dirs);
 
+    // A `-I` directory that happens to contain `std/` would silently replace a trusted standard
+    // library unit (layout and ABI included). Keep the precedence but say so: `std.*` units are the
+    // compiler's implicit L3 surface, never a user extension point.
+    std::set<std::string> user_roots;
+    auto canonical = [](const std::string& p) {
+        std::error_code ec;
+        fs::path c = fs::weakly_canonical(fs::path(p), ec);
+        return ec ? p : c.string();
+    };
+    for (const auto& d : search_dirs) user_roots.insert(canonical(d));
+
     const PlatformSpec spec = parse_platform_spec(platform_os);
     const std::vector<std::string> shadow_keys = platform_shadow_keys(spec);
     const std::string os_name = spec.os;
@@ -386,7 +397,14 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         };
         for (const auto& root : dirs) {
             for (const auto& c : candidates(root)) {
-                if (std::string p = try_dir(c.dir, un, c.dropped); !p.empty()) return p;
+                if (std::string p = try_dir(c.dir, un, c.dropped); !p.empty()) {
+                    if (un.rfind("std.", 0) == 0 && user_roots.count(canonical(root)) != 0) {
+                        std::cerr << "warning: unit `" << un << "` is shadowed by " << p
+                                  << " (a `-I` directory takes precedence over the standard library; "
+                                     "remove it or rename the directory)\n";
+                    }
+                    return p;
+                }
             }
         }
         std::string list;

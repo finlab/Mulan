@@ -276,6 +276,28 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     if (!sd_tmpl && !cd_tmpl && !id_tmpl && !sm_tmpl) {
         err_ts("`" + base + "` is not a generic type", spec);
     }
+
+    // Register an in-progress handle before the body is resolved. A generic that mentions itself
+    // (`Node<T>* next`, `Box(const ref Box<T>)`) then resolves to this handle instead of hitting the
+    // recursion guard; only a *different* instance of the same generic is a real recursive expansion
+    // (the depth limit below still catches it). The handle is filled in by the branch that builds the
+    // type, so every pointer to it stays valid.
+    TypePtr in_progress = std::make_shared<Type>();
+    in_progress->kind = sm_tmpl ? TypeKind::Sum
+                        : (sd_tmpl ? TypeKind::Struct
+                                   : (cd_tmpl ? TypeKind::Class : TypeKind::Interface));
+    in_progress->unit = tmpl_unit;
+    in_progress->name = display;
+    in_progress->in_progress = true;
+    generic_insts_[key] = in_progress;
+    struct PendingGuard {
+        std::unordered_map<std::string, TypePtr>& map;
+        const std::string& key;
+        ~PendingGuard() {
+            auto it = map.find(key);
+            if (it != map.end() && it->second && it->second->in_progress) map.erase(it);
+        }
+    } pending_guard{generic_insts_, key};
     const std::vector<TypeParam>& tps =
         sm_tmpl ? sm_tmpl->type_params
                 : (sd_tmpl ? sd_tmpl->type_params
@@ -343,7 +365,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
 
     // ---------------- generic sums: `type Option<T> = Some(T) | None;` instantiates like a struct ----------------
     if (sm) {
-        TypePtr ty = Type::make_sum(tmpl_unit, display, {}, {}, {}, nullptr);
+        TypePtr ty = in_progress;  // filled in below; the handle was registered for self-reference
         sm->ty = ty;
         Unit* saved_cur = cur_;
         cur_ = tmpl_unit_ptr;
@@ -362,6 +384,13 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             for (auto& fs : alt.fields) {
                 TypePtr ft = resolve_type(fs.get(), tmpl_unit_ptr);
                 if (is_void(ft)) err_ts("payload of alternative `" + alt.name + "` cannot be `void`", spec);
+                // The in-progress handle is the same object a self-reference resolves to, so identity
+                // catches the infinitely large payload; a pointer to the sum stays legal.
+                if (ft.get() == ty.get()) {
+                    err_ts("payload of alternative `" + alt.name + "` would make `" + display +
+                               "` infinitely large (store a pointer or a class handle instead)",
+                           spec);
+                }
                 if (noncopyable_struct(ft)) {
                     err_ts("payload of alternative `" + alt.name + "` is struct `" + ft->str() +
                                "`, which has a destructor and cannot be stored by value in a sum",
@@ -417,6 +446,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         ty->sum_payload = std::move(payload);
         ty->sum_layout = std::move(layout);
         generic_insts_[key] = ty;
+        ty->in_progress = false;
         infos_[tmpl_unit].sums[display] = sm;
         generic_decls_.push_back(std::move(clone));
         return ty;
@@ -424,7 +454,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
 
     // ---------------- generic interfaces: used only for constraints (M5a), no value type is produced ----------------
     if (id) {
-        TypePtr ity = Type::make_interface(tmpl_unit, display);
+        TypePtr ity = in_progress;  // the handle registered for self-reference
         Unit* saved_cur = cur_;
         TypePtr saved_class = cur_class_;
         cur_ = tmpl_unit_ptr;
@@ -517,12 +547,12 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         }
 
         generic_decls_.push_back(std::move(clone));
+        ity->in_progress = false;
         return ity;
     }
 
     const bool is_struct = sd != nullptr;
-    TypePtr ty = is_struct ? Type::make_struct(tmpl_unit, display)
-                           : Type::make_class(tmpl_unit, display);
+    TypePtr ty = in_progress;  // the handle registered for self-reference
     if (is_struct) {
         ty->is_packed = sd->is_packed;
         ty->is_union = sd->is_union;
@@ -602,6 +632,9 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         sig.params = m->pty;
         sig.is_abstract = !m->body;
         sig.is_override = m->is_override;
+        // The non-generic path sets this in sema_decl.cpp; without it a generic class's `virtual`
+        // method became static after instantiation and a subclass's `override` was rejected.
+        sig.is_virtual = m->is_virtual || m->is_override || !m->body;
         sig.is_public = m->is_public;
         sig.owner = ty;
         sig.is_operator = m->is_operator;
@@ -612,12 +645,31 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
 
     const auto& ctors = is_struct ? sd->ctors : cd->ctors;
     ty->ctors.clear();
+    ty->has_copy_ctor = false;
+    ty->has_move_ctor = false;
     for (auto& ctor : ctors) {
         ctor->pty.clear();
         for (auto& p : ctor->params) {
-            ctor->pty.push_back(decay_param_type(resolve_type(p->spec.get(), tmpl_unit_ptr)));
+            TypePtr pt = resolve_type(p->spec.get(), tmpl_unit_ptr);
+            // The copy/move constructors are identified by their parameter marker, exactly as the
+            // non-generic path does (sema_decl.cpp): the symbol name differs, and the type records
+            // that it is copyable/movable. Without this the instantiator emitted a plain constructor
+            // that wrote the borrow's pointer into the value slot.
+            if (p->by_move) {
+                ctor->is_move = true;
+                ty->has_move_ctor = true;
+            }
+            if (p->by_ref) {
+                ctor->is_copy = true;
+                ty->has_copy_ctor = true;
+            } else {
+                pt = decay_param_type(pt);
+            }
+            ctor->pty.push_back(pt);
         }
-        ctor->cname = ctor_cname(tmpl_unit, display, ctor->pty);
+        ctor->cname = ctor->is_move ? move_ctor_cname(tmpl_unit, display)
+                    : ctor->is_copy ? copy_ctor_cname(tmpl_unit, display)
+                                    : ctor_cname(tmpl_unit, display, ctor->pty);
         ty->ctors.push_back(ctor->pty);
         ty->ctor_is_public.push_back(ctor->is_public);
     }
@@ -679,6 +731,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
 
     // The declaration itself is moved only after check_struct, so pointers stay valid during the check
     generic_decls_.push_back(std::move(clone));
+    ty->in_progress = false;
     return ty;
 }
 
@@ -1117,7 +1170,9 @@ void Sema::add_contract_members(const TypePtr& witness, const TypePtr& iface) {
         std::vector<TypePtr> params;
         for (size_t i = 0; i < sig.params.size(); ++i) {
             const bool is_self = i < sig.params_self.size() && sig.params_self[i];
-            if (sig.is_operator && i == 0 && is_self) continue;  // receiver
+            // An operator's first `Self` is its receiver and a member operator takes it as `this`. A
+            // plain method's `Self` is a parameter type (SPEC 3.15.6), so it stays.
+            if (sig.is_operator && i == 0 && is_self) continue;
             params.push_back(is_self ? witness : sig.params[i]);
         }
         sig.params = params;
