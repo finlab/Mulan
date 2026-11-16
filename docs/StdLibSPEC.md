@@ -158,7 +158,8 @@ declaration checking the same shape, `class` equality staying identity — is SP
 |---|---|---|
 | `IIterator<T>` | `bool next()`, `T current()` | a cursor for `for-in` (SPEC 6.4.2) |
 | `IEnumerable<T>` | `IIterator<T> iterator()` | a container |
-| `IIndexable<T>` | `isize length()`, `T operator[](Self c, isize i)` | containers; the subscript is declared with the receiver spelled `Self` and satisfied by a member `T operator[](isize)` / a free `T operator[](C, isize)` / the built-in block subscript (SPEC 3.15.9, 6.4.1) |
+| `IIndexable<T>` | `isize length()`, `T operator[](Self c, isize i)` | a readable container; satisfied by a member `T operator[](isize)`, a free `T operator[](C, isize)`, a `ref T` implementation (a borrow is usable as a value), or the built-in block subscript |
+| `IMutableIndexable<T> : IIndexable<T>` | also `ref T operator[](Self c, isize i)` | a writable container; satisfied only by a `ref` implementation (or the built-in block subscript). Required by a generic body that writes through an element, including `for ref` |
 | `IEquatable` | `==`, `!=` | numbers, pointers, a value type with those operators |
 | `IOrdered : IEquatable` | `<`, `<=`, `>`, `>=` (plus equality) | numbers, pointers, enums, a value type with those operators |
 | `IAddable` / `ISubtractable` / `IMultipliable` / `IDivisible` / `IModulable` | the binary `+ - * / %` returning `Self` | numbers (`%` is `frem` for floats) |

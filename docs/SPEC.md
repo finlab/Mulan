@@ -1134,8 +1134,14 @@ unchanged:
   definition site and is optional.
 - The constraint checker recognises only `+ - * / %` and the comparison operators as built-in
   arithmetic/comparison operators, so there is deliberately no bitwise contract. A **subscript** is
-  declarable and satisfiable (3.15.9), which is what lets `IIndexable<T>` constrain generic container
-  algorithms; it is not an arithmetic operator and does not participate in `INumber`.
+  declarable and satisfiable (3.15.9), which is what lets generic container algorithms be written; it
+  is not an arithmetic operator and does not participate in `INumber`.
+  Because a subscript carries a capability (read or read-write) that a single operator expresses only
+  through its return type, the library ships it as a **pair**: `IIndexable<T>` declares
+  `T operator[](Self c, isize i)` (read — satisfied by a value or a `ref` implementation) and
+  `IMutableIndexable<T> : IIndexable<T>` declares `ref T operator[](Self c, isize i)` (read-write —
+  satisfied only by a `ref` implementation). A generic body that writes through an element — including
+  `for ref x in c` — must be constrained on the mutable one.
 - User value types satisfy these contracts through `operator` members or free `operator` functions in
   a visible unit; `class` equality stays identity, so a `class` does not satisfy `IEquatable`.
 

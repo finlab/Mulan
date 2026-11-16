@@ -44,6 +44,13 @@ public interface IIndexable<T> {
     T operator[](Self c, isize i);
 }
 
+// Read-write: the subscript yields a borrow, so a generic body can write through an element
+// (`c[i] = v`, `for ref x in c`). A mutable container satisfies both contracts with one operator,
+// because a `ref T` implementation satisfies the declared `T` of `IIndexable`.
+public interface IMutableIndexable<T> : IIndexable<T> {
+    ref T operator[](Self c, isize i);
+}
+
 // The container half of the cursor form: the element type is the interface's type argument, and the
 // cursor is returned **as an interface value** (`IIterator<T>`, two words). That is what makes
 // `IEnumerable<T>` usable as a plain generic contract: a `class` implements `IIterator<T>` and this

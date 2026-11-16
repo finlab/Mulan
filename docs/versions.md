@@ -27,6 +27,22 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 154 — 2026-11-16
+
+**Read and read-write index contracts; a built-in block is writable through the subscript.**
+
+- A subscript carries a capability that one operator expresses only through its return type (`T` = read,
+  `ref T` = read-write), so the library now ships it as a pair:
+  `IIndexable<T>` (read; satisfied by a value or a `ref` implementation) and
+  `IMutableIndexable<T> : IIndexable<T>` (read-write; satisfied only by a `ref` implementation).
+  A generic body that writes through an element — including `for ref x in c` — has a contract to name.
+  Generic interface inheritance substitutes its type argument, so `IMutableIndexable<Buf>` also checks
+  the inherited `IIndexable<Buf>` members.
+- `int[]` satisfies both (its block is mutable); a value-returning subscript satisfies only the read form
+  and is rejected by the mutable form with the `for ref` diagnostic.
+- New cases: `iface_mutable_indexable` (run), `iface_mutable_readonly` (must-fail). Full suite: 638/638
+  with `MUC_VERIFY_MEM=1`.
+
 #### build 153 — 2026-11-16
 
 **A generic `ref` parameter is checked after substitution, and a `ref` subscript works in a constraint.**
