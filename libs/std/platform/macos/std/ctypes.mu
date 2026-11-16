@@ -29,5 +29,5 @@ public type c_size = usize;    // size_t
 public type c_ssize = isize;   // ssize_t / ptrdiff_t
 public type c_intptr = isize;
 public type c_uintptr = usize;
-public type c_wchar = uint;  // wchar_t is 32-bit
+public type c_wchar = int;  // wchar_t is a signed 32-bit int on Darwin
 public type c_voidp = void*;

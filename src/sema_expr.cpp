@@ -756,6 +756,7 @@ namespace muc_detail {
         EnumConst* imp_ec = nullptr;
         std::string imp_ec_unit;
         FuncDecl* imp_f = nullptr;
+        std::string imp_f_unit;
         for (auto& use : cur_->uses) {
             if (!unit_visible(use->unit_name)) continue;
             auto it = infos_.find(use->unit_name);
@@ -772,7 +773,10 @@ namespace muc_detail {
             }
             if (auto f = o.funcs.find(e->ident);
                 f != o.funcs.end() && !f->second.empty() && f->second.front()->is_public) {
-                if (!imp_f) imp_f = f->second.front();
+                if (!imp_f) {
+                    imp_f = f->second.front();
+                    imp_f_unit = use->unit_name;
+                }
             }
             if (EnumConst* ec = lookup_enum_const_in(use->unit_name, e->ident, true)) {
                 if (imp_ec) {
@@ -783,6 +787,20 @@ namespace muc_detail {
                 imp_ec = ec;
                 imp_ec_unit = use->unit_name;
             }
+        }
+        // A name may be a variable in one imported unit and an enum member (or a function) in another:
+        // the kind-specific checks above cannot see that, so the cross-kind collision is reported here
+        // instead of silently resolving to one of them (#40).
+        const int imported_kinds = (imp_g ? 1 : 0) + (imp_f ? 1 : 0) + (imp_ec ? 1 : 0);
+        if (imported_kinds > 1) {
+            std::string list;
+            auto add = [&](const std::string& what) { list += (list.empty() ? "" : ", ") + what; };
+            if (imp_g) add(imp_g_unit + "." + e->ident + " (a variable)");
+            if (imp_f) add(imp_f_unit + "." + e->ident + " (a function)");
+            if (imp_ec) add(imp_ec_unit + "." + e->ident + " (an enum member)");
+            err("`" + e->ident + "` is ambiguous between imported declarations: " + list +
+                    "; use a qualified name",
+                e);
         }
         if (imp_g) {
             e->kind = "global";

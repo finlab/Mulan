@@ -27,6 +27,18 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 148 — 2026-11-16
+
+**Two follow-up reports (#40, #41).**
+
+- **Imported declarations of different kinds are ambiguous (#40)**: a bare name that is a variable in
+  one `use`d unit and an enum member (or a function) in another is now an error listing both qualified
+  names, instead of silently resolving by kind priority.
+- **POSIX `c_wchar` is signed (#41)**: `std.ctypes` on Linux and macOS declares `c_wchar` as `int`
+  (glibc/Darwin `wchar_t` is a signed 32-bit type), not `uint`; Windows keeps `ushort`.
+
+**Tests**: 618/618 (210 run + 379 must-fail + 21 check + 5 ir + 3 c abi).
+
 #### build 147 — 2026-11-16
 
 **Eleven review reports (issues #29–#39): symbolic-name soundness, C-ABI ownership, and library/CLI
