@@ -161,6 +161,7 @@ struct Binary : Expr {
     FuncDecl* op_func = nullptr;              // sema: user operator overload (free function)
     const MethodSig* op_method = nullptr;     // sema: member operator on a struct (borrowed receiver)
     bool negate_result = false;               // sema: `a != b` implemented through `operator==` (the result is negated)
+    bool swap_operands = false;               // sema: `a > b` derived as `b < a` (the other operand is the receiver)
 };
 
 struct Cast : Expr {

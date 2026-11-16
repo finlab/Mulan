@@ -5,18 +5,18 @@ unit std_interfaces;
 use std.interfaces;
 use std.cstdio;
 
-// `T: IAddable` — `+` returns T.
-T sum3<T: IAddable>(T a, T b, T c) {
+// `T: IAdd` — `+` returns T.
+T sum3<T: IAdd>(T a, T b, T c) {
     return a + b + c;
 }
 
-// `T: IOrdered` inherits IEquatable, so equality and all four orderings are available.
-T biggest<T: IOrdered>(T a, T b) {
+// `T: IOrder` inherits IEqual, so equality and all four orderings are available.
+T biggest<T: IOrder>(T a, T b) {
     if a < b { return b; }
     return a;
 }
 
-bool same<T: IEquatable>(T a, T b) {
+bool same<T: IEqual>(T a, T b) {
     return a == b;
 }
 
@@ -25,11 +25,11 @@ T scale_add<T: INumber>(T value, T scale, T delta) {
     return -value * scale + delta;
 }
 
-bool above<T: IOrdered>(T a, T b) {
+bool above<T: IOrder>(T a, T b) {
     return a >= b and not (a < b);
 }
 
-struct Money : IAddable, IOrdered {
+struct Money : IAdd, IOrder {
     public int cents;
     public override Money operator+(Money other) {
         Money r = { cents = cents + other.cents };
@@ -44,7 +44,7 @@ struct Money : IAddable, IOrdered {
 }
 
 // The cursor half of the iterable contract is checked at the cursor (`: IIterator<int>`), the
-// container half at the container (`: IEnumerable<int>`). A class cursor is returned as an interface
+// container half at the container (`: IIterable<int>`). A class cursor is returned as an interface
 // value (an interface value cannot hold a struct — that would be boxing); `for-in` iterates it
 // through the itable.
 class Counter : IIterator<int> {
@@ -57,7 +57,7 @@ class Counter : IIterator<int> {
     override int current() { return i * 10; }
 }
 
-class Counts : IEnumerable<int> {
+class Counts : IIterable<int> {
     Counter c;
     Counts() { c = new Counter(); }
     override IIterator<int> iterator() { return c; }
@@ -79,7 +79,7 @@ class Cursor<T> : IIterator<T> {
     override T current() { return v; }
 }
 
-class Source<T> : IEnumerable<T> {
+class Source<T> : IIterable<T> {
     Cursor<T> c;
     Source() { c = new Cursor<T>(); }
     override IIterator<T> iterator() { return c; }
@@ -109,13 +109,13 @@ int main() {
     if biggest<Money>(a, b).cents != 120 { printf("money order\n"); return 11; }
     if not same<Money>(a, a) { printf("money eq\n"); return 12; }
 
-    // The iterable pair: the cursor declares IIterator<int>, the container IEnumerable<int>.
+    // The iterable pair: the cursor declares IIterator<int>, the container IIterable<int>.
     Counts counts = new Counts();
     int total = 0;
     for v in counts { total = total + v; }
     if total != 60 { printf("iterable\n"); return 13; }
 
-    // Generic form: Source<int> implements IEnumerable<int> through Cursor<int>.
+    // Generic form: Source<int> implements IIterable<int> through Cursor<int>.
     Source<int> src = new Source<int>();
     int gtotal = 0;
     for v in src { gtotal = gtotal + v; }

@@ -1,0 +1,1 @@
+has no `>` operator overload (there is no `operator<` to derive it from either)

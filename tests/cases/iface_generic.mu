@@ -1,5 +1,5 @@
 // iface_generic.mu — instantiated generic interfaces are real interfaces: a class implements
-// `IIterator<int>` / `IEnumerable<int>`, a generic class implements `IEnumerable<T>`, a generic
+// `IIterator<int>` / `IIterable<int>`, a generic class implements `IIterable<T>`, a generic
 // interface inherits another one, and a struct satisfies a contract without `override`.
 unit iface_generic;
 
@@ -17,7 +17,7 @@ class Counter : IIterator<int> {
     override int current() { return i * 10; }
 }
 
-class Tens : IEnumerable<int> {
+class Tens : IIterable<int> {
     override IIterator<int> iterator() { return new Counter(0); }
 }
 
@@ -37,7 +37,7 @@ class Cursor<T> : IIterator<T> {
     override T current() { return v; }
 }
 
-class Source<T> : IEnumerable<T> {
+class Source<T> : IIterable<T> {
     override IIterator<T> iterator() { return new Cursor<T>(); }
 }
 
@@ -58,7 +58,7 @@ class Pair : Derived<int> {
 }
 
 // --- a struct satisfies a contract without `override` ------------------------------------------
-struct Point : IAddable, IOrdered {
+struct Point : IAdd, IOrder {
     public int x;
     public Point operator+(Point other) {
         Point r = { x = x + other.x };
@@ -72,14 +72,14 @@ struct Point : IAddable, IOrdered {
     public bool operator>=(Point other) { return x >= other.x; }
 }
 
-// --- a struct can also implement IEnumerable<T> (the cursor is a class) ------------------------
-struct StructTens : IEnumerable<int> {
+// --- a struct can also implement IIterable<T> (the cursor is a class) ------------------------
+struct StructTens : IIterable<int> {
     Counter c;
     IIterator<int> iterator() { return c; }
 }
 
-// `IEnumerable<int>` as a constraint: satisfied structurally by the iterator() signature.
-int peek<T: IEnumerable<int>>(T seq) {
+// `IIterable<int>` as a constraint: satisfied structurally by the iterator() signature.
+int peek<T: IIterable<int>>(T seq) {
     IIterator<int> it = seq.iterator();
     bool any = it.next();
     return it.current();

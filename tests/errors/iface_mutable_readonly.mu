@@ -9,7 +9,7 @@ struct Ro {
     int operator[](isize i) { return d[i]; }
 }
 
-void fill<T: IMutableIndexable<int>>(T c, int v) {
+void fill<T: IIndexMut<int>>(T c, int v) {
     for ref x in c { x = v; }
 }
 

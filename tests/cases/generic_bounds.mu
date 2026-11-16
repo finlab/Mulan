@@ -3,11 +3,11 @@ unit generic_bounds;
 
 extern int puts(const char* s);
 
-interface IAddable {
+interface IAdd {
     Self operator+(Self a, Self b);
 }
 
-interface IOrdered {
+interface IOrder {
     bool operator<(Self a, Self b);
 }
 
@@ -20,9 +20,9 @@ Money operator+(Money a, Money b) {
     return r;
 }
 
-T sum2<T: IAddable>(T a, T b) { return a + b; }
+T sum2<T: IAdd>(T a, T b) { return a + b; }
 
-T max2<T: IOrdered>(T a, T b) { return a < b ? b : a; }
+T max2<T: IOrder>(T a, T b) { return a < b ? b : a; }
 
 int main() {
     int a = sum2<int>(1, 2);

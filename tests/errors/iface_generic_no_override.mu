@@ -12,7 +12,7 @@ class Counter : IIterator<int> {
 }
 
 // A class still has to mark interface implementations `override` (unlike a struct).
-class Bad : IEnumerable<int> {
+class Bad : IIterable<int> {
     IIterator<int> iterator() { return new Counter(); }
 }
 

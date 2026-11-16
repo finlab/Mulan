@@ -2,7 +2,7 @@ unit iface_subscript;
 
 // A constraint may declare a subscript: the receiver is spelled `Self`, the operand after it is the
 // index and is deliberately *not* `Self`.
-interface IIndexable<T> {
+interface IIndex<T> {
     isize length();
     T operator[](Self c, isize i);
 }
@@ -31,7 +31,7 @@ struct Borrowed {
     ref int operator[](isize i) { return d[i]; }
 }
 
-int total<T: IIndexable<int>>(T c) {
+int total<T: IIndex<int>>(T c) {
     int s = 0;
     for i in 0..c.length() {
         s += c[i];

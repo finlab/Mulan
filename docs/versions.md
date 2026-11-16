@@ -27,6 +27,28 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 155 — 2026-11-16
+
+**Short contract names, and the ordering family derived from `operator<`.**
+
+- Renamed (breaking; nothing outside the library used them): `IEquatable` → `IEqual`,
+  `IOrdered` → `IOrder`, `IAddable` … `IModulable` → `IAdd` / `ISub` / `IMul` / `IDiv` / `IMod`,
+  `INegatable` → `INeg`, `IEnumerable` → `IIterable`, `IIndexable` → `IIndex`,
+  `IMutableIndexable` → `IIndexMut`. The `-able` suffix survives only where the bare word would read
+  as an action (`IIterable`); the rest are the operation or concept name itself, so there is nothing
+  to memorize.
+- Each comparison contract now asks only for the operator the compiler can derive the rest from:
+  `IEqual` requires `==`, `IOrder : IEqual` requires `<`. A type that declares `!=` / `>` / `<=` / `>=`
+  still satisfies them and its own operator wins.
+- `a > b`, `a <= b` and `a >= b` are derived from `operator<` when no such operator exists
+  (`b < a`, `!(b < a)`, `!(a < b)`), the same fallback `!=` already used against `==`. Derivation is
+  a fallback, so a float keeps its native `<=` and NaN semantics. A derived `>` / `<=` puts the other
+  operand in the receiver position, so its operands are evaluated right-to-left (documented).
+  `IOrder` therefore promises a **total order**.
+- A missing `>` / `<=` / `>=` now says whether there was an `operator<` to derive it from.
+- New cases: `derive_compare` (run, covers equal values, a never-less `<`, and a declared `>` winning),
+  `derive_compare_missing` (must-fail). Full suite: 640/640 with `MUC_VERIFY_MEM=1`.
+
 #### build 154 — 2026-11-16
 
 **Read and read-write index contracts; a built-in block is writable through the subscript.**

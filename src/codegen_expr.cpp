@@ -472,11 +472,17 @@ static bool is_numeric(const TypePtr& t) {
         TypePtr rt_ = e->right->ty;
 
         if (e->op_method) {
-            Value* r = emitMemberOp(e->op_method, e->left.get(), {e->right.get()});
+            // A derived comparison (`a > b` → `b < a`) puts the other operand in the receiver
+            // position; the arguments follow the same order the operator was resolved with.
+            Value* r = e->swap_operands
+                           ? emitMemberOp(e->op_method, e->right.get(), {e->left.get()})
+                           : emitMemberOp(e->op_method, e->left.get(), {e->right.get()});
             return e->negate_result ? b.CreateNot(r) : r;
         }
         if (e->op_func) {
-            Value* r = emitUserCall(e->op_func, {e->left.get(), e->right.get()});
+            Value* r = e->swap_operands
+                           ? emitUserCall(e->op_func, {e->right.get(), e->left.get()})
+                           : emitUserCall(e->op_func, {e->left.get(), e->right.get()});
             return e->negate_result ? b.CreateNot(r) : r;
         }
 

@@ -63,7 +63,7 @@ int main() {
     id = null;  // releases the environment, which releases the object
     if LiveCount() != 0 { printf("class release\n"); return 8; }
 
-    // ---- a capturing lambda satisfies `IEnumerable<T>` like any other class cursor ----
+    // ---- a capturing lambda satisfies `IIterable<T>` like any other class cursor ----
     Countdown c = new Countdown(3);
     int sum = 0;
     for v in c { sum = sum + v; }
@@ -97,7 +97,7 @@ class Counter : IIterator<int> {
     override int current() { return i + 1; }
 }
 
-class Countdown : IEnumerable<int> {
+class Countdown : IIterable<int> {
     int start;
     Countdown(int n) { start = n; }
     // the cursor is a class, so it can be handed out as an interface value

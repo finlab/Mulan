@@ -5,7 +5,7 @@
 // exactly these signatures is enough), and may also *declare* the interface (`struct Counter :
 // IIterator<int>`, `class Cursor : IIterator<int>`) to have the definition site checked.
 //
-// `IIterator<T>` / `IEnumerable<T>` double as value types: since 0.0.108 an instantiated generic
+// `IIterator<T>` / `IIterable<T>` double as value types: since 0.0.108 an instantiated generic
 // interface is an ordinary interface type, so a class cursor can be returned as `IIterator<T>` and
 // `for-in` dispatches through the itable. A struct is never boxed, so a struct container returns a
 // class cursor (or keeps the `for-in` path structural and returns a struct cursor, which needs no
@@ -39,43 +39,48 @@ public interface IIterator<T> {
 //
 // A type that also provides `iterator()` supports the cursor form as well; the cursor form wins
 // (SPEC 6.4.3).
-public interface IIndexable<T> {
+public interface IIndex<T> {
     isize length();
     T operator[](Self c, isize i);
 }
 
 // Read-write: the subscript yields a borrow, so a generic body can write through an element
 // (`c[i] = v`, `for ref x in c`). A mutable container satisfies both contracts with one operator,
-// because a `ref T` implementation satisfies the declared `T` of `IIndexable`.
-public interface IMutableIndexable<T> : IIndexable<T> {
+// because a `ref T` implementation satisfies the declared `T` of `IIndex`.
+public interface IIndexMut<T> : IIndex<T> {
     ref T operator[](Self c, isize i);
 }
 
 // The container half of the cursor form: the element type is the interface's type argument, and the
 // cursor is returned **as an interface value** (`IIterator<T>`, two words). That is what makes
-// `IEnumerable<T>` usable as a plain generic contract: a `class` implements `IIterator<T>` and this
+// `IIterable<T>` usable as a plain generic contract: a `class` implements `IIterator<T>` and this
 // interface, and dispatch goes through the itable. A `struct` cannot be handed out this way (that
 // would be boxing, 3.15.8), so a struct container returns a **class** cursor; a struct cursor is
 // still iterated statically by `for-in` (SPEC 6.4.2).
-public interface IEnumerable<T> {
+public interface IIterable<T> {
     IIterator<T> iterator();
 }
 
 // ---------------------------------------------------------------- equality and ordering
 //
-// `Self` is the implementor type, so `IOrdered` means "`a < b` is meaningful for this type".
+// One comparison is the source of truth, the rest are derived by the compiler as a fallback:
+// `!=` from `==` (SPEC decision #62) and `>`, `<=`, `>=` from `<` (SPEC 3.11). A type may still
+// declare any of them directly — a declared operator always wins, which is how a type keeps the
+// native semantics (floats with NaN, an asymmetric receiver) or avoids the extra call.
+//
+// `Self` is the implementor type, so `IOrder` means "`a < b` is meaningful for this type".
 // Built-in operators satisfy an operator member when the type is numeric (equality/ordering) or a
 // pointer (ordering); enums take part in comparison but not in arithmetic (SPEC 3.5).
-public interface IEquatable {
+//
+// `IOrder` promises a **total order**: the derived `<=` is `!(b < a)`, which is only correct when
+// `<` is irreflexive and transitive. A float set containing NaN is not totally ordered, but floats
+// carry their own `<=`, so derivation never applies to them.
+public interface IEqual {
     bool operator==(Self a, Self b);
-    bool operator!=(Self a, Self b);
 }
 
-public interface IOrdered : IEquatable {
+public interface IOrder : IEqual {
     bool operator<(Self a, Self b);
-    bool operator<=(Self a, Self b);
-    bool operator>(Self a, Self b);
-    bool operator>=(Self a, Self b);
 }
 
 // ---------------------------------------------------------------- arithmetic
@@ -83,33 +88,33 @@ public interface IOrdered : IEquatable {
 // Only `+ - * / %` and comparison are recognised as built-in operators by the constraint checker,
 // so the arithmetic contracts are split per operator instead of bundling a bitwise group (a
 // bitwise contract could not be satisfied by the built-in integer types today).
-public interface IAddable {
+public interface IAdd {
     Self operator+(Self a, Self b);
 }
 
-public interface ISubtractable {
+public interface ISub {
     Self operator-(Self a, Self b);
 }
 
-public interface IMultipliable {
+public interface IMul {
     Self operator*(Self a, Self b);
 }
 
-public interface IDivisible {
+public interface IDiv {
     Self operator/(Self a, Self b);
 }
 
-public interface IModulable {
+public interface IMod {
     Self operator%(Self a, Self b);
 }
 
 // Unary negation: `-x`.
-public interface INegatable {
+public interface INeg {
     Self operator-(Self a);
 }
 
 // A full arithmetic scalar (C# generic-math shape): satisfies numeric algorithms over `T: INumber`.
-// Float types qualify too (`%` is `frem`, SPEC 5.1), which is why `IModulable` stays separate
+// Float types qualify too (`%` is `frem`, SPEC 5.1), which is why `IMod` stays separate
 // instead of being part of the bundle.
-public interface INumber : IAddable, ISubtractable, IMultipliable, IDivisible, INegatable, IOrdered {
+public interface INumber : IAdd, ISub, IMul, IDiv, INeg, IOrder {
 }

@@ -1,6 +1,6 @@
 unit generic_bound_missing;
 
-interface IAddable {
+interface IAdd {
     Self operator+(Self a, Self b);
 }
 
@@ -8,7 +8,7 @@ struct Money {
     long cents;
 }
 
-T sum2<T: IAddable>(T a, T b) { return a + b; }
+T sum2<T: IAdd>(T a, T b) { return a + b; }
 
 int main() {
     Money m = {1};

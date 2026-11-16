@@ -1,4 +1,4 @@
-// iface_indexable.mu — the shipped `IIndexable<T>` contract actually constrains a container
+// iface_indexable.mu — the shipped `IIndex<T>` contract actually constrains a container
 unit iface_indexable;
 
 extern int puts(const char* s);
@@ -11,8 +11,8 @@ struct Row {
     int operator[](isize i) { return d[i]; }
 }
 
-// a generic algorithm over any `IIndexable<int>`: it only uses the contract, never the concrete type
-int total<T: IIndexable<int>>(T c) {
+// a generic algorithm over any `IIndex<int>`: it only uses the contract, never the concrete type
+int total<T: IIndex<int>>(T c) {
     int s = 0;
     for i in 0..c.length() {
         s += c[i];
@@ -29,7 +29,7 @@ int main() {
     if total<Row>(r) != 10 { puts("generic subscript failed"); return 1; }
 
     // a built-in block satisfies it too, through its built-in subscript
-    if total<int[]>(r.d) != 10 { puts("slice does not satisfy IIndexable"); return 2; }
+    if total<int[]>(r.d) != 10 { puts("slice does not satisfy IIndex"); return 2; }
 
     puts("iface indexable ok");
     return 0;

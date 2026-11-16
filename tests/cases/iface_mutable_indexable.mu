@@ -19,13 +19,13 @@ struct Ro {
     int operator[](isize i) { return d[i]; }
 }
 
-int total<T: IIndexable<int>>(T c) {
+int total<T: IIndex<int>>(T c) {
     int s = 0;
     for i in 0..c.length() { s += c[i]; }
     return s;
 }
 
-void fill<T: IMutableIndexable<int>>(T c, int v) {
+void fill<T: IIndexMut<int>>(T c, int v) {
     for ref x in c { x = v; }
 }
 

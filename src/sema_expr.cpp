@@ -1194,9 +1194,39 @@ namespace muc_detail {
                     return mm->ret;
                 }
                 auto cands = collect_operators(op, {lt, rt});
+                // Ordering family derived from `operator<`, the same way `!=` is derived from `==`:
+                // `a > b` is `b < a`, `a <= b` is `!(b < a)`, `a >= b` is `!(a < b)`. A declared
+                // operator always wins (`cands` non-empty), so a type that needs the native
+                // semantics — floats with NaN, an asymmetric receiver — keeps declaring it.
+                // PERF/NOTE: the receiver of a derived comparison is the other operand, so the two
+                // operands are evaluated right-to-left (documented in SPEC 3.11).
+                if (cands.empty() && (op == ">" || op == "<=" || op == ">=")) {
+                    const bool backwards = op == ">" || op == "<=";  // receiver is the right operand
+                    Expr* recv = backwards ? e->right.get() : e->left.get();
+                    Expr* arg = backwards ? e->left.get() : e->right.get();
+                    TypePtr recvTy = backwards ? rt : lt;
+                    TypePtr argTy = backwards ? lt : rt;
+                    const bool negate = op != ">";
+                    if (const MethodSig* mm = find_member_operator(recvTy, "operator<", {arg}, e)) {
+                        e->op_method = mm;
+                        e->swap_operands = backwards;
+                        e->negate_result = negate;
+                        return mm->ret;
+                    }
+                    auto lesses = collect_operators("<", {recvTy, argTy});
+                    if (!lesses.empty()) {
+                        e->op_func = choose_overload(lesses, {recv, arg}, "operator<", e);
+                        e->swap_operands = backwards;
+                        e->negate_result = negate;
+                        return e->op_func->rty;
+                    }
+                }
                 if (cands.empty()) {
+                    std::string hint;
+                    if (op == ">" || op == "<=" || op == ">=")
+                        hint = " (there is no `operator<` to derive it from either)";
                     err("type `" + lt->str() + "` and `" + rt->str() + "` has no `" + op +
-                            "` operator overload",
+                            "` operator overload" + hint,
                         e);
                 }
                 auto f = choose_overload(cands, {e->left.get(), e->right.get()},
