@@ -36,7 +36,16 @@ std::unique_ptr<Unit> Parser::parse_unit() {
     unit->line = t.line;
     unit->col = t.col;
 
+    const size_t g0 = groups_.size();
     while (!at_eof()) {
+        if (at_op("}") && groups_.size() > g0) { directive_arm_end(); continue; }
+        if (at_directive()) { directive_header(); continue; }
+        const size_t nd = unit->decls.size();
+        const size_t nu = unit->uses.size();
+        ArmDrop drop(*this, [&] {
+            unit->decls.resize(nd);
+            unit->uses.resize(nu);
+        });
         const Token tk = peek();
         bool is_pub = false;
         bool is_export = false;
@@ -117,11 +126,12 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             use->unit_name = std::move(uname);
             use->line = tk.line;
             use->col = tk.col;
-            module_names_.insert(use->unit_name);
-            unit->uses.push_back(std::move(use));
+            if (discard_depth_ == 0) {
+                module_names_.insert(use->unit_name);
+                unit->uses.push_back(std::move(use));
+            }
             continue;
         }
-
         if (at_kw("extern")) {
             if (is_export) throw err_at("`extern` imports a C symbol; `export` cannot be used with it", export_tok);
             if (is_pub) throw err_at("`extern` declarations are implicitly public; `public` cannot be used", tk);
@@ -336,6 +346,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         }
     }
 
+    if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", t);
     return unit;
 }
 
@@ -391,7 +402,25 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
     decl->is_union = is_union;
 
     bool cur_pub = true;  // struct defaults to public
-    while (!at_op("}")) {
+    const size_t g0 = groups_.size();
+    while (true) {
+        if (at_op("}")) {
+            if (groups_.size() > g0) { directive_arm_end(); continue; }
+            break;
+        }
+        if (at_directive()) { directive_header(); continue; }
+        const size_t nf = decl->fields.size();
+        const size_t nc = decl->const_members.size();
+        const size_t nm = decl->methods.size();
+        const size_t nct = decl->ctors.size();
+        const bool had_dtor = decl->dtor != nullptr;
+        ArmDrop drop(*this, [&] {
+            decl->fields.resize(nf);
+            decl->const_members.resize(nc);
+            decl->methods.resize(nm);
+            decl->ctors.resize(nct);
+            if (!had_dtor) decl->dtor.reset();
+        });
         // section label: `public:` / `private:` switches the default visibility of following members
         if ((at_kw("public") || at_kw("private")) && peek(1).is_op(":")) {
             if (is_union) {
@@ -522,6 +551,7 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
         semicolon();
     }
     expect_op("}");
+    if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     if (at_op(";")) advance();
     type_names_ = saved_type_names;
     return decl;
@@ -708,7 +738,25 @@ std::unique_ptr<Decl> Parser::parse_class() {
 
     expect_op("{");
     bool cur_pub = false;  // class defaults to private
-    while (!at_op("}")) {
+    const size_t g0 = groups_.size();
+    while (true) {
+        if (at_op("}")) {
+            if (groups_.size() > g0) { directive_arm_end(); continue; }
+            break;
+        }
+        if (at_directive()) { directive_header(); continue; }
+        const size_t nf = cd->fields.size();
+        const size_t nc = cd->const_members.size();
+        const size_t nm = cd->methods.size();
+        const size_t nct = cd->ctors.size();
+        const bool had_dtor = cd->dtor != nullptr;
+        ArmDrop drop(*this, [&] {
+            cd->fields.resize(nf);
+            cd->const_members.resize(nc);
+            cd->methods.resize(nm);
+            cd->ctors.resize(nct);
+            if (!had_dtor) cd->dtor.reset();
+        });
         // section label: `public:` / `private:` switches the default visibility of following members
         if ((at_kw("public") || at_kw("private")) && peek(1).is_op(":")) {
             cur_pub = at_kw("public");
@@ -808,6 +856,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
         semicolon();
     }
     expect_op("}");
+    if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     if (at_op(";")) advance();
     type_names_ = saved_type_names;
     return cd;
@@ -831,7 +880,15 @@ std::unique_ptr<Decl> Parser::parse_interface() {
     id->base_specs = std::move(base_specs);
 
     expect_op("{");
-    while (!at_op("}")) {
+    const size_t g0 = groups_.size();
+    while (true) {
+        if (at_op("}")) {
+            if (groups_.size() > g0) { directive_arm_end(); continue; }
+            break;
+        }
+        if (at_directive()) { directive_header(); continue; }
+        const size_t nm = id->methods.size();
+        ArmDrop drop(*this, [&] { id->methods.resize(nm); });
         if (at_kw("public", "private")) {
             throw err("`public`/`private` cannot be used on interface methods (interface methods are always public)");
         }
@@ -851,6 +908,7 @@ std::unique_ptr<Decl> Parser::parse_interface() {
         id->methods.push_back(parse_method(std::move(spec), ret_ref, name_tok));
     }
     expect_op("}");
+    if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     if (at_op(";")) advance();
     type_names_ = saved_type_names;
     return id;

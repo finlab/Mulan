@@ -61,6 +61,8 @@ add_executable(muc
   src/parser_unit.cpp
   src/parser_stmt.cpp
   src/parser_expr.cpp
+src/parser_directive.cpp
+src/directive.cpp
   src/ast_clone.cpp
   src/ast_subst.cpp
   src/types.cpp
@@ -68,6 +70,7 @@ add_executable(muc
   src/abi.cpp
   src/sema.cpp
   src/sema_decl.cpp
+src/sema_directive.cpp
   src/sema_types.cpp
   src/sema_generic.cpp
   src/sema_class1.cpp

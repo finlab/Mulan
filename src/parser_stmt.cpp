@@ -160,11 +160,20 @@ std::unique_ptr<Block> Parser::parse_block() {
     auto block = std::make_unique<Block>();
     block->line = tk.line;
     block->col = tk.col;
-    while (!at_op("}")) {
+    const size_t g0 = groups_.size();
+    while (true) {
         if (at_eof()) throw err_at("unterminated block", tk);
+        if (at_op("}")) {
+            if (groups_.size() > g0) { directive_arm_end(); continue; }
+            break;
+        }
+        if (at_directive()) { directive_header(); continue; }
+        const size_t ns = block->stmts.size();
+        ArmDrop drop(*this, [&] { block->stmts.resize(ns); });
         for (auto& s : parse_stmt()) block->stmts.push_back(std::move(s));
     }
     expect_op("}");
+    if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     return block;
 }
 

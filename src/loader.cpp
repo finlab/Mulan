@@ -445,6 +445,9 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
     (void)visit(find_file("std.task"));
     // `std.thread` stays implicitly available as well (thread/mutex/condvar primitives).
     (void)visit(find_file("std.thread"));
+    // Build constants for `#if` conditions and for ordinary `switch os { ... }` code. The compiler
+    // fills their values during sema (Sema::seed_target_unit), so the unit is a declaration only.
+    (void)visit(find_file("std.target"));
     // Compiler-facing contracts for `for-in` and the built-in capabilities (SPEC 6.4.1/6.4.2,
     // 3.15.7); declarations only.
     (void)visit(find_file("std.interfaces"));

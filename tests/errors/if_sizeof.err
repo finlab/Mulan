@@ -1,0 +1,1 @@
+`sizeof` is not available in a `#if` condition

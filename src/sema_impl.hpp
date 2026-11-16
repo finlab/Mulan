@@ -260,6 +260,8 @@ private:
 
     // ------------------------------------------------------------ collection
     void collect();
+    // `std.target` declares the build constants; the compiler owns their values (see directive.hpp).
+    void seed_target_unit();
 
     // ------------------------------------------------------------ public signature chain check
     //

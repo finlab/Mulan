@@ -18,6 +18,7 @@ struct Token {
     std::string bytes;     // raw bytes of a Str
     int line = 0;
     int col = 0;
+    bool bol = false;      // first token on its line; `#` directives require it
 
     bool is_op(const char* s) const { return kind == TokKind::Op && text == s; }
     bool is_kw(const char* s) const { return kind == TokKind::Kw && text == s; }

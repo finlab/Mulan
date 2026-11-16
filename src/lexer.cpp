@@ -131,8 +131,11 @@ public:
 
     std::vector<Token> tokens() {
         std::vector<Token> out;
+        int prev_line = -1;
         for (;;) {
             out.push_back(next());
+            out.back().bol = out.back().kind != TokKind::Eof && out.back().line != prev_line;
+            prev_line = out.back().line;
             if (out.back().kind == TokKind::Eof) return out;
         }
     }
@@ -233,6 +236,15 @@ private:
         // and are effectively unreachable; here they run earlier as the spec intends, so the hint actually fires).
         if (ch == '&' && peek(1) == '&') throw err("`&&` is not supported: use `and` for logical and");
         if (ch == '|' && peek(1) == '|') throw err("`||` is not supported: use `or` for logical or");
+
+        // `#` introduces a compiler directive (`#if` / `#elif` / `#else` / `#error`). It is never part
+        // of an expression; the parser rejects it anywhere except the start of a line in a list position.
+        if (ch == '#') {
+            adv();
+            tok.kind = TokKind::Op;
+            tok.text = "#";
+            return tok;
+        }
 
         // operators (longest match)
         for (const char* op : OPS3) {

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -148,6 +149,43 @@ private:
             throw err("`++`/`--` has no value and cannot appear in an expression; it must be a standalone statement");
         }
     }
+
+    // ------------------------------------------------------ compiler directives
+
+    // `#if` is executed while parsing: the selected arm is spliced into the enclosing list (no scope,
+    // no AST node), the other arms are parsed and dropped (their syntax is still checked). A list
+    // loop detects an arm boundary by comparing the size of `groups_` with the value it recorded on
+    // entry, so a `}` closing a nested block is never mistaken for one.
+    bool at_directive() const { return peek().is_op("#"); }
+    void directive_header();
+    void directive_arm_end();
+    void directive_begin_arm(const Expr* cond, const Token& at);
+
+    struct DirectiveGroup {
+        bool taken = false;      // some arm of this chain is selected
+        bool arm_taken = false;  // the arm being parsed is selected
+        bool saw_else = false;
+        bool awaiting = false;   // the arm just closed; `#elif` / `#else` may follow
+    };
+    std::vector<DirectiveGroup> groups_;
+    int discard_depth_ = 0;  // > 0: this arm is not compiled, so its nested conditions are not evaluated
+
+    // One list element is parsed at a time; while the element sits in an arm that is not compiled the
+    // arm must still be parsed (syntax is checked) but nothing may reach the AST. The undo action
+    // removes whatever the element appended, and it runs on every exit path of the element's parse.
+    class ArmDrop {
+    public:
+        ArmDrop(Parser& p, std::function<void()> undo) : p_(p), undo_(std::move(undo)) {}
+        ~ArmDrop() {
+            if (p_.discard_depth_ > 0 && undo_) undo_();
+        }
+        ArmDrop(const ArmDrop&) = delete;
+        ArmDrop& operator=(const ArmDrop&) = delete;
+
+    private:
+        Parser& p_;
+        std::function<void()> undo_;
+    };
 
     // ------------------------------------------------------ unit
 

@@ -27,6 +27,29 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 158 — 2026-11-16
+
+**Compiler directives: `#if` / `#elif` / `#else` / `#error` (SPEC 9.2).**
+
+- `#if <cond> { … }` selects which code *exists* in a build. It is a compiler directive, not a
+  preprocessor: no macros, no textual substitution, no `#include`, and no `#endif` — the arm is a
+  braced group.
+- The selected arm is **spliced** into the enclosing declaration or statement list: the braces delimit
+  the directive and do **not** create a scope (`int h` declared in an arm stays visible after it).
+  Dropped arms are still parsed, so syntax is checked in every configuration, but they are never
+  name-resolved, type-checked or emitted; a nested `#if` inside a dropped arm is not evaluated, and a
+  `use` there does not join the dependency graph.
+- Conditions are evaluated while parsing (before name resolution), so they may only use the build
+  constants `os` / `arch` / `abi` / `ptr_bits` / `endian` / `debug` / `bounds` / `single_thread`, the
+  enums `OS` / `Arch` / `Abi` / `Endian` (declared in the new unit `std.target`, whose values the
+  compiler fills and cross-checks), literals and the arithmetic / comparison / `and` / `or` / `not`
+  operators. A runtime value, `sizeof` or a call is rejected with a message that explains why.
+- Positions: unit top level, struct / class / interface bodies, function bodies and blocks.
+  `#` must be the first non-blank character of its line.
+- New: `muc dump-config` prints every build constant; `std.target` is loaded implicitly.
+- Tests: `if_config`, `if_target`, `if_dead_use` (run) plus seven must-fail cases covering the
+  rejected condition shapes, dead-branch syntax errors, live `use` of a missing unit and `#error`.
+
 #### build 157 — 2026-11-16
 
 **Contract operators with mixed operands and `ref` receivers; compound assignment on user types.**

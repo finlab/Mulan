@@ -28,6 +28,7 @@
 
 #include "codegen_llvm.hpp"
 #include "common.hpp"
+#include "directive.hpp"
 #include "loader.hpp"
 #include "parser.hpp"
 #include "sema.hpp"
@@ -48,6 +49,7 @@ Usage:
   muc dump  <entry.mu>            dump the AST (debug)
   muc build <entry.mu> [options]  compile and link
   muc run   <entry.mu> [options]  compile, link and run
+  muc dump-config [options]       print the build constants `#if` conditions read
   muc -V | --version              print version
 
 build options:
@@ -630,6 +632,64 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
     return b;
 }
 
+// `#if` conditions read exactly these values, so they are fixed before any unit is parsed. The
+// platform spec decides the unit set; `--target` decides the object file, and its architecture
+// gives `ptr_bits` when the platform spec leaves it out.
+static void init_build_config(const std::string& platform_spec, const TargetInfo& target, bool debug,
+                              bool bounds, bool single_thread) {
+    BuildConfig cfg;
+    PlatformSpec spec;
+    if (!platform_spec.empty()) {
+        spec = parse_platform_spec(platform_spec);
+    } else {
+        spec.os = target.os;
+        spec.arch = target.arch;
+        spec.abi = target.abi;
+    }
+    cfg.os = spec.os;
+    cfg.arch = spec.arch.empty() ? target.arch : spec.arch;
+    cfg.abi = spec.abi.empty() ? target.abi : spec.abi;
+    if (cfg.arch == "aarch64" || cfg.arch == "x86_64") cfg.ptr_bits = 64;
+    else if (cfg.arch == "x86") cfg.ptr_bits = 32;
+    else cfg.ptr_bits = static_cast<int>(sizeof(void*)) * 8;
+    cfg.big_endian = false;  // every target this compiler emits for is little-endian
+    cfg.debug = debug;
+    cfg.bounds = bounds;
+    cfg.single_thread = single_thread;
+    set_build_config(cfg);
+}
+
+static int cmd_dump_config(const std::vector<std::string>& args) {
+    std::string os;
+    std::string platform;
+    std::string target_triple;
+    bool debug = false;
+    bool bounds = true;
+    bool single_thread = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        const std::string& a = args[i];
+        auto need = [&](const char* what) {
+            if (i + 1 >= args.size()) throw MuError(std::string("missing argument for ") + what);
+            return args[++i];
+        };
+        if (a == "--os") os = need("--os");
+        else if (a == "--platform") platform = need("--platform");
+        else if (a == "--target") target_triple = need("--target");
+        else if (a == "-g" || a == "--debug") debug = true;
+        else if (a == "--bounds=on") bounds = true;
+        else if (a == "--bounds=off") bounds = false;
+        else if (a == "--single-thread") single_thread = true;
+        else throw MuError("unknown option `" + a + "`");
+    }
+    if (!os.empty() && !platform.empty()) {
+        throw MuError("`--os` and `--platform` select the same thing; use one of them");
+    }
+    const TargetInfo work = target_triple.empty() ? host_target() : parse_triple(target_triple);
+    init_build_config(platform.empty() ? os : platform, work, debug, bounds, single_thread);
+    std::cout << describe_build_config();
+    return 0;
+}
+
 // `check` accepts the same resolution options as `build` but nothing that produces an artifact.
 static int cmd_check(const std::vector<std::string>& args) {
     std::string entry;
@@ -660,6 +720,7 @@ static int cmd_check(const std::vector<std::string>& args) {
         throw MuError("`--os` and `--platform` select the same thing; use one of them");
     }
     std::string entry_name;
+    init_build_config(platform.empty() ? os : platform, host_target(), false, true, single_thread);
     auto units = load_units(entry, dirs, entry_name, platform.empty() ? os : platform, verbose);
     size_t n = units.size();
     auto prog = analyze(std::move(units), entry_name, single_thread, strict);
@@ -702,6 +763,7 @@ static int cmd_build(const std::vector<std::string>& args) {
         check_platform_matches_target(target_spec, option, spec, target);
     }
     std::string entry_name;
+    init_build_config(target_spec, target, ba.debug, ba.bounds, ba.single_thread);
     auto units = load_units(ba.entry, ba.dirs, entry_name, target_spec, ba.verbose);
     auto prog = analyze(std::move(units), entry_name, ba.single_thread, ba.strict);
 
@@ -771,6 +833,9 @@ static int cmd_build(const std::vector<std::string>& args) {
 
 int main(int argc, char** argv) {
     enableUtf8Console();
+    // Default to the host target so every command (including `dump`) parses with a real configuration;
+    // `check` / `build` overwrite it once their options are known.
+    init_build_config("", host_target(), false, true, false);
     std::vector<std::string> args(argv + 1, argv + argc);
     if (!args.empty() && (args[0] == "-V" || args[0] == "--version")) {
         std::cout << "muc " MUC_VERSION " (build " MUC_BUILD ")\n";
@@ -784,6 +849,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> rest(args.begin() + 1, args.end());
     try {
         if (cmd == "check") return cmd_check(rest);
+        if (cmd == "dump-config" || cmd == "--dump-config") return cmd_dump_config(rest);
         if (cmd == "dump") return cmd_dump(rest);
         if (cmd == "build") return cmd_build(rest);
         if (cmd == "run") {

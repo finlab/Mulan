@@ -247,6 +247,7 @@ namespace muc_detail {
                 }
             }
         }
+        seed_target_unit();
     }
 
     void Sema::check_exposed_type(const TypePtr& t, const std::string& what, const Node* at) {

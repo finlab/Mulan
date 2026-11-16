@@ -8,7 +8,7 @@
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
-> Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor, reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
+> Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor (no macros or textual substitution; `#if` only selects code at build time, see 9.2), reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
 >
 > **Scope: this document specifies the *language*.** The standard library — unit inventory, APIs,
 > error model, C bindings, naming — is specified separately in
@@ -46,7 +46,9 @@
 ## 1. Design Principles
 
 1. **Keep the hard capabilities of C**: value semantics, pointer arithmetic, manual memory, struct, C ABI.
-2. **Drop C's historical baggage**: no preprocessor, no implicit narrowing, no integer truthiness, no `do-while`, no C-style `for`; `++/--` keep only the statement form (no value).
+2. **Drop C's historical baggage**: no preprocessor (no macros, no textual substitution; `#if` only
+   selects code at build time, see 9.2), no implicit narrowing, no integer truthiness, no `do-while`,
+   no C-style `for`; `++/--` keep only the statement form (no value).
 3. **Explicit beats implicit**: use `as` for type conversions; use `const` for mutability; use a read-only `interface` for read-only API boundaries.
 4. **Small and predictable**: generics only do monomorphization (no erasure, no runtime generics), no capturing closures, no hidden allocations; overloading is limited to the bounded rules in 3.11; errors that can be caught at compile time are not deferred to runtime.
 5. **Leave room for optimization without sacrificing semantics**: single assignment for `const`, a structured `for-in`, and future alias annotations.
@@ -2197,7 +2199,9 @@ unit example;
   - `public` does not promise that the symbol appears in the final binary: an **executable** build
     internalizes every definition outside the export surface (plus `--export` names) so that dead code
     can be removed. Library targets keep their exported surface visible (see `agents/toolchain-plan.md` §11).
-- No preprocessor; module-level constants use top-level `const`.
+- No preprocessor: no macros, no textual substitution, no `#include`. Module-level constants use
+  top-level `const`; a platform-specific variant is selected by a compiler directive (`#if`, 9.2),
+  which chooses code at build time and leaves no trace in the output.
 - `extern` is used for C functions/global variables; C ABI; struct layout is compatible with C. `extern` functions cannot be overloaded.
 - Building against C objects: `muc build <entry.mu> --link <obj> [--link <obj> …]` hands extra object files to
   the link step (compile them with the same `--cc` driver); `tests/abi/` uses this to check the C ABI of
@@ -2257,6 +2261,51 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 - Each unit's initializer and cleanup are **separate symbols**, so a future split-compilation mode can
   assemble the same sequence at link time; only the entry unit materializes the call sequence today.
   A build without an entry unit (a library check) generates no sequence at all.
+
+### 9.2 Compiler directives: `#if` (implemented, build 158)
+
+`#if` is a **compiler directive**, not a preprocessor: it selects which code *exists* in this build.
+There are no macros, no textual substitution and no `#include`.
+
+```c
+#if os == OS.Windows and arch == Arch.X86_64 {
+    extern void* CreateFileW(const ushort* name, uint access, uint share,
+                             void* sec, uint disp, uint flags, void* tmpl);
+    public type File = void*;
+}
+#elif os == OS.Linux {
+    extern int open(const char* path, int flags, ...);
+    public type File = int;
+}
+#else {
+    #error "no file backend for this platform"
+}
+```
+
+- **The selected arm is spliced** into the enclosing list. The braces delimit the directive; they do
+  **not** introduce a scope, so a variable declared in an arm stays visible after the directive.
+- **Only one arm is compiled.** The other arms are parsed (their syntax is checked) but never
+  name-resolved, type-checked or emitted; a nested `#if` inside a dropped arm is not evaluated. An arm
+  may therefore mention symbols that do not exist on this platform.
+- **Positions**: a declaration list (unit top level, struct / class / interface body) or a statement
+  list (function body, block). A single-statement position is an error (`if (c) #if …`), and the
+  `unit` declaration itself cannot be conditional.
+- **Syntax**: `#` must be the first non-blank character of its line; an arm is `#if <cond> { … }`,
+  continued by `#elif <cond> { … }` / `#else { … }`. There is no `#endif`. `#error "message"` fails the
+  compilation when it is reached.
+- **Conditions**: a compile-time `bool` built from the build constants — `os`, `arch`, `abi`,
+  `ptr_bits`, `endian`, `debug`, `bounds`, `single_thread`, whose types (`OS`, `Arch`, `Abi`, `Endian`)
+  live in `std.target` — plus literals, arithmetic, comparisons and `and` / `or` / `not`. A runtime
+  value, a local variable, `sizeof` or a call is an error: the condition is evaluated while parsing,
+  before names and layouts exist.
+- **`use` inside an arm** is allowed, and only the units of selected arms join the dependency graph.
+- `muc dump-config` prints every build constant; that output plus the platform spec is the
+  reproduction key of a build.
+- **Deliberately not supported** (decided 2026-11-16): `#if` **inside** an enum variant list or a
+  single parameter list. A conditional variant would silently shift the implicit values of every later
+  variant, and a conditional parameter would need the comma list split; the granularity is too fine to
+  pay for. Wrap the whole declaration instead — a declaration list is a supported position. Conditions
+  that reference library `const`s are not implemented yet either.
 
 ---
 
