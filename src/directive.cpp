@@ -218,6 +218,15 @@ bool eval(const Expr& e, V& out, std::string& why) {
         return true;
     }
     if (const auto* p = dynamic_cast<const Name*>(&e)) {
+        // A visible user constant wins (a `use comptime;` records the builtins as ordinary constants,
+        // so the condition does not care where the value came from).
+        if (g_user_consts) {
+            auto it = g_user_consts->find(p->ident);
+            if (it != g_user_consts->end()) {
+                out = it->second.is_bool ? vbool(it->second.value != 0) : vint(it->second.value);
+                return true;
+            }
+        }
         long long v = 0;
         if (builtin_const(p->ident, v)) {
             if (p->ident == "debug" || p->ident == "bounds" || p->ident == "single_thread") out = vbool(v != 0);
@@ -243,6 +252,14 @@ bool eval(const Expr& e, V& out, std::string& why) {
     }
     if (const auto* p = dynamic_cast<const Member*>(&e)) {
         const auto* base = dynamic_cast<const Name*>(p->obj.get());
+        // A qualified constant (`OS.Windows`) already recorded in the visible table.
+        if (base && g_user_consts) {
+            auto it = g_user_consts->find(base->ident + "." + p->name);
+            if (it != g_user_consts->end()) {
+                out = it->second.is_bool ? vbool(it->second.value != 0) : vint(it->second.value);
+                return true;
+            }
+        }
         const std::vector<std::string>* members = nullptr;
         if (!base || !builtin_enum(base->ident, members)) {
             why = "`#if` conditions may only use the members of OS / Arch / Abi / Endian";
@@ -374,4 +391,30 @@ bool eval_user_const(const Expr& e, const UserConstTable& table, UserConst& out,
     out.is_bool = v.k == VK::Bool;
     out.value = v.k == VK::Bool ? (v.i != 0 ? 1 : 0) : v.i;
     return true;
+}
+
+void add_builtin_constants(UserConstTable& table) {
+    static const char* ints[] = {"ptr_bits"};
+    static const char* bools[] = {"debug", "bounds", "single_thread"};
+    static const char* targets[] = {"os", "arch", "abi", "endian"};
+    static const char* enums[] = {"OS", "Arch", "Abi", "Endian"};
+    for (const char* n : ints) {
+        long long v = 0;
+        if (builtin_const(n, v)) table[n] = UserConst{v, false};
+    }
+    for (const char* n : bools) {
+        long long v = 0;
+        if (builtin_const(n, v)) table[n] = UserConst{v, true};
+    }
+    for (const char* n : targets) {
+        long long v = 0;
+        if (builtin_const(n, v)) table[n] = UserConst{v, false};
+    }
+    for (const char* n : enums) {
+        std::vector<std::string> members;
+        if (!builtin_enum_members(n, members)) continue;
+        for (size_t i = 0; i < members.size(); ++i) {
+            table[std::string(n) + "." + members[i]] = UserConst{static_cast<long long>(i), false};
+        }
+    }
 }

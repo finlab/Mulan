@@ -2462,6 +2462,15 @@ public builtin bool is_linux();
   pointers, strings and aggregates cannot be `builtin`.
 - A `builtin` declaration produces **no symbol and no ABI**: it is resolved and folded by the compiler, and
   cannot be `extern`.
+- **A builtin constant is a compile-time value, not a run-time object** (decided 2026-11-17): it has no
+  storage, cannot have its address taken, does not participate in layout/ABI, and is frozen once the
+  compilation starts. Every reference is folded to the value.
+- **Runtime builtins are not part of `comptime`.** Platform symbols and functions that exist at run time
+  (a `File` handle type, `open_file`, …) belong to a separate unit supplied by the library/platform layer;
+  `comptime` only carries compile-time constants and compile-time functions.
+- **`#if` treats these names like any other constant**: there is no special "build constant" syntax or
+  resolution. After `use comptime`, the names are ordinary visible constants; before the `use`, they are not
+  visible.
 - **Contract**: the `comptime` unit is the language's contract with the compiler — every name it declares
   must be provided with the declared type and semantics, and the compiler may not silently omit one.
   Adding, removing, or changing the type of a builtin is a breaking change and is recorded in

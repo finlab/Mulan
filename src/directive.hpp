@@ -52,3 +52,8 @@ bool eval_directive_cond(const Expr& e, std::string& why, const UserConstTable* 
 
 // Evaluates a unit-level const initializer into `out` (used to record it for later `#if` conditions).
 bool eval_user_const(const Expr& e, const UserConstTable& table, UserConst& out, std::string& why);
+
+// Fills `table` with the compiler-provided compile-time constants (`os`, `arch`, `ptr_bits`, ...) and
+// their enum members (`OS.Windows`, ...). Called when a unit writes `use comptime;` — before that the
+// names are not visible (decided 2026-11-17).
+void add_builtin_constants(UserConstTable& table);

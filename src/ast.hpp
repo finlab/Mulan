@@ -472,6 +472,7 @@ struct LocalVar : Stmt {
     bool zero = false;
     std::string cname;
     bool by_ref = false;  // a for-in ref binding / ref parameter: it is T* on the C side and is dereferenced at the use site
+    bool ref_const = false;  // a `for ref const` binding: a read-only borrow (cannot write the element)
     bool is_ref_param = false;  // a `ref` parameter: it cannot be rebound (a for-in ref variable can write elements)
     int env_index = -1;   // >= 0: a lambda capture; the storage is field `env_index` of the environment object
     int group = 0;        // shared by multiple declarators in the same declaration statement (used for the auto consistency check)
@@ -502,6 +503,8 @@ struct WhileStmt : Stmt {
 
 struct ForInStmt : Stmt {
     bool by_ref = false;
+    // `for ref const x in seq`: a read-only borrow (usable on a `const` sequence, decided 2026-11-17)
+    bool ref_const = false;
     std::string var;
     bool has_idx = false;      // `for i, x in seq`
     std::string idx_name;

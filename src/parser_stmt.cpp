@@ -561,9 +561,14 @@ std::unique_ptr<Stmt> Parser::parse_for() {
         paren = true;
     }
     bool by_ref = false;
+    bool ref_const = false;
     if (at_kw("ref")) {
         advance();
         by_ref = true;
+        if (at_kw("const")) {
+            advance();
+            ref_const = true;
+        }
     }
     if (peek().kind != TokKind::Ident) throw err("for-in requires a loop variable name");
     std::string first = advance().text;
@@ -575,6 +580,10 @@ std::unique_ptr<Stmt> Parser::parse_for() {
         if (at_kw("ref")) {
             advance();
             by_ref = true;
+            if (at_kw("const")) {
+                advance();
+                ref_const = true;
+            }
         }
         if (peek().kind != TokKind::Ident) throw err("for-in requires a loop variable name");
         idx_name = std::move(first);
@@ -611,6 +620,7 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     std::unique_ptr<Block> body = parse_block();
     auto node = std::make_unique<ForInStmt>();
     node->by_ref = by_ref;
+    node->ref_const = ref_const;
     node->var = std::move(var);
     node->has_idx = has_idx;
     node->idx_name = std::move(idx_name);

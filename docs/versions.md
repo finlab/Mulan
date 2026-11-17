@@ -27,6 +27,34 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 174 — 2026-11-17
+
+**`use comptime;` exposes the compiler-provided compile-time constants to `#if`.**
+
+- `use comptime;` records `os` / `arch` / `abi` / `ptr_bits` / `endian` / `debug` / `bounds` /
+  `single_thread` and the `OS` / `Arch` / `Abi` / `Endian` members as ordinary compile-time constants; a
+  `#if` after the use resolves them like any other name (no special build-constant source). The constants
+  are compile-time values: no storage, no address.
+- `comptime` is supplied by the compiler: the loader and sema skip its file, and the parser injects the
+  values on `use comptime;`.
+- Runtime platform symbols/functions are not part of `comptime`; they belong to the library/platform unit.
+- Tests: `if_comptime` (run). The pre-existing implicit visibility of the build constants is kept for
+  compatibility until the remaining `if_*` tests and `std.target` are migrated (next step).
+
+Full suite: 704/704 (260 run, 406 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
+#### build 173 — 2026-11-17
+
+**`for ref const` read-only iteration.**
+
+- `for ref const x in seq` binds a read-only borrow: it can read the element but not write it, and it is
+  the only `for ref` form accepted on a `const` sequence. A plain `for ref` on a const slice/binding now
+  suggests `for ref const`.
+- Works on slices and on user types whose `operator[]` returns `ref T` or `ref const T`.
+- Tests: `for_ref_const` (run), `for_ref_const_write` (must-fail).
+
+Full suite: 703/703 (259 run, 406 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 172 — 2026-11-17
 
 **`#if` user constants inside type bodies and function bodies.**

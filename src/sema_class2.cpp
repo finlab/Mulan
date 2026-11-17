@@ -224,6 +224,9 @@ namespace muc_detail {
                 }
             }
             if (root_is_const(t)) err("`" + n->ident + "` is a `const` binding and cannot be assigned", t);
+            if (auto lv = std::get_if<LocalVar*>(&n->sym); lv && *lv && (*lv)->ref_const) {
+                err("cannot assign through a `for ref const` binding", t);
+            }
             // An implicit `this.field`: a field declared `const` is read-only outside the constructor.
             if (cur_method_const_ && (n->ident == "this" || n->implicit_this)) {
                 err("cannot modify the object inside a `const` method", t);
@@ -935,8 +938,11 @@ namespace muc_detail {
             err("user types do not support `for ref` unless `operator[]` returns `ref T`; use `for i, x` with `c[i] = ...` instead",
                 s->seq.get());
         }
-        if (s->by_ref && s->loop_kind == "index" && is_borrow_type(idx_ret) && idx_ret->is_const) {
-            err("`for ref` requires a mutable borrow: `operator[]` returns `ref const T`", s->seq.get());
+        if (s->by_ref && s->loop_kind == "index" && is_borrow_type(idx_ret) && idx_ret->is_const &&
+            !s->ref_const) {
+            err("`for ref` requires a mutable borrow: `operator[]` returns `ref const T`; write "
+                "`for ref const` for a read-only iteration",
+                s->seq.get());
         }
         if (s->by_ref && s->loop_kind == "range") {
             err("`for ref` cannot be used on a range loop", s);
@@ -944,12 +950,16 @@ namespace muc_detail {
         if (s->by_ref && s->elem_ty && is_reference_type(s->elem_ty)) {
             err("`for ref` is not supported for class or interface elements (bind the handle by value)", s);
         }
-        if (s->by_ref && s->seq_ty && s->seq_ty->kind == TypeKind::Slice && s->seq_ty->elem &&
-            s->seq_ty->elem->is_const) {
-            err("`for ref` cannot be used on a `const` slice", s->seq.get());
+        if (s->by_ref && !s->ref_const && s->seq_ty && s->seq_ty->kind == TypeKind::Slice &&
+            s->seq_ty->elem && s->seq_ty->elem->is_const) {
+            err("`for ref` cannot be used on a `const` slice; write `for ref const` for a read-only "
+                "iteration",
+                s->seq.get());
         }
-        if (s->by_ref && root_is_const(s->seq.get())) {
-            err("`for ref` cannot be used on a `const` binding", s->seq.get());
+        if (s->by_ref && !s->ref_const && root_is_const(s->seq.get())) {
+            err("`for ref` cannot be used on a `const` binding; write `for ref const` for a read-only "
+                "iteration",
+                s->seq.get());
         }
         if (s->by_ref && !simple_seq(s->seq.get())) {
             err("the sequence of `for ref` must be a variable or member access (an lvalue)", s->seq.get());
@@ -960,6 +970,7 @@ namespace muc_detail {
         lv->name = s->var;
         lv->rty = vt;
         lv->by_ref = s->by_ref;
+        lv->ref_const = s->ref_const;
         lv->line = s->line;
         lv->col = s->col;
         declare_local(lv.get());
