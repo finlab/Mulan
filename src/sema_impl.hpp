@@ -278,6 +278,10 @@ private:
     void place_structs();
 
     void resolve_class_fields(ClassDecl* c, Unit* u);
+    // Struct field table (idempotent; collect may resolve it early for a `sizeof` constant).
+    void resolve_struct_fields(StructDecl* sd, Unit* u);
+    // Resolves the type arguments of `sizeof(T)` in a const initializer, so collect can fold it.
+    void resolve_sizeof_types(const Expr* e, Unit* u);
     // Sum types: payload types + the synthesized `{ i32 tag; union payload }` layout.
     void resolve_sum(SumDecl* sd, Unit* u);
 

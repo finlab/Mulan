@@ -295,8 +295,11 @@ bool has_sizeof_init(const Init* i) {
                         }
                         if (!have && g->init && !g->is_builtin && has_sizeof_init(g->init.get())) {
                             // The parser folds literals and arithmetic; a `sizeof`/`alignof` initializer
-                            // needs the type, so it is evaluated here (basic types only until the layout
-                            // pass; a struct value stays a runtime initializer).
+                            // needs the type, so it is evaluated here. The types named by `sizeof` are
+                            // resolved first so a struct layout is available.
+                            if (auto* ie = dynamic_cast<InitExpr*>(g->init.get())) {
+                                resolve_sizeof_types(ie->expr.get(), u.get());
+                            }
                             g->rty = resolve_type(g->spec.get(), u.get());
                             if (g->rty && g->rty->kind != TypeKind::Struct &&
                                 g->rty->kind != TypeKind::Class) {
@@ -562,7 +565,84 @@ bool has_sizeof_init(const Init* i) {
         sd->ty->sum_layout = std::move(layout);
     }
 
-    void Sema::resolve_class_fields(ClassDecl* c, Unit* u) {        std::vector<Field> fields;
+    void Sema::resolve_struct_fields(StructDecl* sd, Unit* u) {
+        if (!sd || sd->fields_resolved) return;
+        if (!sd->ty) sd->ty = Type::make_struct(u->name, sd->name);
+        sd->ty->is_packed = sd->is_packed;
+        sd->ty->is_union = sd->is_union;
+        sd->ty->nocopy = sd->nocopy;
+        const std::string kw = sd->is_union ? "union" : "struct";
+        std::vector<Field> fields;
+        std::unordered_set<std::string> fnames;
+        for (auto& [fname, spec] : sd->fields) {
+            if (!fnames.insert(fname).second) {
+                err("duplicate field `" + fname + "` in " + kw + " `" + sd->name + "`", sd);
+            }
+            TypePtr ft = resolve_type(spec.get(), u);
+            if (is_void(ft)) err("field of " + kw + " `" + sd->name + "` cannot be void", sd);
+            if (same_type(ft, sd->ty)) {
+                err(kw + " `" + sd->name + "` cannot contain itself by value", sd);
+            }
+            if (spec->weak) err("`weak` can only be used on class fields", sd);
+            if (sd->is_union && ft->needs_cleanup()) {
+                err("field `" + fname + "` of union `" + sd->name + "` cannot be `" + ft->str() +
+                        "`: union members cannot hold values that need reference counting",
+                    sd);
+            }
+            bool field_pub = true;  // struct defaults to public
+            if (auto vit = sd->field_visibility.find(fname); vit != sd->field_visibility.end()) {
+                field_pub = vit->second;
+            }
+            fields.push_back(Field{fname, ft, false, field_pub});
+        }
+        sd->ty->fields = std::move(fields);
+        if (sd->is_union && sd->ty->fields.empty()) {
+            err("union `" + sd->name + "` must have at least one member", sd);
+        }
+        sd->fields_resolved = true;
+    }
+
+    void Sema::resolve_sizeof_types(const Expr* e, Unit* u) {
+        if (!e) return;
+        if (auto s = dynamic_cast<const SizeofExpr*>(e)) {
+            if (s->spec && s->spec->kind == TypeSpec::K::Named && !s->spec->is_self &&
+                s->spec->args.empty()) {
+                const std::string& n = s->spec->name;
+                if (!is_prim_name(n) && n.find('.') == std::string::npos) {
+                    for (auto& d : u->decls) {
+                        if (auto* sd = dynamic_cast<StructDecl*>(d.get()); sd && sd->name == n) {
+                            resolve_struct_fields(sd, u);
+                            break;
+                        }
+                        if (auto* cd = dynamic_cast<ClassDecl*>(d.get()); cd && cd->name == n) {
+                            resolve_class_fields(cd, u);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (s->expr) resolve_sizeof_types(s->expr.get(), u);
+            return;
+        }
+        if (auto b = dynamic_cast<const Binary*>(e)) {
+            resolve_sizeof_types(b->left.get(), u);
+            resolve_sizeof_types(b->right.get(), u);
+            return;
+        }
+        if (auto un = dynamic_cast<const Unary*>(e)) { resolve_sizeof_types(un->operand.get(), u); return; }
+        if (auto nt = dynamic_cast<const NotExpr*>(e)) { resolve_sizeof_types(nt->operand.get(), u); return; }
+        if (auto c = dynamic_cast<const Cast*>(e)) { resolve_sizeof_types(c->expr.get(), u); return; }
+        if (auto c = dynamic_cast<const Call*>(e)) {
+            resolve_sizeof_types(c->callee.get(), u);
+            for (const auto& a : c->args) resolve_sizeof_types(a.get(), u);
+            return;
+        }
+        if (auto m = dynamic_cast<const Member*>(e)) resolve_sizeof_types(m->obj.get(), u);
+    }
+
+    void Sema::resolve_class_fields(ClassDecl* c, Unit* u) {
+        if (!c || c->fields_resolved) return;
+        std::vector<Field> fields;
         if (c->ty->base) fields = c->ty->base->fields;
         std::unordered_set<std::string> fnames;
         for (auto& f : fields) fnames.insert(f.name);
@@ -584,6 +664,7 @@ bool has_sizeof_init(const Init* i) {
             fields.push_back(Field{fname, ft, spec->weak, field_pub});
         }
         c->ty->fields = std::move(fields);
+        c->fields_resolved = true;
     }
 
     bool Sema::eval_const_int(Expr* e, long long& out) {
@@ -734,41 +815,8 @@ bool has_sizeof_init(const Init* i) {
         for (auto& d : u->decls) {
             auto sd = dynamic_cast<StructDecl*>(d.get());
             if (!sd) continue;
-            if (!sd->ty) sd->ty = Type::make_struct(u->name, sd->name);
-            sd->ty->is_packed = sd->is_packed;  // align_req is evaluated in check_layouts
-            sd->ty->is_union = sd->is_union;
-            sd->ty->nocopy = sd->nocopy;
+            resolve_struct_fields(sd, u);  // idempotent: collect may already have resolved them
             const std::string kw = sd->is_union ? "union" : "struct";
-            std::vector<Field> fields;
-            std::unordered_set<std::string> fnames;
-            for (auto& [fname, spec] : sd->fields) {
-                if (!fnames.insert(fname).second) {
-                    err("duplicate field `" + fname + "` in " + kw + " `" + sd->name + "`", sd);
-                }
-                TypePtr ft = resolve_type(spec.get(), u);
-                if (is_void(ft)) err("field of " + kw + " `" + sd->name + "` cannot be void", sd);
-                if (same_type(ft, sd->ty)) {
-                    err(kw + " `" + sd->name + "` cannot contain itself by value", sd);
-                }
-                if (spec->weak) err("`weak` can only be used on class fields", sd);
-                if (sd->is_union && ft->needs_cleanup()) {
-                    err("field `" + fname + "` of union `" + sd->name + "` cannot be `" + ft->str() +
-                            "`: union members cannot hold values that need reference counting",
-                        sd);
-                }
-                // A struct with a destructor is a legal member: construction, destruction and the
-                // copyability gate are all recursive (agents/value-semantics.md §4).
-                bool field_pub = true;  // struct defaults to public
-                if (auto vit = sd->field_visibility.find(fname);
-                    vit != sd->field_visibility.end()) {
-                    field_pub = vit->second;
-                }
-                fields.push_back(Field{fname, ft, false, field_pub});
-            }
-            sd->ty->fields = std::move(fields);
-            if (sd->is_union && sd->ty->fields.empty()) {
-                err("union `" + sd->name + "` must have at least one member", sd);
-            }
             resolve_const_members(sd->const_members, sd->ty, u, kw, sd->name);
 
             sd->ty->methods.clear();

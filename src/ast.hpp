@@ -468,6 +468,8 @@ struct StructDecl : Decl {
     bool is_union = false;  // a union declaration (layout: all members at offset 0)
     ExprPtr align_expr;  // the N of align(N) (the parser keeps the original expression and sema evaluates it)
     TypePtr ty;  // sema: the struct type (the fields are filled in after the placeholder is created)
+    // sema: the field table has been resolved (collect may resolve it early for a `sizeof` constant)
+    bool fields_resolved = false;
 };
 
 struct EnumDecl : Decl {
@@ -718,6 +720,8 @@ struct ClassDecl : Decl {
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
     TypePtr ty;  // sema reserved
+    // sema: the field table has been resolved (collect may resolve it early for a `sizeof` constant)
+    bool fields_resolved = false;
 };
 
 struct InterfaceDecl : Decl {

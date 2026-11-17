@@ -27,6 +27,17 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 188 — 2026-11-17
+
+**P3.3b complete: `sizeof(S)` for a struct/class is available to `#if`.**
+
+- Collect resolves the types named by `sizeof`/`alignof` in a const initializer before folding it
+  (`resolve_sizeof_types`), so the struct field table is ready; `resolve_struct_fields` is idempotent and
+  shared with `resolve_unit_types`.
+- `if_sizeof_const` now covers `sizeof(int)`, `sizeof(long)` and `sizeof(P)`.
+
+Full suite: 708/708 (263 run, 407 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 187 — 2026-11-17
 
 **P3.3b: `sizeof` constants visible to `#if` (basic types).**
