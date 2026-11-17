@@ -287,6 +287,20 @@ namespace muc_detail {
         for (auto& item : ctor->init_list) {
             const int idx = ty->field_index(item.first);
             if (idx < 0) {
+                // `: Base(x)` / `: Cfg(7)` look like field entries but name the base class / the class
+                // itself. Both are constructor forms the language does not have yet; say so instead of
+                // "unknown field".
+                if (ty->base && ty->base->name == item.first) {
+                    err("a base-class initializer (`: " + item.first +
+                            "(...)`) is not supported yet: call `super(...)` at the start of the "
+                            "constructor body (it cannot be combined with an initializer list yet)",
+                        item.second.get());
+                }
+                if (ty->name == item.first) {
+                    err("delegating constructors (`: " + item.first +
+                            "(...)`) are not supported yet: initialize the fields directly",
+                        item.second.get());
+                }
                 err("constructor initializer names an unknown field `" + item.first + "`", item.second.get());
             }
             if (static_cast<size_t>(idx) < baseCount) {

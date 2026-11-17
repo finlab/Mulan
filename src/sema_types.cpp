@@ -66,7 +66,23 @@ namespace muc_detail {
                 // A struct with a destructor is a legal element: the element constructor and destructor are
                 // recursive (agents/value-semantics.md §5, §6), and copying is what stays banned while the
                 // element type is uncopyable.
-                return Type::make_array(elem, spec->size);
+                size_t n = spec->size;
+                if (spec->len) {
+                    // A compile-time constant length (`int[SIZE]`): the same evaluator that feeds `step`,
+                    // `align(N)` and switch patterns (SPEC 3.3.2). `sizeof` is not part of it — bind it
+                    // first (`const int N = sizeof(T) as int; int[N] a;`).
+                    long long v = 0;
+                    if (!eval_const_int(spec->len.get(), v)) {
+                        err_ts("array length must be a compile-time integer constant "
+                               "(`const int N = ...; int[N] a;`)",
+                               spec);
+                    }
+                    if (v <= 0) {
+                        err_ts("array length must be greater than 0 (got " + std::to_string(v) + ")", spec);
+                    }
+                    n = static_cast<size_t>(v);
+                }
+                return Type::make_array(elem, n);
             }
             case TypeSpec::K::Func:
             case TypeSpec::K::Delegate: {

@@ -748,7 +748,8 @@ static std::string spec_display(const TypeSpec& s) {
         case TypeSpec::K::Slice:
             return spec_display(*s.elem) + "[]";
         case TypeSpec::K::Array:
-            return spec_display(*s.elem) + "[" + std::to_string(s.size) + "]";
+            return spec_display(*s.elem) + "[" +
+                   (s.len ? std::string("N") : std::to_string(s.size)) + "]";
         case TypeSpec::K::Func:
         case TypeSpec::K::Delegate: {
             std::string n = s.kind == TypeSpec::K::Delegate ? "delegate (" : "(";

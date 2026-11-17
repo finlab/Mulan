@@ -26,6 +26,8 @@ struct Node {
 
 // ---------------------------------------------------------------- Type syntax
 
+struct Expr;  // TypeSpec: an array length may be an expression (`int[N]`)
+
 struct TypeSpec {
     enum class K { Named, Ptr, Array, Slice, Func, Delegate } kind = K::Named;
     std::string name;          // Named: "int" / "Point" / "math.Point" / "Vec"
@@ -35,7 +37,10 @@ struct TypeSpec {
     // Func: `(T1, T2) => R` — parameter types and the return type
     std::vector<std::unique_ptr<TypeSpec>> params;
     std::unique_ptr<TypeSpec> ret;
-    size_t size = 0;           // Array
+    size_t size = 0;           // Array: the element count when the length is an integer literal
+    // Array: the length expression when it is not a literal (`int[N]`, `int[SIZE * 2]`); the semantic pass
+    // folds it against the unit's compile-time constants (SPEC 3.3.2).
+    std::unique_ptr<Expr> len;
     int rank = 1;              // Slice: rank
     bool is_const = false;  // C model: whether this type node is const (a prefix const qualifies the base type, `* const` qualifies the pointer level)
     bool is_self = false;   // `Self` inside an interface body (the implementor type); only allowed in interface member signatures

@@ -49,7 +49,8 @@ inline std::string spec_text(const TypeSpec* s) {
             return spec_text(s->elem.get()) + "[" + std::string(s->rank - 1, ',') + "]" +
                    (s->is_const ? " (const)" : "");
         case TypeSpec::K::Array:
-            return spec_text(s->elem.get()) + "[" + std::to_string(s->size) + "]";
+            return spec_text(s->elem.get()) + "[" +
+                   (s->len ? std::string("N") : std::to_string(s->size)) + "]";
         case TypeSpec::K::Func:
         case TypeSpec::K::Delegate: {
             std::string out = s->kind == TypeSpec::K::Delegate ? "delegate (" : "(";

@@ -2,6 +2,7 @@
 // Copyright 2026 Zhang Guolong
 
 // Parsing — types and expressions
+#include "ast_clone.hpp"  // clone_spec: a shared type syntax must not share its array-length expression
 #include "parser_impl.hpp"
 
 #include <memory>
@@ -34,6 +35,7 @@ TypeSpecPtr clone_spec(const TypeSpec& s) {
     for (const auto& p : s.params) out->params.push_back(p ? clone_spec(*p) : nullptr);
     out->ret = s.ret ? clone_spec(*s.ret) : nullptr;
     out->size = s.size;
+    out->len = s.len ? clone_expr(*s.len) : nullptr;
     out->rank = s.rank;
     out->is_const = s.is_const;
     out->is_self = s.is_self;
@@ -352,13 +354,21 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
                 spec = std::move(slice);
                 continue;
             }
-            std::vector<size_t> dims;
+            std::vector<std::pair<size_t, ExprPtr>> dims;
             for (;;) {
                 const Token n = peek();
-                if (n.kind != TokKind::Int) throw err("array length only supports integer literals for now");
-                advance();
-                if (n.ival <= 0) throw err_at("array length must be greater than 0", n);
-                dims.push_back(static_cast<size_t>(n.ival));
+                if (n.kind == TokKind::Int) {
+                    advance();
+                    if (n.ival <= 0) throw err_at("array length must be greater than 0", n);
+                    dims.emplace_back(static_cast<size_t>(n.ival), nullptr);
+                } else {
+                    // A compile-time constant length (`int[SIZE]`, `int[SIZE * 2]`): the semantic pass
+                    // folds it against the unit's constants (SPEC 3.3.2). A local of the same name is
+                    // not a compile-time value and is rejected there.
+                    ExprPtr e = parse_expr();
+                    if (!e) throw err_at("expected an array length", n);
+                    dims.emplace_back(0, std::move(e));
+                }
                 if (at_op(",")) {
                     advance();
                     continue;
@@ -371,7 +381,8 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
                 auto arr = std::make_unique<TypeSpec>();
                 arr->kind = TypeSpec::K::Array;
                 arr->elem = std::move(spec);
-                arr->size = *it;
+                arr->size = it->first;
+                arr->len = std::move(it->second);
                 arr->line = tok.line;
                 arr->col = tok.col;
                 spec = std::move(arr);

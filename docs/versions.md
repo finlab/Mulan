@@ -27,6 +27,23 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 193 — 2026-11-18
+
+**Compile-time constants as array lengths, and honest constructor diagnostics.**
+
+- **Array lengths** accept a compile-time constant (SPEC 3.3.2/1694/2674): a unit-level `const`, an
+  arithmetic form of it, `std.comptime.X` and a `sizeof`-derived constant. `TypeSpec` carries the length
+  expression when it is not a literal; `resolve_type` folds it with `eval_const_int` (a local of the same
+  name shadows and is rejected, a non-positive length is an error). `canon_spec` keys a generic
+  instantiation by the length expression, so `Box<int[A]>` and `Box<int[B]>` cannot collide.
+- **Constructor diagnostics**: an entry naming the base class (`: Base(x)`) or the class itself
+  (`: Cfg(7)`) now says that base initializers / delegating constructors are not supported yet, instead of
+  reporting the class name as an unknown field.
+
+Tests: `const_array_bound`, `const_array_runtime`, `ctor_base_init_list`, `ctor_delegating`.
+
+Full suite: 735/735 (276 run, 419 must-fail, 26 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 192 — 2026-11-18
 
 **Audit round 2: const pointers, const views, builtin contracts, and the compile-time positions.**

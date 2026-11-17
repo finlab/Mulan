@@ -95,6 +95,21 @@ std::string unchecked_hint_once(const std::vector<TypeParam>& tps,
 }
 
 // Type syntax → canonical display name (`[const] Box<Vec<int[]>>`), used for `Type::name` and the instance cache key.
+// A structural key for an array-length expression (`SIZE`, `SIZE * 2`, `std.comptime.ptr_bits`): two
+// different lengths must never share a generic-instantiation key (SPEC 3.3.2).
+static std::string expr_key(const Expr& e) {
+    if (auto* p = dynamic_cast<const IntLit*>(&e)) return std::to_string(p->value);
+    if (auto* p = dynamic_cast<const CharLit*>(&e)) return "c" + std::to_string(p->value);
+    if (auto* p = dynamic_cast<const Name*>(&e)) return p->ident;
+    if (auto* p = dynamic_cast<const Member*>(&e)) return expr_key(*p->obj) + "." + p->name;
+    if (auto* p = dynamic_cast<const Unary*>(&e)) return p->op + expr_key(*p->operand);
+    if (auto* p = dynamic_cast<const Binary*>(&e)) {
+        return "(" + expr_key(*p->left) + p->op + expr_key(*p->right) + ")";
+    }
+    if (auto* p = dynamic_cast<const Cast*>(&e)) return expr_key(*p->expr) + " as " + p->spec->name;
+    return "?";
+}
+
 std::string canon_spec(const TypeSpec& s) {
     std::string prefix = s.is_const ? "const " : "";
     switch (s.kind) {
@@ -115,7 +130,7 @@ std::string canon_spec(const TypeSpec& s) {
         case TypeSpec::K::Slice:
             return canon_spec(*s.elem) + "[]";
         case TypeSpec::K::Array:
-            return canon_spec(*s.elem) + "[" + std::to_string(s.size) + "]";
+            return canon_spec(*s.elem) + "[" + (s.len ? expr_key(*s.len) : std::to_string(s.size)) + "]";
         case TypeSpec::K::Func:
         case TypeSpec::K::Delegate: {
             std::string n = s.kind == TypeSpec::K::Delegate ? "delegate (" : "(";

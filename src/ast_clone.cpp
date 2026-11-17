@@ -131,6 +131,7 @@ TypeSpecPtr clone_type_spec(const TypeSpec& s) {
     for (const auto& p : s.params) out->params.push_back(p ? clone_type_spec(*p) : nullptr);
     out->ret = s.ret ? clone_type_spec(*s.ret) : nullptr;
     out->size = s.size;
+    out->len = s.len ? clone_expr(*s.len) : nullptr;
     out->rank = s.rank;
     out->is_const = s.is_const;
     out->is_self = s.is_self;
