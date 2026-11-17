@@ -339,8 +339,9 @@ private:
     TypePtr resolve_type(const TypeSpec* spec, Unit* u);
 
     // ------------------------------------------------------------ generic instantiation (U34)
-    // Collect `Unit::templates` into `generic_templates_` (called once at the end of the collect stage)
-    void index_templates();
+    // Registers one template in `generic_templates_` (called as each template leaves the declaration
+    // list, so an instantiation later in the same unit can find it)
+    void index_template(Decl* d, const std::string& unit_name);
     // `spec` is a type syntax with arguments (`Vec<int>`); returns the instance type, cloning and registering the template when needed
     TypePtr instantiate_generic(const TypeSpec* spec, Unit* u);
     // `Name<args>` (from a call site, e.g. value construction of a generic struct `Pair<int,long>(...)`)

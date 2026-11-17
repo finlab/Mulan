@@ -27,6 +27,23 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 190 — 2026-11-18
+
+**P3.4: the compile-time constant tables are owned by `collect` only.**
+
+- The parser no longer evaluates or registers constants: `user_consts_`, `record_user_const`, the
+  `use`-time table merge and the end-of-parse registration are gone, and `parser_impl.hpp` no longer
+  depends on `directive.hpp`. Constants exist only in `collect`.
+- Generic templates are extracted where they are declared (instead of a separate first stage) and indexed
+  immediately, so an instantiation later in the same unit still resolves; their conditional member groups
+  are expanded at the declaration position like any other type.
+- That also closes the P3.3c gap: a `#if` inside a generic template body now sees a `sizeof`-derived
+  constant declared before the template (`if_generic_body`), and a template declared inside a selected
+  `#if` arm is extracted at that position (`if_generic_arm`).
+- `index_templates()` → `index_template(decl, unit)`.
+
+Full suite: 714/714 (268 run, 408 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 189 — 2026-11-18
 
 **P3.3c: the type-body and function-body `#if` is evaluated by the semantic pass.**

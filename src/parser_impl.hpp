@@ -19,7 +19,6 @@
 
 #include "ast.hpp"
 #include "common.hpp"
-#include "directive.hpp"
 #include "lexer.hpp"
 
 namespace muc_detail {
@@ -210,11 +209,6 @@ private:
         DeclTargetScope& operator=(const DeclTargetScope&) = delete;
         ~DeclTargetScope() { p.cur_decls_ = saved; }
     };
-    // Unit-level compile-time constants already declared in this unit. The unit's tables are registered
-    // at the end of `parse_unit`; `collect` re-evaluates and re-registers them with the values of the
-    // declarations that survived `#if` selection (P3.3).
-    UserConstTable user_consts_;
-
     // ------------------------------------------------------ unit
 
     std::unique_ptr<Decl> parse_extern(const Token& tk);
@@ -238,9 +232,6 @@ private:
     std::string parse_qualified_name();
     std::vector<std::unique_ptr<GlobalVar>> parse_global();
     std::vector<std::unique_ptr<GlobalVar>> parse_global_list(TypeSpecPtr spec, bool is_const);
-    // Record a unit-level `const` whose initializer folds into this unit's constant table (the table the
-    // unit registers at the end of parsing; `collect` re-evaluates the surviving declarations later).
-    void record_user_const(GlobalVar* g);
     std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, bool ret_ref, const Token& tk);
     std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr, bool allow_ref = false,
                                                      bool allow_move = false);

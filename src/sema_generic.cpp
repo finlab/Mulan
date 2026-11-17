@@ -155,26 +155,25 @@ static std::string instance_label(const TypePtr& t, const TypeSpec* fallback, co
     return t->unit + "." + t->name;
 }
 
-void Sema::index_templates() {
-    for (auto& u : units_) {
-        for (auto& d : u->templates) {
-            std::string name;
-            if (auto s = dynamic_cast<StructDecl*>(d.get())) {
-                name = s->name;
-            } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
-                name = c->name;
-            } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
-                name = i->name;
-            } else if (auto sm = dynamic_cast<SumDecl*>(d.get())) {
-                name = sm->name;
-            } else if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
-                name = f->name;
-            } else {
-                continue;
-            }
-            generic_templates_[u->name + "." + name] = d.get();
-        }
+// Registers one template under `<unit>.<name>`. Called as each template is moved out of the unit's
+// declaration list, so an instantiation later in the same unit (`sizeof(Box<int>)` in a constant) can
+// already find it.
+void Sema::index_template(Decl* d, const std::string& unit_name) {
+    std::string name;
+    if (auto s = dynamic_cast<StructDecl*>(d)) {
+        name = s->name;
+    } else if (auto c = dynamic_cast<ClassDecl*>(d)) {
+        name = c->name;
+    } else if (auto i = dynamic_cast<InterfaceDecl*>(d)) {
+        name = i->name;
+    } else if (auto sm = dynamic_cast<SumDecl*>(d)) {
+        name = sm->name;
+    } else if (auto f = dynamic_cast<FuncDecl*>(d)) {
+        name = f->name;
+    } else {
+        return;
     }
+    generic_templates_[unit_name + "." + name] = d;
 }
 
 TypePtr Sema::instantiate_generic_named(const std::string& name,

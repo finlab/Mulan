@@ -70,8 +70,9 @@ void add_builtin_constants(UserConstTable& table);
 // folded argument list; only the no-argument forms exist so far.
 bool builtin_func(const std::string& name, const std::vector<long long>& args, long long& value);
 
-// The constant tables are registered by the parser (a bootstrap for template bodies) and re-registered
-// by `collect` with the values of the declarations that survived `#if` selection.
+// The constant tables are filled by `collect`: a unit's constants are evaluated while its declarations
+// are processed (text order) and re-registered at the end of the unit, so a later unit (and a function
+// body checked after collect) sees the values of the declarations that survived `#if` selection.
 // Public compile-time constants of a unit, available to a later `use` in another unit (P3).
 void register_unit_public_consts(const std::string& unit, const UserConstTable& table);
 const UserConstTable* unit_public_consts(const std::string& unit);

@@ -36,22 +36,6 @@ void mark_body_const(MemberGroup& m) {
 
 }  // namespace
 
-void Parser::record_user_const(GlobalVar* g) {
-    if (!g || !g->is_const || !g->init || !g->spec) return;
-    if (g->spec->kind != TypeSpec::K::Named) return;
-    const std::string& tn = g->spec->name;
-    static const std::unordered_set<std::string> scalars = {
-        "bool", "byte", "char", "short", "ushort", "int", "uint", "long", "ulong", "usize", "isize"};
-    if (!scalars.count(tn)) return;
-    auto* ie = dynamic_cast<InitExpr*>(g->init.get());
-    if (!ie || !ie->expr) return;
-    UserConst uc;
-    std::string why;
-    if (!eval_user_const(*ie->expr, user_consts_, uc, why)) return;
-    if (tn == "bool") uc.is_bool = true;
-    user_consts_[g->name] = uc;
-}
-
 std::unique_ptr<Unit> Parser::parse_unit() {
     const Token t = peek();
     bool unit_public = false;
@@ -187,16 +171,6 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             advance();
             std::string uname = parse_unit_name();
-            // `use std.comptime;` makes the compiler-provided compile-time constants visible here
-            // (decided 2026-11-17). Before the use they are not visible, like any other name.
-            if (uname == "std.comptime") {
-                add_builtin_constants(user_consts_);
-            } else if (const UserConstTable* t = unit_public_consts(uname)) {
-                for (const auto& [k, v] : *t) {
-                    user_consts_.emplace(k, v);                // a bare name; the first declaration wins
-                    user_consts_[uname + "." + k] = v;         // the qualified form `unit.name`
-                }
-            }
             semicolon();
             auto use = std::make_unique<UseDecl>();
             use->unit_name = std::move(uname);
@@ -413,7 +387,6 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             // const variable: `const` is a declaration marker on a bare `const T`
             const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
             auto globals = parse_global_list(std::move(spec), is_const);
-            for (auto& g : globals) record_user_const(g.get());
             for (auto& g : globals) g->is_public = is_pub;
             for (auto& g : globals) g->is_export = is_export;
             for (auto& g : globals) push_decl(std::move(g));
@@ -458,18 +431,6 @@ std::unique_ptr<Unit> Parser::parse_unit() {
 
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", t);
     cur_decls_ = nullptr;
-    // Public compile-time constants of this unit become visible to a later `use` in another unit (P3).
-    {
-        UserConstTable pub;
-        for (auto& d : unit->decls) {
-            if (auto* g = dynamic_cast<GlobalVar*>(d.get()); g && g->is_const && g->is_public) {
-                auto it = user_consts_.find(g->name);
-                if (it != user_consts_.end()) pub[g->name] = it->second;
-            }
-        }
-        register_unit_public_consts(unit->name, pub);
-        register_unit_all_consts(unit->name, user_consts_);
-    }
     return unit;
 }
 

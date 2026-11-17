@@ -165,27 +165,9 @@ bool is_scalar_const_type(const TypeSpec* spec) {
 }  // namespace
 
     void Sema::collect() {
-        // First stage: generic templates are only kept and do not take part in regular checks (moved to Unit::templates).
-        // This makes "declarations accepted, use reports not implemented" a stable state and does not affect non-generic code.
-        for (auto& u : units_) {
-            // A generic template is instantiated later, so its body has no single text position: its
-            // conditional member groups are expanded with every constant of the declaring unit.
-            std::vector<std::unique_ptr<Decl>> keep;
-            std::vector<std::unique_ptr<Decl>> tmpl;
-            keep.reserve(u->decls.size());
-            for (auto& d : u->decls) {
-                if (!d->type_params.empty()) {
-                    expand_type_decl(d.get(), u.get(), unit_all_consts(u->name));
-                    d->is_template = true;
-                    tmpl.push_back(std::move(d));
-                } else {
-                    keep.push_back(std::move(d));
-                }
-            }
-            u->decls = std::move(keep);
-            u->templates = std::move(tmpl);
-        }
-        index_templates();
+        // Generic templates are moved out of the declaration list as the per-unit pass reaches them
+        // (see below): they take no part in the regular checks, and their conditional member groups are
+        // expanded at their own source position, like any other type.
         std::unordered_set<std::string> seen_units;
         for (auto& u : units_) {
             if (!seen_units.insert(u->name).second) {
@@ -235,6 +217,17 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                     continue;  // reprocess the same index
                 }
                 auto& d = u->decls[di];
+                if (!d->type_params.empty()) {
+                    // A generic template: expanded at its own source position (the same constants an
+                    // ordinary type sees), then set aside for instantiation. It is indexed right away so
+                    // a later declaration in this unit may already instantiate it (`sizeof(Box<int>)`).
+                    expand_type_decl(d.get(), u.get(), &current_consts);
+                    d->is_template = true;
+                    index_template(d.get(), u->name);
+                    u->templates.push_back(std::move(d));
+                    u->decls.erase(u->decls.begin() + static_cast<long>(di));
+                    continue;
+                }
                 // A conditional member group is evaluated where the type is declared: the constants
                 // visible at this point follow the text order (SPEC 5.1).
                 expand_type_decl(d.get(), u.get(), &current_consts);
