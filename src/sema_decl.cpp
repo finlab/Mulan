@@ -155,17 +155,27 @@ bool has_sizeof_init(const Init* i) {
     if (auto ie = dynamic_cast<const InitExpr*>(i)) return has_sizeof_expr(ie->expr.get());
     return false;
 }
+// The const types whose initializer the `#if` evaluator can fold (the same set the parser used).
+bool is_scalar_const_type(const TypeSpec* spec) {
+    if (!spec || spec->kind != TypeSpec::K::Named) return false;
+    static const std::unordered_set<std::string> scalars = {
+        "bool", "byte", "char", "short", "ushort", "int", "uint", "long", "ulong", "usize", "isize"};
+    return scalars.count(spec->name) != 0;
+}
 }  // namespace
 
     void Sema::collect() {
         // First stage: generic templates are only kept and do not take part in regular checks (moved to Unit::templates).
         // This makes "declarations accepted, use reports not implemented" a stable state and does not affect non-generic code.
         for (auto& u : units_) {
+            // A generic template is instantiated later, so its body has no single text position: its
+            // conditional member groups are expanded with every constant of the declaring unit.
             std::vector<std::unique_ptr<Decl>> keep;
             std::vector<std::unique_ptr<Decl>> tmpl;
             keep.reserve(u->decls.size());
             for (auto& d : u->decls) {
                 if (!d->type_params.empty()) {
+                    expand_type_decl(d.get(), u.get(), unit_all_consts(u->name));
                     d->is_template = true;
                     tmpl.push_back(std::move(d));
                 } else {
@@ -199,44 +209,8 @@ bool has_sizeof_init(const Init* i) {
                     // Evaluate the arms with the constants visible at this point: the public constants
                     // of the `use`d units (and the compiler builtins after `use std.comptime`) plus the
                     // unit's own constants declared before this point (text order, P3.3).
-                    UserConstTable table;
-                    std::unordered_map<std::string, std::string> const_src;
-                    std::unordered_set<std::string> ambiguous;
-                    for (auto& use : u->uses) {
-                        if (use->unit_name == "std.comptime") {
-                            add_builtin_constants(table);
-                            for (const auto& [k, v] : table) const_src.emplace(k, "std.comptime");
-                            continue;
-                        }
-                        const UserConstTable* t = unit_public_consts(use->unit_name);
-                        if (!t) continue;
-                        for (const auto& [k, v] : *t) {
-                            auto it = const_src.find(k);
-                            if (it == const_src.end()) const_src[k] = use->unit_name;
-                            else if (it->second != use->unit_name) ambiguous.insert(k);
-                            table.emplace(k, v);
-                            table[use->unit_name + "." + k] = v;  // the qualified form
-                        }
-                    }
-                    for (const auto& [k, v] : current_consts) {
-                        table[k] = v;  // this unit wins; a same-name constant is not ambiguous
-                        ambiguous.erase(k);
-                    }
-                    DirectiveDecl::Arm* chosen = nullptr;
-                    bool taken = false;
-                    for (auto& arm : dd->arms) {
-                        if (!arm.cond) {
-                            if (!taken) chosen = &arm;  // `#else`: only when nothing above matched
-                            break;
-                        }
-                        std::string why;
-                        if (eval_directive_cond(*arm.cond, why, &table, &ambiguous)) {
-                            chosen = &arm;
-                            taken = true;
-                            break;
-                        }
-                        if (!why.empty()) err("`#if` condition: " + why, arm.cond.get());
-                    }
+                    const DirectiveScope scope = directive_scope(u.get(), &current_consts);
+                    DirectiveDecl::Arm* chosen = choose_decl_arm(*dd, scope);
                     std::vector<std::unique_ptr<Decl>> picked;
                     if (chosen) picked = std::move(chosen->decls);
                     // The selected arm may carry `use` (added to the unit now) and `#error`.
@@ -261,6 +235,9 @@ bool has_sizeof_init(const Init* i) {
                     continue;  // reprocess the same index
                 }
                 auto& d = u->decls[di];
+                // A conditional member group is evaluated where the type is declared: the constants
+                // visible at this point follow the text order (SPEC 5.1).
+                expand_type_decl(d.get(), u.get(), &current_consts);
                 if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
                     ui.funcs[f->name].push_back(f);
                     f->sym = f;
@@ -285,12 +262,19 @@ bool has_sizeof_init(const Init* i) {
                     ui.globals[g->name] = g;
                     g->cname = g->is_extern ? g->name : mangle(u->name, g->name);
                     if (g->is_const) {
+                        // Evaluate the initializer of *this* declaration: the `#if` selection above may
+                        // have picked an arm that declares a different value under the same name than a
+                        // dead arm did, so a name-keyed table cannot answer for it.
                         bool have = false;
-                        if (const UserConstTable* t = unit_all_consts(u->name)) {
-                            auto it = t->find(g->name);
-                            if (it != t->end()) {
-                                current_consts[g->name] = it->second;
-                                have = true;
+                        if (g->init && !g->is_builtin && is_scalar_const_type(g->spec.get())) {
+                            if (auto* ie = dynamic_cast<InitExpr*>(g->init.get()); ie && ie->expr) {
+                                UserConst uc;
+                                std::string why;
+                                if (eval_user_const(*ie->expr, current_consts, uc, why)) {
+                                    if (g->spec->name == "bool") uc.is_bool = true;
+                                    current_consts[g->name] = uc;
+                                    have = true;
+                                }
                             }
                         }
                         if (!have && g->init && !g->is_builtin && has_sizeof_init(g->init.get())) {
@@ -316,6 +300,21 @@ bool has_sizeof_init(const Init* i) {
                     }
                 }
                 ++di;
+            }
+
+            // Re-register the unit's constants with the values of the declarations that survived the
+            // `#if` selection: a later unit (or a function body checked after collect) must not see a
+            // value that only a dead arm declared.
+            register_unit_all_consts(u->name, current_consts);
+            {
+                UserConstTable pub;
+                for (auto& d : u->decls) {
+                    if (auto* g = dynamic_cast<GlobalVar*>(d.get()); g && g->is_const && g->is_public) {
+                        auto it = current_consts.find(g->name);
+                        if (it != current_consts.end()) pub[g->name] = it->second;
+                    }
+                }
+                register_unit_public_consts(u->name, pub);
             }
 
             // Names in the same scope must not clash across categories

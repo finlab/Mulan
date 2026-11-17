@@ -20,7 +20,23 @@ void Parser::push_decl(std::unique_ptr<Decl> d) {
     cur_decls_->push_back(std::move(d));
 }
 
-void Parser::record_user_const(GlobalVar* g, const std::string& unit_name) {
+namespace {
+
+// `const struct` / `const class`: every field and method declared in the body is implicitly const,
+// including the members of a conditional arm (the arm is selected later, by the semantic pass).
+void mark_body_const(MemberGroup& m) {
+    for (auto& f : m.fields) {
+        if (f.second) f.second->is_const = true;
+    }
+    for (auto& mm : m.methods) mm->is_const = true;
+    for (auto& g : m.groups) {
+        for (auto& arm : g.dir->arms) mark_body_const(arm.members);
+    }
+}
+
+}  // namespace
+
+void Parser::record_user_const(GlobalVar* g) {
     if (!g || !g->is_const || !g->init || !g->spec) return;
     if (g->spec->kind != TypeSpec::K::Named) return;
     const std::string& tn = g->spec->name;
@@ -34,7 +50,6 @@ void Parser::record_user_const(GlobalVar* g, const std::string& unit_name) {
     if (!eval_user_const(*ie->expr, user_consts_, uc, why)) return;
     if (tn == "bool") uc.is_bool = true;
     user_consts_[g->name] = uc;
-    const_source_[g->name] = unit_name;
 }
 
 std::unique_ptr<Unit> Parser::parse_unit() {
@@ -63,10 +78,6 @@ std::unique_ptr<Unit> Parser::parse_unit() {
     while (!at_eof()) {
         if (at_op("}") && groups_.size() > g0) { directive_arm_end(); continue; }
         if (at_directive()) { directive_header(); continue; }
-        const size_t nu = unit->uses.size();
-        // Declaration elements go to `cur_decls_` (a `#if` arm has its own container); a `use` inside
-        // a dead arm still needs the rollback because `uses` is not a `Decl` list.
-        ArmDrop drop(*this, [&] { unit->uses.resize(nu); });
         const Token tk = peek();
         bool is_pub = false;
         bool is_export = false;
@@ -180,17 +191,10 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             // (decided 2026-11-17). Before the use they are not visible, like any other name.
             if (uname == "std.comptime") {
                 add_builtin_constants(user_consts_);
-                for (const auto& [k, v] : user_consts_) const_source_.emplace(k, "std.comptime");
             } else if (const UserConstTable* t = unit_public_consts(uname)) {
                 for (const auto& [k, v] : *t) {
-                    auto src = const_source_.find(k);
-                    if (src == const_source_.end()) {
-                        user_consts_.emplace(k, v);          // a bare name; the first declaration wins
-                        const_source_[k] = uname;
-                    } else if (src->second != uname) {
-                        ambiguous_consts_.insert(k);          // a qualified reference is required
-                    }
-                    user_consts_[uname + "." + k] = v;        // the qualified form `unit.name`
+                    user_consts_.emplace(k, v);                // a bare name; the first declaration wins
+                    user_consts_[uname + "." + k] = v;         // the qualified form `unit.name`
                 }
             }
             semicolon();
@@ -198,13 +202,12 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             use->unit_name = std::move(uname);
             use->line = tk.line;
             use->col = tk.col;
-            const bool in_decl_arm = !groups_.empty() && groups_.back().decl_mode && cur_decls_;
-            if (in_decl_arm) {
+            if (!groups_.empty() && groups_.back().decl_mode && cur_decls_) {
                 // The arm may not be selected: the semantic pass decides and then adds the `use`
                 // (P3.3). The dependency is still discovered by the loader's candidate scan.
                 module_names_.insert(use->unit_name);
                 push_decl(std::move(use));
-            } else if (discard_depth_ == 0) {
+            } else {
                 module_names_.insert(use->unit_name);
                 unit->uses.push_back(std::move(use));
             }
@@ -336,10 +339,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 sd->align_expr = std::move(align_expr);
                 if (is_const_decl) {
                     if (is_union) throw err_at("`const` cannot modify a `union` (members are always public fields)", const_tok);
-                    for (auto& f : sd->fields) {
-                        if (f.second) f.second->is_const = true;
-                    }
-                    for (auto& m : sd->methods) m->is_const = true;
+                    mark_body_const(sd->body);
                 }
             }
             push_decl(std::move(d));
@@ -366,12 +366,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             d->is_public = is_pub;
             d->is_export = is_export;
             if (is_const_decl) {
-                if (auto* cd = dynamic_cast<ClassDecl*>(d.get())) {
-                    for (auto& f : cur_members_->fields) {
-                        if (f.second) f.second->is_const = true;
-                    }
-                    for (auto& m : cur_members_->methods) m->is_const = true;
-                }
+                if (auto* cd = dynamic_cast<ClassDecl*>(d.get())) mark_body_const(cd->body);
             }
             push_decl(std::move(d));
             continue;
@@ -418,9 +413,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             // const variable: `const` is a declaration marker on a bare `const T`
             const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
             auto globals = parse_global_list(std::move(spec), is_const);
-            if (discard_depth_ == 0) {
-                for (auto& g : globals) record_user_const(g.get(), unit->name);
-            }
+            for (auto& g : globals) record_user_const(g.get());
             for (auto& g : globals) g->is_public = is_pub;
             for (auto& g : globals) g->is_export = is_export;
             for (auto& g : globals) push_decl(std::move(g));
@@ -714,12 +707,7 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     if (at_op(";")) advance();
     type_names_ = saved_type_names;
-    decl->fields = std::move(members.fields);
-    decl->field_visibility = std::move(members.field_visibility);
-    decl->const_members = std::move(members.const_members);
-    decl->methods = std::move(members.methods);
-    decl->ctors = std::move(members.ctors);
-    decl->dtor = std::move(members.dtor);
+    decl->body = std::move(members);
     cur_members_ = saved_members;
     return decl;
 }
@@ -1063,12 +1051,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     if (at_op(";")) advance();
     type_names_ = saved_type_names;
-    cd->fields = std::move(members.fields);
-    cd->field_visibility = std::move(members.field_visibility);
-    cd->const_members = std::move(members.const_members);
-    cd->methods = std::move(members.methods);
-    cd->ctors = std::move(members.ctors);
-    cd->dtor = std::move(members.dtor);
+    cd->body = std::move(members);
     cur_members_ = saved_members;
     return cd;
 }
@@ -1128,7 +1111,7 @@ std::unique_ptr<Decl> Parser::parse_interface() {
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     if (at_op(";")) advance();
     type_names_ = saved_type_names;
-    id->methods = std::move(members.methods);
+    id->body = std::move(members);
     cur_members_ = saved_members;
     return id;
 }

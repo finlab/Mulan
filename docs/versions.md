@@ -27,6 +27,28 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 189 — 2026-11-18
+
+**P3.3c: the type-body and function-body `#if` is evaluated by the semantic pass.**
+
+- The parser now only collects arms (`DirectiveMembers` with per-member positions, `DirectiveStmt`);
+  `#error` inside an arm becomes an `ErrorDecl` / `ErrorStmt` and is raised only when the arm is selected.
+- `collect` expands the conditional member groups of a type body in source order (field order is layout),
+  and `check_block` splices the selected statement arm in place; both use the same `DirectiveScope`
+  (public constants of `use`d units, the `comptime` builtins, this unit's constants) as the top level.
+- A condition in a declaration list still follows declaration order (a later constant is not visible);
+  a function body is checked after the unit is collected, so it sees every compile-time constant of the
+  unit (SPEC 9.2 refined accordingly).
+- Collect evaluates each `const` from its own initializer and re-registers the unit's constant tables, so
+  a value from a dead arm can no longer leak into a later `use`/`#if` under the same name.
+- `clone_stmt` / `subst_stmt` handle `DirectiveStmt` (a generic body keeps its arms until it is checked).
+- `delete`: the parser's `discard_depth_` / `ArmDrop` / parse-time condition evaluation.
+- Tests: `if_body_cond` (cross-unit + nested + field order + dead `#error` + generic body),
+  `if_const_arm_value` (per-declaration constant value, `sizeof` constant in a body),
+  `if_nested_cond` (nested member arm + constructor body), `if_body_error` (selected `#error` in a body).
+
+Full suite: 712/712 (266 run, 408 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 188 — 2026-11-17
 
 **P3.3b complete: `sizeof(S)` for a struct/class is available to `#if`.**

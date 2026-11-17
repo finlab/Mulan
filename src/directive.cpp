@@ -3,10 +3,12 @@
 
 // Build configuration and `#if` condition evaluation.
 //
-// The condition language is deliberately tiny: build constants, integer/bool/float literals, the
-// comparison and arithmetic operators, and `and` / `or` / `not`. Anything that would need the type
-// system (`sizeof`, calls, variables) is rejected with a message that says why: a `#if` is executed
-// while parsing, before name resolution and layout exist.
+// The condition language is deliberately tiny: constants, integer/bool/float literals, the comparison
+// and arithmetic operators, and `and` / `or` / `not`. The conditions are evaluated by the semantic
+// pass, once the units are parsed and the compile-time constants are known (sema_directive.cpp); this
+// file only evaluates an expression against a table of visible constants. Anything that would need a
+// type (a call other than the `comptime` builtins, a variable, a `sizeof` form) is rejected with a
+// message that says what to write instead.
 #include "directive.hpp"
 
 #include <climits>
@@ -292,8 +294,8 @@ bool eval(const Expr& e, V& out, std::string& why) {
         return true;
     }
     if (dynamic_cast<const SizeofExpr*>(&e)) {
-        why = "`sizeof` is not available in a `#if` condition: the condition is evaluated before types "
-              "are laid out; use `ptr_bits` instead of `sizeof(void*)`";
+        why = "`sizeof` is not available in a `#if` condition: bind it first (`const int N = sizeof(T) as "
+              "int;`) and compare `N`";
         return false;
     }
     if (const auto* p = dynamic_cast<const Call*>(&e)) {
@@ -391,11 +393,11 @@ void add_builtin_constants(UserConstTable& table) {    static const char* ints[]
     static const char* enums[] = {"OS", "Arch", "Abi", "Endian"};
     for (const char* n : ints) {
         long long v = 0;
-        if (builtin_const(n, v)) table[n] = UserConst{v, false};
+        if (builtin_const(n, v)) table[n] = UserConst{v, false, {}};
     }
     for (const char* n : bools) {
         long long v = 0;
-        if (builtin_const(n, v)) table[n] = UserConst{v, true};
+        if (builtin_const(n, v)) table[n] = UserConst{v, true, {}};
     }
     for (size_t i = 0; i < 4; ++i) {
         long long v = 0;

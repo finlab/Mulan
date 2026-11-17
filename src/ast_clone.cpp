@@ -434,6 +434,25 @@ StmtPtr clone_stmt(const Stmt& s) {
         r->finally_body = p->finally_body ? clone_block(*p->finally_body) : nullptr;
         return r;
     }
+    // A statement-list `#if` (a template body is expanded when it is checked, so instantiating a
+    // generic function must carry every arm along)
+    if (auto p = dynamic_cast<const DirectiveStmt*>(&s)) {
+        auto r = mk<DirectiveStmt>(s);
+        r->arms.reserve(p->arms.size());
+        for (const auto& arm : p->arms) {
+            DirectiveStmt::Arm a;
+            a.cond = arm.cond ? clone_expr(*arm.cond) : nullptr;
+            a.stmts.reserve(arm.stmts.size());
+            for (const auto& st : arm.stmts) a.stmts.push_back(clone_stmt(*st));
+            r->arms.push_back(std::move(a));
+        }
+        return r;
+    }
+    if (auto p = dynamic_cast<const ErrorStmt*>(&s)) {
+        auto r = mk<ErrorStmt>(s);
+        r->message = p->message;
+        return r;
+    }
     unsupported_kind(node_kind(s), "statement");
 }
 

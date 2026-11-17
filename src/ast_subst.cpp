@@ -216,6 +216,13 @@ void subst_stmt(Stmt& s, const TypeBindings& b) {
         if (p->finally_body) subst_block(*p->finally_body, b);
         return;
     }
+    if (auto p = dynamic_cast<DirectiveStmt*>(&s)) {
+        for (auto& arm : p->arms) {
+            if (arm.cond) subst_expr(*arm.cond, b);
+            for (auto& st : arm.stmts) subst_stmt(*st, b);
+        }
+        return;
+    }
 }
 
 namespace {

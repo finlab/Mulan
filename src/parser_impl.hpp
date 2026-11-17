@@ -9,7 +9,7 @@
 #pragma once
 
 #include <cstddef>
-#include <functional>
+#include <deque>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -161,33 +161,35 @@ private:
     bool at_directive() const { return peek().is_op("#"); }
     void directive_header();
     void directive_arm_end();
-    void directive_begin_arm(const Expr* cond, const Token& at);
 
     struct DirectiveGroup {
-        bool taken = false;      // some arm of this chain is selected
-        bool arm_taken = false;  // the arm being parsed is selected
         bool saw_else = false;
         bool awaiting = false;   // the arm just closed; `#elif` / `#else` may follow
-        // P3.1: a declaration-list arm is parsed into its own container and merged only if selected.
-        // The statement/member positions still use the old discard scheme until the next slice.
+        // Every position (declaration list, statement list, type body) collects all arms; the semantic
+        // pass evaluates the conditions (P3.3) and splices the selected arm.
         bool decl_mode = false;
         std::vector<std::unique_ptr<Decl>>* outer_decls = nullptr;
         std::vector<std::unique_ptr<Decl>> decls;
-        // The node that carries the declaration arms to the semantic pass (P3.2) and the condition of
-        // the arm being parsed.
         std::unique_ptr<DirectiveDecl> node;
-        ExprPtr arm_cond;
-        // A statement-list arm (P3.1, statement slice).
+        ExprPtr arm_cond;  // the condition of the arm being parsed
+        // A statement-list arm.
         bool stmt_mode = false;
         std::vector<StmtPtr>* outer_stmts = nullptr;
         std::vector<StmtPtr> stmts;
-        // A type-body arm (P3.1, member slice).
+        std::unique_ptr<DirectiveStmt> stmt_node;
+        // A type-body arm: the position of the group among the members, so the selected arm is spliced
+        // back where it was written (field order is layout).
         bool member_mode = false;
         MemberGroup* outer_members = nullptr;
         MemberGroup members;
+        std::unique_ptr<DirectiveMembers> member_node;
+        size_t fields_before = 0;
+        size_t consts_before = 0;
+        size_t methods_before = 0;
+        size_t ctors_before = 0;
     };
-    std::vector<DirectiveGroup> groups_;
-    int discard_depth_ = 0;  // > 0: this arm is not compiled, so its nested conditions are not evaluated
+    // A deque keeps the references to an enclosing arm's containers valid when a nested `#if` starts.
+    std::deque<DirectiveGroup> groups_;
 
     // The current declaration-list target (`#if` arms point it at their own container).
     std::vector<std::unique_ptr<Decl>>* cur_decls_ = nullptr;
@@ -208,28 +210,10 @@ private:
         DeclTargetScope& operator=(const DeclTargetScope&) = delete;
         ~DeclTargetScope() { p.cur_decls_ = saved; }
     };
-    // Unit-level compile-time constants already declared in this unit: a later `#if` may read them
-    // (the same "declared before use" rule as ordinary constant initializers).
+    // Unit-level compile-time constants already declared in this unit. The unit's tables are registered
+    // at the end of `parse_unit`; `collect` re-evaluates and re-registers them with the values of the
+    // declarations that survived `#if` selection (P3.3).
     UserConstTable user_consts_;
-    std::unordered_map<std::string, std::string> const_source_;  // bare name -> declaring unit
-    std::unordered_set<std::string> ambiguous_consts_;           // bare names from several used units
-
-    // One list element is parsed at a time; while the element sits in an arm that is not compiled the
-    // arm must still be parsed (syntax is checked) but nothing may reach the AST. The undo action
-    // removes whatever the element appended, and it runs on every exit path of the element's parse.
-    class ArmDrop {
-    public:
-        ArmDrop(Parser& p, std::function<void()> undo) : p_(p), undo_(std::move(undo)) {}
-        ~ArmDrop() {
-            if (p_.discard_depth_ > 0 && undo_) undo_();
-        }
-        ArmDrop(const ArmDrop&) = delete;
-        ArmDrop& operator=(const ArmDrop&) = delete;
-
-    private:
-        Parser& p_;
-        std::function<void()> undo_;
-    };
 
     // ------------------------------------------------------ unit
 
@@ -254,9 +238,9 @@ private:
     std::string parse_qualified_name();
     std::vector<std::unique_ptr<GlobalVar>> parse_global();
     std::vector<std::unique_ptr<GlobalVar>> parse_global_list(TypeSpecPtr spec, bool is_const);
-    // Record a unit-level `const` whose initializer folds, so a later `#if` in this unit can read it
-    // (decided 2026-11-17).
-    void record_user_const(GlobalVar* g, const std::string& unit_name);
+    // Record a unit-level `const` whose initializer folds into this unit's constant table (the table the
+    // unit registers at the end of parsing; `collect` re-evaluates the surviving declarations later).
+    void record_user_const(GlobalVar* g);
     std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, bool ret_ref, const Token& tk);
     std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr, bool allow_ref = false,
                                                      bool allow_move = false);

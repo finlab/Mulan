@@ -2389,19 +2389,24 @@ use comptime;                                  // required before using os/arch/
 - **Syntax**: `#` must be the first non-blank character of its line; an arm is `#if <cond> { … }`,
   continued by `#elif <cond> { … }` / `#else { … }`. There is no `#endif`. `#error "message"` fails the
   compilation when it is reached.
-- **When it is evaluated** (decided 2026-11-17): in the same pass as compile-time constant evaluation,
-  following the single sequence of 9.1 — entry unit DFS post-order over `use`, declaration order inside a
-  unit. The condition sees exactly the constants visible at that source position:
+- **When it is evaluated** (decided 2026-11-17, refined 2026-11-18): in the same pass as compile-time
+  constant evaluation, following the single sequence of 9.1 — entry unit DFS post-order over `use`,
+  declaration order inside a unit. In a **declaration list** (unit top level, struct / class / interface
+  body) the condition sees exactly the constants visible at that source position:
   - the `comptime` builtins and functions (9.3) after `use comptime`;
   - earlier unit-level `const`s of this unit that are compile-time constants (3.7.2);
-  - `public const`s of units already completed in the sequence, i.e. `use`d before this point.
+  - `public const`s of the units this unit `use`s.
   A constant declared later in the same unit, a `const` that is not a compile-time constant, a local
   variable, a runtime value, `sizeof`/`alignof`/`offsetof`, and ordinary function calls are errors. Calls
   to `comptime` builtin functions are allowed (9.3).
+- **Inside a function body** the `#if` is expanded after the unit's declarations have been collected, so
+  it follows the same name resolution as the surrounding code: every compile-time `const` of the unit is
+  visible wherever it is declared (a later `const` too), and the order of `use` declarations inside a
+  unit is not significant — a `use` is visible in its whole unit, as it is for ordinary code.
 - **One name-resolution rule.** `#if` conditions use the same name resolution as a constant initializer:
-  cross-unit names require a preceding `use` (and `use comptime` for the builtins), a later declaration is
-  not visible, and ambiguity is reported as usual. Dependencies exist only through `use` edges — a constant
-  reference does not create an implicit unit dependency.
+  cross-unit names require a `use` of the unit (and `use comptime` for the builtins), a later declaration
+  is not visible in a declaration list, and ambiguity is reported as usual. Dependencies exist only
+  through `use` edges — a constant reference does not create an implicit unit dependency.
 - **`use` inside an arm** is allowed, and only the units of selected arms join the dependency graph.
 - `muc dump-config` prints every builtin value; that output plus the platform spec is the reproduction
   key of a build.

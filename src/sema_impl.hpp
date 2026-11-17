@@ -74,6 +74,22 @@ inline EnumConst* intern_enum_const(const std::string& unit, const std::string& 
     return &pool.back();
 }
 
+// The constants visible to a `#if` condition at one point of the program (see `Sema::directive_scope`).
+struct DirectiveScope {
+    UserConstTable table;
+    std::unordered_set<std::string> ambiguous;  // bare names coming from several `use`d units
+};
+
+// Where an expanded type body's members go (a struct/class has all lists, an interface only methods).
+struct MemberSink {
+    std::vector<std::pair<std::string, TypeSpecPtr>>* fields = nullptr;
+    std::unordered_map<std::string, bool>* field_visibility = nullptr;
+    std::vector<std::unique_ptr<ConstMember>>* const_members = nullptr;
+    std::vector<std::unique_ptr<MethodDecl>>* methods = nullptr;
+    std::vector<std::unique_ptr<CtorDecl>>* ctors = nullptr;
+    std::unique_ptr<DtorDecl>* dtor = nullptr;
+};
+
 class Sema {
 public:
     Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool single_thread = false,
@@ -266,6 +282,23 @@ private:
     // `std.comptime` declares the compiler-provided constants; this cross-checks its target enums
     // against the compiler's table (see directive.hpp).
     void check_comptime_unit();
+
+    // ------------------------------------------------------------ conditional lists (P3)
+    // The constants visible to a `#if` at this point: the public constants of the `use`d units (and
+    // the compiler builtins after `use std.comptime`), then `own` — this unit's constants — which wins.
+    DirectiveScope directive_scope(Unit* u, const UserConstTable* own);
+    // Picks the selected arm of a `#if` chain; null when nothing is selected (`#if` without a matching
+    // arm and no `#else`).
+    DirectiveDecl::Arm* choose_decl_arm(DirectiveDecl& dir, const DirectiveScope& scope);
+    DirectiveStmt::Arm* choose_stmt_arm(DirectiveStmt& dir, const DirectiveScope& scope);
+    DirectiveMembers::Arm* choose_member_arm(DirectiveMembers& dir, const DirectiveScope& scope);
+    // Expands the conditional member groups of a struct/class/interface declaration (no-op if none).
+    void expand_type_decl(Decl* d, Unit* u, const UserConstTable* own);
+    // Expands the conditional member groups of a type body into `sink` (in source order).
+    void expand_member_body(MemberGroup& body, const DirectiveScope& scope, const MemberSink& sink,
+                            const Node* at);
+    // Splices the selected arm of a statement-list `#if` into the block at `i`.
+    void expand_directive_stmt(Block* b, size_t& i);
 
     // ------------------------------------------------------------ public signature chain check
     //

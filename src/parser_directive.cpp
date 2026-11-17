@@ -1,41 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// Compiler directives (`#if` / `#elif` / `#else` / `#error`) executed while parsing.
+// Compiler directives (`#if` / `#elif` / `#else` / `#error`).
 //
-// The selected arm's elements are produced by the enclosing list loop exactly as if the directive
-// were not there (splice, no scope); the other arms are parsed with `discard_depth_` raised and
-// dropped, so their syntax is checked but nothing else happens.
-#include "directive.hpp"
+// The parser keeps every arm as data (`DirectiveDecl`, `DirectiveStmt`, `MemberGroup::Group`); the
+// semantic pass evaluates the conditions once the compile-time constants are known (P3.3) and splices
+// the selected arm into the enclosing list. The parser splices nothing and evaluates nothing, so a
+// condition may use any constant the semantic pass can see (a `sizeof` constant, a `use`d unit).
+// Dead arms are still parsed, so their syntax is checked and nothing else happens.
 #include "parser_impl.hpp"
 
 namespace muc_detail {
-
-void Parser::directive_begin_arm(const Expr* cond, const Token& at) {
-    DirectiveGroup& g = groups_.back();
-    g.awaiting = false;
-    if (g.decl_mode) {
-        // The semantic pass evaluates declaration arms after the units are parsed (P3.3); the parser
-        // only collects them, so `#error` and `use` are deferred with the declarations.
-        g.arm_taken = false;
-        return;
-    }
-    bool take = false;
-    // A nested condition inside an arm that is already dropped is not evaluated: its constants (or
-    // its errors) belong to a configuration that is not being compiled.
-    if (!g.taken && discard_depth_ == 0) {
-        if (!cond) {
-            take = true;
-        } else {
-            std::string why;
-            take = eval_directive_cond(*cond, why, &user_consts_, &ambiguous_consts_);
-            if (!why.empty()) throw err_at("`#if` condition: " + why, at);
-        }
-    }
-    g.arm_taken = take;
-    if (take) g.taken = true;
-    else ++discard_depth_;
-}
 
 void Parser::directive_header() {
     const Token hash = advance();  // '#'
@@ -50,8 +25,24 @@ void Parser::directive_header() {
         if (peek().kind != TokKind::Str) throw err_at("`#error` needs a string literal message", peek());
         const std::string msg = advance().bytes;
         if (at_op(";")) advance();
-        if (!groups_.empty() && groups_.back().decl_mode && cur_decls_) {
-            // Keep it for the semantic pass: the arm may not be selected (P3.3).
+        // Inside a conditional arm the error is raised only if that arm is selected (P3.3).
+        if (!groups_.empty() && cur_stmts_) {
+            auto es = std::make_unique<ErrorStmt>();
+            es->message = msg;
+            es->line = nm.line;
+            es->col = nm.col;
+            push_stmt(std::move(es));
+            return;
+        }
+        if (!groups_.empty() && cur_members_) {
+            auto ed = std::make_unique<ErrorDecl>();
+            ed->message = msg;
+            ed->line = nm.line;
+            ed->col = nm.col;
+            groups_.back().members.errors.push_back(std::move(ed));
+            return;
+        }
+        if (!groups_.empty() && cur_decls_) {
             auto ed = std::make_unique<ErrorDecl>();
             ed->message = msg;
             ed->line = nm.line;
@@ -59,32 +50,44 @@ void Parser::directive_header() {
             push_decl(std::move(ed));
             return;
         }
-        if (discard_depth_ == 0) throw err_at("#error " + msg, nm);
-        return;
+        throw err_at("#error " + msg, nm);
     }
 
     if (d == "if") {
-        groups_.push_back(DirectiveGroup{});
+        groups_.emplace_back();
         DirectiveGroup& g = groups_.back();
-        // A statement list collects each arm into its own container; a declaration list does the same.
+        // The arm's elements collect into their own container; the selected one is spliced by the
+        // semantic pass at the position of the directive node.
         if (cur_stmts_) {
             g.stmt_mode = true;
             g.outer_stmts = cur_stmts_;
             cur_stmts_ = &g.stmts;
+            g.stmt_node = std::make_unique<DirectiveStmt>();
+            g.stmt_node->line = nm.line;
+            g.stmt_node->col = nm.col;
         } else if (cur_members_) {
             g.member_mode = true;
             g.outer_members = cur_members_;
+            g.fields_before = cur_members_->fields.size();
+            g.consts_before = cur_members_->const_members.size();
+            g.methods_before = cur_members_->methods.size();
+            g.ctors_before = cur_members_->ctors.size();
             cur_members_ = &g.members;
+            g.member_node = std::make_unique<DirectiveMembers>();
+            g.member_node->line = nm.line;
+            g.member_node->col = nm.col;
         } else if (cur_decls_) {
             g.decl_mode = true;
             g.outer_decls = cur_decls_;
             cur_decls_ = &g.decls;
             g.node = std::make_unique<DirectiveDecl>();
+            g.node->line = nm.line;
+            g.node->col = nm.col;
+        } else {
+            throw err_at("`#if` is not allowed here", hash);
         }
-        ExprPtr cond = parse_expr();
+        g.arm_cond = parse_expr();
         expect_op("{");
-        directive_begin_arm(cond.get(), nm);
-        if (g.decl_mode) g.arm_cond = std::move(cond);
         return;
     }
 
@@ -94,12 +97,10 @@ void Parser::directive_header() {
         }
         DirectiveGroup& g = groups_.back();
         if (g.saw_else) throw err_at("`#" + d + "` cannot follow `#else`", nm);
-        ExprPtr cond;
-        if (d == "elif") cond = parse_expr();
+        g.awaiting = false;
+        if (d == "elif") g.arm_cond = parse_expr();
         else g.saw_else = true;
         expect_op("{");
-        directive_begin_arm(cond.get(), nm);
-        if (g.decl_mode) g.arm_cond = std::move(cond);
         return;
     }
 
@@ -109,39 +110,35 @@ void Parser::directive_header() {
 void Parser::directive_arm_end() {
     advance();  // '}'
     DirectiveGroup& g = groups_.back();
-    if (g.member_mode && g.arm_taken) {
-        MemberGroup& dst = *g.outer_members;
-        MemberGroup& src = g.members;
-        for (auto& f : src.fields) dst.fields.push_back(std::move(f));
-        for (auto& [k, v] : src.field_visibility) dst.field_visibility[k] = v;
-        for (auto& cm : src.const_members) dst.const_members.push_back(std::move(cm));
-        for (auto& m : src.methods) dst.methods.push_back(std::move(m));
-        for (auto& c : src.ctors) dst.ctors.push_back(std::move(c));
-        if (src.dtor) dst.dtor = std::move(src.dtor);
-        src = MemberGroup{};
-    }
-    if (g.stmt_mode && g.arm_taken) {
-        for (auto& s : g.stmts) g.outer_stmts->push_back(std::move(s));
+    if (g.stmt_mode) {
+        g.stmt_node->arms.emplace_back(std::move(g.arm_cond), std::move(g.stmts));
         g.stmts.clear();
-    }
-    if (g.decl_mode && g.node) {
-        // Keep every arm: collect evaluates the conditions after the units are parsed (P3.2b).
+    } else if (g.member_mode) {
+        g.member_node->arms.emplace_back(std::move(g.arm_cond), std::move(g.members));
+        g.members = MemberGroup{};
+    } else if (g.decl_mode && g.node) {
         g.node->arms.emplace_back(std::move(g.arm_cond), std::move(g.decls));
         g.decls.clear();
-        g.arm_cond.reset();
     }
-    if (!g.decl_mode && !g.arm_taken) --discard_depth_;
-    g.arm_taken = false;
+    g.arm_cond.reset();
     // Another arm of the same chain follows: `directive_header` continues it on the next iteration.
     if (peek().is_op("#") && (peek(1).text == "elif" || peek(1).text == "else")) {
         g.awaiting = true;
         return;
     }
-    if (g.stmt_mode) cur_stmts_ = g.outer_stmts;
-    if (g.member_mode) cur_members_ = g.outer_members;
+    // The chain is finished: place the node in the enclosing list. An empty arm list means "nothing
+    // selected", which the semantic pass treats as an empty splice.
+    if (g.stmt_mode) {
+        g.outer_stmts->push_back(std::move(g.stmt_node));
+        cur_stmts_ = g.outer_stmts;
+    }
+    if (g.member_mode) {
+        g.outer_members->groups.push_back(MemberGroup::Group{g.fields_before, g.consts_before,
+                                                             g.methods_before, g.ctors_before,
+                                                             std::move(g.member_node)});
+        cur_members_ = g.outer_members;
+    }
     if (g.decl_mode) {
-        // The chain is finished: place the node in the enclosing declaration list (the semantic pass
-        // splices the selected arm). An empty arm list means "nothing selected".
         if (g.node) g.outer_decls->push_back(std::move(g.node));
         cur_decls_ = g.outer_decls;
     }

@@ -789,7 +789,16 @@ namespace muc_detail {
     void Sema::check_block(Block* b) {
         if (!b) return;
         push();
-        for (auto& s : b->stmts) check_stmt(s.get());
+        // A statement-list `#if` is expanded in place (P3.3): the unit's constants are complete, so the
+        // condition uses the same values ordinary code does.
+        for (size_t i = 0; i < b->stmts.size();) {
+            if (dynamic_cast<DirectiveStmt*>(b->stmts[i].get())) {
+                expand_directive_stmt(b, i);
+                continue;
+            }
+            check_stmt(b->stmts[i].get());
+            ++i;
+        }
         pop();
     }
 
@@ -910,6 +919,9 @@ namespace muc_detail {
             check_para(pp);
         } else if (auto pf = dynamic_cast<ParaForStmt*>(s)) {
             check_para_for(pf);
+        } else if (auto es = dynamic_cast<ErrorStmt*>(s)) {
+            // A selected `#error` arm (only reachable through a spliced `#if`).
+            err("#error " + es->message, es);
         } else {
             err("unknown statement", s);
         }

@@ -344,20 +344,39 @@ struct Decl : Node {
     virtual ~Decl() = default;
 };
 
-// ---------------------------------------------------------------- conditional declaration lists (P3.1 skeleton)
+// ---------------------------------------------------------------- conditional lists (P3)
 //
 // `#if` in a declaration/statement/member list keeps its arms as data so the semantic pass can pick one
-// after the constants are known (P3). The parser fills these nodes; until P3.2 lands the parser still
-// selects an arm immediately, so the nodes are not produced yet.
+// after the constants are known. The parser fills these nodes and never selects an arm itself.
+
+// `#error "msg"` inside a conditional arm: collected by the parser and raised by the semantic pass only
+// when the arm is actually selected.
+struct ErrorDecl : Decl {
+    std::string message;
+};
+
+struct DirectiveMembers;
 
 // A type body's member lists (the parallel vectors of StructDecl/ClassDecl/InterfaceDecl).
 struct MemberGroup {
+    // A `#if` chain inside the body, at the position where it was written. `*_before` counts the
+    // members of each kind declared before the group, so the selected arm is spliced back at the same
+    // position (field order is layout; method order is the vtable order).
+    struct Group {
+        size_t fields_before = 0;
+        size_t consts_before = 0;
+        size_t methods_before = 0;
+        size_t ctors_before = 0;
+        std::unique_ptr<DirectiveMembers> dir;
+    };
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
     std::unordered_map<std::string, bool> field_visibility;
     std::vector<std::unique_ptr<ConstMember>> const_members;
     std::vector<std::unique_ptr<MethodDecl>> methods;
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
+    std::vector<Group> groups;
+    std::vector<std::unique_ptr<ErrorDecl>> errors;  // `#error` inside a conditional member arm
 };
 
 struct DirectiveMembers : Node {
@@ -374,12 +393,6 @@ struct DirectiveDecl : Decl {
         std::vector<std::unique_ptr<Decl>> decls;
     };
     std::vector<Arm> arms;
-};
-
-// `#error "msg"` inside a conditional declaration arm: collected by the parser and raised by the
-// semantic pass only when the arm is actually selected (P3.3).
-struct ErrorDecl : Decl {
-    std::string message;
 };
 
 struct UseDecl : Decl {
@@ -461,6 +474,8 @@ struct StructDecl : Decl {
     std::vector<std::unique_ptr<MethodDecl>> methods;  // value type methods (static dispatch)
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
+    // The body as parsed: `collect` expands the conditional member groups into the lists above.
+    MemberGroup body;
     // Layout modifiers
     bool is_packed = false;
     // `nocopy`: the type must not be copied by value (SPEC 3.13); only meaningful on a struct.
@@ -509,6 +524,11 @@ struct DirectiveStmt : Stmt {
         std::vector<StmtPtr> stmts;
     };
     std::vector<Arm> arms;
+};
+
+// `#error "msg"` inside a conditional statement arm: raised only if the arm is selected.
+struct ErrorStmt : Stmt {
+    std::string message;
 };
 
 struct Block : Stmt {
@@ -719,6 +739,8 @@ struct ClassDecl : Decl {
     std::vector<std::unique_ptr<MethodDecl>> methods;
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
+    // The body as parsed: `collect` expands the conditional member groups into the lists above.
+    MemberGroup body;
     TypePtr ty;  // sema reserved
     // sema: the field table has been resolved (collect may resolve it early for a `sizeof` constant)
     bool fields_resolved = false;
@@ -729,6 +751,8 @@ struct InterfaceDecl : Decl {
     std::vector<std::string> bases;
     std::vector<TypeSpecPtr> base_specs;  // parallel to bases
     std::vector<std::unique_ptr<MethodDecl>> methods;
+    // The body as parsed: `collect` expands the conditional member groups into the list above.
+    MemberGroup body;
     TypePtr ty;
 };
 
