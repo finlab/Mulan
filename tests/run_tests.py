@@ -352,10 +352,20 @@ def run_abi_case(case: AbiCase, verbose: bool) -> tuple[bool, str]:
     return compare_run_output(case.expected, 0, r, cmd, verbose)
 
 
+def abnormal_exit(rc: int) -> bool:
+    """The process was killed by the OS instead of returning (a stack overflow, an access violation).
+
+    POSIX reports -signal and a Windows SEH crash reports a negative NTSTATUS; `muc --run` re-exits with
+    the child's code, which arrives as the unsigned 32-bit NTSTATUS (3221225725 = 0xC00000FD,
+    STATUS_STACK_OVERFLOW). A case that expects 3 ("abnormal termination") accepts any of these.
+    """
+    return rc < 0 or rc >= 0xC0000000
+
+
 def compare_run_output(expected: Path, expected_code: int, r, cmd: list[str],
                        verbose: bool) -> tuple[bool, str]:
     """Compare the run's exit code and stdout with the expectation (compiler status lines stripped)."""
-    if r.returncode != expected_code:
+    if r.returncode != expected_code and not (expected_code == 3 and abnormal_exit(r.returncode)):
         msg = [
             f"build --run failed (exit code {r.returncode}, expected {expected_code})",
             "  command: " + " ".join(cmd),

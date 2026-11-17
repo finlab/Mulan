@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 196 — 2026-11-18
+
+**Test runner: `@exit 3` also accepts an OS-level termination.**
+
+- `compare_run_output` treated any non-expected exit code as a failure, so a case that documents an OS
+  termination (a stack overflow, an access violation) could not be written although the docs already said
+  "abnormal termination is 3". `abnormal_exit` now accepts a negative code (POSIX `-signal`, a signed
+  NTSTATUS) and an unsigned 32-bit NTSTATUS (`0xC0000000` and above).
+- New case `stack_limit` (with `@exit 3`): `set_task_stack(65536, 65536)` plus a 20000-frame recursion on
+  the task fiber dies with STATUS_STACK_OVERFLOW, which is the evidence that the configured stack is
+  enforced (see issue #37 — the original repro was optimized into a loop). The recursion goes through a
+  function value and its frame buffer escapes, so it cannot be folded.
+
+Full suite: 745/745 (282 run, 422 must-fail, 27 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 195 — 2026-11-18
 
 **Audit round 4: `#if` in constructor bodies, generic const overloads, locals in `#if`.**
