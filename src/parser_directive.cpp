@@ -64,6 +64,7 @@ void Parser::directive_header() {
             g.decl_mode = true;
             g.outer_decls = cur_decls_;
             cur_decls_ = &g.decls;
+            g.node = std::make_unique<DirectiveDecl>();
         }
         ExprPtr cond = parse_expr();
         expect_op("{");
@@ -106,10 +107,10 @@ void Parser::directive_arm_end() {
         for (auto& s : g.stmts) g.outer_stmts->push_back(std::move(s));
         g.stmts.clear();
     }
-    if (g.decl_mode && g.arm_taken) {
-        // Merge the selected arm into the enclosing declaration list (the unselected arms stay in
-        // their container and are dropped when the chain is popped).
-        for (auto& d : g.decls) g.outer_decls->push_back(std::move(d));
+    if (g.decl_mode && g.arm_taken && g.node) {
+        // The parser still selects the arm (P3.2 keeps the previous behaviour); the node records the
+        // selected declarations so the semantic pass can splice them after the name/layout pass.
+        g.node->arms.emplace_back(DirectiveDecl::Arm{nullptr, std::move(g.decls)});
         g.decls.clear();
     }
     if (!g.arm_taken) --discard_depth_;
@@ -121,7 +122,12 @@ void Parser::directive_arm_end() {
     }
     if (g.stmt_mode) cur_stmts_ = g.outer_stmts;
     if (g.member_mode) cur_members_ = g.outer_members;
-    if (g.decl_mode) cur_decls_ = g.outer_decls;
+    if (g.decl_mode) {
+        // The chain is finished: place the node in the enclosing declaration list (the semantic pass
+        // splices the selected arm). An empty arm list means "nothing selected".
+        if (g.node) g.outer_decls->push_back(std::move(g.node));
+        cur_decls_ = g.outer_decls;
+    }
     groups_.pop_back();
 }
 

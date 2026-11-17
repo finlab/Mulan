@@ -4,6 +4,8 @@
 // This file holds fields/utilities/visibility/collection/signature checks/layout modifiers (definitions of Sema members).
 #include "sema_impl.hpp"
 
+#include <iterator>
+
 namespace muc_detail {
 
     [[noreturn]] void Sema::err(const std::string& msg, const Node* node) const {
@@ -160,7 +162,19 @@ namespace muc_detail {
         for (auto& u : units_) {
             cur_ = u.get();
             UnitInfo& ui = infos_.at(u->name);
-            for (auto& d : u->decls) {
+            // The declaration list is processed in place: a `DirectiveDecl` (P3.2) is expanded to the
+            // declarations of its selected arm before the loop moves on.
+            for (size_t di = 0; di < u->decls.size();) {
+                if (auto* dd = dynamic_cast<DirectiveDecl*>(u->decls[di].get())) {
+                    std::vector<std::unique_ptr<Decl>> chosen;
+                    if (!dd->arms.empty()) chosen = std::move(dd->arms.front().decls);
+                    u->decls.erase(u->decls.begin() + static_cast<long>(di));
+                    u->decls.insert(u->decls.begin() + static_cast<long>(di),
+                                    std::make_move_iterator(chosen.begin()),
+                                    std::make_move_iterator(chosen.end()));
+                    continue;  // reprocess the same index
+                }
+                auto& d = u->decls[di];
                 if (auto f = dynamic_cast<FuncDecl*>(d.get())) {
                     ui.funcs[f->name].push_back(f);
                     f->sym = f;
@@ -185,6 +199,7 @@ namespace muc_detail {
                     ui.globals[g->name] = g;
                     g->cname = g->is_extern ? g->name : mangle(u->name, g->name);
                 }
+                ++di;
             }
 
             // Names in the same scope must not clash across categories

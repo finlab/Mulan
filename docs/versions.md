@@ -27,6 +27,17 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 184 — 2026-11-17
+
+**P3.2a: top-level `#if` becomes a `DirectiveDecl` expanded by collect.**
+
+- The parser no longer splices a top-level `#if` arm directly: it records the selected arm in a
+  `DirectiveDecl`, and collect expands it in place before registration.
+- Behaviour is unchanged (the parser still selects). This is the structural step for P3.2b, where the
+  parser will keep every arm and collect will evaluate the condition (constants + `sizeof`).
+
+Full suite: 707/707 (262 run, 407 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 183 — 2026-11-17
 
 **P3.1 complete: `#if` arm containers for all five list positions.**
