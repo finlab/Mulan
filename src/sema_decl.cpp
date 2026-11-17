@@ -129,6 +129,34 @@ namespace muc_detail {
         }
     }
 
+namespace {
+// The parser folds literals and arithmetic in a `const` initializer; a `sizeof`/`alignof`/`offsetof`
+// form needs the type, so collect evaluates the constant instead (basic types only until the layout
+// pass). Scanning the initializer keeps every other constant on the existing path.
+bool has_sizeof_expr(const Expr* e) {
+    if (!e) return false;
+    if (dynamic_cast<const SizeofExpr*>(e)) return true;
+    if (auto b = dynamic_cast<const Binary*>(e)) {
+        return has_sizeof_expr(b->left.get()) || has_sizeof_expr(b->right.get());
+    }
+    if (auto u = dynamic_cast<const Unary*>(e)) return has_sizeof_expr(u->operand.get());
+    if (auto n = dynamic_cast<const NotExpr*>(e)) return has_sizeof_expr(n->operand.get());
+    if (auto c = dynamic_cast<const Cast*>(e)) return has_sizeof_expr(c->expr.get());
+    if (auto c = dynamic_cast<const Call*>(e)) {
+        if (has_sizeof_expr(c->callee.get())) return true;
+        for (const auto& a : c->args) {
+            if (has_sizeof_expr(a.get())) return true;
+        }
+    }
+    if (auto m = dynamic_cast<const Member*>(e)) return has_sizeof_expr(m->obj.get());
+    return false;
+}
+bool has_sizeof_init(const Init* i) {
+    if (auto ie = dynamic_cast<const InitExpr*>(i)) return has_sizeof_expr(ie->expr.get());
+    return false;
+}
+}  // namespace
+
     void Sema::collect() {
         // First stage: generic templates are only kept and do not take part in regular checks (moved to Unit::templates).
         // This makes "declarations accepted, use reports not implemented" a stable state and does not affect non-generic code.
@@ -257,10 +285,30 @@ namespace muc_detail {
                     ui.globals[g->name] = g;
                     g->cname = g->is_extern ? g->name : mangle(u->name, g->name);
                     if (g->is_const) {
-                        // The value was folded by the parser; it becomes visible to a later `#if`.
+                        bool have = false;
                         if (const UserConstTable* t = unit_all_consts(u->name)) {
                             auto it = t->find(g->name);
-                            if (it != t->end()) current_consts[g->name] = it->second;
+                            if (it != t->end()) {
+                                current_consts[g->name] = it->second;
+                                have = true;
+                            }
+                        }
+                        if (!have && g->init && !g->is_builtin && has_sizeof_init(g->init.get())) {
+                            // The parser folds literals and arithmetic; a `sizeof`/`alignof` initializer
+                            // needs the type, so it is evaluated here (basic types only until the layout
+                            // pass; a struct value stays a runtime initializer).
+                            g->rty = resolve_type(g->spec.get(), u.get());
+                            if (g->rty && g->rty->kind != TypeKind::Struct &&
+                                g->rty->kind != TypeKind::Class) {
+                                ConstVal v;
+                                if (eval_global_const(g, u->name, v)) {
+                                    UserConst uc;
+                                    uc.value = v.i;
+                                    uc.is_bool = v.ty && v.ty->is_bool();
+                                    if (v.ty && v.ty->kind == TypeKind::Enum) uc.enum_ns = v.ty->name;
+                                    current_consts[g->name] = uc;
+                                }
+                            }
                         }
                     }
                 }

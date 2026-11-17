@@ -27,6 +27,18 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 187 — 2026-11-17
+
+**P3.3b: `sizeof` constants visible to `#if` (basic types).**
+
+- A `const` initialized with `sizeof`/`alignof`/`offsetof` is evaluated by collect (the parser only folds
+  literals/arithmetic) and becomes visible to a later `#if`.
+- Struct/class layouts are not computed yet when collect runs, so `sizeof(S)` stays a runtime initializer;
+  the layout pass is the remaining P3.3b work.
+- Tests: `if_sizeof_const` (run).
+
+Full suite: 708/708 (263 run, 407 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 186 — 2026-11-17
 
 **P3.3a: top-level `#if` is evaluated only by collect (the parser no longer evaluates declaration arms).**
