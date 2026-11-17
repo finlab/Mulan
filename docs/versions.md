@@ -27,6 +27,32 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 191 — 2026-11-18
+
+**Audit round: the const / `#if` SPEC gaps reported against build 190.**
+
+- **Repeated `const`** (`const const int`, `T* const const`) parses and folds (SPEC 3.7).
+- **Top-level `const` in signatures** (`f(int)` ≡ `f(const int)`): duplicate detection now compares
+  parameter lists with `same_param_sig` (top-level cv ignored) for functions *and* methods, so the second
+  declaration is a duplicate rather than an ambiguous overload. Low-level const still splits a signature.
+- **Default member initializer** `const T x = expr;`: parsed, carried through `#if` member expansion, and a
+  constructor that does not name the field gets the expression as an init-list entry (an explicit entry
+  wins). Cloned/substituted for generic types.
+- **`#if` compile-time functions**: `is_windows()` and the qualified `std.comptime.is_windows()` fold; a
+  builtin called with arguments reports "takes no arguments" (the old text claimed the functions worked
+  while rejecting every call). `std.comptime.os` is a valid qualified constant.
+- **Unit naming**: the unit is `std.comptime` — SPEC 9.2/9.3 examples updated, and `use comptime;` now
+  fails with "did you mean `use std.comptime;`?" instead of a bare not-found.
+- **`#if` source position**: a declaration-list condition sees only the `use`s written before it, so
+  `#if os == OS.Windows` before `use std.comptime` is an error again (SPEC 9.2).
+- **SPEC clarifications**: a derived interface's default does not silently win (the class must override,
+  #22); structural satisfaction counts interface default methods (the type must provide them, #33).
+
+Tests: `const_repeat`, `overload_top_const`, `overload_low_const`, `const_field_default`, `if_builtin_fn`,
+`if_builtin_fn_args`, `if_before_use_comptime`, `contract_iface_default`, `contract_structural_default`.
+
+Full suite: 723/723 (271 run, 412 must-fail, 26 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 190 — 2026-11-18
 
 **P3.4: the compile-time constant tables are owned by `collect` only.**

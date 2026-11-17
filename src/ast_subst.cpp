@@ -265,6 +265,9 @@ void subst_decl(Decl& d, const TypeBindings& b) {
         for (auto& f : p->fields) {
             if (f.second) subst_type_spec(*f.second, b);
         }
+        for (auto& [fname, init] : p->field_default) {
+            if (init) subst_expr(*init, b);
+        }
         subst_const_members(p->const_members, b);
         subst_methods(p->methods, b);
         subst_ctors(p->ctors, b);
@@ -278,6 +281,9 @@ void subst_decl(Decl& d, const TypeBindings& b) {
         }
         for (auto& f : p->fields) {
             if (f.second) subst_type_spec(*f.second, b);
+        }
+        for (auto& [fname, init] : p->field_default) {
+            if (init) subst_expr(*init, b);
         }
         subst_const_members(p->const_members, b);
         subst_methods(p->methods, b);

@@ -167,6 +167,9 @@ bool same_type(const TypePtr& a, const TypePtr& b);
 // of both sides is ignored, as in C++ (`f(const int)` and `f(int)` are the same signature). Low-level
 // const (the pointee) still participates.
 bool same_type_sig(const TypePtr& a, const TypePtr& b);
+// Parameter-list signature comparison (overloads, duplicate methods): same length and every type equal
+// under `same_type_sig`, so a top-level `const` never splits a signature.
+bool same_param_sig(const std::vector<TypePtr>& a, const std::vector<TypePtr>& b);
 
 // Layout (a Struct's packed / align(N) is implemented only here; codegen delegates to it so that the two layouts cannot drift apart)
 size_t type_align(const TypePtr& t);

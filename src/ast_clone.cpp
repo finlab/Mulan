@@ -522,6 +522,9 @@ std::unique_ptr<Decl> clone_decl(const Decl& d) {
         r->base_specs = clone_type_args(p->base_specs);
         r->fields = clone_fields(p->fields);
         r->field_visibility = p->field_visibility;
+        for (const auto& [fname, init] : p->field_default) {
+            if (init) r->field_default[fname] = clone_expr(*init);
+        }
         r->const_members = clone_const_members(p->const_members);
         r->methods = clone_methods(p->methods);
         r->ctors = clone_ctors(p->ctors);
@@ -556,6 +559,9 @@ std::unique_ptr<Decl> clone_decl(const Decl& d) {
         r->base_specs = clone_type_args(p->base_specs);
         r->fields = clone_fields(p->fields);
         r->field_visibility = p->field_visibility;
+        for (const auto& [fname, init] : p->field_default) {
+            if (init) r->field_default[fname] = clone_expr(*init);
+        }
         r->const_members = clone_const_members(p->const_members);
         r->methods = clone_methods(p->methods);
         r->ctors = clone_ctors(p->ctors);

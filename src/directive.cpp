@@ -82,9 +82,6 @@ int index_of_ci(const std::vector<std::string>& v, const std::string& s) {
 
 BuildConfig g_config;
 
-const char* const kConstNames =
-    "os, arch, abi, ptr_bits, endian, debug, bounds, single_thread";
-
 bool builtin_enum(const std::string& type, const std::vector<std::string>*& out) {
     if (type == "OS") { out = &kOs; return true; }
     if (type == "Arch") { out = &kArch; return true; }
@@ -99,6 +96,21 @@ bool is_int_type_name(const std::string& n) {
 }
 
 bool eval(const Expr& e, V& out, std::string& why);
+
+// `a`, `a.b`, `a.b.c` → the dotted name; empty for anything else (a call, an index, ...).
+std::string dotted_name(const Expr& e) {
+    if (const auto* n = dynamic_cast<const Name*>(&e)) return n->ident;
+    if (const auto* m = dynamic_cast<const Member*>(&e)) {
+        if (!m->type_args.empty()) return {};
+        std::string base = dotted_name(*m->obj);
+        if (base.empty()) return {};
+        return base + "." + m->name;
+    }
+    return {};
+}
+
+// The unit that declares the compiler-provided compile-time names (SPEC 9.3).
+const std::string kComptimeUnit = "std.comptime";
 
 bool need_bool(const V& v, const char* where, std::string& why) {
     if (v.k == VK::Bool) return true;
@@ -203,6 +215,9 @@ bool eval_binary(const Binary& b, V& out, std::string& why) {
 const UserConstTable* g_user_consts = nullptr;
 // Bare names that came from several `use`d units (a qualified reference is required).
 const std::unordered_set<std::string>* g_ambiguous = nullptr;
+// Whether `use std.comptime` is visible at this point: the compile-time functions need it, like any
+// other name.
+bool g_comptime_visible = true;
 
 bool eval(const Expr& e, V& out, std::string& why) {
     if (const auto* p = dynamic_cast<const IntLit*>(&e)) {
@@ -238,20 +253,26 @@ bool eval(const Expr& e, V& out, std::string& why) {
             }
         }
         why = "`" + p->ident + "` is not a visible compile-time constant; a `#if` condition resolves "
-              "names normally (write `use comptime;` for the build constants)";
+              "names normally (write `use std.comptime;` for the build constants)";
         return false;
     }
     if (const auto* p = dynamic_cast<const Member*>(&e)) {
-        const auto* base = dynamic_cast<const Name*>(p->obj.get());
-        if (base && g_user_consts) {
-            auto it = g_user_consts->find(base->ident + "." + p->name);
+        // A qualified constant: `unit.name` (and `std.comptime.os` for the build constants).
+        const std::string full = dotted_name(e);
+        if (!full.empty() && g_user_consts) {
+            auto it = g_user_consts->find(full);
             if (it != g_user_consts->end()) {
                 out = it->second.is_bool ? vbool(it->second.value != 0) : vint(it->second.value);
                 out.enum_ns = it->second.enum_ns;
                 return true;
             }
         }
-        why = "`" + (base ? base->ident + "." + p->name : p->name) +
+        if (full.rfind("comptime.", 0) == 0) {
+            why = "`comptime` is not a unit name: the compile-time unit is `std.comptime` (write `std." +
+                  full + "`)";
+            return false;
+        }
+        why = "`" + (full.empty() ? std::string(p->name) : full) +
               "` is not a visible compile-time constant";
         return false;
     }
@@ -299,20 +320,47 @@ bool eval(const Expr& e, V& out, std::string& why) {
         return false;
     }
     if (const auto* p = dynamic_cast<const Call*>(&e)) {
-        // A compiler-provided compile-time function (`is_windows()`), no arguments so far.
-        const auto* nm = dynamic_cast<const Name*>(p->callee.get());
-        if (nm && p->args.empty() && p->named.empty()) {
+        // A compiler-provided compile-time function: `is_windows()` (after `use std.comptime`) or the
+        // qualified `std.comptime.is_windows()`.
+        std::string fn;
+        if (const auto* nm = dynamic_cast<const Name*>(p->callee.get())) {
+            fn = nm->ident;
+        } else {
+            const std::string full = dotted_name(*p->callee);
+            if (full.rfind(kComptimeUnit + ".", 0) == 0) {
+                fn = full.substr(kComptimeUnit.size() + 1);
+            } else if (full.rfind("comptime.", 0) == 0) {
+                why = "`comptime` is not a unit name: the compile-time unit is `std.comptime` (write "
+                      "`std." + full + "()`)";
+                return false;
+            }
+        }
+        if (!fn.empty() && !g_comptime_visible) {
+            why = "`" + fn + "` is not visible here: write `use std.comptime;` before this `#if` to use "
+                  "the compiler-provided compile-time functions";
+            return false;
+        }
+        if (!fn.empty() && (!p->args.empty() || !p->named.empty())) {
+            why = "`" + fn + "` takes no arguments: a `#if` condition may only call the "
+                  "`std.comptime` compile-time functions (`is_windows()`, `is_linux()`, `is_macos()`)";
+            return false;
+        }
+        if (!fn.empty()) {
             long long v = 0;
-            if (builtin_func(nm->ident, {}, v)) {
+            if (builtin_func(fn, {}, v)) {
                 out = vbool(v != 0);
                 return true;
             }
+            why = "`" + fn + "` is not a compile-time function; `std.comptime` declares "
+                  "`is_windows()`, `is_linux()` and `is_macos()`";
+            return false;
         }
-        why = "a function call is not a build constant; a `#if` condition may only use " +
-              std::string(kConstNames) + " and the `std.comptime` compile-time functions";
+        why = "a function call is not a build constant; a `#if` condition may only use compile-time "
+              "constants and call the `std.comptime` compile-time functions";
         return false;
     }
-    why = "`#if` conditions may only use build constants, literals and arithmetic/comparison operators";
+    why = "`#if` conditions may only use compile-time constants, literals and arithmetic/comparison "
+          "operators";
     return false;
 }
 
@@ -361,13 +409,15 @@ std::string describe_build_config() {
 }
 
 bool eval_directive_cond(const Expr& e, std::string& why, const UserConstTable* user_consts,
-                         const std::unordered_set<std::string>* ambiguous) {
+                         const std::unordered_set<std::string>* ambiguous, bool comptime_visible) {
     g_user_consts = user_consts;
     g_ambiguous = ambiguous;
+    g_comptime_visible = comptime_visible;
     V v;
     const bool ok = eval(e, v, why);
     g_user_consts = nullptr;
     g_ambiguous = nullptr;
+    g_comptime_visible = true;
     if (!ok) return false;
     if (v.k != VK::Bool) {
         why = "a `#if` condition must be a bool; write a comparison such as `os == OS.Windows`";

@@ -827,7 +827,14 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
   receiver needs a free `operator` whose first parameter is `ref` (or a struct member operator, whose
   `this` is borrowed); a `ref const Self` receiver is satisfied by a free `ref const` (or by-value) first
   parameter, or by a `const` member operator (whose `this` is `const Self`, 3.11).
-- A default method may only call interface methods and cannot access fields; when two interfaces provide default implementations with the same signature, the class must explicitly override them, otherwise it is a compile error (a default declared on a derived interface refines the base interface's default and wins).
+- A default method may only call interface methods and cannot access fields; when two interfaces provide
+  default implementations with the same signature, the class must explicitly override them, otherwise it
+  is a compile error. A **derived interface's default does not silently replace the base interface's**
+  (decided 2026-11-18, the conservative reading): `interface D : B` that re-declares a default of `B` makes
+  the signature ambiguous for an implementor, so the class must write the `override` explicitly. The rule
+  is uniform (`IBase`/`IDerived` in a chain, or two unrelated interfaces) and a one-line `override` is the
+  answer; the alternative (a derived default winning) makes the resolution depend on the inheritance graph
+  in a way a reader of the class cannot see.
 - An interface value is laid out as two machine words `{object pointer, class descriptor pointer}`; it may be `null`.
 - Conversions: `class → interface` is implicit; `interface A → interface B` (A inherits B) is a static conversion;
   `class → derived class` and `interface → class` use `as` for a runtime check (along the desc base class chain), yielding `null` on failure;
@@ -1142,6 +1149,7 @@ T: A | B  →  type set is the union (wider)  →  available members of T are th
 **Structural satisfaction (important)**: `T: I` **does not require** `T` to declare `: I`; it only checks whether the shapes match:
 
 - Method members: `T` has a method with the same name and exactly the same parameter types and return type (looked up along the base class chain and in interface default methods).
+- **A default method still counts as a required member** (decided 2026-11-18): `interface IVal { int val(); int twice() { return val() * 2; } }` needs `twice` on a structurally-satisfying `T`, even though a declaring implementor (`struct S : IVal`) gets it materialized from the default. A structural relation has no place to materialize a default (there is no declared itable), so the type must provide the method itself; Rust's trait defaults work differently because an `impl` block is where the default would be attached.
 - Operator members: the **receiver is the first operand and must be `Self`**; the operands after it are
   matched **as declared**, exactly (a stream `Self operator<<(Self b, byte c)`, a scaled arithmetic
   `Self operator*(Self a, int k)`, a comparison `bool operator<(Self a, int b)`). An implementation is a
@@ -2363,7 +2371,7 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
 There are no macros, no textual substitution and no `#include`.
 
 ```c
-use comptime;                                  // required before using os/arch/...
+use std.comptime;                              // required before using os/arch/...
 #if os == OS.Windows and arch == Arch.X86_64 {
     extern void* CreateFileW(const ushort* name, uint access, uint share,
                              void* sec, uint disp, uint flags, void* tmpl);
@@ -2393,18 +2401,18 @@ use comptime;                                  // required before using os/arch/
   constant evaluation, following the single sequence of 9.1 — entry unit DFS post-order over `use`,
   declaration order inside a unit. In a **declaration list** (unit top level, struct / class / interface
   body) the condition sees exactly the constants visible at that source position:
-  - the `comptime` builtins and functions (9.3) after `use comptime`;
+  - the `std.comptime` builtins and functions (9.3) after `use std.comptime`;
   - earlier unit-level `const`s of this unit that are compile-time constants (3.7.2);
   - `public const`s of the units this unit `use`s.
   A constant declared later in the same unit, a `const` that is not a compile-time constant, a local
   variable, a runtime value, `sizeof`/`alignof`/`offsetof`, and ordinary function calls are errors. Calls
-  to `comptime` builtin functions are allowed (9.3).
+  to `std.comptime` builtin functions are allowed (9.3).
 - **Inside a function body** the `#if` is expanded after the unit's declarations have been collected, so
   it follows the same name resolution as the surrounding code: every compile-time `const` of the unit is
   visible wherever it is declared (a later `const` too), and the order of `use` declarations inside a
   unit is not significant — a `use` is visible in its whole unit, as it is for ordinary code.
 - **One name-resolution rule.** `#if` conditions use the same name resolution as a constant initializer:
-  cross-unit names require a `use` of the unit (and `use comptime` for the builtins), a later declaration
+  cross-unit names require a `use` of the unit (and `use std.comptime` for the builtins), a later
   is not visible in a declaration list, and ambiguity is reported as usual. Dependencies exist only
   through `use` edges — a constant reference does not create an implicit unit dependency.
 - **`use` inside an arm** is allowed, and only the units of selected arms join the dependency graph.
@@ -2415,14 +2423,14 @@ use comptime;                                  // required before using os/arch/
   variant, and a conditional parameter would need the comma list split; the granularity is too fine to
   pay for. Wrap the whole declaration instead — a declaration list is a supported position.
 
-### 9.3 The `comptime` unit and `builtin` declarations (decided 2026-11-17)
+### 9.3 The `std.comptime` unit and `builtin` declarations (decided 2026-11-17)
 
-`comptime` is an **ordinary unit** shipped with the toolchain: its position, visibility, import and
+`std.comptime` is an **ordinary unit** shipped with the toolchain: its position, visibility, import and
 reference rules are exactly those of any other unit. What is special is the `builtin` modifier: it binds a
 name to the compiler's built-in table.
 
 ```c
-// comptime unit
+// std.comptime unit
 public enum OS { Windows, Linux, MacOS }
 public enum Arch { X86_64, AArch64 }
 public enum Abi { Msvc, Ucrt, Gnu, None }
@@ -2458,11 +2466,14 @@ public builtin bool is_linux();
   against its built-in table: a name not in the table is an error
   (`builtin 'X' is not provided by this compiler`); the same name may be declared **once across the whole
   program** (a duplicate is an error). A type/signature mismatch is an error.
-- **Visibility and reference** follow ordinary units: `public` is needed across units; after `use comptime`
-  the names are usable **without a qualifier** (`os`, `is_windows()`), and the qualified form
-  (`comptime.os`) is also accepted.
-- **Explicit import**: a unit (including its `#if` conditions) must `use comptime` before the names become
-  visible. There is no implicit visibility of the builtins.
+- **Visibility and reference** follow ordinary units: `public` is needed across units; after
+  `use std.comptime` the names are usable **without a qualifier** (`os`, `is_windows()`), and the qualified
+  form (`std.comptime.os`, `std.comptime.is_windows()`) is also accepted. The unit is `std.comptime`; the
+  short spelling `comptime` is not a unit name (`use comptime;` fails, and the loader suggests the full
+  name).
+- **Explicit import**: a unit (including its `#if` conditions) must `use std.comptime` before the names
+  become visible. There is no implicit visibility of the builtins, and a `#if` in a declaration list only
+  sees a `use` written before it (9.2).
 - **Types**: builtin constants and function parameters/returns are limited to scalars, `bool` and enums;
   pointers, strings and aggregates cannot be `builtin`.
 - A `builtin` declaration produces **no symbol and no ABI**: it is resolved and folded by the compiler, and
@@ -2470,13 +2481,13 @@ public builtin bool is_linux();
 - **A builtin constant is a compile-time value, not a run-time object** (decided 2026-11-17): it has no
   storage, cannot have its address taken, does not participate in layout/ABI, and is frozen once the
   compilation starts. Every reference is folded to the value.
-- **Runtime builtins are not part of `comptime`.** Platform symbols and functions that exist at run time
-  (a `File` handle type, `open_file`, …) belong to a separate unit supplied by the library/platform layer;
-  `comptime` only carries compile-time constants and compile-time functions.
+- **Runtime builtins are not part of `std.comptime`.** Platform symbols and functions that exist at run
+  time (a `File` handle type, `open_file`, …) belong to a separate unit supplied by the library/platform
+  layer; `std.comptime` only carries compile-time constants and compile-time functions.
 - **`#if` treats these names like any other constant**: there is no special "build constant" syntax or
-  resolution. After `use comptime`, the names are ordinary visible constants; before the `use`, they are not
-  visible.
-- **Contract**: the `comptime` unit is the language's contract with the compiler — every name it declares
+  resolution. After `use std.comptime`, the names are ordinary visible constants; before the `use`, they
+  are not visible.
+- **Contract**: the `std.comptime` unit is the language's contract with the compiler — every name it declares
   must be provided with the declared type and semantics, and the compiler may not silently omit one.
   Adding, removing, or changing the type of a builtin is a breaking change and is recorded in
   `docs/versions.md`.
@@ -2779,7 +2790,7 @@ switch v {
 | 128 | Signed or unsigned index / length type | **Decided (2026-11-16): `isize`.** `length()`, subscripts, `for i, x` ordinals, `find` offsets, `sizeof`/`alignof`/`offsetof` and the `alloc`/`realloc` byte counts are all `isize`; `usize` is kept for unsigned arithmetic and for C-facing sizes (`cstd.*`, `c_size`), where an explicit `as` is required. Rationale: `length() - 1` on an empty sequence must not wrap to `2^64-1`, descending loops need a signed counter, `find` already returns `-1`, and the emitted bounds check (`icmp uge` on the 64-bit index) catches a negative index with no extra instruction |
 | 129 | `const` redesign (C++ model) | **Decided 2026-11-17**: cv is part of the type at every level; top-level const is ignored in signatures (and a top-level `const` return type is accepted but ignored), low-level const participates in overloads and mangling; `const` fields and `const` methods; `const struct` / `const class` is a declaration modifier without cv on the type name (content fixed after construction; copy/move allowed; whole-variable reassignment allowed); `T* const` is supported; `T** → const T**` has no implicit conversion (`as` can force it, as in C++); a const object is deeply read-only; `const_cast` is replaced by `as`; no `constexpr`/`consteval`/`constinit`, no `mutable`/`volatile` (3.7) |
 | 130 | `move` is `&&` | **Decided 2026-11-17**: `move T` is a non-const rvalue reference; `const` and `move` cannot qualify the same parameter; `move` on a const object is an error (no silent copy); used in move construction and transfer positions (3.4, 3.8, 4.4) |
-| 131 | `comptime` unit / `builtin` | **Decided 2026-11-17**: `comptime` is an ordinary unit shipped with the toolchain; `builtin` declares compiler-provided constants/functions with no initializer and no body; any unit may declare one, but only names in the compiler's built-in table are accepted and a name may be declared once; explicit `use comptime` (no implicit visibility); replaces `std.target` (9.3) |
+| 131 | `std.comptime` unit / `builtin` | **Decided 2026-11-17, unit renamed to `std.comptime` 2026-11-18**: an ordinary unit shipped with the toolchain; `builtin` declares compiler-provided constants/functions with no initializer and no body; any unit may declare one, but only names in the compiler's built-in table are accepted and a name may be declared once; explicit `use std.comptime` (no implicit visibility); replaces `std.target` (9.3) |
 
 ---
 

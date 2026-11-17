@@ -170,6 +170,7 @@ namespace muc_detail {
         begin_member(c->ty, t_void(), c->name + " constructor", ctor->line, ctor->col);
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
+        apply_field_defaults(c->field_default, c->ty->fields, ctor);
         check_ctor_init_list(c->ty, ctor);
 
         bool needs_super = false;
@@ -250,9 +251,30 @@ namespace muc_detail {
         begin_member(sd->ty, t_void(), sd->name + " constructor", ctor->line, ctor->col);
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
+        apply_field_defaults(sd->field_default, sd->ty->fields, ctor);
         check_ctor_init_list(sd->ty, ctor);
         check_block(ctor->body.get());
         end_member();
+    }
+
+    // A constructor that does not name a field with a default member initializer gets that expression as
+    // an initializer entry: one code path for `: x(v)` and `const int x = 5;` (SPEC 3.7).
+    void Sema::apply_field_defaults(const std::unordered_map<std::string, ExprPtr>& defaults,
+                                    const std::vector<Field>& fields, CtorDecl* ctor) {
+        if (defaults.empty()) return;
+        for (const auto& f : fields) {
+            auto it = defaults.find(f.name);
+            if (it == defaults.end() || !it->second) continue;
+            bool listed = false;
+            for (const auto& item : ctor->init_list) {
+                if (item.first == f.name) {
+                    listed = true;
+                    break;
+                }
+            }
+            if (listed) continue;
+            ctor->init_list.emplace_back(f.name, clone_expr(*it->second));
+        }
     }
 
     // `C(...) : x(v), y(w) { }`: validate the member initializer list (decided 2026-11-17). The entries
@@ -505,17 +527,24 @@ namespace muc_detail {
 
     void Sema::check_struct(StructDecl* sd) {
         check_const_members(sd->const_members, sd->ty, sd->is_union ? "union" : "struct", sd->name);
-        std::unordered_set<std::string> seen;
+        // Duplicate signatures: a top-level `const` on a parameter is not part of the signature
+        // (SPEC 3.7), so `m(int)` and `m(const int)` are the same method.
+        std::vector<MethodDecl*> seen;
         for (auto& m : sd->methods) {
             // A materialized default points its diagnostics at the struct, not at the interface body
             // (the body's line/col would name a declaration the user cannot change here).
             Node* where = m->from_iface_default ? static_cast<Node*>(sd) : static_cast<Node*>(m.get());
-            std::string key = m->name + "(";
-            for (auto& p : m->pty) key += p->str() + ",";
-            key += m->is_const ? ") const" : ")";
-            if (!seen.insert(key).second) {
+            for (MethodDecl* prev : seen) {
+                if (prev->name != m->name || prev->is_const != m->is_const ||
+                    !same_param_sig(prev->pty, m->pty)) {
+                    continue;
+                }
+                std::string key = m->name + "(";
+                for (auto& p : m->pty) key += p->str() + ",";
+                key += m->is_const ? ") const" : ")";
                 err("duplicate method `" + key + "` in struct `" + sd->name + "`", where);
             }
+            seen.push_back(m.get());
             if (sd->ty->field_type(m->name)) {
                 err("method `" + m->name + "` in struct `" + sd->name + "` has the same name as a field", where);
             }
@@ -562,18 +591,24 @@ namespace muc_detail {
 
     void Sema::check_class(ClassDecl* c) {
         check_const_members(c->const_members, c->ty, "class", c->name);
-        std::unordered_set<std::string> seen;
+        // A top-level `const` on a parameter is not part of the signature (SPEC 3.7).
+        std::vector<MethodDecl*> seen;
         for (auto& m : c->methods) {
             MethodSig sig;
             sig.name = m->name;
             sig.is_const = m->is_const;
             sig.params = m->pty;
-            std::string key = m->name + "(";
-            for (auto& p : m->pty) key += p->str() + ",";
-            key += m->is_const ? ") const" : ")";
-            if (!seen.insert(key).second) {
+            for (MethodDecl* prev : seen) {
+                if (prev->name != m->name || prev->is_const != m->is_const ||
+                    !same_param_sig(prev->pty, m->pty)) {
+                    continue;
+                }
+                std::string key = m->name + "(";
+                for (auto& p : m->pty) key += p->str() + ",";
+                key += m->is_const ? ") const" : ")";
                 err("duplicate method `" + key + "` in class `" + c->name + "`", m.get());
             }
+            seen.push_back(m.get());
             if (c->ty->field_type(m->name)) {
                 err("method `" + m->name + "` in class `" + c->name + "` has the same name as a field", m.get());
             }

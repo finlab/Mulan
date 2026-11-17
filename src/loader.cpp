@@ -423,8 +423,24 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
                 ++shown;
             }
         }
-        throw MuError("cannot find unit `" + un + "` for platform `" + os_name +
-                      "`; looked for (platform shadow first, then the portable unit):" + list);
+        // `use comptime;` is a common slip for `use std.comptime;`: when a `std.` unit of that name
+        // exists, say so instead of leaving a bare "not found" (issue #44).
+        std::string hint;
+        if (un.find('.') == std::string::npos) {
+            const std::string alt = dotted_path("std." + un) + ".mu";
+            for (const auto& root : dirs) {
+                if (!fs::exists(root)) continue;
+                for (const auto& c : candidates(root)) {
+                    if (fs::exists(c.dir + "/" + alt)) {
+                        hint = " (did you mean `use std." + un + ";`?)";
+                        break;
+                    }
+                }
+                if (!hint.empty()) break;
+            }
+        }
+        throw MuError("cannot find unit `" + un + "` for platform `" + os_name + "`" + hint +
+                      "; looked for (platform shadow first, then the portable unit):" + list);
     };
 
     // A cheap lexical pre-scan: the unit name and its `use` list (comments stripped). It lets the

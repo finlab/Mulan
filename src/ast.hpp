@@ -371,6 +371,9 @@ struct MemberGroup {
     };
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
     std::unordered_map<std::string, bool> field_visibility;
+    // `const T x = expr;`: the default member initializer of a field (SPEC 3.7). A constructor that
+    // does not name the field gets this expression (sema synthesizes the init-list entry).
+    std::unordered_map<std::string, ExprPtr> field_default;
     std::vector<std::unique_ptr<ConstMember>> const_members;
     std::vector<std::unique_ptr<MethodDecl>> methods;
     std::vector<std::unique_ptr<CtorDecl>> ctors;
@@ -470,6 +473,8 @@ struct StructDecl : Decl {
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
     // the final visibility of the fields (computed by the parser while parsing, from the default values/section labels/member prefixes)
     std::unordered_map<std::string, bool> field_visibility;
+    // `const T x = expr;`: the default member initializer of a field (SPEC 3.7).
+    std::unordered_map<std::string, ExprPtr> field_default;
     std::vector<std::unique_ptr<ConstMember>> const_members;  // type-level compile-time constants
     std::vector<std::unique_ptr<MethodDecl>> methods;  // value type methods (static dispatch)
     std::vector<std::unique_ptr<CtorDecl>> ctors;
@@ -735,6 +740,8 @@ struct ClassDecl : Decl {
     std::vector<TypeSpecPtr> base_specs;  // parallel to bases; a generic base class needs structured type arguments
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
     std::unordered_map<std::string, bool> field_visibility;  // the final visibility of the fields
+    // `const T x = expr;`: the default member initializer of a field (SPEC 3.7).
+    std::unordered_map<std::string, ExprPtr> field_default;
     std::vector<std::unique_ptr<ConstMember>> const_members;  // type-level compile-time constants
     std::vector<std::unique_ptr<MethodDecl>> methods;
     std::vector<std::unique_ptr<CtorDecl>> ctors;

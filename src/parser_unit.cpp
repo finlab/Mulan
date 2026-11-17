@@ -618,19 +618,22 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
                          name_tok);
         }
         if (spec->is_const) {
-            // `const T name;` is an instance field (decided 2026-11-17). Type-level constants are gone:
-            // a const field is initialized by every constructor, not by an initializer here.
+            // `const T name;` is an instance field: it is initialized by every constructor, either
+            // through the initializer list or through a default member initializer `const T x = expr;`
+            // (SPEC 3.7).
             if (is_union) {
                 throw err_at("union `" + name + "` does not support const fields (union members are always public fields)",
                              name_tok);
             }
-            if (at_op("=")) {
-                throw err_at("type-level constants are gone: write a unit-level `const`, or initialize this "
-                             "`const` field in the constructor initializer list (`C(...) : name(value) { }`)",
-                             name_tok);
-            }
-            cur_members_->fields.emplace_back(name_tok.text, clone_spec(*spec));
-            cur_members_->field_visibility[name_tok.text] = member_pub;
+            const auto add_const_field = [&](const std::string& fname) {
+                cur_members_->fields.emplace_back(fname, clone_spec(*spec));
+                cur_members_->field_visibility[fname] = member_pub;
+                if (at_op("=")) {
+                    advance();
+                    cur_members_->field_default[fname] = parse_expr();
+                }
+            };
+            add_const_field(name_tok.text);
             for (;;) {
                 if (!at_op(",")) break;
                 advance();
@@ -640,15 +643,18 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
                         "bit-fields are not supported: use explicit shifts/masks or a `byte[N]` field with offset constants",
                         extra);
                 }
-                std::string fname = extra.text;
-                cur_members_->field_visibility[fname] = member_pub;
-                cur_members_->fields.emplace_back(std::move(fname), clone_spec(*spec));
+                add_const_field(extra.text);
             }
             semicolon();
             continue;
         }
         cur_members_->fields.emplace_back(name_tok.text, clone_spec(*spec));
         cur_members_->field_visibility[name_tok.text] = member_pub;
+        if (at_op("=")) {
+            throw err_at("a default member initializer is only supported on a `const` field "
+                         "(`const int x = 5;`); assign the field in the constructor body instead",
+                         name_tok);
+        }
         for (;;) {
             if (!at_op(",")) break;
             advance();
@@ -978,28 +984,33 @@ std::unique_ptr<Decl> Parser::parse_class() {
         if (prefix_virtual) throw err_at("`virtual` can only be used on a method", name_tok);
         if (prefix_override) throw err_at("`override` can only be used on methods", name_tok);
         if (spec->is_const) {
-            // `const T name;` is an instance field (decided 2026-11-17). Type-level constants are gone.
+            // `const T name;` is an instance field, initialized by every constructor through the
+            // initializer list or a default member initializer `const T x = expr;` (SPEC 3.7).
             if (prefix_weak) throw err_at("`weak` cannot be combined with a `const` field", name_tok);
-            if (at_op("=")) {
-                throw err_at("type-level constants are gone: write a unit-level `const`, or initialize this "
-                             "`const` field in the constructor initializer list (`C(...) : name(value) { }`)",
-                             name_tok);
-            }
-            cur_members_->fields.emplace_back(name_tok.text, clone_spec(*spec));
-            cur_members_->field_visibility[name_tok.text] = member_pub;
+            const auto add_const_field = [&](const std::string& fname) {
+                cur_members_->fields.emplace_back(fname, clone_spec(*spec));
+                cur_members_->field_visibility[fname] = member_pub;
+                if (at_op("=")) {
+                    advance();
+                    cur_members_->field_default[fname] = parse_expr();
+                }
+            };
+            add_const_field(name_tok.text);
             for (;;) {
                 if (!at_op(",")) break;
                 advance();
-                const Token extra = expect_ident("field name");
-                std::string fname = extra.text;
-                cur_members_->field_visibility[fname] = member_pub;
-                cur_members_->fields.emplace_back(std::move(fname), clone_spec(*spec));
+                add_const_field(expect_ident("field name").text);
             }
             semicolon();
             continue;
         }
         cur_members_->fields.emplace_back(name_tok.text, clone_spec(*spec));
         cur_members_->field_visibility[name_tok.text] = member_pub;
+        if (at_op("=")) {
+            throw err_at("a default member initializer is only supported on a `const` field "
+                         "(`const int x = 5;`); assign the field in the constructor body instead",
+                         name_tok);
+        }
         while (at_op(",")) {
             advance();
             const std::string fname = expect_ident("field name").text;

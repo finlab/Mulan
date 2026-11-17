@@ -708,6 +708,14 @@ bool same_type_sig(const TypePtr& a, const TypePtr& b) {
     return same_type_impl(a, b, true);
 }
 
+bool same_param_sig(const std::vector<TypePtr>& a, const std::vector<TypePtr>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (!same_type_sig(a[i], b[i])) return false;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------- Conversion rules
 
 bool is_class_type(const TypePtr& t) { return t && t->kind == TypeKind::Class; }

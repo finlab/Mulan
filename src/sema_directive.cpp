@@ -42,15 +42,20 @@ namespace muc_detail {
         }
     }
 
-    DirectiveScope Sema::directive_scope(Unit* u, const UserConstTable* own) {
+    DirectiveScope Sema::directive_scope(Unit* u, const UserConstTable* own, int before_line) {
         DirectiveScope scope;
         std::unordered_map<std::string, std::string> src;  // bare name -> declaring unit
         for (auto& use : u->uses) {
+            // A `use` written after the declaration being processed is not visible to its `#if`
+            // (SPEC 9.2: the condition sees the constants visible at that source position).
+            if (before_line > 0 && use->line >= before_line) continue;
             if (use->unit_name == "std.comptime") {
+                scope.comptime = true;
                 UserConstTable builtins;
                 add_builtin_constants(builtins);
                 for (const auto& [k, v] : builtins) {
-                    scope.table.emplace(k, v);
+                    scope.table.emplace(k, v);                 // bare (`os`, `is_windows`)
+                    scope.table["std.comptime." + k] = v;      // qualified (`std.comptime.os`)
                     src.emplace(k, "std.comptime");
                 }
                 continue;
@@ -78,7 +83,7 @@ namespace muc_detail {
         for (auto& arm : dir.arms) {
             if (!arm.cond) return &arm;  // `#else`: only reached when nothing above matched
             std::string why;
-            if (eval_directive_cond(*arm.cond, why, &scope.table, &scope.ambiguous)) return &arm;
+            if (eval_directive_cond(*arm.cond, why, &scope.table, &scope.ambiguous, scope.comptime)) return &arm;
             if (!why.empty()) err("`#if` condition: " + why, arm.cond.get());
         }
         return nullptr;
@@ -88,7 +93,7 @@ namespace muc_detail {
         for (auto& arm : dir.arms) {
             if (!arm.cond) return &arm;
             std::string why;
-            if (eval_directive_cond(*arm.cond, why, &scope.table, &scope.ambiguous)) return &arm;
+            if (eval_directive_cond(*arm.cond, why, &scope.table, &scope.ambiguous, scope.comptime)) return &arm;
             if (!why.empty()) err("`#if` condition: " + why, arm.cond.get());
         }
         return nullptr;
@@ -98,7 +103,7 @@ namespace muc_detail {
         for (auto& arm : dir.arms) {
             if (!arm.cond) return &arm;
             std::string why;
-            if (eval_directive_cond(*arm.cond, why, &scope.table, &scope.ambiguous)) return &arm;
+            if (eval_directive_cond(*arm.cond, why, &scope.table, &scope.ambiguous, scope.comptime)) return &arm;
             if (!why.empty()) err("`#if` condition: " + why, arm.cond.get());
         }
         return nullptr;
@@ -136,6 +141,12 @@ namespace muc_detail {
         }
         take(body.fields.size(), body.const_members.size(), body.methods.size(), body.ctors.size());
         for (auto& e : body.errors) err("#error " + e->message, e.get());
+        // Default member initializers are keyed by field name, so the order is not significant.
+        if (sink.field_default) {
+            for (auto& [fname, init] : body.field_default) {
+                if (init) (*sink.field_default)[fname] = std::move(init);
+            }
+        }
         if (body.dtor) {
             if (sink.dtor) {
                 if (sink.dtor->get()) {
@@ -158,26 +169,29 @@ namespace muc_detail {
         MemberSink sink;
         if (auto* sd = dynamic_cast<StructDecl*>(d)) {
             body = &sd->body;
-            sink = MemberSink{&sd->fields, &sd->field_visibility, &sd->const_members, &sd->methods,
-                              &sd->ctors, &sd->dtor};
+            sink = MemberSink{&sd->fields, &sd->field_visibility, &sd->field_default, &sd->const_members,
+                              &sd->methods, &sd->ctors, &sd->dtor};
         } else if (auto* cd = dynamic_cast<ClassDecl*>(d)) {
             body = &cd->body;
-            sink = MemberSink{&cd->fields, &cd->field_visibility, &cd->const_members, &cd->methods,
-                              &cd->ctors, &cd->dtor};
+            sink = MemberSink{&cd->fields, &cd->field_visibility, &cd->field_default, &cd->const_members,
+                              &cd->methods, &cd->ctors, &cd->dtor};
         } else if (auto* id = dynamic_cast<InterfaceDecl*>(d)) {
             body = &id->body;
             sink.methods = &id->methods;
         }
         if (!body) return;
         // The body is the only place the members live, so this always runs; the constants are needed
-        // only when there is a conditional group to evaluate.
+        // only when there is a conditional group to evaluate. The `use` set is limited to the ones
+        // written before the type declaration (SPEC 9.2).
         DirectiveScope scope;
-        if (!body->groups.empty()) scope = directive_scope(u, own);
+        if (!body->groups.empty()) scope = directive_scope(u, own, d->line);
         expand_member_body(*body, scope, sink, d);
     }
 
     void Sema::expand_directive_stmt(Block* b, size_t& i) {
         auto* ds = dynamic_cast<DirectiveStmt*>(b->stmts[i].get());
+        // A function body is checked after the unit is collected: it follows the unit's name
+        // resolution, so every `use` of the unit is visible (SPEC 9.2).
         const DirectiveScope scope = directive_scope(cur_, unit_all_consts(cur_->name));
         std::vector<StmtPtr> picked;
         if (DirectiveStmt::Arm* chosen = choose_stmt_arm(*ds, scope)) picked = std::move(chosen->stmts);

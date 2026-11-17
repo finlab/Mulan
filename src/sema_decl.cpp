@@ -191,7 +191,7 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                     // Evaluate the arms with the constants visible at this point: the public constants
                     // of the `use`d units (and the compiler builtins after `use std.comptime`) plus the
                     // unit's own constants declared before this point (text order, P3.3).
-                    const DirectiveScope scope = directive_scope(u.get(), &current_consts);
+                    const DirectiveScope scope = directive_scope(u.get(), &current_consts, dd->line);
                     DirectiveDecl::Arm* chosen = choose_decl_arm(*dd, scope);
                     std::vector<std::unique_ptr<Decl>> picked;
                     if (chosen) picked = std::move(chosen->decls);

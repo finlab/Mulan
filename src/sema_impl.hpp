@@ -78,12 +78,14 @@ inline EnumConst* intern_enum_const(const std::string& unit, const std::string& 
 struct DirectiveScope {
     UserConstTable table;
     std::unordered_set<std::string> ambiguous;  // bare names coming from several `use`d units
+    bool comptime = false;                      // `use std.comptime` is visible at this position
 };
 
 // Where an expanded type body's members go (a struct/class has all lists, an interface only methods).
 struct MemberSink {
     std::vector<std::pair<std::string, TypeSpecPtr>>* fields = nullptr;
     std::unordered_map<std::string, bool>* field_visibility = nullptr;
+    std::unordered_map<std::string, ExprPtr>* field_default = nullptr;
     std::vector<std::unique_ptr<ConstMember>>* const_members = nullptr;
     std::vector<std::unique_ptr<MethodDecl>>* methods = nullptr;
     std::vector<std::unique_ptr<CtorDecl>>* ctors = nullptr;
@@ -286,7 +288,10 @@ private:
     // ------------------------------------------------------------ conditional lists (P3)
     // The constants visible to a `#if` at this point: the public constants of the `use`d units (and
     // the compiler builtins after `use std.comptime`), then `own` — this unit's constants — which wins.
-    DirectiveScope directive_scope(Unit* u, const UserConstTable* own);
+    // `before_line` is the source line of the declaration being processed: a `use` written later in the
+    // unit is not visible to it (SPEC 9.2, the source-position rule); 0 means "no limit" (a function
+    // body, which is checked after the unit is collected).
+    DirectiveScope directive_scope(Unit* u, const UserConstTable* own, int before_line = 0);
     // Picks the selected arm of a `#if` chain; null when nothing is selected (`#if` without a matching
     // arm and no `#else`).
     DirectiveDecl::Arm* choose_decl_arm(DirectiveDecl& dir, const DirectiveScope& scope);
@@ -455,6 +460,11 @@ private:
     void check_ctor(ClassDecl* c, CtorDecl* ctor);
     // Validate `C(...) : x(v), y(w) { }` (decided 2026-11-17)
     void check_ctor_init_list(const TypePtr& ty, CtorDecl* ctor);
+    // `const T x = expr;`: fields with a default member initializer join the constructor initializer
+    // list when the constructor does not name them (SPEC 3.7). The expression is cloned per
+    // constructor: it is checked in that constructor's scope and emitted into its prologue.
+    void apply_field_defaults(const std::unordered_map<std::string, ExprPtr>& defaults,
+                              const std::vector<Field>& fields, CtorDecl* ctor);
 
     void check_dtor(ClassDecl* c);
 

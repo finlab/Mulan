@@ -175,7 +175,8 @@ Token Parser::expect_gt() {
 
 TypeSpecPtr Parser::parse_type() {
     bool base_const = false;
-    if (at_kw("const")) {
+    // Repeated `const` folds (`const const int` ≡ `const int`, SPEC 3.7).
+    while (at_kw("const")) {
         advance();
         base_const = true;
     }
@@ -263,7 +264,9 @@ TypeSpecPtr Parser::parse_type() {
 TypeSpecPtr Parser::parse_type_base() {
     NestGuard guard(*this, "type");
     bool base_const = false;
-    if (at_kw("const")) {
+    // Repeated `const` is allowed and folds (`const const int` ≡ `const int`, SPEC 3.7): a code
+    // generator or a macro expansion may repeat a qualifier.
+    while (at_kw("const")) {
         advance();
         base_const = true;
     }
@@ -309,8 +312,9 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
             auto ptr = std::make_unique<TypeSpec>();
             ptr->kind = TypeSpec::K::Ptr;
             ptr->elem = std::move(spec);
-            // `T* const`: the pointer itself is read-only (the pointee const is carried by the elem spec)
-            if (at_kw("const")) {
+            // `T* const`: the pointer itself is read-only (the pointee const is carried by the elem
+            // spec). A repeated `const` folds (SPEC 3.7).
+            while (at_kw("const")) {
                 advance();
                 ptr->is_const = true;
             }

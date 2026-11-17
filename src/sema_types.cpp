@@ -470,7 +470,9 @@ namespace muc_detail {
             cur_global_ = nullptr;
             unit_globals_so_far_.push_back(g);
         }
-        // Signatures of same-name functions must not be fully identical (overloads must differ in parameters)
+        // Signatures of same-name functions must not be fully identical (overloads must differ in
+        // parameters). A top-level `const` on a parameter is not part of the signature (SPEC 3.7):
+        // `f(int)` and `f(const int)` are the same function, so the second declaration is a duplicate.
         for (auto& entry : infos_.at(u->name).funcs) {
             auto& vec = entry.second;
             if (entry.first == "main" && vec.size() > 1) {
@@ -489,16 +491,9 @@ namespace muc_detail {
             }
             for (size_t i = 0; i < vec.size(); ++i) {
                 for (size_t j = i + 1; j < vec.size(); ++j) {
-                    bool same = vec[i]->pty.size() == vec[j]->pty.size();
-                    if (same) {
-                        for (size_t k = 0; k < vec[i]->pty.size(); ++k) {
-                            if (!same_type(vec[i]->pty[k], vec[j]->pty[k])) {
-                                same = false;
-                                break;
-                            }
-                        }
+                    if (same_param_sig(vec[i]->pty, vec[j]->pty)) {
+                        err("duplicate signature of function `" + entry.first + "`", vec[j]);
                     }
-                    if (same) err("duplicate signature of function `" + entry.first + "`", vec[j]);
                 }
             }
         }
