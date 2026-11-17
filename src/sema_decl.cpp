@@ -166,12 +166,37 @@ namespace muc_detail {
             // declarations of its selected arm before the loop moves on.
             for (size_t di = 0; di < u->decls.size();) {
                 if (auto* dd = dynamic_cast<DirectiveDecl*>(u->decls[di].get())) {
-                    std::vector<std::unique_ptr<Decl>> chosen;
-                    if (!dd->arms.empty()) chosen = std::move(dd->arms.front().decls);
+                    // Evaluate the arms with the constants visible at this point: the public constants
+                    // of the `use`d units plus every compile-time constant of this unit (P3.2b).
+                    UserConstTable table;
+                    for (auto& use : u->uses) {
+                        if (const UserConstTable* t = unit_public_consts(use->unit_name)) {
+                            for (const auto& [k, v] : *t) table.emplace(k, v);
+                        }
+                    }
+                    if (const UserConstTable* t = unit_all_consts(u->name)) {
+                        for (const auto& [k, v] : *t) table[k] = v;  // this unit wins
+                    }
+                    DirectiveDecl::Arm* chosen = nullptr;
+                    bool taken = false;
+                    for (auto& arm : dd->arms) {
+                        if (!arm.cond) {
+                            if (!taken) chosen = &arm;  // `#else`: only when nothing above matched
+                            break;
+                        }
+                        std::string why;
+                        if (eval_directive_cond(*arm.cond, why, &table, nullptr)) {
+                            chosen = &arm;
+                            taken = true;
+                            break;
+                        }
+                    }
+                    std::vector<std::unique_ptr<Decl>> picked;
+                    if (chosen) picked = std::move(chosen->decls);
                     u->decls.erase(u->decls.begin() + static_cast<long>(di));
                     u->decls.insert(u->decls.begin() + static_cast<long>(di),
-                                    std::make_move_iterator(chosen.begin()),
-                                    std::make_move_iterator(chosen.end()));
+                                    std::make_move_iterator(picked.begin()),
+                                    std::make_move_iterator(picked.end()));
                     continue;  // reprocess the same index
                 }
                 auto& d = u->decls[di];

@@ -173,8 +173,10 @@ private:
         bool decl_mode = false;
         std::vector<std::unique_ptr<Decl>>* outer_decls = nullptr;
         std::vector<std::unique_ptr<Decl>> decls;
-        // The node that carries the selected declaration arm to the semantic pass (P3.2).
+        // The node that carries the declaration arms to the semantic pass (P3.2) and the condition of
+        // the arm being parsed.
         std::unique_ptr<DirectiveDecl> node;
+        ExprPtr arm_cond;
         // A statement-list arm (P3.1, statement slice).
         bool stmt_mode = false;
         std::vector<StmtPtr>* outer_stmts = nullptr;

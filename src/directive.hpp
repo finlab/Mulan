@@ -71,4 +71,8 @@ bool builtin_func(const std::string& name, const std::vector<long long>& args, l
 // Public compile-time constants of a parsed unit, available to a later `use` in another unit (P3).
 void register_unit_public_consts(const std::string& unit, const UserConstTable& table);
 const UserConstTable* unit_public_consts(const std::string& unit);
+// All compile-time constants of a parsed unit (private ones included), used by the collect-time `#if`
+// expansion inside that same unit (P3.2b).
+void register_unit_all_consts(const std::string& unit, const UserConstTable& table);
+const UserConstTable* unit_all_consts(const std::string& unit);
 void reset_unit_public_consts();

@@ -469,6 +469,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
         }
         register_unit_public_consts(unit->name, pub);
+        register_unit_all_consts(unit->name, user_consts_);
     }
     return unit;
 }

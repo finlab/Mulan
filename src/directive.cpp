@@ -437,3 +437,19 @@ const UserConstTable* unit_public_consts(const std::string& unit) {
 }
 
 void reset_unit_public_consts() { public_consts_table().clear(); }
+
+// All constants of a parsed unit (private included), for the collect-time expansion in that unit.
+std::unordered_map<std::string, UserConstTable>& all_consts_table() {
+    static std::unordered_map<std::string, UserConstTable> t;
+    return t;
+}
+
+void register_unit_all_consts(const std::string& unit, const UserConstTable& table) {
+    all_consts_table()[unit] = table;
+}
+
+const UserConstTable* unit_all_consts(const std::string& unit) {
+    auto& t = all_consts_table();
+    auto it = t.find(unit);
+    return it == t.end() ? nullptr : &it->second;
+}

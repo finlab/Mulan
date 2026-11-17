@@ -69,6 +69,7 @@ void Parser::directive_header() {
         ExprPtr cond = parse_expr();
         expect_op("{");
         directive_begin_arm(cond.get(), nm);
+        if (g.decl_mode) g.arm_cond = std::move(cond);
         return;
     }
 
@@ -83,6 +84,7 @@ void Parser::directive_header() {
         else g.saw_else = true;
         expect_op("{");
         directive_begin_arm(cond.get(), nm);
+        if (g.decl_mode) g.arm_cond = std::move(cond);
         return;
     }
 
@@ -107,11 +109,11 @@ void Parser::directive_arm_end() {
         for (auto& s : g.stmts) g.outer_stmts->push_back(std::move(s));
         g.stmts.clear();
     }
-    if (g.decl_mode && g.arm_taken && g.node) {
-        // The parser still selects the arm (P3.2 keeps the previous behaviour); the node records the
-        // selected declarations so the semantic pass can splice them after the name/layout pass.
-        g.node->arms.emplace_back(DirectiveDecl::Arm{nullptr, std::move(g.decls)});
+    if (g.decl_mode && g.node) {
+        // Keep every arm: collect evaluates the conditions after the units are parsed (P3.2b).
+        g.node->arms.emplace_back(std::move(g.arm_cond), std::move(g.decls));
         g.decls.clear();
+        g.arm_cond.reset();
     }
     if (!g.arm_taken) --discard_depth_;
     g.arm_taken = false;

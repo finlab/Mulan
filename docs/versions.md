@@ -27,6 +27,18 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 185 — 2026-11-17
+
+**P3.2b: collect evaluates the top-level `#if` arms.**
+
+- The parser keeps every arm (conditions included) in a `DirectiveDecl`; collect evaluates the conditions
+  with the visible constants (public constants of the `use`d units plus all constants of the unit) and
+  splices the selected arm before registration.
+- `#error` and `use` still go through the parser's selection so a dead-arm `use` stays out of the
+  dependency graph; both paths use the same constant table.
+- `sizeof` in a condition is still rejected by the parser-side evaluator (P3.3).
+- Behaviour unchanged; full suite: 707/707 (262 run, 407 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 184 — 2026-11-17
 
 **P3.2a: top-level `#if` becomes a `DirectiveDecl` expanded by collect.**
