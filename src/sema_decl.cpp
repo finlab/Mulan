@@ -5,6 +5,7 @@
 #include "sema_impl.hpp"
 
 #include <iterator>
+#include <limits>
 
 namespace muc_detail {
 
@@ -607,12 +608,18 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                 const std::string& n = s->spec->name;
                 if (!is_prim_name(n) && n.find('.') == std::string::npos) {
                     for (auto& d : u->decls) {
+                        // A struct is stored by value, so its layout (and every field's) is needed now. A
+                        // class is a reference: `sizeof` it is the handle size, independent of its fields,
+                        // and its fields are deliberately resolved late (`class A { B b; }` may name a `B`
+                        // declared further down). Resolving them here made that ordering fail — and, when
+                        // the field named a class that was not even indexed yet, crashed (#75).
                         if (auto* sd = dynamic_cast<StructDecl*>(d.get()); sd && sd->name == n) {
                             resolve_struct_fields(sd, u);
                             break;
                         }
                         if (auto* cd = dynamic_cast<ClassDecl*>(d.get()); cd && cd->name == n) {
-                            resolve_class_fields(cd, u);
+                            // The handle type is enough: its size does not depend on the fields.
+                            if (!cd->ty) cd->ty = Type::make_class(u->name, cd->name);
                             break;
                         }
                     }
@@ -639,6 +646,9 @@ bool is_scalar_const_type(const TypeSpec* spec) {
 
     void Sema::resolve_class_fields(ClassDecl* c, Unit* u) {
         if (!c || c->fields_resolved) return;
+        // A class named by a sizeof in an earlier declaration may still be a bare declaration here: the
+        // placeholder is created on demand, exactly as check_class does.
+        if (!c->ty) c->ty = Type::make_class(u->name, c->name);
         // Reject a too-deep chain *before* flattening the base fields: copying them level by level is
         // O(depth^2), so an absurd hierarchy would otherwise burn seconds before the diagnostic.
         {
@@ -726,6 +736,9 @@ bool is_scalar_const_type(const TypeSpec* spec) {
             long long v = 0;
             if (!eval_const_int(u->operand.get(), v)) return false;
             if (u->op == "-") {
+                // `-LLONG_MIN` has no 64-bit result; the host would trap, and reporting "not a constant"
+                // lets the caller produce the ordinary diagnostic.
+                if (v == std::numeric_limits<long long>::min()) return false;
                 out = -v;
                 return true;
             }
@@ -741,19 +754,28 @@ bool is_scalar_const_type(const TypeSpec* spec) {
             if (!eval_const_int(b->left.get(), l) || !eval_const_int(b->right.get(), r)) {
                 return false;
             }
+            // The folding is host C++ code, so it must not invoke undefined behaviour: `l + r` on
+            // overflowing operands and `l / -1` on LLONG_MIN are UB (the latter traps on x86), and an
+            // evaluator that crashes the compiler on a `const` initializer is not a diagnostic
+            // (#70, #78). Sums, differences and products wrap through unsigned arithmetic, which is
+            // defined; the language-level width (`int` vs `long`) is a separate check.
             const std::string& op = b->op;
-            if (op == "+") out = l + r;
-            else if (op == "-") out = l - r;
-            else if (op == "*") out = l * r;
+            const auto ul = static_cast<unsigned long long>(l);
+            const auto ur = static_cast<unsigned long long>(r);
+            if (op == "+") out = static_cast<long long>(ul + ur);
+            else if (op == "-") out = static_cast<long long>(ul - ur);
+            else if (op == "*") out = static_cast<long long>(ul * ur);
             else if (op == "/") {
                 if (r == 0) return false;
+                if (l == std::numeric_limits<long long>::min() && r == -1) return false;
                 out = l / r;
             } else if (op == "%") {
                 if (r == 0) return false;
+                if (l == std::numeric_limits<long long>::min() && r == -1) return false;
                 out = l % r;
             } else if (op == "<<") {
-                if (r < 0 || r > 62) return false;
-                out = l << r;
+                if (r < 0 || r > 63) return false;
+                out = static_cast<long long>(ul << r);
             } else if (op == ">>") {
                 if (r < 0 || r > 63) return false;
                 out = l >> r;

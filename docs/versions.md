@@ -27,6 +27,26 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 200 — 2026-11-18
+
+**Two compiler crashes in constant folding.**
+
+- **`MIN / -1` trapped the compiler** (audit issue #78): `eval_const_int` folded `long` division in the
+  compiler's own C++ arithmetic, where `LLONG_MIN / -1` is undefined behaviour and raises SIGFPE on x86;
+  `muc check` on `int[MIN / -1] a;` died with `0xC0000094`. Division and remainder by `-1` on the minimum
+  value are rejected (the caller reports "not a compile-time constant"), and `+`, `-`, `*`, `<<` and unary
+  `-` no longer invoke undefined behaviour either: they fold through unsigned arithmetic (a defined wrap)
+  and `-LLONG_MIN` is rejected (#70's class of bug).
+- **`sizeof` of a class resolved its fields** (audit issue #75): `const int SIZE = sizeof(First) as int;`
+  with `class First { Later value; }` and `class Later` declared further down segfaulted in
+  `resolve_class_fields`, because the early `sizeof` pre-resolution forced field resolution before the
+  named class was indexed. A class is a reference: `sizeof` it is the handle size and needs no fields, so
+  the pre-resolution only materializes the handle type now, and fields keep their late resolution (where a
+  field may name a class declared later).
+- Tests: `tests/errors/const_div_overflow.mu`, `tests/check/sizeof_class_forward.mu`.
+
+Full suite: 758/758 (283 run, 431 must-fail, 30 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 199 — 2026-11-18
 
 **Audit follow-up on the capacity work: six boundary bugs, and the diamond blowup they uncovered.**
