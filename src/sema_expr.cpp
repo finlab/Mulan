@@ -1447,6 +1447,9 @@ namespace muc_detail {
     bool Sema::can_cast(const TypePtr& src, const TypePtr& dst) {
         if (!src || !dst) return false;
         if (same_type(src, dst)) return true;
+        // `as` is the explicit (unsafe) escape hatch, including `const` removal (SPEC 3.7: there is no
+        // `const_cast`; write `as`). Adding cv to the same type is equally explicit.
+        if (same_type_sig(src, dst)) return true;
         // An enum is a nominal type: explicit conversion only with integers (non-enum), and never with floating point
         if (src->kind == TypeKind::Enum || dst->kind == TypeKind::Enum) {
             if (src->kind == TypeKind::Enum && dst->kind == TypeKind::Enum) return false;

@@ -827,8 +827,22 @@ bool is_scalar_const_type(const TypeSpec* spec) {
         }
     }
 
-    void Sema::resolve_unit_types(Unit* u) {
-        cur_ = u;
+    // A `const T` view was copied from T while T may still have been an empty placeholder (its fields and
+    // methods are filled in `resolve_unit_types`). Once every shape is final, replace each view's body
+    // with the canonical type's, keeping the view's own cv flag and identity.
+    void Sema::refresh_cv_views() {
+        for (auto& [canon, views] : cv_views_) {
+            if (!canon) continue;
+            for (Type* view : views) {
+                if (!view) continue;
+                const bool keep_const = view->is_const;
+                *view = *canon;
+                view->is_const = keep_const;
+            }
+        }
+    }
+
+    void Sema::resolve_unit_types(Unit* u) {        cur_ = u;
 
         // Structs: the placeholder type is ready, fields are filled in here (fields may reference other structs/enums)
         for (auto& d : u->decls) {
@@ -1299,6 +1313,9 @@ Program Sema::run() {
     collect();
     place_structs();
     for (auto& u : units_) resolve_unit_types(u.get());
+    // A `const T` view is a copy of the type node (cv lives on the node), taken while T may still have
+    // been a placeholder; now that every shape is final, refresh each view from its type.
+    refresh_cv_views();
     check_layouts();
     check_hierarchy_cycles();
     compute_abstract_all();

@@ -250,6 +250,11 @@ namespace muc_detail {
             }
             if (root_is_const(t)) err("cannot modify a member of a `const` binding", t);
             TypePtr ot = m->obj ? m->obj->ty : nullptr;
+            // `arr[0].x = ...` where `arr` is a `const P[N]`: the element is a const object even though the
+            // binding is not (SPEC 3.7: a `const T[N]` array has read-only elements).
+            if (ot && ot->is_const) {
+                err("cannot modify a member of a read-only (`const`) value (`" + ot->str() + "`)", t);
+            }
             if (ot &&
                 (ot->kind == TypeKind::Struct || ot->kind == TypeKind::Class) && m->field_index >= 0 &&
                 static_cast<size_t>(m->field_index) < ot->fields.size()) {
@@ -265,6 +270,9 @@ namespace muc_detail {
                 err("cannot write through a `const` slice", t);
             if (bt && bt->kind == TypeKind::Ptr && bt->elem && bt->elem->is_const)
                 err("cannot write through a `const` pointer", t);
+            // `const T[N]` has read-only elements (SPEC 3.7); the binding itself is not `const`.
+            if (bt && bt->kind == TypeKind::Array && bt->elem && bt->elem->is_const)
+                err("cannot write a read-only (`const`) array element", t);
             if (root_is_const(ix->base.get())) err("cannot modify an element of a `const` binding", t);
             return;
         }

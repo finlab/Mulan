@@ -122,9 +122,8 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             // `const struct S` / `const class C` is a declaration modifier (decided 2026-11-17): every
             // field and method is implicitly const. It is distinguished from a `const T` variable
-            // declaration by the following keyword.
-            if (at_kw("const") &&
-                (peek(1).text == "struct" || peek(1).text == "class" || peek(1).text == "union")) {
+            // declaration by what follows, which may be other modifiers (`const nocopy struct S`).
+            if (at_kw("const") && type_decl_after_modifiers(1)) {
                 if (is_const_decl) throw err_at("duplicate modifier `const`", peek());
                 is_const_decl = true;
                 const_tok = peek();

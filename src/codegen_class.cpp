@@ -348,8 +348,9 @@ namespace muc_detail {
     }
 
     // Store the member initializer list (`C(...) : x(v) { }`) before the body runs. The destination
-    // fields are zeroed at allocation (class) or default-constructed by the member step (struct), so a
-    // simple store is correct for trivial field types; a managed field type is retained below.
+    // fields are zeroed at allocation (class) or default-constructed by the member step (struct), so the
+    // store follows the same ownership rules as a field assignment: a borrowed source is retained, an
+    // owned one is transferred (a raw store left class-handle fields unretained).
     void Emitter::emitCtorInitList(Value* self, const TypePtr& ty, CtorDecl* ctor) {
         if (!self || !ty || !ctor || ctor->init_list.empty()) return;
         for (auto& item : ctor->init_list) {
@@ -357,9 +358,7 @@ namespace muc_detail {
             if (idx < 0) continue;  // sema already reported
             const Field& f = ty->fields[static_cast<size_t>(idx)];
             Value* dst = fieldAddr(self, ty, idx);
-            Value* v = eval(item.second.get());
-            if (f.type) v = coerce(item.second.get(), f.type);
-            b.CreateStore(v, dst);
+            initFromExpr(dst, f.type, item.second.get(), ty->is_packed);
         }
     }
 

@@ -27,6 +27,30 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 194 — 2026-11-18
+
+**Audit round 3: const views (a crash, the interface view, array elements), `as`, modifier order.**
+
+- **A `const T` view is a copy of the type node** and was taken while T was still an empty placeholder, so
+  the view kept an empty field/method table: `const IC` had no methods at all and `const Cell2` ("const
+  struct's handle field") had no fields. `resolve_type` now records every view; `refresh_cv_views()` runs
+  after `resolve_unit_types` and copies the final shape into each view (cv flag and identity preserved).
+- **Constructor initializer lists** stored a class-handle field with a raw `store`: the parameter's
+  release then freed the object the field still pointed at (heap corruption on the next read). The list now
+  goes through `initFromExpr`, the same ownership rules as a field assignment (retain a borrowed source,
+  transfer an owned one); `initInto`'s expression tail is shared, so the two paths cannot drift.
+- **`const T[N]` elements are read-only**: `arr[0].x = v` (a member through a const element) and
+  `ia[0] = v` (a scalar element of a `const int[N]`) are rejected; the binding itself is not `const`.
+- **`as` removes `const`**: `c as P` for a value struct was rejected although pointer const removal worked
+  (`can_cast` accepts a cv-only difference now, as SPEC 3.7 says: `as` replaces `const_cast`).
+- **Declaration modifiers compose in any order**: `const nocopy struct`, `const packed struct`,
+  `const align(8) struct` parse (`const` is a declaration modifier when a type declaration follows,
+  skipping the other modifiers).
+- Tests: `const_iface_view`, `const_struct_as_removal`, `decl_modifier_order`, `const_arr_member_write`,
+  `const_arr_scalar_write`, `initlist_class_field`.
+
+Full suite: 741/741 (279 run, 421 must-fail, 27 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 193 — 2026-11-18
 
 **Compile-time constants as array lengths, and honest constructor diagnostics.**

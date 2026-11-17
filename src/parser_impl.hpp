@@ -158,7 +158,35 @@ private:
     // loop detects an arm boundary by comparing the size of `groups_` with the value it recorded on
     // entry, so a `}` closing a nested block is never mistaken for one.
     bool at_directive() const { return peek().is_op("#"); }
-    void directive_header();
+    // Whether a `struct` / `class` / `union` declaration starts at `from`, after any intervening
+    // declaration modifiers (`nocopy`, `packed`, `align(N)`). `const` is a declaration modifier only in
+    // that case (`const nocopy struct S` is not a `const` variable).
+    bool type_decl_after_modifiers(std::size_t from) const {
+        for (std::size_t i = from;;) {
+            const std::string& t = peek(i).text;
+            if (t == "struct" || t == "class" || t == "union") return true;
+            if (t == "nocopy" || t == "packed") {
+                ++i;
+                continue;
+            }
+            if (t == "align" && peek(i + 1).is_op("(")) {
+                int depth = 0;
+                for (; i < toks_.size(); ++i) {
+                    const Token& tk = peek(i);
+                    if (tk.is_op("(")) {
+                        ++depth;
+                    } else if (tk.is_op(")")) {
+                        if (--depth == 0) {
+                            ++i;
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+            return false;
+        }
+    }    void directive_header();
     void directive_arm_end();
 
     struct DirectiveGroup {

@@ -700,6 +700,11 @@ struct Emitter {
 
     void initInto(Value* addr, const TypePtr& ty, Init* init, bool unaligned = false);
 
+    // Ownership-correct store of an expression into a fresh slot: the expression tail of `initInto`
+    // (retain a borrowed source, transfer an owned one). Constructor initializer lists hold
+    // expressions rather than `Init` nodes, so they share this path.
+    void initFromExpr(Value* addr, const TypePtr& ty, Expr* e, bool unaligned = false);
+
     void block(Block* blk);
 
     void stmt(Stmt* s);

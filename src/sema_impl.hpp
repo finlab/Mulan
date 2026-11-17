@@ -125,6 +125,9 @@ private:
     // Cache for `directive_const_table()` (one table per unit being checked).
     Unit* const_table_unit_ = nullptr;
     UserConstTable const_table_;
+    // Every `const T` view created by `resolve_type`, grouped by its canonical type (`cv_views_[T]`).
+    // `refresh_cv_views` copies the final shape of T into each view.
+    std::unordered_map<const Type*, std::vector<Type*>> cv_views_;
     Unit* cur_ = nullptr;
     FuncDecl* cur_func_ = nullptr;
     TypePtr cur_ret_;
@@ -290,6 +293,10 @@ private:
 
     // ------------------------------------------------------------ collection
     void collect();
+    // A `const T` view is a copy of the type node (cv is part of the type). The copy is taken while T may
+    // still be a placeholder (its fields/methods are filled later), so every view is refreshed from its
+    // canonical type once all shapes are final.
+    void refresh_cv_views();
     // `std.comptime` declares the compiler-provided constants; this cross-checks its target enums
     // against the compiler's table (see directive.hpp).
     void check_comptime_unit();

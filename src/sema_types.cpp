@@ -13,6 +13,7 @@ namespace muc_detail {
             if (spec->is_const && !spec->resolved->is_const) {
                 auto c = std::make_shared<Type>(*spec->resolved);
                 c->is_const = true;
+                cv_views_[spec->resolved.get()].push_back(c.get());
                 return c;
             }
             return spec->resolved;
@@ -44,6 +45,7 @@ namespace muc_detail {
                     if (t->kind == TypeKind::Module) err_ts("`const` cannot qualify a unit name", spec);
                     auto c = std::make_shared<Type>(*t);
                     c->is_const = true;
+                    cv_views_[t.get()].push_back(c.get());
                     return c;
                 }
                 return t;

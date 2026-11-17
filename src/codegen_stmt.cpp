@@ -113,31 +113,7 @@ using ArgPack = Emitter::ArgPack;
                                ConstantInt::get(i64(), bytes.size()));
                 return;
             }
-            Value* v = coerce(e, ty);
-            if (isRefKind(ty)) {
-                if (!ownsReference(e)) emitRetainRef(v, ty);
-                storeValue(v, addr, ty, unaligned);
-                return;
-            }
-            if (ty->kind == TypeKind::Array && needsCleanup(ty)) {
-                storeValue(v, addr, ty, unaligned);
-                if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
-                return;
-            }
-            if ((ty->kind == TypeKind::Struct || ty->kind == TypeKind::Sum) && needsCleanup(ty)) {
-                // borrowed source: retain field by field (a sum retains its active payload);
-                // owned source (a call result / a construction result): ownership transfer
-                storeValue(v, addr, ty, unaligned);
-                if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
-                return;
-            }
-            if (ty->kind == TypeKind::Slice) {
-                // borrowed source (another dynamic array): retain; new / array conversion / call result: ownership transfer
-                storeValue(v, addr, ty, unaligned);
-                if (!convOwns(e, ty)) emitRetainValue(addr, ty, unaligned);
-                return;
-            }
-            storeValue(v, addr, ty, unaligned);
+            initFromExpr(addr, ty, e, unaligned);
             return;
         }
         if (auto ia = dynamic_cast<InitAggregate*>(init)) {
@@ -214,6 +190,36 @@ using ArgPack = Emitter::ArgPack;
             }
         }
         fail("LLVM backend: unsupported initializer", init->line, init->col);
+    }
+
+    void Emitter::initFromExpr(Value* addr, const TypePtr& ty, Expr* e, bool unaligned) {
+        if (!e || !ty) return;
+        Value* v = coerce(e, ty);
+        if (isRefKind(ty)) {
+            if (!ownsReference(e)) emitRetainRef(v, ty);
+            storeValue(v, addr, ty, unaligned);
+            return;
+        }
+        if (ty->kind == TypeKind::Array && needsCleanup(ty)) {
+            storeValue(v, addr, ty, unaligned);
+            if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
+            return;
+        }
+        if ((ty->kind == TypeKind::Struct || ty->kind == TypeKind::Sum) && needsCleanup(ty)) {
+            // borrowed source: retain field by field (a sum retains its active payload);
+            // owned source (a call result / a construction result): ownership transfer
+            storeValue(v, addr, ty, unaligned);
+            if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
+            return;
+        }
+        if (ty->kind == TypeKind::Slice) {
+            // borrowed source (another dynamic array): retain; new / array conversion / call result:
+            // ownership transfer
+            storeValue(v, addr, ty, unaligned);
+            if (!convOwns(e, ty)) emitRetainValue(addr, ty, unaligned);
+            return;
+        }
+        storeValue(v, addr, ty, unaligned);
     }
 
     void Emitter::block(Block* blk) {
