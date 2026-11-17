@@ -99,55 +99,79 @@ namespace muc_detail {
         return true;
     }
 
-    const MethodSig* Sema::find_sig(const TypePtr& t, const MethodSig& sig, int depth) {
+    // The interface and base-class graphs are DAGs, so a plain recursion visits shared ancestors once per
+    // path — exponentially many times in a diamond, which a generated program can exploit (`interface
+    // A{i} : A{i-1}, B{i-1}` doubles the paths per level). Every walk below takes a visited set.
+    static bool first_visit(std::unordered_set<const Type*>* seen, const TypePtr& t) {
+        if (!seen) return true;
+        return seen->insert(t.get()).second;
+    }
+
+    const MethodSig* Sema::find_sig(const TypePtr& t, const MethodSig& sig, int depth,
+                                    std::unordered_set<const Type*>* seen) {
         if (!t || depth > 256) return nullptr;
+        std::unordered_set<const Type*> local;
+        std::unordered_set<const Type*>& visited = seen ? *seen : local;
+        if (!first_visit(&visited, t)) return nullptr;
         for (auto& m : t->methods) {
             if (same_sig(m, sig)) return &m;
         }
         if (t->kind == TypeKind::Class && t->base) {
-            if (auto r = find_sig(t->base, sig, depth + 1)) return r;
+            if (auto r = find_sig(t->base, sig, depth + 1, &visited)) return r;
         }
         for (auto& i : t->interfaces) {
-            if (auto r = find_sig(i, sig, depth + 1)) return r;
+            if (auto r = find_sig(i, sig, depth + 1, &visited)) return r;
         }
         return nullptr;
     }
 
     void Sema::collect_sigs(const TypePtr& t, const MethodSig& sig,
-                             std::vector<const MethodSig*>& out, int depth) {
+                             std::vector<const MethodSig*>& out, int depth,
+                             std::unordered_set<const Type*>* seen) {
         if (!t || depth > 256) return;
+        std::unordered_set<const Type*> local;
+        std::unordered_set<const Type*>& visited = seen ? *seen : local;
+        if (!first_visit(&visited, t)) return;
         for (auto& m : t->methods) {
             if (same_sig(m, sig)) out.push_back(&m);
         }
-        if (t->kind == TypeKind::Class && t->base) collect_sigs(t->base, sig, out, depth + 1);
-        for (auto& i : t->interfaces) collect_sigs(i, sig, out, depth + 1);
+        if (t->kind == TypeKind::Class && t->base) collect_sigs(t->base, sig, out, depth + 1, &visited);
+        for (auto& i : t->interfaces) collect_sigs(i, sig, out, depth + 1, &visited);
     }
 
     const MethodSig* Sema::find_method(const TypePtr& t, const std::string& name, size_t argc,
-                                        int depth) {
+                                        int depth, std::unordered_set<const Type*>* seen) {
         if (!t || depth > 256) return nullptr;
+        std::unordered_set<const Type*> local;
+        std::unordered_set<const Type*>& visited = seen ? *seen : local;
+        if (!first_visit(&visited, t)) return nullptr;
         for (auto& m : t->methods) {
             if (m.name == name && m.params.size() == argc) return &m;
         }
         if (t->kind == TypeKind::Class && t->base) {
-            if (auto r = find_method(t->base, name, argc, depth + 1)) return r;
+            if (auto r = find_method(t->base, name, argc, depth + 1, &visited)) return r;
         }
         for (auto& i : t->interfaces) {
-            if (auto r = find_method(i, name, argc, depth + 1)) return r;
+            if (auto r = find_method(i, name, argc, depth + 1, &visited)) return r;
         }
         return nullptr;
     }
 
-    bool Sema::has_method_named(const TypePtr& t, const std::string& name, int depth) {
+    bool Sema::has_method_named(const TypePtr& t, const std::string& name, int depth,
+                                std::unordered_set<const Type*>* seen) {
         if (!t || depth > 256) return false;
+        std::unordered_set<const Type*> local;
+        std::unordered_set<const Type*>& visited = seen ? *seen : local;
+        if (!first_visit(&visited, t)) return false;
         for (auto& m : t->methods) {
             if (m.name == name) return true;
         }
-        if (t->kind == TypeKind::Class && t->base && has_method_named(t->base, name, depth + 1)) {
+        if (t->kind == TypeKind::Class && t->base &&
+            has_method_named(t->base, name, depth + 1, &visited)) {
             return true;
         }
         for (auto& i : t->interfaces) {
-            if (has_method_named(i, name, depth + 1)) return true;
+            if (has_method_named(i, name, depth + 1, &visited)) return true;
         }
         return false;
     }
@@ -375,11 +399,15 @@ namespace muc_detail {
     // `d` is `b` itself or inherits from it (used so that a refining default wins, as it does for classes).
     // The depth bound covers the enforced limit (`kMaxInterfaceDepth` = 256), so a program that compiles
     // never loses an inherited member to a truncated walk.
-    static bool iface_extends(const TypePtr& d, const TypePtr& b, int depth = 0) {
+    static bool iface_extends(const TypePtr& d, const TypePtr& b, int depth = 0,
+                              std::unordered_set<const Type*>* seen = nullptr) {
         if (!d || !b || depth > kMaxInterfaceDepth) return false;
+        std::unordered_set<const Type*> local;
+        std::unordered_set<const Type*>& visited = seen ? *seen : local;
+        if (!visited.insert(d.get()).second) return false;
         if (same_type(d, b)) return true;
         for (const auto& p : d->interfaces) {
-            if (iface_extends(p, b, depth + 1)) return true;
+            if (iface_extends(p, b, depth + 1, &visited)) return true;
         }
         return false;
     }
@@ -389,8 +417,11 @@ namespace muc_detail {
     // parallel: sema_decl.cpp builds both in one pass, in declaration order. Generic interface
     // instances register their cloned decl under the display name, so `ISeq<int>` works too.
     MethodDecl* Sema::find_iface_default_decl(const TypePtr& itf, const MethodSig& sig, TypePtr* owner,
-                                              int depth) {
+                                              int depth, std::unordered_set<const Type*>* seen) {
         if (!itf || depth > kMaxInterfaceDepth) return nullptr;
+        std::unordered_set<const Type*> local;
+        std::unordered_set<const Type*>& visited = seen ? *seen : local;
+        if (!first_visit(&visited, itf)) return nullptr;
         auto info = infos_.find(itf->unit);
         if (info != infos_.end()) {
             auto found = info->second.interfaces.find(itf->name);
@@ -407,7 +438,7 @@ namespace muc_detail {
             }
         }
         for (const auto& b : itf->interfaces) {
-            if (MethodDecl* d = find_iface_default_decl(b, sig, owner, depth + 1)) return d;
+            if (MethodDecl* d = find_iface_default_decl(b, sig, owner, depth + 1, &visited)) return d;
         }
         return nullptr;
     }
@@ -450,6 +481,7 @@ namespace muc_detail {
         // pairs they require, so that two interfaces contributing the same signature are seen together.
         std::vector<TypePtr> chains;
         std::vector<std::pair<const MethodSig*, TypePtr>> reqs;
+        std::unordered_set<const Type*> visited;  // shared by the `collect` walks of every listed interface
         for (size_t i = 0; i < sd->base_specs.size(); ++i) {
             if (!sd->base_specs[i]) continue;
             TypePtr bt = resolve_type(sd->base_specs[i].get(), cur_);
@@ -464,6 +496,7 @@ namespace muc_detail {
             chains.push_back(bt);
             std::function<void(const TypePtr&, int)> collect = [&](const TypePtr& itf, int depth) {
                 if (!itf || depth > kMaxInterfaceDepth) return;
+                if (!visited.insert(itf.get()).second) return;  // a DAG: shared ancestors once
                 for (const auto& m : itf->methods) reqs.push_back({&m, itf});
                 for (const auto& p : itf->interfaces) collect(p, depth + 1);
             };
@@ -725,20 +758,29 @@ namespace muc_detail {
 
     void Sema::check_interface(InterfaceDecl* itf) {
         // The interface graph walker (`iface_extends`) stops at a fixed depth; a deeper chain would
-        // silently drop inherited members.
+        // silently drop inherited members. The metric is the *longest path*, not the number of visited
+        // nodes: a diamond re-visits its shared ancestors, so counting visits rejects a shallow DAG
+        // (`A : B, C`, both `: D`) once it fans out. Heights are memoized, so each interface is walked
+        // once.
         {
-            int depth = 0;
-            std::vector<TypePtr> stack(itf->ty->interfaces.begin(), itf->ty->interfaces.end());
-            while (!stack.empty()) {
-                TypePtr cur = stack.back();
-                stack.pop_back();
-                if (++depth > kMaxInterfaceDepth) {
-                    err("interface `" + itf->name + "` inherits more than " +
-                            std::to_string(kMaxInterfaceDepth) +
-                            " interfaces in one chain; flatten the hierarchy",
-                        itf);
-                }
-                for (auto& i : cur->interfaces) stack.push_back(i);
+            std::unordered_map<const Type*, int> height;
+            std::unordered_set<const Type*> busy;
+            std::function<int(const TypePtr&)> longest = [&](const TypePtr& cur) -> int {
+                if (!cur) return 0;
+                if (auto it = height.find(cur.get()); it != height.end()) return it->second;
+                if (!busy.insert(cur.get()).second) return 0;  // a cycle: check_hierarchy_cycles reports it
+                int best = 0;
+                for (auto& b : cur->interfaces) best = std::max(best, longest(b) + 1);
+                busy.erase(cur.get());
+                height[cur.get()] = best;
+                return best;
+            };
+            const int depth = longest(itf->ty);
+            if (depth > kMaxInterfaceDepth) {
+                err("interface `" + itf->name + "` inherits more than " +
+                        std::to_string(kMaxInterfaceDepth) +
+                        " interfaces in one chain; flatten the hierarchy",
+                    itf);
             }
         }
         for (auto& m : itf->methods) {
@@ -765,40 +807,51 @@ namespace muc_detail {
         return false;
     }
 
-    bool Sema::iface_has_default(const TypePtr& t, const MethodSig& req, int depth) {
+    bool Sema::iface_has_default(const TypePtr& t, const MethodSig& req, int depth,
+                                 std::unordered_set<const Type*>* seen) {
         if (!t || depth > 256) return false;
+        std::unordered_set<const Type*> local;
+        std::unordered_set<const Type*>& visited = seen ? *seen : local;
+        if (!first_visit(&visited, t)) return false;
         for (auto& m : t->methods) {
             if (same_sig(m, req) && !m.is_abstract) return true;
         }
         for (auto& i : t->interfaces) {
-            if (iface_has_default(i, req, depth + 1)) return true;
+            if (iface_has_default(i, req, depth + 1, &visited)) return true;
         }
         return false;
     }
 
     void Sema::collect_abstract_reqs(const TypePtr& t, std::vector<MethodSig>& out,
-                                      int depth) {
+                                      int depth, std::unordered_set<const Type*>* seen) {
         if (!t || depth > 256) return;
+        std::unordered_set<const Type*> local;
+        std::unordered_set<const Type*>& visited = seen ? *seen : local;
+        if (!first_visit(&visited, t)) return;
         for (auto& m : t->methods) {
             // Operators are compile-time-only contract members: they have no vtable slot and are
             // resolved statically, so an interface operator never makes an implementor abstract.
             if (m.is_abstract && !m.is_operator) out.push_back(m);
         }
         if (t->kind == TypeKind::Class && t->base) {
-            collect_abstract_reqs(t->base, out, depth + 1);
+            collect_abstract_reqs(t->base, out, depth + 1, &visited);
         }
         for (auto& i : t->interfaces) {
-            collect_abstract_reqs(i, out, depth + 1);
+            collect_abstract_reqs(i, out, depth + 1, &visited);
         }
     }
 
-    void Sema::collect_defaults(const TypePtr& t, std::vector<MethodSig>& out, int depth) {
+    void Sema::collect_defaults(const TypePtr& t, std::vector<MethodSig>& out, int depth,
+                                std::unordered_set<const Type*>* seen) {
         if (!t || depth > 256) return;
+        std::unordered_set<const Type*> local;
+        std::unordered_set<const Type*>& visited = seen ? *seen : local;
+        if (!first_visit(&visited, t)) return;
         for (auto& m : t->methods) {
             if (!m.is_abstract) out.push_back(m);
         }
         for (auto& i : t->interfaces) {
-            collect_defaults(i, out, depth + 1);
+            collect_defaults(i, out, depth + 1, &visited);
         }
     }
 

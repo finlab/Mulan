@@ -27,6 +27,43 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 199 — 2026-11-18
+
+**Audit follow-up on the capacity work: six boundary bugs, and the diamond blowup they uncovered.**
+
+- **Units at the limit** (audit #88): the cap was tested when `visit()` was entered, before the
+  "already loaded" lookup, so a program with exactly 1024 units was rejected because the entry's second
+  pass over its own dependencies tripped it. The check now sits at the insertion point; 1024 loaded
+  units pass, 1025 fail.
+- **Interface depth** (audit #86): the guard counted *visits*, so a shallow diamond (`Ai : Ai-1, Bi-1`)
+  was rejected as a deep chain. It measures the longest path now, memoized, so each interface is walked
+  once.
+- **Class chain walkers** (audit #90): with the limit at 256 base links the walkers (`depth > 256`)
+  inspect the whole accepted chain, and `tests/check/class_chain_upcast.mu` pins the boundary.
+- **Sum layouts** (audit #85): `sizeof` of a sum goes through the synthesized tag + payload union, one
+  level deeper than the payload, so a payload at the edge of the limit was accepted with a wrong size.
+  `check_layouts` validates every sum's layout.
+- **Generic instances** (audit #87): an instance is created while bodies are checked, i.e. after
+  `check_layouts`; `Box<S511>` therefore passed every check and failed in the LLVM backend with a layout
+  mismatch. Instances get their own validation pass (`check_instance_layouts`) before errors are
+  reported.
+- **By-value cycles across sums** (audit #89): `type A = Wrap(B) | None; type B = Wrap(A) | None;` has no
+  finite layout; the direct self-reference check could not see it. `type_size` / `type_align` keep the
+  recursion path, report the cycle, and `check_layouts` rejects it instead of returning a truncated size.
+  The depth guard now only trips on composite types (a leaf at the end of a legal chain is not a
+  violation), so "512 levels" means 512 nested containers exactly.
+- **Interface diamonds were exponential**: a 30-level diamond with a `struct` implementing it took 2 s,
+  35 levels never finished — every interface walk (`find_sig`, `collect_sigs`, `find_method`,
+  `has_method_named`, `iface_has_default`, `collect_abstract_reqs`, `collect_defaults`,
+  `find_iface_default_decl`, `iface_extends`) recursed without a visited set. All of them keep one now:
+  60 levels take 0.02 s. A diamond default is collected once, so it neither conflicts with itself nor
+  fails to materialize (`tests/cases/iface_diamond_default.mu`).
+- Tests: `sum_cycle`, `sum_nesting_limit`, `generic_struct_nesting` (must-fail), `iface_diamond`,
+  `class_chain_upcast` (check), `iface_diamond_default` (run). `Mulan-Agents:bench/capacity_probe.py`
+  grows to 27 axes, including the exactly-at-the-limit unit program.
+
+Full suite: 756/756 (283 run, 430 must-fail, 29 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 198 — 2026-11-18
 
 **Capacity limits calibrated against C, C++ and Rust.** Build 197's first pass was too generous; every

@@ -522,12 +522,6 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
     std::set<std::string> prescan_stack;
 
     std::function<Unit*(const std::string&)> visit = [&](const std::string& path) -> Unit* {
-        // A program that pulls in tens of thousands of units is either generated or hostile; the cost is
-        // ~7ms per unit, so the limit keeps a compile bounded instead of letting it run for minutes.
-        if (owned.size() >= kMaxUnits) {
-            throw MuError("this program uses more than " + std::to_string(kMaxUnits) +
-                          " units; combine related declarations into fewer files");
-        }
         const auto pre = prescan(path);
         if (!pre.first.empty()) {
             if (prescan_stack.count(pre.first)) {
@@ -556,6 +550,14 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
             throw MuError("unit circular dependency: " + name);
         }
         if (it != owned.end()) return it->second.get();
+        // A program that pulls in tens of thousands of units is either generated or hostile; the cost is
+        // ~7ms per unit, so the limit keeps a compile bounded instead of letting it run for minutes. The
+        // check sits at the insertion point, after the "already loaded" lookups above, so a program with
+        // exactly `kMaxUnits` units is accepted.
+        if (owned.size() >= kMaxUnits) {
+            throw MuError("this program uses more than " + std::to_string(kMaxUnits) +
+                          " units; combine related declarations into fewer files");
+        }
         if (verbose) std::cerr << "unit " << name << " <- " << path << "\n";
         in_progress.insert(name);
         Unit* raw = unit.get();

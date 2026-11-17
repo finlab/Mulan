@@ -385,6 +385,7 @@ private:
     static bool is_pow2(long long n);
 
     void check_layouts();
+    void check_instance_layouts();
 
     // Type-level compile-time constants: resolve the type and check that "only scalars / enums are allowed"
     void resolve_const_members(std::vector<std::unique_ptr<ConstMember>>& list,
@@ -500,15 +501,19 @@ private:
 
     static bool same_sig(const MethodSig& a, const MethodSig& b);
 
-    static const MethodSig* find_sig(const TypePtr& t, const MethodSig& sig, int depth = 0);
+    static const MethodSig* find_sig(const TypePtr& t, const MethodSig& sig, int depth = 0,
+                                     std::unordered_set<const Type*>* seen = nullptr);
 
     static void collect_sigs(const TypePtr& t, const MethodSig& sig,
-                             std::vector<const MethodSig*>& out, int depth = 0);
+                             std::vector<const MethodSig*>& out, int depth = 0,
+                             std::unordered_set<const Type*>* seen = nullptr);
 
     static const MethodSig* find_method(const TypePtr& t, const std::string& name, size_t argc,
-                                        int depth = 0);
+                                        int depth = 0,
+                                        std::unordered_set<const Type*>* seen = nullptr);
 
-    static bool has_method_named(const TypePtr& t, const std::string& name, int depth = 0);
+    static bool has_method_named(const TypePtr& t, const std::string& name, int depth = 0,
+                                 std::unordered_set<const Type*>* seen = nullptr);
 
     void check_method(ClassDecl* c, MethodDecl* m);
 
@@ -539,7 +544,8 @@ private:
     // inheritance chain, most derived first); `owner` receives the declaring interface. nullptr when
     // every declaration on the chain is abstract.
     MethodDecl* find_iface_default_decl(const TypePtr& itf, const MethodSig& sig,
-                                        TypePtr* owner = nullptr, int depth = 0);
+                                        TypePtr* owner = nullptr, int depth = 0,
+                                        std::unordered_set<const Type*>* seen = nullptr);
 
     // Materialize that default as an ordinary method of `sd`: the body is cloned and re-checked with
     // `this` = S, so its calls resolve statically. Layout, vtable and `super` are unaffected.
@@ -560,12 +566,14 @@ private:
 
     static bool class_has_concrete(const TypePtr& cls, const MethodSig& req);
 
-    static bool iface_has_default(const TypePtr& t, const MethodSig& req, int depth = 0);
+    static bool iface_has_default(const TypePtr& t, const MethodSig& req, int depth = 0,
+                                  std::unordered_set<const Type*>* seen = nullptr);
 
     static void collect_abstract_reqs(const TypePtr& t, std::vector<MethodSig>& out,
-                                      int depth = 0);
+                                      int depth = 0, std::unordered_set<const Type*>* seen = nullptr);
 
-    static void collect_defaults(const TypePtr& t, std::vector<MethodSig>& out, int depth = 0);
+    static void collect_defaults(const TypePtr& t, std::vector<MethodSig>& out, int depth = 0,
+                                 std::unordered_set<const Type*>* seen = nullptr);
 
     void check_hierarchy_cycles();
 

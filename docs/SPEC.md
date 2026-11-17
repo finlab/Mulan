@@ -2509,7 +2509,7 @@ hand-written program comes anywhere near 256 levels of nesting or 4096 fields.
 |---|---|---|---|
 | One source file | 16 MiB | no limit (bounded by memory) | `source file … is N bytes; the limit is …` |
 | Tokens in one file | 2M | no limit | `a source file must not contain more than 2000000 tokens` |
-| Units in one program | 1024 | no limit | `this program uses more than 1024 units` |
+| Units in one program (the standard library's own closure included) | 1024 | no limit | `this program uses more than 1024 units` |
 | Parenthesised expression nesting | 256 | C++ §1.4: 256 | `expression nesting too deep (limit 256 levels)` |
 | Block / statement / initializer nesting | 256 | C++ §1.1: 256, C 127 | `block nesting too deep (limit 256 levels)` |
 | Pointer / array declarators per type | 256 | C++ §1.3: 256, C 12 | `type is too long (limit 256 …)` |
@@ -2525,6 +2525,9 @@ hand-written program comes anywhere near 256 levels of nesting or 4096 fields.
 | Class inheritance chain | 256 | no minimum (GCC/Clang accept thousands) | `… is more than 256 levels deep in its inheritance chain` |
 | Interface inheritance chain | 256 | no minimum | `… inherits more than 256 interfaces in one chain` |
 
+A program that reaches a limit exactly is accepted: the check runs when the next item is added, so
+`k` items are allowed and `k + 1` are rejected.
+
 Two properties hold for every row:
 
 - **A bound is a stack guard, not just a work bound.** The parser, the semantic passes and the code
@@ -2532,7 +2535,14 @@ Two properties hold for every row:
   (120k nested `#if` used to crash with `0xC00000FD`).
 - **A truncated walk is never kept.** The internal walkers stop at the same bound as the enforced limit
   (class / interface relations, `type_size`), so a program that compiles cannot carry a silently wrong
-  layout, subclass relation or inherited member.
+  layout, subclass relation or inherited member. That covers every composite type the checker can size:
+  a `struct`/`class`, the synthesized layout of a `sum` (tag + payload union), and every generic
+  instance. A type that contains itself by value — through a `sum` payload as well as directly — has no
+  finite layout and is reported as a cycle rather than as a deep chain.
+
+The interface and base-class graphs are DAGs: a diamond makes any memo-less walk visit shared ancestors
+once per path, which is exponential in the number of levels. Every such walk (relation tests, default
+method lookup, abstract-method collection) keeps a visited set, so a generated diamond is linear.
 
 ## 10. Phase-one non-goals
 

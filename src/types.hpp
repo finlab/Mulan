@@ -174,10 +174,12 @@ bool same_param_sig(const std::vector<TypePtr>& a, const std::vector<TypePtr>& b
 // Layout (a Struct's packed / align(N) is implemented only here; codegen delegates to it so that the two layouts cannot drift apart)
 size_t type_align(const TypePtr& t);
 size_t type_size(const TypePtr& t);
-// The by-value nesting limit of `type_align` / `type_size` (a stack guard). `check_layouts` clears the
-// flag, asks for every type's size, and rejects the declaration when it was set, so an accepted program
-// never keeps a layout computed by the truncated recursion.
+// The by-value nesting limit of `type_align` / `type_size` (a stack guard) and the by-value cycle they
+// detect. `check_layouts` clears the flags, asks for every type's size, and rejects the declaration when
+// one was set, so an accepted program never keeps a layout computed by a truncated recursion.
 bool type_depth_exceeded();
+bool type_cycle_detected();
+std::string type_cycle_name();
 void clear_type_depth_exceeded();
 // Byte offset of struct/union member `idx` (0 for every union member). The single layout definition: the
 // codegen Emitter and the constant folder both call this, so `offsetof` and field addressing cannot drift.

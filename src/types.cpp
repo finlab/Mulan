@@ -11,6 +11,7 @@
 #include <array>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -502,14 +503,58 @@ namespace {
 
 size_t align_up(size_t v, size_t a) { return a ? (v + a - 1) / a * a : v; }
 
-// 	ype_size / 	ype_align recurse over the by-value nesting of a type. The counter is a stack guard: a
-// nonexistent by-value cycle must not blow the compiler's stack. A program that actually reaches the limit
-// is rejected by check_layouts, so an accepted program never has a silently wrong layout.
+// `type_size` / `type_align` recurse over the by-value nesting of a type. The counter is a stack guard: a
+// by-value cycle (which has no finite layout) must not blow the compiler's stack. A program that reaches
+// the limit, or that contains a cycle, is rejected by `check_layouts`, so an accepted program never keeps
+// a silently wrong layout.
 constexpr int kMaxTypeNesting = 512;
 bool g_type_depth_exceeded = false;
+bool g_type_cycle = false;
+std::string g_cycle_name;
+// The types currently on the recursion path: a repeat means the type contains itself by value.
+std::unordered_set<const Type*> g_path;
+
+void note_cycle(const TypePtr& t) {
+    g_type_cycle = true;
+    if (g_cycle_name.empty()) g_cycle_name = t->str();
+}
+
+// Keeps `g_path` in sync with the recursion: `inserted` is false when the type was already on the path.
+struct PathGuard {
+    const Type* t = nullptr;
+    bool inserted = false;
+    explicit PathGuard(const TypePtr& tp) : t(tp.get()), inserted(g_path.insert(tp.get()).second) {}
+    ~PathGuard() {
+        if (inserted) g_path.erase(t);
+    }
+    PathGuard(const PathGuard&) = delete;
+    PathGuard& operator=(const PathGuard&) = delete;
+};
+
+size_t align_body(const TypePtr& t, int depth);
+
+// Only a composite type loses layout information to the depth guard: a leaf (primitive, pointer, enum,
+// interface, delegate) has no nested layout, so reaching the guard at a leaf is normal — a chain of
+// exactly `kMaxTypeNesting` containers ends with a leaf one level past the budget.
+bool has_nested_layout(const TypePtr& t) {
+    return t->kind == TypeKind::Struct || t->kind == TypeKind::Array || t->kind == TypeKind::Sum;
+}
 
 size_t align_impl(const TypePtr& t, int depth) {
-    if (!t || depth > kMaxTypeNesting) { if (t) g_type_depth_exceeded = true; return 1; }
+    if (!t) return 1;
+    if (depth >= kMaxTypeNesting && has_nested_layout(t)) {
+        g_type_depth_exceeded = true;
+        return 1;
+    }
+    PathGuard guard(t);
+    if (!guard.inserted) {
+        note_cycle(t);
+        return 1;
+    }
+    return align_body(t, depth);
+}
+
+size_t align_body(const TypePtr& t, int depth) {
     switch (t->kind) {
         case TypeKind::Void: return 1;
         case TypeKind::Prim: {
@@ -538,8 +583,23 @@ size_t align_impl(const TypePtr& t, int depth) {
     }
 }
 
+size_t size_body(const TypePtr& t, int depth);
+
 size_t size_impl(const TypePtr& t, int depth) {
-    if (!t || depth > kMaxTypeNesting) { if (t) g_type_depth_exceeded = true; return 0; }
+    if (!t) return 0;
+    if (depth >= kMaxTypeNesting && has_nested_layout(t)) {
+        g_type_depth_exceeded = true;
+        return 0;
+    }
+    PathGuard guard(t);
+    if (!guard.inserted) {
+        note_cycle(t);
+        return 0;
+    }
+    return size_body(t, depth);
+}
+
+size_t size_body(const TypePtr& t, int depth) {
     switch (t->kind) {
         case TypeKind::Void: return 0;
         case TypeKind::Prim: {
@@ -599,7 +659,14 @@ size_t size_impl(const TypePtr& t, int depth) {
 size_t type_align(const TypePtr& t) { return align_impl(t, 0); }
 size_t type_size(const TypePtr& t) { return size_impl(t, 0); }
 bool type_depth_exceeded() { return g_type_depth_exceeded; }
-void clear_type_depth_exceeded() { g_type_depth_exceeded = false; }
+bool type_cycle_detected() { return g_type_cycle; }
+std::string type_cycle_name() { return g_cycle_name; }
+void clear_type_depth_exceeded() {
+    g_type_depth_exceeded = false;
+    g_type_cycle = false;
+    g_cycle_name.clear();
+    g_path.clear();
+}
 
 uint64_t type_member_offset(const TypePtr& t, size_t idx) {
     if (!t) return 0;

@@ -841,6 +841,55 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                 }
             }
         }
+
+        // `sizeof` of a sum goes through its synthesized layout (tag + payload union), so a payload at the
+        // very edge of the by-value nesting limit silently produced a wrong size; the synthesized layout
+        // is validated here. A sum that contains itself by value (directly or through another sum) has no
+        // finite layout at all and is rejected as a cycle.
+        for (auto& u : units_) {
+            cur_ = u.get();
+            for (auto& d : u->decls) {
+                auto sd = dynamic_cast<SumDecl*>(d.get());
+                if (!sd || !sd->ty) continue;
+                clear_type_depth_exceeded();
+                (void)type_size(sd->ty);
+                if (type_cycle_detected()) {
+                    err("sum `" + sd->name + "` contains itself by value (the cycle passes through `" +
+                            type_cycle_name() +
+                            "`); store a pointer or a class handle instead",
+                        sd);
+                } else if (type_depth_exceeded()) {
+                    err("sum `" + sd->name +
+                            "` nests more than 512 levels by value; break the chain up with pointers or "
+                            "an interface",
+                        sd);
+                }
+            }
+        }
+    }
+
+    // A generic instance is a synthesized struct that no unit's declaration list contains, and it is
+    // created while bodies are checked — i.e. after `check_layouts`. An instance whose by-value nesting is
+    // one level past the layout limit used to pass every check and surface as an LLVM layout mismatch, so
+    // the instances are validated here, before the errors are reported.
+    void Sema::check_instance_layouts() {
+        for (auto& d : generic_decls_) {
+            auto sd = dynamic_cast<StructDecl*>(d.get());
+            if (!sd || !sd->ty) continue;
+            clear_type_depth_exceeded();
+            (void)type_size(sd->ty);
+            const std::string kw = sd->is_union ? "union" : "struct";
+            if (type_cycle_detected()) {
+                err(kw + " `" + sd->name + "` contains itself by value (the cycle passes through `" +
+                        type_cycle_name() + "`); break the cycle up with pointers or an interface",
+                    sd);
+            } else if (type_depth_exceeded()) {
+                err(kw + " `" + sd->name +
+                        "` nests more than 512 levels by value; break the chain up with pointers or an "
+                        "interface",
+                    sd);
+            }
+        }
     }
 
     void Sema::resolve_const_members(std::vector<std::unique_ptr<ConstMember>>& list,
@@ -1373,6 +1422,7 @@ Program Sema::run() {
     // A constrained generic body is checked at its definition (build 156), after every unit's own
     // bodies: the constraint types must be fully resolved by then.
     check_generic_contracts();
+    check_instance_layouts();
     if (strict_) warn_uninstantiated_generics();
     if (!errors_.empty()) throw MuErrorList(std::move(errors_));
     check_entry();
