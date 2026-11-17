@@ -669,6 +669,33 @@ bool is_scalar_const_type(const TypeSpec* spec) {
             out = cl->value;
             return true;
         }
+        // A unit-level compile-time constant (SPEC 3.3.2: `step`, `align(N)`, `switch` ranges and array
+        // lengths accept one). A local of the same name shadows it and is not a compile-time value.
+        if (auto* nm = dynamic_cast<Name*>(e)) {
+            if (lookup_local(nm->ident)) return false;
+            if (auto* t = directive_const_table()) {
+                auto it = t->find(nm->ident);
+                if (it != t->end() && !it->second.is_bool) {
+                    out = it->second.value;
+                    return true;
+                }
+            }
+            return false;
+        }
+        // `std.comptime.ptr_bits` (and the enum members `std.comptime.OS.Windows`).
+        if (auto* mem = dynamic_cast<Member*>(e)) {
+            const std::string full = expr_dotted_name(*mem);
+            if (!full.empty()) {
+                if (auto* t = directive_const_table()) {
+                    auto it = t->find(full);
+                    if (it != t->end() && !it->second.is_bool) {
+                        out = it->second.value;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
         if (auto u = dynamic_cast<Unary*>(e)) {
             long long v = 0;
             if (!eval_const_int(u->operand.get(), v)) return false;

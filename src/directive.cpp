@@ -15,10 +15,24 @@
 #include <string>
 #include <vector>
 
+// `a`, `a.b`, `a.b.c` → the dotted name; empty for anything else (a call, an index, ...). Shared with the
+// semantic pass, which resolves the same qualified forms (`std.comptime.ptr_bits`) outside `#if`.
+namespace {
+std::string dotted_name(const Expr& e) {
+    if (const auto* n = dynamic_cast<const Name*>(&e)) return n->ident;
+    if (const auto* m = dynamic_cast<const Member*>(&e)) {
+        if (!m->type_args.empty()) return {};
+        std::string base = dotted_name(*m->obj);
+        if (base.empty()) return {};
+        return base + "." + m->name;
+    }
+    return {};
+}
+}  // namespace
+
 namespace {
 
 enum class VK { Int, Bool, Float };
-
 struct V {
     VK k = VK::Int;
     long long i = 0;
@@ -96,18 +110,6 @@ bool is_int_type_name(const std::string& n) {
 }
 
 bool eval(const Expr& e, V& out, std::string& why);
-
-// `a`, `a.b`, `a.b.c` → the dotted name; empty for anything else (a call, an index, ...).
-std::string dotted_name(const Expr& e) {
-    if (const auto* n = dynamic_cast<const Name*>(&e)) return n->ident;
-    if (const auto* m = dynamic_cast<const Member*>(&e)) {
-        if (!m->type_args.empty()) return {};
-        std::string base = dotted_name(*m->obj);
-        if (base.empty()) return {};
-        return base + "." + m->name;
-    }
-    return {};
-}
 
 // The unit that declares the compiler-provided compile-time names (SPEC 9.3).
 const std::string kComptimeUnit = "std.comptime";
@@ -365,6 +367,11 @@ bool eval(const Expr& e, V& out, std::string& why) {
 }
 
 }  // namespace
+
+namespace muc_detail {
+// The anonymous-namespace helper above; exposed for the semantic pass (see directive.hpp).
+std::string expr_dotted_name(const Expr& e) { return dotted_name(e); }
+}  // namespace muc_detail
 
 const BuildConfig& build_config() { return g_config; }
 void set_build_config(const BuildConfig& cfg) { g_config = cfg; }

@@ -189,10 +189,12 @@ namespace muc_detail {
         if (sig->is_abstract) return false;  // no implementation to name without the vtable
         if (!findImpl(recvTy, *sig)) return false;
         for (const auto& cls : allClasses) {
-            if (!cls || cls == recvTy) continue;
+            // A `const` view is a copy of the class type with the cv flag set, so identity by pointer
+            // would miss every subclass: compare signatures (cv is not part of a class identity).
+            if (!cls || same_type_sig(cls, recvTy)) continue;
             bool derived = false;
             for (TypePtr b = cls->base; b; b = b->base) {
-                if (b == recvTy) {
+                if (same_type_sig(b, recvTy)) {
                     derived = true;
                     break;
                 }

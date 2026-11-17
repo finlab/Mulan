@@ -227,6 +227,11 @@ namespace muc_detail {
             if (auto lv = std::get_if<LocalVar*>(&n->sym); lv && *lv && (*lv)->ref_const) {
                 err("cannot assign through a `for ref const` binding", t);
             }
+            // `int* const p`: the cv belongs to the pointer type, not to the binding, so the binding is
+            // not `const` yet the object is read-only (`p` cannot be retargeted, `*p` can be written).
+            if (n->ty && n->ty->is_const) {
+                err("cannot reassign `" + n->ident + "`: its type is read-only (`" + n->ty->str() + "`)", t);
+            }
             // An implicit `this.field`: a field declared `const` is read-only outside the constructor.
             if (cur_method_const_ && (n->ident == "this" || n->implicit_this)) {
                 err("cannot modify the object inside a `const` method", t);
@@ -568,16 +573,22 @@ namespace muc_detail {
                 return checked_int_pattern(v, st, e);
             }
         }
+        // A unit-level compile-time constant, an arithmetic form or `std.comptime.X` (SPEC 3.3.2: the
+        // same evaluator feeds `#if`, `step`, `align(N)`, switch ranges and array lengths).
+        long long folded = 0;
+        if (eval_const_int(e, folded)) return checked_int_pattern(folded, st, e);
         if (auto* n = dynamic_cast<Name*>(e)) {
             check_expr(e);  // resolve as a variable / enum member to give a more precise error
             if (std::get_if<EnumConst*>(&n->sym)) {
                 err("pattern `" + n->ident + "` is an enum member and cannot match " + st->str(), e);
             }
             err("switch case pattern must be a compile-time constant: `" + n->ident +
-                    "` is a variable; use a literal or an enum member",
+                    "` is a variable, not a unit-level `const`; use a literal or a compile-time constant",
                 e);
         }
-        err("switch case pattern must be a compile-time constant (integer literal, character literal, or enum member)", e);
+        err("switch case pattern must be a compile-time constant (a literal, an enum member, or a "
+            "unit-level `const`)",
+            e);
     }
 
     std::vector<std::pair<std::string, long long>> Sema::enum_members_of(const TypePtr& et) {

@@ -27,6 +27,32 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 192 — 2026-11-18
+
+**Audit round 2: const pointers, const views, builtin contracts, and the compile-time positions.**
+
+- **`int* const p`**: reassigning the pointer is an error (`cannot reassign `p`: its type is read-only`),
+  while `*p = v` still writes through (SPEC 3.7). The check looks at the *type's* top-level cv, not only at
+  the binding.
+- **`const` class/interface views**: `const Animal a = new Spider();` (and a `const` parameter position) now
+  converts implicitly; dropping a const view still needs `as`. Virtual dispatch no longer degenerates to
+  the base implementation for a const view — `methodDispatchIsStatic` compared class types by pointer and
+  a const view is a copy of the type node, so it never saw the subclass override; it now compares
+  signatures.
+- **`builtin` contracts** (SPEC 9.3): the declared type/signature is checked against the compiler's table
+  (`builtin const string os;` → "declared `string` but the compiler provides `OS`"; `builtin int
+  is_windows();` → "returns `bool`"), and a name may be declared once per program (cross-unit duplicates
+  are rejected).
+- **One compile-time evaluator for the positions SPEC 3.3.2 lists**: `step`, `align(N)` and `switch`
+  patterns now accept a unit-level `const` and its arithmetic forms (`eval_const_int` resolves names and
+  `std.comptime.X`; a local of the same name still shadows and is rejected). The switch diagnostic no
+  longer calls a `const` a "variable".
+- Tests: `const_ptr_retarget`, `const_ptr_write`, `const_polymorph`, `const_positions`,
+  `switch_const_pattern` (was a must-fail for the old literal-only rule), `builtin_dup`,
+  `builtin_type_mismatch`, `builtin_func_sig`.
+
+Full suite: 731/731 (275 run, 416 must-fail, 26 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 191 — 2026-11-18
 
 **Audit round: the const / `#if` SPEC gaps reported against build 190.**

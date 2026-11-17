@@ -513,6 +513,47 @@ namespace muc_detail {
         }
     }
 
+namespace {
+// The compiler's type for a builtin constant (`std.comptime` is the declaration of record, SPEC 9.3).
+std::string builtin_const_type_name(const std::string& name) {
+    if (name == "os") return "OS";
+    if (name == "arch") return "Arch";
+    if (name == "abi") return "Abi";
+    if (name == "endian") return "Endian";
+    if (name == "ptr_bits") return "int";
+    return "bool";  // debug / bounds / single_thread
+}
+}  // namespace
+
+    // SPEC 9.3: a builtin name may be declared once across the whole program, and the declaration must
+    // match the compiler's table (name, type/signature).
+    void Sema::check_builtin_owner(const std::string& name, const Node* at) {
+        auto it = builtin_owner_.find(name);
+        if (it == builtin_owner_.end()) {
+            builtin_owner_.emplace(name, cur_ ? cur_->name : std::string());
+            return;
+        }
+        // A duplicate inside one unit already has its own declaration diagnostic.
+        if (cur_ && it->second == cur_->name) return;
+        err("builtin `" + name + "` is already declared in `" + it->second +
+                "`; a builtin name may be declared once across the whole program",
+            at);
+    }
+
+    void Sema::check_builtin_func(FuncDecl* f) {
+        long long v = 0;
+        if (!builtin_func(f->name, {}, v)) {
+            err("builtin function `" + f->name + "` is not provided by this compiler", f);
+        }
+        check_builtin_owner(f->name, f);
+        if (!f->pty.empty()) err("builtin function `" + f->name + "` takes no parameters", f);
+        if (!is_prim(f->rty) || f->rty->name != "bool") {
+            err("builtin function `" + f->name + "` returns `bool`, not `" +
+                    (f->rty ? f->rty->str() : std::string("?")) + "`",
+                f);
+        }
+    }
+
     void Sema::check_global(GlobalVar* g) {
         if (!g->rty) {
             err("global variable `" + g->name + "` is missing its type", g);
@@ -529,7 +570,19 @@ namespace muc_detail {
                 err("builtin `" + g->name + "` is not provided by this compiler", g);
                 return;
             }
+            check_builtin_owner(g->name, g);
             if (g->init) err("a `builtin` constant cannot have an initializer", g);
+            // SPEC 9.3: the declared type must be the type the compiler provides for this name.
+            const std::string want = builtin_const_type_name(g->name);
+            const TypePtr& ty = g->rty;
+            const bool ok = want == "int"    ? (is_prim(ty) && ty->name == "int")
+                            : want == "bool" ? (is_prim(ty) && ty->name == "bool")
+                                             : (ty && ty->kind == TypeKind::Enum && ty->name == want);
+            if (!ok) {
+                err("builtin `" + g->name + "` is declared `" + (ty ? ty->str() : std::string("?")) +
+                        "` but the compiler provides `" + want + "`",
+                    g);
+            }
             g->const_evaluated = true;
             g->const_is_float = false;
             g->const_ival = v;
@@ -792,6 +845,7 @@ namespace muc_detail {
 
     void Sema::check_func(FuncDecl* f) {
         if (!f->rty) err("function `" + f->name + "` is missing its return type", f);
+        if (f->is_builtin) check_builtin_func(f);
         if (f->is_operator) check_operator_decl(f);
         // A function body is checked in a clean control-flow context. Generic bodies are checked
         // lazily at the instantiation site (sema_generic.cpp), which may sit inside a `para` section

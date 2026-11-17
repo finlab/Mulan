@@ -729,7 +729,9 @@ bool is_subclass_of(const TypePtr& sub, const TypePtr& base) {
     TypePtr cur = sub;
     int guard = 0;
     while (cur && cur->kind == TypeKind::Class && guard++ < 1024) {
-        if (same_type(cur, base)) return true;
+        // A const view of the base is reached by upcasting (adding cv is implicit), so the comparison
+        // ignores the top-level cv of both sides.
+        if (same_type_sig(cur, base)) return true;
         cur = cur->base;
     }
     return false;
@@ -737,7 +739,7 @@ bool is_subclass_of(const TypePtr& sub, const TypePtr& base) {
 
 static bool iface_extends(const TypePtr& a, const TypePtr& b, int depth) {
     if (!a || !b || depth > 256) return false;
-    if (same_type(a, b)) return true;
+    if (same_type_sig(a, b)) return true;  // the cv of an interface view is not part of the relation
     for (auto& i : a->interfaces) {
         if (iface_extends(i, b, depth + 1)) return true;
     }
@@ -782,6 +784,12 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
             if (src->elem && dst->elem && src->elem->is_const && !dst->elem->is_const) {
                 return false;
             }
+        }
+        // A class/interface handle names a shared object, so dropping a `const` view would grant write
+        // access through the same object: that needs an explicit `as` (SPEC 3.7).
+        if ((src->kind == TypeKind::Class || src->kind == TypeKind::Interface) && src->is_const &&
+            !dst->is_const) {
+            return false;
         }
     }
     if (same_type_sig(src, dst)) return true;

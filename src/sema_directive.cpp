@@ -79,8 +79,16 @@ namespace muc_detail {
         return scope;
     }
 
-    DirectiveDecl::Arm* Sema::choose_decl_arm(DirectiveDecl& dir, const DirectiveScope& scope) {
-        for (auto& arm : dir.arms) {
+    const UserConstTable* Sema::directive_const_table() {
+        if (!cur_) return nullptr;
+        if (const_table_unit_ != cur_) {
+            const_table_unit_ = cur_;
+            const_table_ = directive_scope(cur_, unit_all_consts(cur_->name)).table;
+        }
+        return &const_table_;
+    }
+
+    DirectiveDecl::Arm* Sema::choose_decl_arm(DirectiveDecl& dir, const DirectiveScope& scope) {        for (auto& arm : dir.arms) {
             if (!arm.cond) return &arm;  // `#else`: only reached when nothing above matched
             std::string why;
             if (eval_directive_cond(*arm.cond, why, &scope.table, &scope.ambiguous, scope.comptime)) return &arm;

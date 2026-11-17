@@ -74,6 +74,9 @@ inline EnumConst* intern_enum_const(const std::string& unit, const std::string& 
     return &pool.back();
 }
 
+// `a`, `a.b`, `a.b.c` → the dotted name; empty for anything else (a call, an index, ...).
+std::string expr_dotted_name(const Expr& e);
+
 // The constants visible to a `#if` condition at one point of the program (see `Sema::directive_scope`).
 struct DirectiveScope {
     UserConstTable table;
@@ -116,6 +119,11 @@ private:
     // `--single-thread`: reference counting is non-atomic, so concurrency constructs are rejected.
     bool single_thread_ = false;
     std::unordered_map<std::string, UnitInfo> infos_;
+    // `builtin` declarations seen so far, name -> declaring unit (SPEC 9.3: once per program).
+    std::unordered_map<std::string, std::string> builtin_owner_;
+    // Cache for `directive_const_table()` (one table per unit being checked).
+    Unit* const_table_unit_ = nullptr;
+    UserConstTable const_table_;
     Unit* cur_ = nullptr;
     FuncDecl* cur_func_ = nullptr;
     TypePtr cur_ret_;
@@ -292,6 +300,10 @@ private:
     // unit is not visible to it (SPEC 9.2, the source-position rule); 0 means "no limit" (a function
     // body, which is checked after the unit is collected).
     DirectiveScope directive_scope(Unit* u, const UserConstTable* own, int before_line = 0);
+    // The compile-time constants of the unit being checked, with the `std.comptime` qualified forms
+    // (`std.comptime.ptr_bits`). Cached per unit: `eval_const_int` is called for every `step`,
+    // `align(N)`, `switch` range and array length, and the table does not change after `collect`.
+    const UserConstTable* directive_const_table();
     // Picks the selected arm of a `#if` chain; null when nothing is selected (`#if` without a matching
     // arm and no `#else`).
     DirectiveDecl::Arm* choose_decl_arm(DirectiveDecl& dir, const DirectiveScope& scope);
@@ -424,6 +436,9 @@ private:
     void check_unit(Unit* u);
 
     void check_global(GlobalVar* g);
+    // SPEC 9.3: a `builtin` name is declared once per program and must match the compiler's table.
+    void check_builtin_owner(const std::string& name, const Node* at);
+    void check_builtin_func(FuncDecl* f);
     // 9.1: a unit-level initializer must not observe a variable that is initialized after it.
     void check_global_init_order(GlobalVar* g, Expr* at);
 
