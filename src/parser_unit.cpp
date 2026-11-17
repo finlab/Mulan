@@ -361,10 +361,10 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             d->is_export = is_export;
             if (is_const_decl) {
                 if (auto* cd = dynamic_cast<ClassDecl*>(d.get())) {
-                    for (auto& f : cd->fields) {
+                    for (auto& f : cur_members_->fields) {
                         if (f.second) f.second->is_const = true;
                     }
-                    for (auto& m : cd->methods) m->is_const = true;
+                    for (auto& m : cur_members_->methods) m->is_const = true;
                 }
             }
             push_decl(std::move(d));
@@ -898,6 +898,9 @@ std::unique_ptr<DtorDecl> Parser::parse_dtor() {
 
 std::unique_ptr<Decl> Parser::parse_class() {
     DeclTargetScope decl_scope(*this);
+    MemberGroup members;
+    auto* saved_members = cur_members_;
+    cur_members_ = &members;
     const Token tk = expect_kw("class");
     const Token nm = expect_ident("class name");
     type_names_.insert(nm.text);
@@ -923,18 +926,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
             break;
         }
         if (at_directive()) { directive_header(); continue; }
-        const size_t nf = cd->fields.size();
-        const size_t nc = cd->const_members.size();
-        const size_t nm = cd->methods.size();
-        const size_t nct = cd->ctors.size();
-        const bool had_dtor = cd->dtor != nullptr;
-        ArmDrop drop(*this, [&] {
-            cd->fields.resize(nf);
-            cd->const_members.resize(nc);
-            cd->methods.resize(nm);
-            cd->ctors.resize(nct);
-            if (!had_dtor) cd->dtor.reset();
-        });
+        // Members collect into `cur_members_` (a `#if` arm has its own MemberGroup); no rollback needed.
         // section label: `public:` / `private:` switches the default visibility of following members
         if ((at_kw("public") || at_kw("private")) && peek(1).is_op(":")) {
             cur_pub = at_kw("public");
@@ -954,8 +946,8 @@ std::unique_ptr<Decl> Parser::parse_class() {
         }
         if (at_op("~")) {
             if (explicit_mod) throw err("destructor cannot use `public`/`private`");
-            if (cd->dtor) throw err("class `" + cd->name + "` can only have one destructor");
-            cd->dtor = parse_dtor();
+            if (cur_members_->dtor) throw err("class `" + cd->name + "` can only have one destructor");
+            cur_members_->dtor = parse_dtor();
             continue;
         }
         bool prefix_override = false;
@@ -980,8 +972,8 @@ std::unique_ptr<Decl> Parser::parse_class() {
                 throw err_at("a constructor is never virtual: construction runs on the concrete class", t);
             }
             const Token ctor_name = advance();
-            cd->ctors.push_back(parse_ctor(ctor_name));
-            cd->ctors.back()->is_public = member_pub;
+            cur_members_->ctors.push_back(parse_ctor(ctor_name));
+            cur_members_->ctors.back()->is_public = member_pub;
             continue;
         }
         bool prefix_weak = false;
@@ -1011,7 +1003,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
             op->is_override = prefix_override;
             op->is_virtual = prefix_virtual;
             op->is_public = member_pub;
-            cd->methods.push_back(std::move(op));
+            cur_members_->methods.push_back(std::move(op));
             continue;
         }
         const Token name_tok = expect_ident("member name");
@@ -1021,7 +1013,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
             if (prefix_override) m->is_override = true;
             if (prefix_virtual) m->is_virtual = true;
             m->is_public = member_pub;
-            cd->methods.push_back(std::move(m));
+            cur_members_->methods.push_back(std::move(m));
             continue;
         }
         if (ret_ref) {
@@ -1037,26 +1029,26 @@ std::unique_ptr<Decl> Parser::parse_class() {
                              "`const` field in the constructor initializer list (`C(...) : name(value) { }`)",
                              name_tok);
             }
-            cd->fields.emplace_back(name_tok.text, clone_spec(*spec));
-            cd->field_visibility[name_tok.text] = member_pub;
+            cur_members_->fields.emplace_back(name_tok.text, clone_spec(*spec));
+            cur_members_->field_visibility[name_tok.text] = member_pub;
             for (;;) {
                 if (!at_op(",")) break;
                 advance();
                 const Token extra = expect_ident("field name");
                 std::string fname = extra.text;
-                cd->field_visibility[fname] = member_pub;
-                cd->fields.emplace_back(std::move(fname), clone_spec(*spec));
+                cur_members_->field_visibility[fname] = member_pub;
+                cur_members_->fields.emplace_back(std::move(fname), clone_spec(*spec));
             }
             semicolon();
             continue;
         }
-        cd->fields.emplace_back(name_tok.text, clone_spec(*spec));
-        cd->field_visibility[name_tok.text] = member_pub;
+        cur_members_->fields.emplace_back(name_tok.text, clone_spec(*spec));
+        cur_members_->field_visibility[name_tok.text] = member_pub;
         while (at_op(",")) {
             advance();
             const std::string fname = expect_ident("field name").text;
-            cd->field_visibility[fname] = member_pub;
-            cd->fields.emplace_back(fname, clone_spec(*spec));
+            cur_members_->field_visibility[fname] = member_pub;
+            cur_members_->fields.emplace_back(fname, clone_spec(*spec));
         }
         semicolon();
     }
@@ -1064,11 +1056,21 @@ std::unique_ptr<Decl> Parser::parse_class() {
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     if (at_op(";")) advance();
     type_names_ = saved_type_names;
+    cd->fields = std::move(members.fields);
+    cd->field_visibility = std::move(members.field_visibility);
+    cd->const_members = std::move(members.const_members);
+    cd->methods = std::move(members.methods);
+    cd->ctors = std::move(members.ctors);
+    cd->dtor = std::move(members.dtor);
+    cur_members_ = saved_members;
     return cd;
 }
 
 std::unique_ptr<Decl> Parser::parse_interface() {
     DeclTargetScope decl_scope(*this);
+    MemberGroup members;
+    auto* saved_members = cur_members_;
+    cur_members_ = &members;
     const Token tk = expect_kw("interface");
     const Token nm = expect_ident("interface name");
     type_names_.insert(nm.text);
@@ -1093,8 +1095,7 @@ std::unique_ptr<Decl> Parser::parse_interface() {
             break;
         }
         if (at_directive()) { directive_header(); continue; }
-        const size_t nm = id->methods.size();
-        ArmDrop drop(*this, [&] { id->methods.resize(nm); });
+        // Interface methods collect into `cur_members_`; a `#if` arm has its own MemberGroup.
         if (at_kw("public", "private")) {
             throw err("`public`/`private` cannot be used on interface methods (interface methods are always public)");
         }
@@ -1110,16 +1111,18 @@ std::unique_ptr<Decl> Parser::parse_interface() {
         bool ret_ref = false;
         TypeSpecPtr spec = parse_return_type(ret_ref);
         if (at_kw("operator")) {
-            id->methods.push_back(parse_interface_operator(std::move(spec), ret_ref));
+            cur_members_->methods.push_back(parse_interface_operator(std::move(spec), ret_ref));
             continue;
         }
         const Token name_tok = expect_ident("method name");
-        id->methods.push_back(parse_method(std::move(spec), ret_ref, name_tok));
+        cur_members_->methods.push_back(parse_method(std::move(spec), ret_ref, name_tok));
     }
     expect_op("}");
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     if (at_op(";")) advance();
     type_names_ = saved_type_names;
+    id->methods = std::move(members.methods);
+    cur_members_ = saved_members;
     return id;
 }
 

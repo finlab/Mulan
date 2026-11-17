@@ -27,6 +27,17 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 183 — 2026-11-17
+
+**P3.1 complete: `#if` arm containers for all five list positions.**
+
+- Class and interface member lists now collect each arm into a `MemberGroup` and merge the selected arm
+  after the chain (struct was done in build 182); `ArmDrop` is gone from every parser list position.
+- Behaviour is unchanged: the parser still selects an arm immediately.
+- Next: P3.2 moves the selection of top-level `#if` into sema collect (constants + `sizeof`).
+
+Full suite: 707/707 (262 run, 407 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 182 — 2026-11-17
 
 **P3.1 parser slice: declaration, statement and struct-member `#if` arm containers.**
