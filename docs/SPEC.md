@@ -2477,8 +2477,9 @@ public builtin bool is_linux();
   `docs/versions.md`.
 - **Runtime use**: calling a builtin function outside a compile-time context is folded to its value (it has
   no runtime implementation); the same holds for a builtin constant.
-- `std.target` is superseded by `comptime`; the old "compiler rewrites the initializer of `std.target`"
-  mechanism is removed.
+- `std.target` has been **removed**: its target enums and constants are now declared by `std.comptime`.
+  The old "compiler rewrites the initializer of `std.target`" mechanism is gone; `builtin` constants are
+  bound by the compiler (9.3).
 
 ---
 

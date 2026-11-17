@@ -27,6 +27,19 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 180 — 2026-11-17
+
+**`std.target` removed; `std.comptime` is the only source of build constants.**
+
+- The loader no longer implicitly loads `std.target`; `libs/std/target.mu` is deleted.
+- `Sema::seed_target_unit` (the "compiler rewrites the initializer" mechanism) is replaced by
+  `check_comptime_unit`, which cross-checks the `std.comptime` target enums against the compiler table;
+  the `builtin` constants themselves are bound by `check_global`.
+- `std.comptime`'s `Abi` enum gains `Musl` to match the compiler table.
+- Runtime platform symbols stay in the library/platform units; they are not part of `comptime`.
+
+Full suite: 707/707 (262 run, 407 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 179 — 2026-11-17
 
 **Ambiguity diagnostics for cross-unit `#if` constants.**

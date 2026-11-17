@@ -263,8 +263,9 @@ private:
 
     // ------------------------------------------------------------ collection
     void collect();
-    // `std.target` declares the build constants; the compiler owns their values (see directive.hpp).
-    void seed_target_unit();
+    // `std.comptime` declares the compiler-provided constants; this cross-checks its target enums
+    // against the compiler's table (see directive.hpp).
+    void check_comptime_unit();
 
     // ------------------------------------------------------------ public signature chain check
     //

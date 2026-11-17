@@ -47,7 +47,7 @@ V vflt(double d) {
 bool numeric(const V& v) { return v.k != VK::Bool; }
 double as_double(const V& v) { return v.k == VK::Float ? v.f : static_cast<double>(v.i); }
 
-// Declaration order is the value order: `OS.Windows == 0`. `std.target` must declare exactly these
+// Declaration order is the value order: `OS.Windows == 0`. `std.comptime` must declare exactly these
 // members in this order, and sema checks it (see check_target_unit).
 const std::vector<std::string> kOs = {"Windows", "Linux", "MacOS"};
 const std::vector<std::string> kArch = {"X86_64", "AArch64"};
