@@ -172,8 +172,7 @@ namespace muc_detail {
         body.groups.clear();
     }
 
-    void Sema::expand_type_decl(Decl* d, Unit* u, const UserConstTable* own) {
-        MemberGroup* body = nullptr;
+    void Sema::expand_type_decl(Decl* d, Unit* u, const UserConstTable* own) {        MemberGroup* body = nullptr;
         MemberSink sink;
         if (auto* sd = dynamic_cast<StructDecl*>(d)) {
             body = &sd->body;
@@ -196,8 +195,48 @@ namespace muc_detail {
         expand_member_body(*body, scope, sink, d);
     }
 
+    void Sema::check_directive_locals(const Expr* e) {
+        if (!e) return;
+        if (auto* n = dynamic_cast<const Name*>(e)) {
+            if (LocalVar* lv = lookup_local(n->ident)) {
+                err("a `#if` condition cannot reference the local variable `" + n->ident +
+                        "`; a compile-time constant of the unit is required",
+                    lv);
+            }
+            return;
+        }
+        if (auto* m = dynamic_cast<const Member*>(e)) {
+            check_directive_locals(m->obj.get());
+            return;
+        }
+        if (auto* u = dynamic_cast<const Unary*>(e)) {
+            check_directive_locals(u->operand.get());
+            return;
+        }
+        if (auto* n = dynamic_cast<const NotExpr*>(e)) {
+            check_directive_locals(n->operand.get());
+            return;
+        }
+        if (auto* b = dynamic_cast<const Binary*>(e)) {
+            check_directive_locals(b->left.get());
+            check_directive_locals(b->right.get());
+            return;
+        }
+        if (auto* c = dynamic_cast<const Cast*>(e)) {
+            check_directive_locals(c->expr.get());
+            return;
+        }
+        if (auto* c = dynamic_cast<const Call*>(e)) {
+            check_directive_locals(c->callee.get());
+            for (const auto& a : c->args) check_directive_locals(a.get());
+        }
+    }
+
     void Sema::expand_directive_stmt(Block* b, size_t& i) {
         auto* ds = dynamic_cast<DirectiveStmt*>(b->stmts[i].get());
+        // A local variable may not appear in a `#if` condition (SPEC 9.2): a local that happens to share
+        // a builtin's name must not silently resolve to the builtin.
+        for (auto& arm : ds->arms) check_directive_locals(arm.cond.get());
         // A function body is checked after the unit is collected: it follows the unit's name
         // resolution, so every `use` of the unit is visible (SPEC 9.2).
         const DirectiveScope scope = directive_scope(cur_, unit_all_consts(cur_->name));

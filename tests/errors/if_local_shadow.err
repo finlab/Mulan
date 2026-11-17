@@ -1,0 +1,1 @@
+a `#if` condition cannot reference the local variable `ptr_bits`

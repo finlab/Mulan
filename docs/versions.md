@@ -27,6 +27,26 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 195 — 2026-11-18
+
+**Audit round 4: `#if` in constructor bodies, generic const overloads, locals in `#if`.**
+
+- **A constructor body is a function body**: `check_ctor` iterated the body's statements itself (to find a
+  leading `super(...)`), so a statement-list `#if` reached `check_stmt` as "unknown statement". The body is
+  now expanded by `expand_directive_stmts` before the super call is looked for.
+- **Generic const overloads**: instantiating a class registered method signatures **without `is_const`**
+  (and mangled the name without it too), so the const overload was dropped as a duplicate and a const
+  receiver resolved to the non-const one. Both instantiation paths set `sig.is_const` and pass it to
+  `method_cname`.
+- **A local in a `#if` condition is an error** (SPEC 9.2): a local that happens to share a builtin's name
+  used to resolve silently to the builtin; the statement path now checks the condition's names against the
+  scope (`a `#if` condition cannot reference the local variable `x``), and the old generic message
+  (`x` is not a visible compile-time constant) is replaced by it.
+- Tests: `if_ctor_body`, `generic_const_overload`, `if_local_shadow` (`if_not_const` now expects the
+  specific message).
+
+Full suite: 744/744 (281 run, 422 must-fail, 27 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 194 — 2026-11-18
 
 **Audit round 3: const views (a crash, the interface view, array elements), `as`, modifier order.**

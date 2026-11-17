@@ -186,6 +186,9 @@ namespace muc_detail {
         }
 
         Block* body = ctor->body.get();
+        // A statement-list `#if` in the body must be expanded before the leading `super(...)` is looked
+        // for: the selected arm decides whether the first statement is the super call (P3.3c).
+        expand_directive_stmts(body);
         bool first_super = false;
         if (body && !body->stmts.empty()) {
             auto es = dynamic_cast<ExprStmt*>(body->stmts[0].get());
@@ -849,6 +852,19 @@ namespace muc_detail {
             ++i;
         }
         pop();
+    }
+
+    // Splice every statement-list `#if` of this block in place, without checking the statements. The
+    // constructor path needs the list expanded before it looks for a leading `super(...)`.
+    void Sema::expand_directive_stmts(Block* b) {
+        if (!b) return;
+        for (size_t i = 0; i < b->stmts.size();) {
+            if (dynamic_cast<DirectiveStmt*>(b->stmts[i].get())) {
+                expand_directive_stmt(b, i);
+                continue;
+            }
+            ++i;
+        }
     }
 
     void Sema::check_stmt(Stmt* s) {

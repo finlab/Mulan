@@ -324,6 +324,12 @@ private:
                             const Node* at);
     // Splices the selected arm of a statement-list `#if` into the block at `i`.
     void expand_directive_stmt(Block* b, size_t& i);
+    // A `#if` condition may not name a local variable (SPEC 9.2); the statement path calls this before
+    // evaluating the arms.
+    void check_directive_locals(const Expr* e);
+    // Splices every statement-list `#if` of a block (no statement checks): the constructor path needs the
+    // list expanded before it looks for a leading `super(...)`.
+    void expand_directive_stmts(Block* b);
 
     // ------------------------------------------------------------ public signature chain check
     //

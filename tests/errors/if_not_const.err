@@ -1,1 +1,1 @@
-`x` is not a visible compile-time constant
+a `#if` condition cannot reference the local variable `x`

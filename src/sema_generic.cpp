@@ -518,7 +518,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             for (auto& p : m->params) sig.params_self.push_back(p->spec && p->spec->is_self);
             if (m->is_operator) init_interface_operator(m.get(), sig, display);
             ity->methods.push_back(std::move(sig));
-            m->cname = method_cname(tmpl_unit, display, m->name, m->pty);
+            m->cname = method_cname(tmpl_unit, display, m->name, m->pty, m->is_const);
         }
         cur_class_ = saved_class;
         cur_ = saved_cur;
@@ -651,10 +651,13 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         // method became static after instantiation and a subclass's `override` was rejected.
         sig.is_virtual = m->is_virtual || m->is_override || !m->body;
         sig.is_public = m->is_public;
+        // const is part of the signature: without it the const overload of an instantiated class is
+        // dropped as a duplicate and a const receiver resolves to the non-const one.
+        sig.is_const = m->is_const;
         sig.owner = ty;
         sig.is_operator = m->is_operator;
         ty->methods.push_back(sig);
-        m->cname = method_cname(tmpl_unit, display, m->name, m->pty);
+        m->cname = method_cname(tmpl_unit, display, m->name, m->pty, m->is_const);
         if (!m->body) ty->is_abstract = true;
     }
 
