@@ -194,6 +194,8 @@ private:
     // ------------------------------------------------------ unit
 
     std::unique_ptr<Decl> parse_extern(const Token& tk);
+    // `builtin const T name;` / `builtin T f(...);` — compiler-provided compile-time declarations (9.3)
+    std::unique_ptr<Decl> parse_builtin(const Token& tk);
     std::unique_ptr<Decl> parse_struct(bool is_union = false);
     std::unique_ptr<Decl> parse_enum();
     std::unique_ptr<Decl> parse_class();

@@ -456,6 +456,9 @@ namespace muc_detail {
                     " arguments, but " + std::to_string(c->args.size()) + " were given",
                 c);
         }
+        if (target->is_builtin) {
+            err("builtin function `" + target->name + "` is not callable yet", c);
+        }
         if (target->is_varargs && c->args.size() < params.size()) {
             err("variadic function `" + target->name + "` expects at least " +
                     std::to_string(params.size()) + " arguments, but " +

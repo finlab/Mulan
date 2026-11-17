@@ -373,6 +373,9 @@ struct GlobalVar : Decl {    std::string name;
     InitPtr init;
     bool is_extern = false;
     bool is_const = false;
+    // `builtin const T name;` — a compiler-provided compile-time constant: no storage, no address
+    // (decided 2026-11-17). The value is bound during sema from the compiler's built-in table.
+    bool is_builtin = false;
     // sema
     TypePtr rty;
     bool zero = false;
@@ -685,6 +688,8 @@ struct FuncDecl : Decl {
     bool is_extern = false;
     bool is_varargs = false;  // the `...` of an extern function (C varargs)
     bool is_operator = false;
+    // `builtin T f();` — a compiler-provided compile-time function (no body, no symbol), 9.3.
+    bool is_builtin = false;
     // sema
     TypePtr rty;
     std::vector<TypePtr> pty;

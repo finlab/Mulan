@@ -527,6 +527,19 @@ namespace muc_detail {
             if (g->init) err("`extern` variable `" + g->name + "` cannot have an initializer", g);
             return;
         }
+        if (g->is_builtin) {
+            // A compiler-provided compile-time constant: no storage, no initializer (9.3).
+            long long v = 0;
+            if (!builtin_const(g->name, v)) {
+                err("builtin `" + g->name + "` is not provided by this compiler", g);
+                return;
+            }
+            if (g->init) err("a `builtin` constant cannot have an initializer", g);
+            g->const_evaluated = true;
+            g->const_is_float = false;
+            g->const_ival = v;
+            return;
+        }
         if (!g->init) {
             if (g->is_const) {
                 err("`const` variable `" + g->name + "` must be initialized", g);
@@ -825,11 +838,12 @@ namespace muc_detail {
             f->param_locals.push_back(std::move(lv));
         }
 
-        if (f->body) check_block(f->body.get());
-
-        // A non-void function must guarantee a return value; main is exempt (falling off the end is equivalent to return 0)
-        if (!is_void(f->rty) && !f->is_entry && !guarantees_return(f->body.get())) {
-            err("function `" + f->name + "` may reach the end of its body without returning a value", f);
+        if (f->body && !f->is_builtin) {
+            check_block(f->body.get());
+            // A non-void function must guarantee a return value; main is exempt (falling off the end is equivalent to return 0)
+            if (!is_void(f->rty) && !f->is_entry && !guarantees_return(f->body.get())) {
+                err("function `" + f->name + "` may reach the end of its body without returning a value", f);
+            }
         }
 
         scopes_.clear();

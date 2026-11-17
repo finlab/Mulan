@@ -27,6 +27,23 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 175 — 2026-11-17
+
+**`builtin` declarations and the `comptime` unit.**
+
+- `builtin const T name;` declares a compiler-provided compile-time constant (no initializer, no storage,
+  no address); `builtin T f(...);` declares a compiler-provided compile-time function (no body). The
+  compiler binds constants from its built-in table and reports unknown names.
+- `libs/comptime.mu` declares `OS` / `Arch` / `Abi` / `Endian` and the eight build constants as
+  `builtin const`; `use comptime;` exposes them as ordinary names, and `comptime.os` resolves across units
+  by folding the value.
+- Builtin references fold in codegen; builtin globals/functions are not emitted. `&comptime.os` is
+  rejected (not addressable). Builtin function calls are rejected until a compile-time call model lands.
+- Runtime platform symbols stay outside `comptime` (library/platform unit).
+- Tests: `if_comptime` covers the unit; manual probes for builtin declarations and cross-unit folding.
+
+Full suite: 704/704 (260 run, 406 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 174 — 2026-11-17
 
 **`use comptime;` exposes the compiler-provided compile-time constants to `#if`.**

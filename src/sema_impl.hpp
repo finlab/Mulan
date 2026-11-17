@@ -8,6 +8,7 @@
 #pragma once
 
 #include "sema.hpp"
+#include "directive.hpp"
 #include <algorithm>
 #include <climits>
 #include <cstddef>

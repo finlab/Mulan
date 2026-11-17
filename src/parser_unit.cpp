@@ -73,6 +73,8 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         Token nocopy_tok = tk;
         bool is_const_decl = false;
         Token const_tok = tk;
+        bool has_builtin_decl = false;
+        Token builtin_tok = tk;
         ExprPtr align_expr;
         bool has_layout = false;
         Token layout_tok = tk;
@@ -129,6 +131,14 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 advance();
                 continue;
             }
+            // `builtin const T name;` / `builtin T f(...);` (9.3)
+            if (at_kw("builtin")) {
+                if (has_builtin_decl) throw err_at("duplicate modifier `builtin`", peek());
+                has_builtin_decl = true;
+                builtin_tok = peek();
+                advance();
+                continue;
+            }
             break;
         }
         if (at_eof()) throw err_at("expected declaration after modifier", tk);
@@ -140,6 +150,17 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         // interface has no storage, a union is copied by bits, and the rest are not type declarations.
         if (nocopy && !(at_kw("struct") || at_kw("union"))) {
             throw err_at("`nocopy` can only modify a `struct` declaration", nocopy_tok);
+        }
+
+        if (has_builtin_decl) {
+            if (has_layout) {
+                throw err_at("`builtin` cannot be combined with a layout modifier", builtin_tok);
+            }
+            auto d = parse_builtin(builtin_tok);
+            d->is_public = is_pub;
+            d->is_export = is_export;
+            unit->decls.push_back(std::move(d));
+            continue;
         }
 
         if (at_kw("use")) {
@@ -444,6 +465,34 @@ std::unique_ptr<Decl> Parser::parse_extern(const Token& tk) {
     gv->spec = std::move(spec);
     gv->is_extern = true;
     gv->is_const = false;
+    gv->line = tk.line;
+    gv->col = tk.col;
+    semicolon();
+    return gv;
+}
+
+std::unique_ptr<Decl> Parser::parse_builtin(const Token& tk) {
+    bool ret_ref = false;
+    TypeSpecPtr spec = parse_return_type(ret_ref);
+    const Token name_tok = expect_ident("builtin name");
+    if (at_op("(")) {
+        auto fn = std::make_unique<FuncDecl>();
+        fn->name = name_tok.text;
+        fn->ret = std::move(spec);
+        fn->params = parse_params(&fn->is_varargs, /*allow_ref=*/true);
+        fn->is_builtin = true;
+        fn->is_public = true;
+        fn->line = tk.line;
+        fn->col = tk.col;
+        semicolon();
+        return fn;
+    }
+    if (ret_ref) throw err_at("a builtin constant cannot have a reference type", tk);
+    auto gv = std::make_unique<GlobalVar>();
+    gv->name = name_tok.text;
+    gv->spec = std::move(spec);
+    gv->is_const = true;
+    gv->is_builtin = true;
     gv->line = tk.line;
     gv->col = tk.col;
     semicolon();

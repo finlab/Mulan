@@ -742,6 +742,10 @@ using ArgPack = Emitter::ArgPack;
                 if (!cm || !*cm) fail("LLVM backend: missing const member", e->line, e->col);
                 return constOfValue(e->ty, (*cm)->is_float, (*cm)->ival, (*cm)->fval);
             }
+            if (auto gv = std::get_if<GlobalVar*>(&n->sym); gv && *gv && (*gv)->is_builtin) {
+                // A builtin constant has no storage: fold every reference to its value (9.3).
+                return constOfValue(e->ty, (*gv)->const_is_float, (*gv)->const_ival, (*gv)->const_fval);
+            }
             if (n->kind == "func") {
                 auto* f = std::get_if<FuncDecl*>(&n->sym);
                 if (!f || !*f) fail("LLVM backend: missing function target", e->line, e->col);
@@ -773,6 +777,13 @@ using ArgPack = Emitter::ArgPack;
                 auto* cm = std::get_if<ConstMember*>(&m->sym);
                 if (!cm || !*cm) fail("LLVM backend: missing const member", e->line, e->col);
                 return constOfValue(e->ty, (*cm)->is_float, (*cm)->ival, (*cm)->fval);
+            }
+            if (m->kind == "global") {
+                auto* gv = std::get_if<GlobalVar*>(&m->sym);
+                if (gv && *gv && (*gv)->is_builtin) {
+                    return constOfValue(e->ty, (*gv)->const_is_float, (*gv)->const_ival,
+                                        (*gv)->const_fval);
+                }
             }
             if (m->kind == "func") {
                 auto* f = std::get_if<FuncDecl*>(&m->sym);

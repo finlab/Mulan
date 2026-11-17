@@ -247,7 +247,7 @@ namespace muc_detail {
             curUnit = u->name;
             for (auto& d : u->decls) {
                 auto* g = dynamic_cast<GlobalVar*>(d.get());
-                if (!g || g->is_extern) continue;
+                if (!g || g->is_extern || g->is_builtin) continue;
                 LType* ty = lt(g->rty);
                 Constant* init = nullptr;
                 if (g->runtime_init) {
@@ -401,7 +401,7 @@ namespace muc_detail {
         for (auto& u : prog.units) {
             curUnit = u->name;
             for (auto& d : u->decls) {
-                if (auto f = dynamic_cast<FuncDecl*>(d.get())) emitFunction(f);
+                if (auto f = dynamic_cast<FuncDecl*>(d.get()); f && !f->is_builtin) emitFunction(f);
             }
             for (auto& l : u->lambdas) emitFunction(l.get());
         }

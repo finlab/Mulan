@@ -44,7 +44,7 @@ bool reserved_word(const std::string& s) { return s == "where" || s == "typeof";
 // keyword table (KEYWORDS in lexer.py)
 const std::unordered_set<std::string>& keywords() {
     static const std::unordered_set<std::string> kws = {
-        "unit",     "use",      "public",  "private", "export",  "const",   "auto",    "struct",   "enum",
+        "unit",     "use",      "public",  "private", "export",  "const",   "builtin", "auto",    "struct",   "enum",
         "extern",   "if",       "else",    "elif",    "while",    "for",      "in",
         "switch",
         "para",     "ref",      "break",    "continue", "return", "true",     "false",    "null",

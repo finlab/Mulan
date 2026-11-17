@@ -442,8 +442,6 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         owned[name] = std::move(unit);
         for (auto& use : raw->uses) {
             check_unit_name(use->unit_name, use->line, use->col, raw->filename);
-            // `comptime` is supplied by the compiler, not by a file on disk (9.3).
-            if (use->unit_name == "comptime") continue;
             Unit* dep = visit(find_file(use->unit_name));
             if (dep->name != use->unit_name) {
                 throw MuError(dep->filename + " declares unit `" + dep->name +

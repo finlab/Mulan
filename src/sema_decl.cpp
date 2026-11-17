@@ -227,9 +227,6 @@ namespace muc_detail {
         for (auto& u : units_) {
             cur_ = u.get();
             for (auto& use : u->uses) {
-                // `comptime` is supplied by the compiler, not by a unit file (9.3); its constants are
-                // resolved during parsing.
-                if (use->unit_name == "comptime") continue;
                 if (!infos_.count(use->unit_name)) {
                     err("cannot find unit `" + use->unit_name + "`", use.get());
                 }
