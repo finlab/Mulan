@@ -49,9 +49,10 @@
   #22); structural satisfaction counts interface default methods (the type must provide them, #33).
 
 Tests: `const_repeat`, `overload_top_const`, `overload_low_const`, `const_field_default`, `if_builtin_fn`,
-`if_builtin_fn_args`, `if_before_use_comptime`, `contract_iface_default`, `contract_structural_default`.
+`if_builtin_fn_args`, `if_before_use_comptime`, `use_short_comptime`, `contract_iface_default`,
+`contract_structural_default`.
 
-Full suite: 723/723 (271 run, 412 must-fail, 26 check, 1 warning, 10 ir, 3 c abi).
+Full suite: 724/724 (271 run, 413 must-fail, 26 check, 1 warning, 10 ir, 3 c abi).
 
 #### build 190 — 2026-11-18
 
