@@ -13,7 +13,9 @@ namespace muc_detail {
             if (spec->is_const && !spec->resolved->is_const) {
                 auto c = std::make_shared<Type>(*spec->resolved);
                 c->is_const = true;
-                cv_views_[spec->resolved.get()].push_back(c.get());
+                auto& slot = cv_views_[spec->resolved.get()];
+                slot.first = spec->resolved;
+                slot.second.push_back(c);
                 return c;
             }
             return spec->resolved;
@@ -45,7 +47,9 @@ namespace muc_detail {
                     if (t->kind == TypeKind::Module) err_ts("`const` cannot qualify a unit name", spec);
                     auto c = std::make_shared<Type>(*t);
                     c->is_const = true;
-                    cv_views_[t.get()].push_back(c.get());
+                    auto& slot = cv_views_[t.get()];
+                    slot.first = t;
+                    slot.second.push_back(c);
                     return c;
                 }
                 return t;
@@ -450,10 +454,18 @@ namespace muc_detail {
         // namespace. A value outside the `int` range would be truncated and a repeated member name
         // would silently bind to the first declaration, so both are rejected here (#36 / #37).
         {
-            std::vector<std::pair<std::string, std::string>> owner;  // member -> enum
+            // member name -> declaring enum. A map keeps the check O(1) per member: a linear scan over
+            // every member seen so far made a large enum quadratic (a 40k-member enum took 0.66s, 200k
+            // never finished).
+            std::unordered_map<std::string, std::string> owner;
             for (auto& d : u->decls) {
                 auto* ed = dynamic_cast<EnumDecl*>(d.get());
                 if (!ed) continue;
+                if (ed->members.size() > kMaxEnumMembers) {
+                    err("enum `" + ed->name + "` has more than " + std::to_string(kMaxEnumMembers) +
+                            " members; split it into several enums",
+                        ed);
+                }
                 long long value = 0;
                 bool has = false;
                 for (auto& [m, v] : ed->members) {
@@ -470,13 +482,12 @@ namespace muc_detail {
                         err("value of enum member `" + m + "` (" + std::to_string(value) +
                                 ") does not fit the underlying `int` range", ed);
                     }
-                    for (auto& [seen, seen_enum] : owner) {
-                        if (seen != m) continue;
-                        err("duplicate enum member `" + m + "` (declared in `" + seen_enum +
+                    if (auto it = owner.find(m); it != owner.end()) {
+                        err("duplicate enum member `" + m + "` (declared in `" + it->second +
                                 "` and `" + ed->name + "`); write `" + ed->name + "." + m + "`",
                             ed);
                     }
-                    owner.emplace_back(m, ed->name);
+                    owner.emplace(m, ed->name);
                 }
             }
         }

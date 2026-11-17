@@ -608,6 +608,20 @@ namespace muc_detail {
 
     void Sema::check_class(ClassDecl* c) {
         check_const_members(c->const_members, c->ty, "class", c->name);
+        // The hierarchy walkers (`is_subclass_of`, `is_interface`) stop at a fixed depth, and every class
+        // copies its base's fields: a chain deeper than this both misbehaves and costs O(n^2).
+        {
+            int depth = 0;
+            std::unordered_set<const Type*> seen;
+            for (TypePtr b = c->ty->base; b; b = b->base) {
+                if (!seen.insert(b.get()).second) break;  // a cycle: the hierarchy check reports it
+                if (++depth > kMaxInheritanceDepth) {
+                    err("class `" + c->name + "` is more than " + std::to_string(kMaxInheritanceDepth) +
+                            " levels deep in its inheritance chain; flatten the hierarchy",
+                        c);
+                }
+            }
+        }
         // A top-level `const` on a parameter is not part of the signature (SPEC 3.7).
         std::vector<MethodDecl*> seen;
         for (auto& m : c->methods) {
@@ -708,6 +722,23 @@ namespace muc_detail {
     }
 
     void Sema::check_interface(InterfaceDecl* itf) {
+        // The interface graph walker (`iface_extends`) stops at a fixed depth; a deeper chain would
+        // silently drop inherited members.
+        {
+            int depth = 0;
+            std::vector<TypePtr> stack(itf->ty->interfaces.begin(), itf->ty->interfaces.end());
+            while (!stack.empty()) {
+                TypePtr cur = stack.back();
+                stack.pop_back();
+                if (++depth > kMaxInterfaceDepth) {
+                    err("interface `" + itf->name + "` inherits more than " +
+                            std::to_string(kMaxInterfaceDepth) +
+                            " interfaces in one chain; flatten the hierarchy",
+                        itf);
+                }
+                for (auto& i : cur->interfaces) stack.push_back(i);
+            }
+        }
         for (auto& m : itf->methods) {
             if (!m->body) continue;  // abstract declaration other than a default method
             begin_member(itf->ty, m->rty, itf->name + "." + m->name, m->line, m->col);

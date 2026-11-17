@@ -634,6 +634,20 @@ bool is_scalar_const_type(const TypeSpec* spec) {
 
     void Sema::resolve_class_fields(ClassDecl* c, Unit* u) {
         if (!c || c->fields_resolved) return;
+        // Reject a too-deep chain *before* flattening the base fields: copying them level by level is
+        // O(depth^2), so an absurd hierarchy would otherwise burn seconds before the diagnostic.
+        {
+            int depth = 0;
+            std::unordered_set<const Type*> seen;
+            for (TypePtr b = c->ty ? c->ty->base : nullptr; b; b = b->base) {
+                if (!seen.insert(b.get()).second) break;  // a cycle: check_hierarchy_cycles reports it
+                if (++depth > kMaxInheritanceDepth) {
+                    err("class `" + c->name + "` is more than " + std::to_string(kMaxInheritanceDepth) +
+                            " levels deep in its inheritance chain; flatten the hierarchy",
+                        c);
+                }
+            }
+        }
         std::vector<Field> fields;
         if (c->ty->base) fields = c->ty->base->fields;
         std::unordered_set<std::string> fnames;
@@ -770,6 +784,16 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                 if (!sd || !sd->ty) continue;
                 const TypePtr& ty = sd->ty;
                 const std::string kw = sd->is_union ? "union" : "struct";
+                // A by-value nesting deeper than the layout recursion limit would leave a silently wrong
+                // size (`type_size` stops recursing as a stack guard), so it is rejected here.
+                clear_type_depth_exceeded();
+                (void)type_size(ty);
+                if (type_depth_exceeded()) {
+                    err(kw + " `" + sd->name +
+                            "` nests more than 512 levels by value; break the chain up with pointers or "
+                            "an interface",
+                        sd);
+                }
                 if (ty->align_req > 0 && !ty->is_packed) {
                     size_t natural = 1;
                     for (auto& f : ty->fields) natural = std::max(natural, type_align(f.type));
@@ -831,15 +855,18 @@ bool is_scalar_const_type(const TypeSpec* spec) {
     // methods are filled in `resolve_unit_types`). Once every shape is final, replace each view's body
     // with the canonical type's, keeping the view's own cv flag and identity.
     void Sema::refresh_cv_views() {
-        for (auto& [canon, views] : cv_views_) {
+        for (auto& [key, entry] : cv_views_) {
+            const TypePtr& canon = entry.first;
             if (!canon) continue;
-            for (Type* view : views) {
+            for (auto& weak : entry.second) {
+                TypePtr view = weak.lock();  // a view that was a temporary is already gone
                 if (!view) continue;
                 const bool keep_const = view->is_const;
                 *view = *canon;
                 view->is_const = keep_const;
             }
         }
+        cv_views_.clear();
     }
 
     void Sema::resolve_unit_types(Unit* u) {        cur_ = u;

@@ -502,8 +502,14 @@ namespace {
 
 size_t align_up(size_t v, size_t a) { return a ? (v + a - 1) / a * a : v; }
 
+// 	ype_size / 	ype_align recurse over the by-value nesting of a type. The counter is a stack guard: a
+// nonexistent by-value cycle must not blow the compiler's stack. A program that actually reaches the limit
+// is rejected by check_layouts, so an accepted program never has a silently wrong layout.
+constexpr int kMaxTypeNesting = 512;
+bool g_type_depth_exceeded = false;
+
 size_t align_impl(const TypePtr& t, int depth) {
-    if (!t || depth > 64) return 1;
+    if (!t || depth > kMaxTypeNesting) { if (t) g_type_depth_exceeded = true; return 1; }
     switch (t->kind) {
         case TypeKind::Void: return 1;
         case TypeKind::Prim: {
@@ -533,7 +539,7 @@ size_t align_impl(const TypePtr& t, int depth) {
 }
 
 size_t size_impl(const TypePtr& t, int depth) {
-    if (!t || depth > 64) return 0;
+    if (!t || depth > kMaxTypeNesting) { if (t) g_type_depth_exceeded = true; return 0; }
     switch (t->kind) {
         case TypeKind::Void: return 0;
         case TypeKind::Prim: {
@@ -592,6 +598,8 @@ size_t size_impl(const TypePtr& t, int depth) {
 
 size_t type_align(const TypePtr& t) { return align_impl(t, 0); }
 size_t type_size(const TypePtr& t) { return size_impl(t, 0); }
+bool type_depth_exceeded() { return g_type_depth_exceeded; }
+void clear_type_depth_exceeded() { g_type_depth_exceeded = false; }
 
 uint64_t type_member_offset(const TypePtr& t, size_t idx) {
     if (!t) return 0;

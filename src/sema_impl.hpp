@@ -126,8 +126,10 @@ private:
     Unit* const_table_unit_ = nullptr;
     UserConstTable const_table_;
     // Every `const T` view created by `resolve_type`, grouped by its canonical type (`cv_views_[T]`).
-    // `refresh_cv_views` copies the final shape of T into each view.
-    std::unordered_map<const Type*, std::vector<Type*>> cv_views_;
+    // `refresh_cv_views` copies the final shape of T into each view. Both sides are weak/shared on
+    // purpose: a view is often a temporary (a discarded conversion probe), and the map keeps the
+    // canonical type alive, so the refresh never writes into freed memory.
+    std::unordered_map<const Type*, std::pair<TypePtr, std::vector<std::weak_ptr<Type>>>> cv_views_;
     Unit* cur_ = nullptr;
     FuncDecl* cur_func_ = nullptr;
     TypePtr cur_ret_;
@@ -239,6 +241,17 @@ private:
     // stack is non-empty carries them (see `err`). Mutable because diagnostics are `const` members.
     mutable std::vector<std::string> instantiation_notes_;
     static constexpr int kGenericDepthLimit = 256;
+    // Total instances per program. Depth alone does not bound the work (`Pair<T, T>` doubles the count per
+    // level); real code uses a few hundred, and the standard library a few dozen.
+    static constexpr size_t kGenericInstanceLimit = 8192;
+    size_t generic_instance_count_ = 0;
+    // The hierarchy walkers stop at a fixed depth; a deeper chain is rejected rather than silently losing
+    // subclass/interface relationships (`is_subclass_of`, `iface_extends`).
+    static constexpr int kMaxInheritanceDepth = 1024;
+    static constexpr int kMaxInterfaceDepth = 256;
+    // One enum with more members than this is generated input: the members share the unit's unqualified
+    // namespace and each one is interned for the whole process.
+    static constexpr size_t kMaxEnumMembers = 65536;
     std::vector<std::unique_ptr<Decl>> generic_decls_;          // instantiation products (lifetime)
     std::vector<std::unique_ptr<Decl>> synth_decls_;            // synthesized lambda environment classes (lifetime)
 

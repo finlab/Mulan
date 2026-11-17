@@ -275,6 +275,15 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
                    " nested instances; SPEC 3.15.4 requires a finite expansion)",
                spec);
     }
+    // Depth alone does not bound the work: `Pair<T, T>` doubles the instance count per level, so a
+    // 24-level program asks for 16M instances. The total is capped instead of letting the compile run.
+    if (generic_instance_count_ >= kGenericInstanceLimit) {
+        err_ts("this program needs more than " + std::to_string(kGenericInstanceLimit) +
+                   " generic instantiations (the last is `" + display +
+                   "`); SPEC 3.15.4 requires a finite expansion, so simplify the type arguments",
+               spec);
+    }
+    ++generic_instance_count_;
     ++generic_depth_;
     struct DepthGuard {
         int& d;
@@ -813,6 +822,13 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     if (generic_busy_.count(key)) {
         err("recursive generic instantiation of `" + display + "`", c);
     }
+    if (generic_instance_count_ >= kGenericInstanceLimit) {
+        err("this program needs more than " + std::to_string(kGenericInstanceLimit) +
+                " generic instantiations (the last is `" + display +
+                "`); SPEC 3.15.4 requires a finite expansion, so simplify the type arguments",
+            c);
+    }
+    ++generic_instance_count_;
     generic_busy_.insert(key);
     BusyGuard busy_guard{generic_busy_, key};
     // The instantiation chain + "why only now" hint for an unchecked parameter.

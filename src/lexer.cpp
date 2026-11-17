@@ -135,6 +135,10 @@ public:
         : src_(std::move(src)), filename_(std::move(filename)), n_(src_.size()) {}
 
     std::vector<Token> tokens() {
+        // One token per few source bytes in the worst case (`1 1 1 ...`), and a token is ~90 bytes: a
+        // 64 MiB pathological file would need gigabytes of tokens. The limit is far above real code (the
+        // standard library's largest unit is a few tens of thousands of tokens).
+        static constexpr size_t kMaxTokens = 8'000'000;
         std::vector<Token> out;
         int prev_line = -1;
         for (;;) {
@@ -142,6 +146,12 @@ public:
             out.back().bol = out.back().kind != TokKind::Eof && out.back().line != prev_line;
             prev_line = out.back().line;
             if (out.back().kind == TokKind::Eof) return out;
+            if (out.size() >= kMaxTokens) {
+                const Token& t = out.back();
+                throw MuError(filename_ + ":" + std::to_string(t.line) + ":" + std::to_string(t.col) +
+                              ": a source file must not contain more than " +
+                              std::to_string(kMaxTokens) + " tokens (split it into units)");
+            }
         }
     }
 

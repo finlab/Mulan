@@ -38,6 +38,23 @@ namespace {
 
 namespace fs = std::filesystem;
 
+// Capacity limits: a compile must fail with a diagnostic instead of being blown up by a generated or
+// hostile input. The numbers are far above real code (the standard library has a few dozen units of a
+// few thousand lines) and small enough that a compile stays bounded.
+constexpr size_t kMaxUnits = 4096;                 // units in one program (recursive `use` closure)
+constexpr std::uintmax_t kMaxSourceBytes = 64ull << 20;  // one source file (64 MiB)
+
+// The size of one source file, checked before it is read into memory.
+void check_source_size(const std::string& path) {
+    std::error_code ec;
+    const std::uintmax_t n = fs::file_size(path, ec);
+    if (ec) return;  // the read itself reports a missing/unreadable file
+    if (n > kMaxSourceBytes) {
+        throw MuError("source file `" + path + "` is " + std::to_string(n) +
+                      " bytes; the limit is " + std::to_string(kMaxSourceBytes) + " bytes (64 MiB)");
+    }
+}
+
 std::string dirname_of(const std::string& p) {
     auto pos = p.find_last_of("/\\");
     return pos == std::string::npos ? std::string(".") : p.substr(0, pos);
@@ -448,6 +465,7 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
     // compile-time constants (P3). A `use` inside a dead `#if` arm is not known here; a missing
     // dependency is ignored and reported only if the live parse reaches it.
     auto prescan = [](const std::string& path) {
+        check_source_size(path);
         std::ifstream in(path, std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         std::string clean;
@@ -501,6 +519,12 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
     std::set<std::string> prescan_stack;
 
     std::function<Unit*(const std::string&)> visit = [&](const std::string& path) -> Unit* {
+        // A program that pulls in tens of thousands of units is either generated or hostile; the cost is
+        // ~7ms per unit, so the limit keeps a compile bounded instead of letting it run for minutes.
+        if (owned.size() >= kMaxUnits) {
+            throw MuError("this program uses more than " + std::to_string(kMaxUnits) +
+                          " units; combine related declarations into fewer files");
+        }
         const auto pre = prescan(path);
         if (!pre.first.empty()) {
             if (prescan_stack.count(pre.first)) {

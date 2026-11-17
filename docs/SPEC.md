@@ -2497,6 +2497,32 @@ public builtin bool is_linux();
   The old "compiler rewrites the initializer of `std.target`" mechanism is gone; `builtin` constants are
   bound by the compiler (9.3).
 
+### 9.4 Capacity limits (decided 2026-11-18)
+
+The compiler must fail with a diagnostic instead of being blown up by a generated or hostile program; every
+limit below is far above real code (the standard library's largest unit is a few thousand lines, its whole
+`use` closure a few dozen units) and each one names what to do instead.
+
+| Input | Limit | Diagnostic |
+|---|---|---|
+| One source file | 64 MiB | `source file … is N bytes; the limit is …` |
+| Tokens in one file | 8M | `a source file must not contain more than 8000000 tokens` |
+| Units in one program | 4096 | `this program uses more than 4096 units` |
+| Parser nesting (parentheses / unary / blocks / types) | 320 levels | `… nesting too deep` |
+| One operator/member/pointer chain | 2048 links | `… is too long (limit 2048 …)` |
+| Nested `#if` chains | 256 | `` `#if` chains are nested too deeply `` |
+| Generic instances per program | 8192 | `this program needs more than 8192 generic instantiations` |
+| Nested generic instances (one chain) | 256 | `recursive generic instantiation … does not terminate` |
+| By-value type nesting (a `struct` inside a `struct` …) | 512 | `… nests more than 512 levels by value` |
+| Class inheritance chain | 1024 | `… is more than 1024 levels deep in its inheritance chain` |
+| Interface inheritance chain | 256 | `… inherits more than 256 interfaces in one chain` |
+| Enum members (one enum) | 65536 | `enum … has more than 65536 members` |
+
+The nesting limits exist because the parser, the semantic passes and the code generator walk the tree
+recursively: a bound there is a stack-overflow guard as much as a work bound. A type or hierarchy that hits
+its limit is rejected *before* a layout or a subclass relation is computed from a truncated walk, so an
+accepted program never keeps a silently wrong result.
+
 ---
 
 ## 10. Phase-one non-goals

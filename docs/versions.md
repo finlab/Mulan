@@ -27,6 +27,30 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 197 — 2026-11-18
+
+**Capacity limits: a pathological program is rejected instead of blowing the compiler up.**
+
+- **Limits** (SPEC 9.4): one source file 64 MiB, 8M tokens per file, 4096 units per program, 256 nested
+  `#if`, 8192 generic instantiations per program, 512 levels of by-value type nesting, 1024 levels of class
+  inheritance, 256 interfaces in one chain, 65536 members per enum. The existing parser limits (320 levels
+  of nesting, 2048 links in a chain) are documented alongside them.
+- **Two blowups fixed instead of capped**: the duplicate-enum-member check scanned every member seen so far
+  (a 40k-member enum took 0.66s, 200k never finished — it is a map now), and a by-value type nesting past
+  `type_size`'s recursion guard silently produced a wrong layout (`sizeof(S199)` reached the backend as an
+  internal size mismatch); the guard now records that it was hit and `check_layouts` rejects the type, so an
+  accepted program never keeps a truncated layout. A class chain deeper than 1024 is rejected before its
+  base fields are flattened (the walkers stop there, and the copies are O(depth^2)).
+- **A dangling-pointer fix**: `const T` views registered for `refresh_cv_views` were held as raw pointers; a
+  discarded conversion probe left a dangling entry and the refresh wrote into freed memory (an
+  environment-dependent crash in build 194's `const_array_bound`). Views are weak references and the
+  canonical type is kept alive by the registry.
+- `tests/errors/if_nesting_limit.mu`, `tests/errors/type_nesting_limit.mu`; the probe script lives in
+  `Mulan-Agents:bench/capacity_probe.py` (every axis, before/after numbers in
+  `Mulan-Agents:agents/capacity-limits.md`).
+
+Full suite: 747/747 (282 run, 424 must-fail, 27 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 196 — 2026-11-18
 
 **Test runner: `@exit 3` also accepts an OS-level termination.**

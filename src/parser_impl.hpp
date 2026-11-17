@@ -113,6 +113,9 @@ private:
     //     level per link; the AST walkers (sema, codegen) recurse over it and overflow past 5k.
     static constexpr int kMaxNestDepth = 320;
     static constexpr int kMaxChainLinks = 2048;
+    // Nested `#if` chains are kept as data by the parser, but the semantic pass expands member arms
+    // recursively and declaration arms through a deep call chain, so the depth is bounded here.
+    static constexpr size_t kMaxIfNesting = 256;
 
     // One level of nesting for the lifetime of the guard. Throws before incrementing, so a guard
     // that is never constructed cannot unbalance the counter.
@@ -137,8 +140,7 @@ private:
 
     // A chain built in a loop adds one tree level per link with no recursion at all; `links` counts
     // them within the current construct, which bounds the depth handed to sema and codegen.
-    void note_link(int& links, const char* what) {
-        if (++links > kMaxChainLinks) {
+    void note_link(int& links, const char* what) {        if (++links > kMaxChainLinks) {
             throw err(std::string(what) + " is too long (limit " + std::to_string(kMaxChainLinks) +
                       " chained operators or links); split it up");
         }

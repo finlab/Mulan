@@ -54,6 +54,11 @@ void Parser::directive_header() {
     }
 
     if (d == "if") {
+        if (groups_.size() >= kMaxIfNesting) {
+            throw err_at("`#if` chains are nested too deeply (limit " + std::to_string(kMaxIfNesting) +
+                             " levels); simplify the conditional structure",
+                         nm);
+        }
         groups_.emplace_back();
         DirectiveGroup& g = groups_.back();
         // The arm's elements collect into their own container; the selected one is spliced by the
