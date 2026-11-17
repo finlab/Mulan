@@ -15,7 +15,7 @@ using namespace muc_detail;
 
 // ---------------------------------------------------------------- unit
 
-void Parser::record_user_const(GlobalVar* g) {
+void Parser::record_user_const(GlobalVar* g, const std::string& unit_name) {
     if (!g || !g->is_const || !g->init || !g->spec) return;
     if (g->spec->kind != TypeSpec::K::Named) return;
     const std::string& tn = g->spec->name;
@@ -29,6 +29,7 @@ void Parser::record_user_const(GlobalVar* g) {
     if (!eval_user_const(*ie->expr, user_consts_, uc, why)) return;
     if (tn == "bool") uc.is_bool = true;
     user_consts_[g->name] = uc;
+    const_source_[g->name] = unit_name;
 }
 
 std::unique_ptr<Unit> Parser::parse_unit() {
@@ -175,10 +176,17 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             // (decided 2026-11-17). Before the use they are not visible, like any other name.
             if (uname == "std.comptime") {
                 add_builtin_constants(user_consts_);
+                for (const auto& [k, v] : user_consts_) const_source_.emplace(k, "std.comptime");
             } else if (const UserConstTable* t = unit_public_consts(uname)) {
                 for (const auto& [k, v] : *t) {
-                    user_consts_.emplace(k, v);              // a bare name; an earlier declaration wins
-                    user_consts_[uname + "." + k] = v;       // the qualified form `unit.name`
+                    auto src = const_source_.find(k);
+                    if (src == const_source_.end()) {
+                        user_consts_.emplace(k, v);          // a bare name; the first declaration wins
+                        const_source_[k] = uname;
+                    } else if (src->second != uname) {
+                        ambiguous_consts_.insert(k);          // a qualified reference is required
+                    }
+                    user_consts_[uname + "." + k] = v;        // the qualified form `unit.name`
                 }
             }
             semicolon();
@@ -401,7 +409,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
             auto globals = parse_global_list(std::move(spec), is_const);
             if (discard_depth_ == 0) {
-                for (auto& g : globals) record_user_const(g.get());
+                for (auto& g : globals) record_user_const(g.get(), unit->name);
             }
             for (auto& g : globals) g->is_public = is_pub;
             for (auto& g : globals) g->is_export = is_export;

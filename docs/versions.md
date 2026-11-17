@@ -27,6 +27,16 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 179 — 2026-11-17
+
+**Ambiguity diagnostics for cross-unit `#if` constants.**
+
+- A bare constant name declared by two `use`d units is recorded as ambiguous; `#if` reports it and asks for
+  a qualified reference (`unit.name`) instead of silently taking the first.
+- Tests: `if_cross_unit_ambiguous` (must-fail) with `tests/errors/iflib/{lib,other}.mu`.
+
+Full suite: 707/707 (262 run, 407 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 178 — 2026-11-17
 
 **Cross-unit `#if` compile-time constants (first P3 step).**

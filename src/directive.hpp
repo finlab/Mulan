@@ -9,6 +9,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "ast.hpp"
@@ -50,8 +51,10 @@ struct UserConst {
 using UserConstTable = std::unordered_map<std::string, UserConst>;
 
 // Evaluates an `#if` condition. Returns false and fills `why` on failure; the caller attaches the position.
-// `user_consts` extends the evaluator with the constants visible at this point (may be null).
-bool eval_directive_cond(const Expr& e, std::string& why, const UserConstTable* user_consts = nullptr);
+// `user_consts` extends the evaluator with the constants visible at this point (may be null);
+// `ambiguous` names constants that came from several `use`d units and need a qualified reference.
+bool eval_directive_cond(const Expr& e, std::string& why, const UserConstTable* user_consts = nullptr,
+                         const std::unordered_set<std::string>* ambiguous = nullptr);
 
 // Evaluates a unit-level const initializer into `out` (used to record it for later `#if` conditions).
 bool eval_user_const(const Expr& e, const UserConstTable& table, UserConst& out, std::string& why);

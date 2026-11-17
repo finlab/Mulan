@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -173,6 +174,8 @@ private:
     // Unit-level compile-time constants already declared in this unit: a later `#if` may read them
     // (the same "declared before use" rule as ordinary constant initializers).
     UserConstTable user_consts_;
+    std::unordered_map<std::string, std::string> const_source_;  // bare name -> declaring unit
+    std::unordered_set<std::string> ambiguous_consts_;           // bare names from several used units
 
     // One list element is parsed at a time; while the element sits in an arm that is not compiled the
     // arm must still be parsed (syntax is checked) but nothing may reach the AST. The undo action
@@ -216,7 +219,7 @@ private:
     std::vector<std::unique_ptr<GlobalVar>> parse_global_list(TypeSpecPtr spec, bool is_const);
     // Record a unit-level `const` whose initializer folds, so a later `#if` in this unit can read it
     // (decided 2026-11-17).
-    void record_user_const(GlobalVar* g);
+    void record_user_const(GlobalVar* g, const std::string& unit_name);
     std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, bool ret_ref, const Token& tk);
     std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr, bool allow_ref = false,
                                                      bool allow_move = false);

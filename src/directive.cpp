@@ -199,6 +199,8 @@ bool eval_binary(const Binary& b, V& out, std::string& why) {
 
 // The user constants visible to the condition being evaluated (set by `eval_directive_cond`).
 const UserConstTable* g_user_consts = nullptr;
+// Bare names that came from several `use`d units (a qualified reference is required).
+const std::unordered_set<std::string>* g_ambiguous = nullptr;
 
 bool eval(const Expr& e, V& out, std::string& why) {
     if (const auto* p = dynamic_cast<const IntLit*>(&e)) {
@@ -219,7 +221,12 @@ bool eval(const Expr& e, V& out, std::string& why) {
     }
     if (const auto* p = dynamic_cast<const Name*>(&e)) {
         // `#if` has no special "build constant" source: the name is whatever is visible at this
-        // point (a `use comptime;` records the compiler-provided constants as ordinary names).
+        // point (a `use std.comptime;` records the compiler-provided constants as ordinary names).
+        if (g_ambiguous && g_ambiguous->count(p->ident)) {
+            why = "`" + p->ident + "` is ambiguous: several `use`d units declare it; write a qualified "
+                  "name such as `unit." + p->ident + "`";
+            return false;
+        }
         if (g_user_consts) {
             auto it = g_user_consts->find(p->ident);
             if (it != g_user_consts->end()) {
@@ -351,11 +358,14 @@ std::string describe_build_config() {
     return s;
 }
 
-bool eval_directive_cond(const Expr& e, std::string& why, const UserConstTable* user_consts) {
+bool eval_directive_cond(const Expr& e, std::string& why, const UserConstTable* user_consts,
+                         const std::unordered_set<std::string>* ambiguous) {
     g_user_consts = user_consts;
+    g_ambiguous = ambiguous;
     V v;
     const bool ok = eval(e, v, why);
     g_user_consts = nullptr;
+    g_ambiguous = nullptr;
     if (!ok) return false;
     if (v.k != VK::Bool) {
         why = "a `#if` condition must be a bool; write a comparison such as `os == OS.Windows`";

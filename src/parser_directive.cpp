@@ -22,7 +22,7 @@ void Parser::directive_begin_arm(const Expr* cond, const Token& at) {
             take = true;
         } else {
             std::string why;
-            take = eval_directive_cond(*cond, why, &user_consts_);
+            take = eval_directive_cond(*cond, why, &user_consts_, &ambiguous_consts_);
             if (!why.empty()) throw err_at("`#if` condition: " + why, at);
         }
     }
