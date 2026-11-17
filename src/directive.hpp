@@ -43,6 +43,9 @@ bool builtin_const(const std::string& name, long long& value);
 struct UserConst {
     long long value = 0;
     bool is_bool = false;
+    // Non-empty when the constant is an enum value (`os`, `OS.Windows`): the evaluator keeps the
+    // enum identity so `#if` compares enum values only with the same enum type.
+    std::string enum_ns;
 };
 using UserConstTable = std::unordered_map<std::string, UserConst>;
 

@@ -218,61 +218,33 @@ bool eval(const Expr& e, V& out, std::string& why) {
         return true;
     }
     if (const auto* p = dynamic_cast<const Name*>(&e)) {
-        // A visible user constant wins (a `use comptime;` records the builtins as ordinary constants,
-        // so the condition does not care where the value came from).
+        // `#if` has no special "build constant" source: the name is whatever is visible at this
+        // point (a `use comptime;` records the compiler-provided constants as ordinary names).
         if (g_user_consts) {
             auto it = g_user_consts->find(p->ident);
             if (it != g_user_consts->end()) {
                 out = it->second.is_bool ? vbool(it->second.value != 0) : vint(it->second.value);
+                out.enum_ns = it->second.enum_ns;
                 return true;
             }
         }
-        long long v = 0;
-        if (builtin_const(p->ident, v)) {
-            if (p->ident == "debug" || p->ident == "bounds" || p->ident == "single_thread") out = vbool(v != 0);
-            else out = vint(v);
-            // The build constants keep the identity of their enum so comparisons can check it.
-            if (p->ident == "os") out.enum_ns = "OS";
-            else if (p->ident == "arch") out.enum_ns = "Arch";
-            else if (p->ident == "abi") out.enum_ns = "Abi";
-            else if (p->ident == "endian") out.enum_ns = "Endian";
-            return true;
-        }
-        // A user compile-time constant visible at this point (decided 2026-11-17).
-        if (g_user_consts) {
-            auto it = g_user_consts->find(p->ident);
-            if (it != g_user_consts->end()) {
-                out = it->second.is_bool ? vbool(it->second.value != 0) : vint(it->second.value);
-                return true;
-            }
-        }
-        why = "`" + p->ident + "` is not a build constant or a visible compile-time constant; a `#if` "
-              "condition may only use " + kConstNames + " (and the members of OS / Arch / Abi / Endian)";
+        why = "`" + p->ident + "` is not a visible compile-time constant; a `#if` condition resolves "
+              "names normally (write `use comptime;` for the build constants)";
         return false;
     }
     if (const auto* p = dynamic_cast<const Member*>(&e)) {
         const auto* base = dynamic_cast<const Name*>(p->obj.get());
-        // A qualified constant (`OS.Windows`) already recorded in the visible table.
         if (base && g_user_consts) {
             auto it = g_user_consts->find(base->ident + "." + p->name);
             if (it != g_user_consts->end()) {
                 out = it->second.is_bool ? vbool(it->second.value != 0) : vint(it->second.value);
+                out.enum_ns = it->second.enum_ns;
                 return true;
             }
         }
-        const std::vector<std::string>* members = nullptr;
-        if (!base || !builtin_enum(base->ident, members)) {
-            why = "`#if` conditions may only use the members of OS / Arch / Abi / Endian";
-            return false;
-        }
-        const int idx = index_of(*members, p->name);
-        if (idx < 0) {
-            why = "`" + base->ident + "` has no member `" + p->name + "`";
-            return false;
-        }
-        out = vint(idx);
-        out.enum_ns = base->ident;
-        return true;
+        why = "`" + (base ? base->ident + "." + p->name : p->name) +
+              "` is not a visible compile-time constant";
+        return false;
     }
     if (const auto* p = dynamic_cast<const NotExpr*>(&e)) {
         V v;
@@ -406,15 +378,15 @@ void add_builtin_constants(UserConstTable& table) {
         long long v = 0;
         if (builtin_const(n, v)) table[n] = UserConst{v, true};
     }
-    for (const char* n : targets) {
+    for (size_t i = 0; i < 4; ++i) {
         long long v = 0;
-        if (builtin_const(n, v)) table[n] = UserConst{v, false};
+        if (builtin_const(targets[i], v)) table[targets[i]] = UserConst{v, false, enums[i]};
     }
     for (const char* n : enums) {
         std::vector<std::string> members;
         if (!builtin_enum_members(n, members)) continue;
         for (size_t i = 0; i < members.size(); ++i) {
-            table[std::string(n) + "." + members[i]] = UserConst{static_cast<long long>(i), false};
+            table[std::string(n) + "." + members[i]] = UserConst{static_cast<long long>(i), false, n};
         }
     }
 }

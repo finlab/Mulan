@@ -1,4 +1,5 @@
 unit if_config;
+use comptime;
 
 extern int putchar(int c);
 

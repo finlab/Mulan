@@ -27,6 +27,22 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 176 — 2026-11-17
+
+**`#if` build constants require `use comptime;` (implicit visibility removed).**
+
+- The directive evaluator has no built-in constant fallback: `#if os == OS.Windows` resolves `os` and
+  `OS.Windows` from the visible constant table, which `use comptime;` fills. Without the use they are not
+  visible (the diagnostic says so).
+- The enum identity is kept in the constant table, so `os == Endian.Little` is still rejected as a
+  cross-enum comparison.
+- Existing `if_*` tests now write `use comptime;`; `if_target` uses the `comptime` unit instead of
+  `std.target`.
+- `std.target` is kept for compatibility (no test or library uses it now); it will be removed when the
+  library migrates.
+
+Full suite: 704/704 (260 run, 406 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 175 — 2026-11-17
 
 **`builtin` declarations and the `comptime` unit.**
