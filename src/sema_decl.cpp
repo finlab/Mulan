@@ -566,6 +566,11 @@ bool is_scalar_const_type(const TypeSpec* spec) {
         const std::string kw = sd->is_union ? "union" : "struct";
         std::vector<Field> fields;
         std::unordered_set<std::string> fnames;
+        if (sd->fields.size() > kMaxFields) {
+            err(kw + " `" + sd->name + "` declares more than " + std::to_string(kMaxFields) +
+                    " fields; split the data into nested structs",
+                sd);
+        }
         for (auto& [fname, spec] : sd->fields) {
             if (!fnames.insert(fname).second) {
                 err("duplicate field `" + fname + "` in " + kw + " `" + sd->name + "`", sd);
@@ -652,6 +657,13 @@ bool is_scalar_const_type(const TypeSpec* spec) {
         if (c->ty->base) fields = c->ty->base->fields;
         std::unordered_set<std::string> fnames;
         for (auto& f : fields) fnames.insert(f.name);
+        // The base's fields are flattened into this class, so the bound applies to the sum: 256 levels of
+        // 4096 fields each would otherwise add up to a million entries in one layout.
+        if (fields.size() + c->fields.size() > kMaxFields) {
+            err("class `" + c->name + "` has more than " + std::to_string(kMaxFields) +
+                    " fields including the inherited ones; split the data into nested classes",
+                c);
+        }
         for (auto& [fname, spec] : c->fields) {
             if (!fnames.insert(fname).second) {
                 err("duplicate field `" + fname + "` in class `" + c->name + "`", c);

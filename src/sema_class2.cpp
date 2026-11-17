@@ -626,6 +626,16 @@ namespace muc_detail {
 
     void Sema::check_switch(SwitchStmt* s) {
         ScopeGuard guard(*this);
+        // Case labels of one switch: C++ [implimits] §1.19 sets 16384 (nested switches are separate).
+        {
+            size_t labels = 0;
+            for (auto& arm : s->arms) labels += arm->pats.size();
+            if (labels > kMaxSwitchLabels) {
+                err("this switch has more than " + std::to_string(kMaxSwitchLabels) +
+                        " case labels; split the value space",
+                    s);
+            }
+        }
         TypePtr st = check_expr(s->scrut.get());
         if (!st) err("switch is missing the value to match", s);
         // A sum-type scrutinee dispatches on the tag and may bind payload fields (SPEC 10.1.2).

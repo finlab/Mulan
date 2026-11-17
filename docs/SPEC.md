@@ -2499,31 +2499,40 @@ public builtin bool is_linux();
 
 ### 9.4 Capacity limits (decided 2026-11-18)
 
-The compiler must fail with a diagnostic instead of being blown up by a generated or hostile program; every
-limit below is far above real code (the standard library's largest unit is a few thousand lines, its whole
-`use` closure a few dozen units) and each one names what to do instead.
+The compiler must fail with a diagnostic instead of being blown up by a generated or hostile program.
+The values are the informative minima of C++ [implimits] where C++ has one (C and C++ agree on the small
+ones: 127 [C 5.2.4.1] vs 256 parameters), and every one of them is far above real code — the standard
+library's largest unit is a few thousand lines and its whole `use` closure a few dozen units, and no
+hand-written program comes anywhere near 256 levels of nesting or 4096 fields.
 
-| Input | Limit | Diagnostic |
-|---|---|---|
-| One source file | 64 MiB | `source file … is N bytes; the limit is …` |
-| Tokens in one file | 8M | `a source file must not contain more than 8000000 tokens` |
-| Units in one program | 4096 | `this program uses more than 4096 units` |
-| Parser nesting (parentheses / unary / blocks / types) | 320 levels | `… nesting too deep` |
-| One operator/member/pointer chain | 2048 links | `… is too long (limit 2048 …)` |
-| Nested `#if` chains | 256 | `` `#if` chains are nested too deeply `` |
-| Generic instances per program | 8192 | `this program needs more than 8192 generic instantiations` |
-| Nested generic instances (one chain) | 256 | `recursive generic instantiation … does not terminate` |
-| By-value type nesting (a `struct` inside a `struct` …) | 512 | `… nests more than 512 levels by value` |
-| Class inheritance chain | 1024 | `… is more than 1024 levels deep in its inheritance chain` |
-| Interface inheritance chain | 256 | `… inherits more than 256 interfaces in one chain` |
-| Enum members (one enum) | 65536 | `enum … has more than 65536 members` |
+| Input | Limit | C / C++ / Rust | Diagnostic |
+|---|---|---|---|
+| One source file | 16 MiB | no limit (bounded by memory) | `source file … is N bytes; the limit is …` |
+| Tokens in one file | 2M | no limit | `a source file must not contain more than 2000000 tokens` |
+| Units in one program | 1024 | no limit | `this program uses more than 1024 units` |
+| Parenthesised expression nesting | 256 | C++ §1.4: 256 | `expression nesting too deep (limit 256 levels)` |
+| Block / statement / initializer nesting | 256 | C++ §1.1: 256, C 127 | `block nesting too deep (limit 256 levels)` |
+| Pointer / array declarators per type | 256 | C++ §1.3: 256, C 12 | `type is too long (limit 256 …)` |
+| One operator / member chain | 2048 | no minimum (implementation detail) | `… is too long (limit 2048 …)` |
+| Nested `#if` chains | 256 | C++ §1.2: 256, C 63 | `` `#if` chains are nested too deeply `` |
+| Parameters of one function | 256 | C 127, C++ §1.11: 256 | `a function cannot declare more than 256 parameters` |
+| Enum members of one enum | 4096 | C++ §1.22: 4096, C 127 | `enum … has more than 4096 members` |
+| Fields of one struct / class | 4096 | C++ §1.20: 16384 (4096 per member-specification) | `… declares more than 4096 fields` |
+| Case labels of one switch | 16384 | C++ §1.19: 16384 | `this switch has more than 16384 case labels` |
+| Generic instances per program | 4096 | no minimum (Rust: `recursion_limit` 128 per chain) | `this program needs more than 4096 generic instantiations` |
+| Nested generic instances (one chain) | 256 | C++ §1.9: 1024, Rust 128, GCC 900 | `recursive generic instantiation … does not terminate` |
+| By-value type nesting (a `struct` inside a `struct` …) | 512 | no minimum (Rust `type_length_limit` 1048576) | `… nests more than 512 levels by value` |
+| Class inheritance chain | 256 | no minimum (GCC/Clang accept thousands) | `… is more than 256 levels deep in its inheritance chain` |
+| Interface inheritance chain | 256 | no minimum | `… inherits more than 256 interfaces in one chain` |
 
-The nesting limits exist because the parser, the semantic passes and the code generator walk the tree
-recursively: a bound there is a stack-overflow guard as much as a work bound. A type or hierarchy that hits
-its limit is rejected *before* a layout or a subclass relation is computed from a truncated walk, so an
-accepted program never keeps a silently wrong result.
+Two properties hold for every row:
 
----
+- **A bound is a stack guard, not just a work bound.** The parser, the semantic passes and the code
+  generator walk the tree recursively, so a depth without a limit is a stack overflow waiting for input
+  (120k nested `#if` used to crash with `0xC00000FD`).
+- **A truncated walk is never kept.** The internal walkers stop at the same bound as the enforced limit
+  (class / interface relations, `type_size`), so a program that compiles cannot carry a silently wrong
+  layout, subclass relation or inherited member.
 
 ## 10. Phase-one non-goals
 

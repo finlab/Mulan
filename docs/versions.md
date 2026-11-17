@@ -27,6 +27,29 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 198 — 2026-11-18
+
+**Capacity limits calibrated against C, C++ and Rust.** Build 197's first pass was too generous; every
+value is now the C++ `[implimits]` minimum where one exists, and the new member / parameter / chain
+limits match their standards.
+
+- **Tightened**: one source file 64 → 16 MiB, tokens per file 8M → 2M, units per program 4096 → 1024
+  (loading costs ~7 ms per unit), enum members 65536 → 4096 (C++ §1.22), generic instantiations 8192 →
+  4096, class inheritance chain 1024 → 256, and the parser's single 320-level counter is split into 256
+  parenthesised-expression levels (C++ §1.4) and 256 block/statement/initializer levels (C++ §1.1), so
+  `deep_parens` (100 parentheses) still compiles and 300 fails.
+- **New limits**: 256 parameters (C 127, C++ §1.11), 4096 fields in a struct/class (C++ §1.20), 16384 case
+  labels of one switch (C++ §1.19), 256 pointer/array declarators per type (C++ §1.3).
+- **Walkers aligned with the limits**: `is_subclass_of` and the interface walkers stopped at 256 while the
+  enforced chain limit was 1024, i.e. an accepted program could silently lose a subclass relation or an
+  inherited default; the interface walkers were at 64. The constants moved to namespace scope in
+  `sema_impl.hpp` so the walkers and the checks use the same number.
+- `Mulan-Agents:bench/capacity_probe.py` now asserts the expected outcome per case (22 axes: pass at the
+  limit, reject past it) instead of only printing.
+
+Full suite: 750/750 (282 run, 427 must-fail, 27 check, 1 warning, 10 ir, 3 c abi);
+`tests/errors/params_limit`, `fields_limit` and `enum_limit` lock the new member / parameter limits.
+
 #### build 197 — 2026-11-18
 
 **Capacity limits: a pathological program is rejected instead of blowing the compiler up.**

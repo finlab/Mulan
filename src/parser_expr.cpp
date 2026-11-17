@@ -264,7 +264,7 @@ TypeSpecPtr Parser::parse_type() {
 }
 
 TypeSpecPtr Parser::parse_type_base() {
-    NestGuard guard(*this, "type");
+    NestGuard guard(*this, nest_type_, kMaxTypeNest, kMaxTypeNest, "type");
     bool base_const = false;
     // Repeated `const` is allowed and folds (`const const int` ≡ `const int`, SPEC 3.7): a code
     // generator or a macro expansion may repeat a qualifier.
@@ -293,7 +293,7 @@ TypeSpecPtr Parser::parse_type_base() {
     if (base_const) spec->is_const = true;
     int links = 0;
     while (at_op("*")) {
-        note_link(links, "type");
+        note_link(links, "type", kMaxTypeLinks);
         const Token tok = advance();
         auto ptr = std::make_unique<TypeSpec>();
         ptr->kind = TypeSpec::K::Ptr;
@@ -308,7 +308,7 @@ TypeSpecPtr Parser::parse_type_base() {
 TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
     int links = 0;
     for (;;) {
-        note_link(links, "type");
+        note_link(links, "type", kMaxTypeLinks);
         if (at_op("*")) {
             const Token tok = advance();
             auto ptr = std::make_unique<TypeSpec>();
@@ -409,7 +409,7 @@ ExprPtr Parser::make_binary(const std::string& op, ExprPtr left, ExprPtr right,
 }
 
 ExprPtr Parser::parse_ternary() {
-    NestGuard guard(*this, "expression");
+    NestGuard guard(*this, nest_expr_, kMaxExprNest, kMaxParenNesting, "expression");
     ExprPtr cond = parse_or();
     if (!at_op("?")) return cond;
     const Token tok = advance();
@@ -449,7 +449,7 @@ ExprPtr Parser::parse_and() {
 }
 
 ExprPtr Parser::parse_not() {
-    NestGuard guard(*this, "expression");
+    NestGuard guard(*this, nest_expr_, kMaxExprNest, kMaxParenNesting, "expression");
     // `move x` binds like a prefix operator, but the operand is restricted to a name (sema checks it):
     // partial moves are not allowed (agents/value-semantics.md §8.4).
     if (at_kw("move")) {
@@ -611,7 +611,7 @@ ExprPtr Parser::parse_mul() {
 }
 
 ExprPtr Parser::parse_unary() {
-    NestGuard guard(*this, "expression");
+    NestGuard guard(*this, nest_expr_, kMaxExprNest, kMaxParenNesting, "expression");
     const Token t = peek();
     const bool uninit = at_kw("uninit");
     if (uninit) {

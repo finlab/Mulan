@@ -96,6 +96,30 @@ struct MemberSink {
     std::unique_ptr<DtorDecl>* dtor = nullptr;
 };
 
+// ---------------------------------------------------------------- capacity limits (SPEC 9.4, C++ [implimits])
+//
+// The numbers are C++'s informative minima where they exist, and every one of them is far above real
+// code. The hierarchy and generic limits are also the depth bounds of the walkers that compute
+// subclass / interface relations (see sema_class1.cpp), so a program that compiles never keeps a
+// relation computed by a truncated walk.
+
+// Instantiations in one chain (`Box<Box<…>>`); C++ [implimits] §1.9 nested template instantiations: 1024.
+constexpr int kGenericDepthLimit = 256;
+// Total instances per program. Depth alone does not bound the work (`Pair<T, T>` doubles the count per
+// level); real code uses a few hundred, and the standard library a few dozen.
+constexpr size_t kGenericInstanceLimit = 4096;
+// Class inheritance chain and interface inheritance chain (C++ sets no minimum for these).
+constexpr int kMaxInheritanceDepth = 256;
+constexpr int kMaxInterfaceDepth = 256;
+// Enumeration constants in one enum: C++ [implimits] §1.22 sets 4096. The members share the unit's
+// unqualified namespace and each one is interned for the whole process.
+constexpr size_t kMaxEnumMembers = 4096;
+// Non-static data members of one struct/class: C++ [implimits] §1.20 sets 16384 (and 4096 members in a
+// single member-specification, §1.28; Mulan has no out-of-line members, so the smaller fits both).
+constexpr size_t kMaxFields = 4096;
+// Case labels of one switch: C++ [implimits] §1.19 sets 16384.
+constexpr size_t kMaxSwitchLabels = 16384;
+
 class Sema {
 public:
     Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool single_thread = false,
@@ -240,18 +264,7 @@ private:
     // Innermost-last stack of "while instantiating ..." lines; every diagnostic raised while the
     // stack is non-empty carries them (see `err`). Mutable because diagnostics are `const` members.
     mutable std::vector<std::string> instantiation_notes_;
-    static constexpr int kGenericDepthLimit = 256;
-    // Total instances per program. Depth alone does not bound the work (`Pair<T, T>` doubles the count per
-    // level); real code uses a few hundred, and the standard library a few dozen.
-    static constexpr size_t kGenericInstanceLimit = 8192;
     size_t generic_instance_count_ = 0;
-    // The hierarchy walkers stop at a fixed depth; a deeper chain is rejected rather than silently losing
-    // subclass/interface relationships (`is_subclass_of`, `iface_extends`).
-    static constexpr int kMaxInheritanceDepth = 1024;
-    static constexpr int kMaxInterfaceDepth = 256;
-    // One enum with more members than this is generated input: the members share the unit's unqualified
-    // namespace and each one is interned for the whole process.
-    static constexpr size_t kMaxEnumMembers = 65536;
     std::vector<std::unique_ptr<Decl>> generic_decls_;          // instantiation products (lifetime)
     std::vector<std::unique_ptr<Decl>> synth_decls_;            // synthesized lambda environment classes (lifetime)
 

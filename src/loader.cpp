@@ -41,8 +41,11 @@ namespace fs = std::filesystem;
 // Capacity limits: a compile must fail with a diagnostic instead of being blown up by a generated or
 // hostile input. The numbers are far above real code (the standard library has a few dozen units of a
 // few thousand lines) and small enough that a compile stays bounded.
-constexpr size_t kMaxUnits = 4096;                 // units in one program (recursive `use` closure)
-constexpr std::uintmax_t kMaxSourceBytes = 64ull << 20;  // one source file (64 MiB)
+// Units in one program (the recursive `use` closure) and the size of one source file. Both are far
+// above real code — the standard library's whole closure is a few dozen units of at most a few thousand
+// lines — and both bound the work: loading costs ~7 ms per unit, and one file is read into memory whole.
+constexpr size_t kMaxUnits = 1024;
+constexpr std::uintmax_t kMaxSourceBytes = 16ull << 20;  // one source file (16 MiB)
 
 // The size of one source file, checked before it is read into memory.
 void check_source_size(const std::string& path) {
@@ -51,7 +54,7 @@ void check_source_size(const std::string& path) {
     if (ec) return;  // the read itself reports a missing/unreadable file
     if (n > kMaxSourceBytes) {
         throw MuError("source file `" + path + "` is " + std::to_string(n) +
-                      " bytes; the limit is " + std::to_string(kMaxSourceBytes) + " bytes (64 MiB)");
+                      " bytes; the limit is " + std::to_string(kMaxSourceBytes) + " bytes (16 MiB)");
     }
 }
 

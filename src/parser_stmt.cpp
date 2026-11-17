@@ -33,6 +33,13 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
     bool saw_varargs = false;
     if (!at_op(")")) {
         for (;;) {
+            // C says 127 parameters, C++ 256 ([implimits] §1.11): far above real code, and it keeps the
+            // call-site matching (which tries every parameter) bounded.
+            if (params.size() >= kMaxParams) {
+                throw err_at("a function cannot declare more than " + std::to_string(kMaxParams) +
+                                 " parameters; take a struct instead",
+                             peek());
+            }
             if (at_op("...")) {
                 const Token dots = advance();
                 if (!varargs) throw err_at("only `extern` functions can be variadic", dots);
@@ -162,7 +169,7 @@ void Parser::push_stmt(StmtPtr s) {
 }
 
 std::unique_ptr<Block> Parser::parse_block() {
-    NestGuard guard(*this, "block");
+    NestGuard guard(*this, nest_block_, kMaxBlockNesting, kMaxBlockNesting, "block");
     // A block is a statement list; a `#if` here collects each arm into its own container.
     auto* saved_decls = cur_decls_;
     auto* saved_stmts = cur_stmts_;
@@ -467,7 +474,7 @@ std::vector<StmtPtr> Parser::parse_local(bool is_const, bool is_auto) {
 }
 
 InitPtr Parser::parse_init() {
-    NestGuard guard(*this, "initializer");
+    NestGuard guard(*this, nest_block_, kMaxBlockNesting, kMaxBlockNesting, "initializer");
     const Token t = peek();
     if (at_op("{")) {
         advance();
@@ -516,7 +523,7 @@ InitPtr Parser::parse_init() {
 }
 
 std::unique_ptr<Stmt> Parser::parse_if() {
-    NestGuard guard(*this, "statement");
+    NestGuard guard(*this, nest_block_, kMaxBlockNesting, kMaxBlockNesting, "statement");
     const Token tk = expect_kw("if");
     ExprPtr cond = parse_expr();
     forbid_inc_expr();

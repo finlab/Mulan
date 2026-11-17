@@ -102,17 +102,27 @@ private:
 
     // ------------------------------------------------------ nesting guard
 
-    // Two budgets, because they exhaust the stack for different reasons (measured on this host,
-    // MSYS2/UCRT, with the 8 MB main-thread reserve from CMakeLists.txt):
-    //   * recursive nesting: a parenthesised subexpression costs **3** guard levels (expression →
-    //     unary → primary), a unary operator or a nested block costs 1. ~2.5 KB of parser frames per
-    //     level, so 320 levels ≈ 100 nested parentheses ≈ 0.8 MB — far below the 8 MB reserve.
-    //     Hand-written code rarely goes past ~10 levels; the cap exists so absurd input gets a
-    //     diagnostic instead of a stack overflow.
-    //   * a chain built in a loop (`a.b.c…`, `1+1+1…`, `int***…`): no parser recursion, one AST
-    //     level per link; the AST walkers (sema, codegen) recurse over it and overflow past 5k.
-    static constexpr int kMaxNestDepth = 320;
+    // Three counters, because the constructs cost different numbers of guard levels and the standards
+    // bound them separately (C++ [implimits]: 256 nesting levels of parenthesized expressions §1.4, 256
+    // levels of compound/iteration/selection statements §1.1). A parenthesised subexpression costs **3**
+    // expression levels (ternary → not → unary, the path a `( … )` operand takes); a block, statement or
+    // initializer costs one block level; a nested type operand one type level. ~2.5 KB of parser frames
+    // per level, so 768 expression levels ≈ 1.9 MB — far below the 8 MB main-thread reserve.
+    //   * A chain built in a loop (`a.b.c…`, `1+1+1…`, `int***…`) has no parser recursion at all: one
+    //     AST level per link, and the AST walkers (sema, codegen) recurse over it (see the link limits).
+    static constexpr int kMaxParenNesting = 256;
+    static constexpr int kMaxExprNest = 3 * kMaxParenNesting;
+    static constexpr int kMaxBlockNesting = 256;
+    // Nested type operands (`Box<Box<…>>`, `int**…` written out in a type position). Counted apart from
+    // blocks so that a deep block does not use up the type budget.
+    static constexpr int kMaxTypeNest = 256;
+    // One operator/member chain in an expression. C++ sets no minimum for this; the AST walkers recurse
+    // over a left-deep chain, so the bound is a stack guard.
     static constexpr int kMaxChainLinks = 2048;
+    // Pointer / array / function declarators modifying one type (C++ [implimits] §1.3 sets 256).
+    static constexpr int kMaxTypeLinks = 256;
+    // Parameters in one function definition / arguments in one call (C [5.2.4.1] 127, C++ 256).
+    static constexpr int kMaxParams = 256;
     // Nested `#if` chains are kept as data by the parser, but the semantic pass expands member arms
     // recursively and declaration arms through a deep call chain, so the depth is bounded here.
     static constexpr size_t kMaxIfNesting = 256;
@@ -121,27 +131,36 @@ private:
     // that is never constructed cannot unbalance the counter.
     class NestGuard {
     public:
-        NestGuard(Parser& p, const char* what) : p_(p) {
-            if (p_.nest_depth_ >= kMaxNestDepth) throw p_.nest_too_deep(what);
-            ++p_.nest_depth_;
+        // `budget` is what the counter is checked against (a parenthesised subexpression spends three
+        // expression levels, so the expression budget is 3 x the construct limit); `report` is the
+        // construct limit named in the diagnostic.
+        NestGuard(Parser& p, int& counter, int budget, int report, const char* what)
+            : p_(p), counter_(counter), budget_(budget), report_(report) {
+            if (counter_ >= budget_) throw p_.nest_too_deep(what, report_);
+            ++counter_;
         }
-        ~NestGuard() { --p_.nest_depth_; }
+        ~NestGuard() { --counter_; }
         NestGuard(const NestGuard&) = delete;
         NestGuard& operator=(const NestGuard&) = delete;
 
     private:
         Parser& p_;
+        int& counter_;
+        int budget_;
+        int report_;
     };
 
-    ParserError nest_too_deep(const char* what) const {
-        return err(std::string(what) + " nesting too deep (limit " + std::to_string(kMaxNestDepth) +
+    ParserError nest_too_deep(const char* what, int limit) const {
+        return err(std::string(what) + " nesting too deep (limit " + std::to_string(limit) +
                    " levels); simplify the construct");
     }
 
     // A chain built in a loop adds one tree level per link with no recursion at all; `links` counts
-    // them within the current construct, which bounds the depth handed to sema and codegen.
-    void note_link(int& links, const char* what) {        if (++links > kMaxChainLinks) {
-            throw err(std::string(what) + " is too long (limit " + std::to_string(kMaxChainLinks) +
+    // them within the current construct, which bounds the depth handed to sema and codegen. `limit`
+    // separates expression chains from type declarators (`kMaxTypeLinks`).
+    void note_link(int& links, const char* what, int limit = kMaxChainLinks) {
+        if (++links > limit) {
+            throw err(std::string(what) + " is too long (limit " + std::to_string(limit) +
                       " chained operators or links); split it up");
         }
     }
@@ -330,8 +349,12 @@ ExprPtr parse_lambda();
     bool suppress_as_ = false;
     // unit names introduced by `use`, enabling qualified types such as `math.Point`
     std::unordered_set<std::string> module_names_;
-    // Current expression/block/type nesting depth; see NestGuard above.
-    int nest_depth_ = 0;
+    // Current nesting depth of each counter; see NestGuard above. Expression and statement nesting are
+    // tracked separately because the standards bound them separately and a parenthesised expression
+    // spends several expression levels.
+    int nest_expr_ = 0;
+    int nest_block_ = 0;
+    int nest_type_ = 0;
 };
 
 }  // namespace muc_detail

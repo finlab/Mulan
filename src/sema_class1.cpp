@@ -372,9 +372,11 @@ namespace muc_detail {
         }
     }
 
-    // `d` is `b` itself or inherits from it (used so that a refining default wins, as it does for classes)
+    // `d` is `b` itself or inherits from it (used so that a refining default wins, as it does for classes).
+    // The depth bound covers the enforced limit (`kMaxInterfaceDepth` = 256), so a program that compiles
+    // never loses an inherited member to a truncated walk.
     static bool iface_extends(const TypePtr& d, const TypePtr& b, int depth = 0) {
-        if (!d || !b || depth > 64) return false;
+        if (!d || !b || depth > kMaxInterfaceDepth) return false;
         if (same_type(d, b)) return true;
         for (const auto& p : d->interfaces) {
             if (iface_extends(p, b, depth + 1)) return true;
@@ -388,7 +390,7 @@ namespace muc_detail {
     // instances register their cloned decl under the display name, so `ISeq<int>` works too.
     MethodDecl* Sema::find_iface_default_decl(const TypePtr& itf, const MethodSig& sig, TypePtr* owner,
                                               int depth) {
-        if (!itf || depth > 64) return nullptr;
+        if (!itf || depth > kMaxInterfaceDepth) return nullptr;
         auto info = infos_.find(itf->unit);
         if (info != infos_.end()) {
             auto found = info->second.interfaces.find(itf->name);
@@ -461,7 +463,7 @@ namespace muc_detail {
             if (dup) continue;
             chains.push_back(bt);
             std::function<void(const TypePtr&, int)> collect = [&](const TypePtr& itf, int depth) {
-                if (!itf || depth > 64) return;
+                if (!itf || depth > kMaxInterfaceDepth) return;
                 for (const auto& m : itf->methods) reqs.push_back({&m, itf});
                 for (const auto& p : itf->interfaces) collect(p, depth + 1);
             };

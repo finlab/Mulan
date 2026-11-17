@@ -135,10 +135,11 @@ public:
         : src_(std::move(src)), filename_(std::move(filename)), n_(src_.size()) {}
 
     std::vector<Token> tokens() {
-        // One token per few source bytes in the worst case (`1 1 1 ...`), and a token is ~90 bytes: a
-        // 64 MiB pathological file would need gigabytes of tokens. The limit is far above real code (the
-        // standard library's largest unit is a few tens of thousands of tokens).
-        static constexpr size_t kMaxTokens = 8'000'000;
+        // A token is ~96 bytes, so the vector alone reaches ~200 MB at the limit. 2M tokens is still
+        // far above real code: the standard library's largest unit has a few tens of thousands, and a
+        // 20k-line file of dense tokens ~100k. The limit exists because the token count is unrelated to
+        // the byte count `kMaxSourceBytes` bounds (`1 1 1 ...` is one token per two bytes).
+        static constexpr size_t kMaxTokens = 2'000'000;
         std::vector<Token> out;
         int prev_line = -1;
         for (;;) {
