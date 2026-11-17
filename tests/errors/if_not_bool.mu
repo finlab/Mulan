@@ -1,5 +1,5 @@
 unit if_not_bool;
-use comptime;
+use std.comptime;
 
 #if os {
 }

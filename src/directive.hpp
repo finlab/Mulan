@@ -57,6 +57,10 @@ bool eval_directive_cond(const Expr& e, std::string& why, const UserConstTable* 
 bool eval_user_const(const Expr& e, const UserConstTable& table, UserConst& out, std::string& why);
 
 // Fills `table` with the compiler-provided compile-time constants (`os`, `arch`, `ptr_bits`, ...) and
-// their enum members (`OS.Windows`, ...). Called when a unit writes `use comptime;` — before that the
-// names are not visible (decided 2026-11-17).
+// their enum members (`OS.Windows`, ...). Called when a unit writes `use std.comptime;` — before that
+// the names are not visible (decided 2026-11-17).
 void add_builtin_constants(UserConstTable& table);
+
+// The compiler-provided compile-time functions (`is_windows`, `is_linux`, `is_macos`). `args` is the
+// folded argument list; only the no-argument forms exist so far.
+bool builtin_func(const std::string& name, const std::vector<long long>& args, long long& value);

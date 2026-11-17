@@ -324,6 +324,9 @@ using ArgPack = Emitter::ArgPack;
     }
 
     Value* Emitter::evalCall(Call* c) {
+        if (c->callee_kind == "builtin_const") {
+            return ConstantInt::get(lt(c->ty), static_cast<uint64_t>(c->builtin_value), true);
+        }
         if (c->callee_kind == "slice_length") {
             auto* m = dynamic_cast<Member*>(c->callee.get());
             Expr* base = m->obj.get();

@@ -1,5 +1,5 @@
 unit if_config;
-use comptime;
+use std.comptime;
 
 extern int putchar(int c);
 

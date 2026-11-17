@@ -289,8 +289,18 @@ bool eval(const Expr& e, V& out, std::string& why) {
               "are laid out; use `ptr_bits` instead of `sizeof(void*)`";
         return false;
     }
-    if (dynamic_cast<const Call*>(&e)) {
-        why = "a function call is not a build constant; a `#if` condition may only use " + std::string(kConstNames);
+    if (const auto* p = dynamic_cast<const Call*>(&e)) {
+        // A compiler-provided compile-time function (`is_windows()`), no arguments so far.
+        const auto* nm = dynamic_cast<const Name*>(p->callee.get());
+        if (nm && p->args.empty() && p->named.empty()) {
+            long long v = 0;
+            if (builtin_func(nm->ident, {}, v)) {
+                out = vbool(v != 0);
+                return true;
+            }
+        }
+        why = "a function call is not a build constant; a `#if` condition may only use " +
+              std::string(kConstNames) + " and the `std.comptime` compile-time functions";
         return false;
     }
     why = "`#if` conditions may only use build constants, literals and arithmetic/comparison operators";
@@ -365,8 +375,7 @@ bool eval_user_const(const Expr& e, const UserConstTable& table, UserConst& out,
     return true;
 }
 
-void add_builtin_constants(UserConstTable& table) {
-    static const char* ints[] = {"ptr_bits"};
+void add_builtin_constants(UserConstTable& table) {    static const char* ints[] = {"ptr_bits"};
     static const char* bools[] = {"debug", "bounds", "single_thread"};
     static const char* targets[] = {"os", "arch", "abi", "endian"};
     static const char* enums[] = {"OS", "Arch", "Abi", "Endian"};
@@ -389,4 +398,13 @@ void add_builtin_constants(UserConstTable& table) {
             table[std::string(n) + "." + members[i]] = UserConst{static_cast<long long>(i), false, n};
         }
     }
+}
+
+bool builtin_func(const std::string& name, const std::vector<long long>& args, long long& value) {
+    if (!args.empty()) return false;
+    const std::string os = lowered(g_config.os);
+    if (name == "is_windows") { value = os == "windows" ? 1 : 0; return true; }
+    if (name == "is_linux") { value = os == "linux" ? 1 : 0; return true; }
+    if (name == "is_macos") { value = os == "macos" ? 1 : 0; return true; }
+    return false;
 }

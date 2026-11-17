@@ -457,7 +457,17 @@ namespace muc_detail {
                 c);
         }
         if (target->is_builtin) {
-            err("builtin function `" + target->name + "` is not callable yet", c);
+            // A compiler-provided compile-time function: fold it to a constant.
+            if (!c->args.empty()) {
+                err("builtin function `" + target->name + "` does not take arguments yet", c);
+            }
+            long long v = 0;
+            if (!builtin_func(target->name, {}, v)) {
+                err("builtin function `" + target->name + "` is not provided by this compiler", c);
+            }
+            c->callee_kind = "builtin_const";
+            c->builtin_value = v;
+            return target->rty;
         }
         if (target->is_varargs && c->args.size() < params.size()) {
             err("variadic function `" + target->name + "` expects at least " +

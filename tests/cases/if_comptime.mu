@@ -1,8 +1,8 @@
-// if_comptime.mu — `use comptime;` makes the compiler-provided compile-time constants visible to
+// if_comptime.mu — `use std.comptime;` makes the compiler-provided compile-time constants visible to
 // `#if` as ordinary names (there is no separate "build constant" source).
 unit if_comptime;
 
-use comptime;
+use std.comptime;
 
 extern int puts(const char* s);
 

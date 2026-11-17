@@ -194,6 +194,8 @@ struct Call : Expr {
     TypePtr sum_ty;           // callee_kind == "sum_ctor": the sum type being constructed
     int sum_alt = -1;         // callee_kind == "sum_ctor": which alternative
     std::string builtin;      // alloc / realloc / free
+    // `callee_kind == "builtin_const"`: a compiler-provided compile-time function call folded to a value
+    long long builtin_value = 0;
     std::vector<int> field_order;
     const MethodSig* method = nullptr;      // the selected method / interface default method
     const std::vector<TypePtr>* ctor_pty = nullptr;  // the selected constructor (used by super)

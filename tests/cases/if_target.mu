@@ -1,5 +1,5 @@
 unit if_target;
-use comptime;
+use std.comptime;
 
 extern int putchar(int c);
 

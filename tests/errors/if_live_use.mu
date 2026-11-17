@@ -1,5 +1,5 @@
 unit if_live_use;
-use comptime;
+use std.comptime;
 
 #if ptr_bits > 0 {
     use nosuch.thing;

@@ -1371,10 +1371,10 @@ namespace muc_detail {
                 }
                 return t_bool();
             }
-            const bool eq = same_type(lt, rt);
+            const bool eq = same_type_sig(lt, rt);
             if ((eq && (lt->kind == TypeKind::Ptr || lt->kind == TypeKind::Enum ||
                         lt->kind == TypeKind::Class || lt->kind == TypeKind::Interface)) ||
-                (is_prim(lt) && lt->name == "bool" && same_type(rt, lt))) {
+                (is_prim(lt) && lt->name == "bool" && same_type_sig(rt, lt))) {
                 return t_bool();
             }
             // Between reference types: identity comparison is allowed when they are convertible to each other (base class/interface)

@@ -1,5 +1,5 @@
 unit if_cross_enum;
-use comptime;
+use std.comptime;
 // `#if` follows the same rule as ordinary code: enum values compare only with the same enum type.
 int main() {
     #if os == Endian.Little {

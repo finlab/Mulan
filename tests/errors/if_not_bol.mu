@@ -1,5 +1,5 @@
 unit if_not_bol;
-use comptime;
+use std.comptime;
 
 #if ptr_bits > 0 {
 } #else {

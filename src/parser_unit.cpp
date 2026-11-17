@@ -171,9 +171,9 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             advance();
             std::string uname = parse_unit_name();
-            // `use comptime;` makes the compiler-provided compile-time constants visible here
+            // `use std.comptime;` makes the compiler-provided compile-time constants visible here
             // (decided 2026-11-17). Before the use they are not visible, like any other name.
-            if (uname == "comptime") add_builtin_constants(user_consts_);
+            if (uname == "std.comptime") add_builtin_constants(user_consts_);
             semicolon();
             auto use = std::make_unique<UseDecl>();
             use->unit_name = std::move(uname);

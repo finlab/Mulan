@@ -27,6 +27,20 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 177 — 2026-11-17
+
+**`std.comptime` and compiler-provided compile-time functions.**
+
+- `comptime` moved to `libs/std/comptime.mu` as `public unit std.comptime`; every `use comptime;` is now
+  `use std.comptime;`, and the parser fills the constant table on that name.
+- `builtin` compile-time functions: `is_windows()` / `is_linux()` / `is_macos()` are declared in
+  `std.comptime`; a call folds to a `bool` constant in `#if` conditions and in ordinary code (no symbol).
+- `const bool` vs `bool` comparisons use the signature comparison (top-level const ignored), fixing
+  `IS_WIN != is_windows()`.
+- Tests: `if_comptime_func` (run).
+
+Full suite: 705/705 (261 run, 406 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 176 — 2026-11-17
 
 **`#if` build constants require `use comptime;` (implicit visibility removed).**
