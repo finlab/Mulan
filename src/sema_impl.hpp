@@ -104,6 +104,8 @@ private:
     TypePtr cur_class_;
     bool in_ctor_ = false;
     bool in_dtor_ = false;
+    // `f() const`: writes through `this` are rejected (decided 2026-11-17)
+    bool cur_method_const_ = false;
     bool in_finally_ = false;
     bool super_ok_ = false;
     std::vector<std::unique_ptr<LocalVar>> this_local_;
@@ -411,6 +413,8 @@ private:
     void check_method(ClassDecl* c, MethodDecl* m);
 
     void check_ctor(ClassDecl* c, CtorDecl* ctor);
+    // Validate `C(...) : x(v), y(w) { }` (decided 2026-11-17)
+    void check_ctor_init_list(const TypePtr& ty, CtorDecl* ctor);
 
     void check_dtor(ClassDecl* c);
 
@@ -481,6 +485,7 @@ private:
 
     // Walk Index/Member down to the innermost binding and determine whether it is const
     bool root_is_const(Expr* e);
+    bool root_is_this(Expr* e);
 
     void check_writable(Expr* t);
 
@@ -701,6 +706,10 @@ private:
 
     void collect_methods(const TypePtr& t, const std::string& name,
                          std::vector<const MethodSig*>& out, int depth = 0);
+
+    // Keep only the overloads callable on a `const` receiver (or prefer the non-const ones on a
+    // mutable receiver), C++ rules (decided 2026-11-17).
+    void filter_methods_for_receiver(std::vector<const MethodSig*>& ms, bool recv_const);
 
     const MethodSig* choose_method(const std::vector<const MethodSig*>& cands,
                                    const std::vector<Expr*>& args,

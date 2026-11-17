@@ -26,7 +26,7 @@ struct Item {
 
 std::string method_key(const MethodSig* sig) {
     if (!sig || !sig->owner) return {};
-    return method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params);
+    return method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params, sig->is_const);
 }
 
 struct Analysis {

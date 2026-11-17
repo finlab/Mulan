@@ -608,6 +608,8 @@ struct MethodDecl : Node {
     std::string name;
     TypeSpecPtr ret;
     bool ret_ref = false;  // `ref T m()`: returns a borrow
+    // `f() const`: a read-only method (decided 2026-11-17)
+    bool is_const = false;
     // an operator signature in an interface: `T operator+(T a, T b);` (no this, the parameter list holds all operands)
     bool is_operator = false;
     std::vector<std::unique_ptr<Param>> params;
@@ -631,6 +633,9 @@ struct MethodDecl : Node {
 struct CtorDecl : Node {
     bool is_implicit = false;  // `implicit T(...)`: usable as an implicit conversion (struct only)
     std::vector<std::unique_ptr<Param>> params;
+    // `C(...) : x(v), y(w) { }` — the member initializer list (decided 2026-11-17). A `const` field
+    // must appear here; the entries are lowered to field assignments before the body runs.
+    std::vector<std::pair<std::string, ExprPtr>> init_list;
     std::unique_ptr<Block> body;
     bool is_public = false;  // visible only inside the unit by default
     // sema

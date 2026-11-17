@@ -451,6 +451,7 @@ std::unique_ptr<MethodDecl> clone_method(const MethodDecl& m) {
     r->name = m.name;
     r->ret = m.ret ? clone_type_spec(*m.ret) : nullptr;
     r->ret_ref = m.ret_ref;
+    r->is_const = m.is_const;
     r->is_operator = m.is_operator;
     r->params = clone_params(m.params);
     r->body = m.body ? clone_block(*m.body) : nullptr;
@@ -468,6 +469,9 @@ std::unique_ptr<MethodDecl> clone_method(const MethodDecl& m) {
 std::unique_ptr<CtorDecl> clone_ctor(const CtorDecl& c) {
     auto r = mk<CtorDecl>(c);
     r->params = clone_params(c.params);
+    for (const auto& item : c.init_list) {
+        r->init_list.emplace_back(item.first, item.second ? clone_expr(*item.second) : nullptr);
+    }
     r->body = c.body ? clone_block(*c.body) : nullptr;
     r->is_public = c.is_public;
     r->is_implicit = c.is_implicit;

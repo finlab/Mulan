@@ -1,1 +1,0 @@
-no implicit conversion between enums and integers; write `as`

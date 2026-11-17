@@ -84,7 +84,9 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
             // `const Cat c` / `const int x` make the parameter binding read-only; in `const int* p` the const sits on the pointee, so the binding can still be rebound.
             const bool is_const = const_before_ref ||
                                   (spec->kind == TypeSpec::K::Named && spec->is_const);
-            if (is_const) spec->is_const = false;
+            // cv stays in the type specification (decided 2026-11-17). A borrowed parameter carries its
+            // read-only flag in `pty_cref`, so there the const is recorded only on the binding.
+            if (is_const && by_ref) spec->is_const = false;
             std::string pname = expect_ident("parameter name").text;
             auto p = std::make_unique<Param>();
             p->name = std::move(pname);

@@ -586,12 +586,12 @@ static bool is_numeric(const TypePtr& t) {
                 if (rt_->kind == TypeKind::Null) rv = Constant::getNullValue(ptrTy());
                 return compareOp(op, lv, rv, false, false);
             }
-            if (same_type(lt_, rt_) && lt_->kind == TypeKind::Prim && lt_->is_bool()) {
+            if (same_type_sig(lt_, rt_) && lt_->kind == TypeKind::Prim && lt_->is_bool()) {
                 return compareOp(op, l, r, false, false);
             }
             // enum: only compared with the same enum, using the signed order of the underlying int (SPEC §3.5)
             if (lt_->kind == TypeKind::Enum && rt_->kind == TypeKind::Enum &&
-                same_type(lt_, rt_)) {
+                same_type_sig(lt_, rt_)) {
                 l = convertTo(l, lt_, Type::make_prim("int"));
                 r = convertTo(r, rt_, Type::make_prim("int"));
                 return compareOp(op, l, r, true, false);

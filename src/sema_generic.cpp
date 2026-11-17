@@ -492,6 +492,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             }
             MethodSig sig;
             sig.name = m->name;
+            sig.is_const = m->is_const;
             sig.ret = m->rty;
             sig.params = m->pty;
             sig.is_abstract = !m->body;

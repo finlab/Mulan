@@ -661,6 +661,7 @@ namespace muc_detail {
                 }
                 MethodSig sig;
                 sig.name = m->name;
+                sig.is_const = m->is_const;
                 sig.ret = m->rty;
                 sig.params = m->pty;
                 sig.is_abstract = false;
@@ -670,7 +671,7 @@ namespace muc_detail {
                 sig.is_operator = m->is_operator;
                 if (m->is_operator) check_member_operator_sig(m.get(), sd->ty);
                 sd->ty->methods.push_back(std::move(sig));
-                m->cname = method_cname(u->name, sd->name, m->name, m->pty);
+                m->cname = method_cname(u->name, sd->name, m->name, m->pty, m->is_const);
             }
             sd->ty->ctors.clear();
             for (auto& ctor : sd->ctors) {
@@ -808,6 +809,7 @@ namespace muc_detail {
                 }
                 MethodSig sig;
                 sig.name = m->name;
+                sig.is_const = m->is_const;
                 sig.ret = m->rty;
                 sig.params = m->pty;
                 sig.is_abstract = !m->body;
@@ -821,7 +823,7 @@ namespace muc_detail {
                 sig.is_operator = m->is_operator;
                 if (m->is_operator) check_member_operator_sig(m.get(), c->ty);
                 c->ty->methods.push_back(std::move(sig));
-                m->cname = method_cname(u->name, c->name, m->name, m->pty);
+                m->cname = method_cname(u->name, c->name, m->name, m->pty, m->is_const);
                 if (!m->body) c->ty->is_abstract = true;
             }
             for (auto& ctor : c->ctors) {
@@ -922,6 +924,7 @@ namespace muc_detail {
                 }
                 MethodSig sig;
                 sig.name = m->name;
+                sig.is_const = m->is_const;
                 sig.ret = m->rty;
                 sig.params = m->pty;
                 sig.is_abstract = !m->body;

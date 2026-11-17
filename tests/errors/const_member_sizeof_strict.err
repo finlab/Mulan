@@ -1,2 +1,0 @@
-initializer of const member `C`: cannot assign isize to int
-initializer of `G`: cannot assign isize to int

@@ -73,6 +73,9 @@ namespace muc_detail {
                 std::vector<const MethodSig*> ms;
                 collect_methods(cur_class_, nm->ident, ms);
                 if (!ms.empty()) {
+                    filter_methods_for_receiver(ms, cur_method_const_);
+                    if (ms.empty())
+                        err("cannot call a non-const method `" + nm->ident + "` inside a `const` method", c);
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + nm->ident + "`", c);
                     check_method_args(c, sig, "method `" + nm->ident + "`");
                     c->callee_kind =
@@ -237,7 +240,7 @@ namespace muc_detail {
                             c);
                     }
                     c->callee_kind = "slice_ptr";
-                    return Type::make_ptr(ot->elem, ot->is_const);
+                    return Type::make_ptr(ot->elem);
                 }
             }
             // super.method(...)
@@ -247,6 +250,9 @@ namespace muc_detail {
                 std::vector<const MethodSig*> ms;
                 collect_class_methods(cur_class_->base, m->name, ms);
                 if (ms.empty()) err("base class has no method `" + m->name + "`", c);
+                filter_methods_for_receiver(ms, cur_method_const_);
+                if (ms.empty())
+                    err("cannot call a non-const method `" + m->name + "` inside a `const` method", c);
                 auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
                 if (sig->is_abstract) {
                     err("abstract method `" + m->name + "` cannot be called via `super`", c);
@@ -329,6 +335,9 @@ namespace muc_detail {
                         }
                         err("type `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
+                    filter_methods_for_receiver(ms, (ot && ot->is_const) || root_is_const(obj));
+                    if (ms.empty())
+                        err("cannot call a non-const method `" + m->name + "` on a `const` object", c);
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
                     if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
                         err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
@@ -352,6 +361,9 @@ namespace muc_detail {
                         }
                         err("struct `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
+                    filter_methods_for_receiver(ms, (ot && ot->is_const) || root_is_const(obj));
+                    if (ms.empty())
+                        err("cannot call a non-const method `" + m->name + "` on a `const` object", c);
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
                     if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
                         err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
@@ -463,7 +475,7 @@ namespace muc_detail {
                             "` must be an addressable variable: a `ref` parameter borrows the caller's storage",
                         a);
                 }
-                if (!same_type(at, params[i])) {
+                if (!same_type_sig(at, params[i])) {
                     err("argument " + std::to_string(i + 1) + " of `" + target->name + "` must be `" +
                             params[i]->str() + "` (found `" + at->str() +
                             "`): `ref` parameters do not convert",
@@ -508,13 +520,13 @@ namespace muc_detail {
         // Implicit struct construction is the weakest match: exact > widening > implicit conversion.
         auto implicit_rank = [&]() { return find_implicit_conv(p, aty) ? 2 : -1; };
         if (auto il = dynamic_cast<IntLit*>(e)) {
-            if (same_type(aty, p)) return 0;
+            if (same_type_sig(aty, p)) return 0;
             if (is_numeric(p) && promote_int_literal(il->value, p)) return 1;
             return implicit_rank();
         }
         if (auto fl = dynamic_cast<FloatLit*>(e)) {
             (void)fl;
-            if (same_type(aty, p)) return 0;
+            if (same_type_sig(aty, p)) return 0;
             if (p->kind == TypeKind::Prim && (p->name == "float" || p->name == "double")) return 1;
             return implicit_rank();
         }
@@ -525,7 +537,7 @@ namespace muc_detail {
             }
             return implicit_rank();
         }
-        if (same_type(aty, p)) return 0;
+        if (same_type_sig(aty, p)) return 0;
         if (implicit_ok(aty, p)) return 1;
         return implicit_rank();
     }
@@ -662,7 +674,7 @@ namespace muc_detail {
                         ref_reject = i;
                         break;
                     }
-                    if (!same_type(atys[i], f->pty[i])) { good = false; break; }
+                    if (!same_type_sig(atys[i], f->pty[i])) { good = false; break; }
                     const bool is_cref = i < f->pty_cref.size() && f->pty_cref[i];
                     if (!is_cref) {
                         if (root_is_const(a)) { good = false; break; }
@@ -735,6 +747,33 @@ namespace muc_detail {
         if (t->kind == TypeKind::Class && t->base) {
             collect_class_methods(t->base, name, out, depth + 1);
         }
+    }
+
+    void Sema::filter_methods_for_receiver(std::vector<const MethodSig*>& ms, bool recv_const) {
+        if (ms.empty()) return;
+        if (recv_const) {
+            std::vector<const MethodSig*> kept;
+            for (auto* s : ms) {
+                if (s->is_const) kept.push_back(s);
+            }
+            ms = std::move(kept);
+            return;
+        }
+        // A mutable receiver prefers the non-const overload (C++ rules); the const overload stays
+        // callable only when there is no non-const candidate at all.
+        bool has_nonconst = false;
+        for (auto* s : ms) {
+            if (!s->is_const) {
+                has_nonconst = true;
+                break;
+            }
+        }
+        if (!has_nonconst) return;
+        std::vector<const MethodSig*> kept;
+        for (auto* s : ms) {
+            if (!s->is_const) kept.push_back(s);
+        }
+        ms = std::move(kept);
     }
 
     void Sema::collect_methods(const TypePtr& t, const std::string& name,
@@ -1227,7 +1266,7 @@ namespace muc_detail {
         };
         const TypePtr& p0 = main->pty[0];
         const TypePtr& p1 = main->pty[1];
-        bool ok0 = p0 && same_type(p0, t_int());
+        bool ok0 = p0 && same_type_sig(p0, t_int());
         bool ok1 = p1 && p1->kind == TypeKind::Ptr && p1->elem &&
                    p1->elem->kind == TypeKind::Ptr && is_char(p1->elem->elem);
         if (!ok0 || !ok1) {

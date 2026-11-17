@@ -33,7 +33,7 @@ namespace muc_detail {
             h.u = u.get();
             for (auto& d : u->decls) {
                 auto* g = dynamic_cast<GlobalVar*>(d.get());
-                if (!g || g->is_extern || g->is_const) continue;
+                if (!g || g->is_extern || (g->is_const && !g->runtime_init)) continue;
                 if (g->runtime_init) h.runtime_inits.push_back(g);
                 // A zero-initialized variable of a cleanup-needing type is registered too: `main`
                 // may assign it later.

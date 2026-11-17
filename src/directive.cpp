@@ -9,6 +9,7 @@
 // while parsing, before name resolution and layout exist.
 #include "directive.hpp"
 
+#include <climits>
 #include <string>
 #include <vector>
 
@@ -175,6 +176,11 @@ bool eval_binary(const Binary& b, V& out, std::string& why) {
             why = "division by zero in a `#if` condition";
             return false;
         }
+        // `MIN / -1` and `MIN % -1` are UB in C++; the compiler must not execute them.
+        if ((op == "/" || op == "%") && r.i == -1 && l.i == LLONG_MIN) {
+            why = "signed overflow in a `#if` condition (the most negative value divided by -1)";
+            return false;
+        }
         if (op == "+") out = vint(l.i + r.i);
         else if (op == "-") out = vint(l.i - r.i);
         else if (op == "*") out = vint(l.i * r.i);
@@ -190,6 +196,9 @@ bool eval_binary(const Binary& b, V& out, std::string& why) {
     why = "`" + op + "` is not allowed in a `#if` condition";
     return false;
 }
+
+// The user constants visible to the condition being evaluated (set by `eval_directive_cond`).
+const UserConstTable* g_user_consts = nullptr;
 
 bool eval(const Expr& e, V& out, std::string& why) {
     if (const auto* p = dynamic_cast<const IntLit*>(&e)) {
@@ -210,19 +219,27 @@ bool eval(const Expr& e, V& out, std::string& why) {
     }
     if (const auto* p = dynamic_cast<const Name*>(&e)) {
         long long v = 0;
-        if (!builtin_const(p->ident, v)) {
-            why = "`" + p->ident + "` is not a build constant; a `#if` condition may only use " +
-                  kConstNames + " (and the members of OS / Arch / Abi / Endian)";
-            return false;
+        if (builtin_const(p->ident, v)) {
+            if (p->ident == "debug" || p->ident == "bounds" || p->ident == "single_thread") out = vbool(v != 0);
+            else out = vint(v);
+            // The build constants keep the identity of their enum so comparisons can check it.
+            if (p->ident == "os") out.enum_ns = "OS";
+            else if (p->ident == "arch") out.enum_ns = "Arch";
+            else if (p->ident == "abi") out.enum_ns = "Abi";
+            else if (p->ident == "endian") out.enum_ns = "Endian";
+            return true;
         }
-        if (p->ident == "debug" || p->ident == "bounds" || p->ident == "single_thread") out = vbool(v != 0);
-        else out = vint(v);
-        // The build constants keep the identity of their enum so comparisons can check it.
-        if (p->ident == "os") out.enum_ns = "OS";
-        else if (p->ident == "arch") out.enum_ns = "Arch";
-        else if (p->ident == "abi") out.enum_ns = "Abi";
-        else if (p->ident == "endian") out.enum_ns = "Endian";
-        return true;
+        // A user compile-time constant visible at this point (decided 2026-11-17).
+        if (g_user_consts) {
+            auto it = g_user_consts->find(p->ident);
+            if (it != g_user_consts->end()) {
+                out = it->second.is_bool ? vbool(it->second.value != 0) : vint(it->second.value);
+                return true;
+            }
+        }
+        why = "`" + p->ident + "` is not a build constant or a visible compile-time constant; a `#if` "
+              "condition may only use " + kConstNames + " (and the members of OS / Arch / Abi / Endian)";
+        return false;
     }
     if (const auto* p = dynamic_cast<const Member*>(&e)) {
         const auto* base = dynamic_cast<const Name*>(p->obj.get());
@@ -335,12 +352,26 @@ std::string describe_build_config() {
     return s;
 }
 
-bool eval_directive_cond(const Expr& e, std::string& why) {
+bool eval_directive_cond(const Expr& e, std::string& why, const UserConstTable* user_consts) {
+    g_user_consts = user_consts;
     V v;
-    if (!eval(e, v, why)) return false;
+    const bool ok = eval(e, v, why);
+    g_user_consts = nullptr;
+    if (!ok) return false;
     if (v.k != VK::Bool) {
         why = "a `#if` condition must be a bool; write a comparison such as `os == OS.Windows`";
         return false;
     }
     return v.i != 0;
+}
+
+bool eval_user_const(const Expr& e, const UserConstTable& table, UserConst& out, std::string& why) {
+    g_user_consts = &table;
+    V v;
+    const bool ok = eval(e, v, why);
+    g_user_consts = nullptr;
+    if (!ok) return false;
+    out.is_bool = v.k == VK::Bool;
+    out.value = v.k == VK::Bool ? (v.i != 0 ? 1 : 0) : v.i;
+    return true;
 }

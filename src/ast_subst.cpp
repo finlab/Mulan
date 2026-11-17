@@ -237,6 +237,9 @@ void subst_methods(std::vector<std::unique_ptr<MethodDecl>>& methods, const Type
 void subst_ctors(std::vector<std::unique_ptr<CtorDecl>>& ctors, const TypeBindings& b) {
     for (auto& c : ctors) {
         subst_params(c->params, b);
+        for (auto& item : c->init_list) {
+            if (item.second) subst_expr(*item.second, b);
+        }
         if (c->body) subst_block(*c->body, b);
     }
 }

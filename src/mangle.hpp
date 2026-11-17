@@ -26,7 +26,8 @@ std::string func_cname(const std::string& unit, FuncDecl* f);
 
 // Method / constructor / destructor
 std::string method_cname(const std::string& unit, const std::string& owner,
-                         const std::string& name, const std::vector<TypePtr>& params);
+                         const std::string& name, const std::vector<TypePtr>& params,
+                         bool is_const = false);
 std::string ctor_cname(const std::string& unit, const std::string& owner,
                        const std::vector<TypePtr>& params);
 std::string dtor_cname(const std::string& unit, const std::string& owner);

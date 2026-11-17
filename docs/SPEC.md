@@ -4,9 +4,12 @@
 > 2026-11-14: aligned with the current implementation — string literals are `const char*` (0.0.89), `len` is
 > removed and static arrays are C storage (0.0.101), unit-level init/cleanup (9.1), `export` and the export
 > surface (0.0.104), arrays decay to pointers (C99, 0.0.106).
-> Status: draft, current through build 145 (2026-11-16; the per-build change log is docs/versions.md,
+> **2026-11-17: `const` redesigned on the C++ model (3.7), `move` defined as `&&` (3.8/4.4), and the
+> `comptime` unit with `builtin` declarations added (9.3); `constexpr`/`consteval`/`constinit` stay out.**
+> Status: draft, current through build 167 (2026-11-17; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
+> Items marked **decided 2026-11-17** are frozen by design but not implemented yet.
 > Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
 > Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor (no macros or textual substitution; `#if` only selects code at build time, see 9.2), reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
 >
@@ -24,12 +27,12 @@
 |---|---|
 | Loops | Only `while` and `for-in` are kept; C-style `for` and `do-while` are not kept |
 | Iteration | `for x in seq { }` (parentheses optional); ranges `a..b` / `a..=b` (optionally `step n`) and managed sequences (`T[]` / `T[,]` / `String` and library containers that provide `length()` + `operator[]`) are supported; static arrays are C storage and are not iterable; `continue` proceeds to the next iteration |
-| Mutability | C#-style: the type is declared before use; mutable by default; `const` is a C-model prefix qualifier: on named types it is a read-only binding marker, on pointers/slices it makes the pointee read-only |
+| Mutability | C++ model (decided 2026-11-17): mutable by default; `const` is a **cv qualifier that is part of the type**, at every level (top-level and low-level), participating in overloads and symbol names; `const` methods are provided; `constexpr`/`consteval`/`constinit` are not |
 | Declaration initialization | Declarations use only `=`: `Point p = {1, 2}`, `Point p = {}`, `Point p = Point(1, 2)`; in non-declaration positions use `Point(...)` |
 | Type inference | Local variables may use `auto x = expr;`; local only, and an initializer is required; `dynamic`/`any` are reserved names only |
 | Dynamic types | Not done in phase one; heterogeneous values prefer library-level Variant/sum types; `dynamic`/`any` are reserved only |
 | Scope | Declarations do not write `T x(...)`; `Point p` is uninitialized, `= {}` zero-initializes; unit-level variables are declared directly and are `private` by default |
-| Unit initialization | Unit-level variables may be initialized at runtime and are destroyed at exit (9.1, implemented 0.0.102); the order is a DFS post-order over `use` edges from the entry unit, cleanup is its exact reverse, declaration order inside a unit; only `use` dependencies are tracked |
+| Unit initialization | Unit-level variables may be initialized at runtime and are destroyed at exit (9.1, implemented 0.0.102); the order is a DFS post-order over `use` edges from the entry unit, cleanup is its exact reverse, declaration order inside a unit; **the same sequence orders compile-time constant evaluation and `#if` selection** (9.2) |
 | Object model | Values and references are separated: `struct` is a value type; `class` is a reference type (single inheritance + interfaces; virtual methods by default; atomic RC + weak; no GC/cycle collector) |
 | Strings | `string` (a value type provided by the std library: an immutable UTF-8 byte sequence; for layout and API see the library documentation) |
 | Generics | **Monomorphization** (one copy of the code per combination of type arguments); `<>` syntax; constraints use `interface` + `&`/`\|`; `Self` refers to the implementor; constraints are matched **structurally**, and built-in types satisfy them at zero cost; see 3.15 for details |
@@ -49,9 +52,9 @@
 2. **Drop C's historical baggage**: no preprocessor (no macros, no textual substitution; `#if` only
    selects code at build time, see 9.2), no implicit narrowing, no integer truthiness, no `do-while`,
    no C-style `for`; `++/--` keep only the statement form (no value).
-3. **Explicit beats implicit**: use `as` for type conversions; use `const` for mutability; use a read-only `interface` for read-only API boundaries.
+3. **Explicit beats implicit**: use `as` for type conversions; use `const` for mutability; a read-only API boundary uses `const` methods (3.11) or a read-only `interface`.
 4. **Small and predictable**: generics only do monomorphization (no erasure, no runtime generics), no capturing closures, no hidden allocations; overloading is limited to the bounded rules in 3.11; errors that can be caught at compile time are not deferred to runtime.
-5. **Leave room for optimization without sacrificing semantics**: single assignment for `const`, a structured `for-in`, and future alias annotations.
+5. **Leave room for optimization without sacrificing semantics**: `const` is a static guarantee (each object is initialized once), a structured `for-in`, and future alias annotations.
 6. **Separate values from references**: `struct` has value semantics and `class` has reference semantics, and the two are never confused; heap objects are managed with reference counting, and cycles are broken manually with `weak`.
 7. **No `unsafe` mechanism**: every facility (raw pointers and arithmetic, `alloc`/`free`, `union`, uninitialized locals, `extern`, future intrinsics) is available to every programmer. There is no safe subset to protect, so a marker would be decoration; what is unsafe stays **documented UB** (8.2), and the compiler's job is to make it *findable* (explicit intrinsics with fixed names) and *debuggable* (optional runtime checks), not to fence it off.
 
@@ -88,7 +91,7 @@
 ### 2.3 Keywords
 
 ```
-unit use public private export const auto struct enum extern class interface new weak packed union
+unit use public private export const builtin auto struct enum extern class interface new weak packed union
 if else while for in switch ref break continue return
 try catch throw finally
 true false null as sizeof alignof offsetof alloc realloc free
@@ -98,6 +101,8 @@ and or not override operator super this
 ```
 
 > `del` was removed in 0.0.47 (it is kept as a keyword only to give a migration diagnostic): to release a reference, write `x = null;`.
+
+> **`builtin` is a hard keyword** (decided 2026-11-17, 9.3): it declares a constant or function whose value/implementation is provided by the compiler; a `builtin` declaration has no initializer and no body.
 
 > `goto/typedef/fn` are not included for now (function types are written `(T1, T2) => R` with no keyword, and no
 > `typedef`-style declarator is introduced; see 3.16). `sizeof/alloc/realloc/free/alignof` and the like are built-in identifiers,
@@ -247,7 +252,7 @@ where  move  typeof
     (the latter yields null handles).
   - `s.length()`: 0 for a null handle; `s[i]` indexing (bounds-checked, see below); `for x in s` iterates over the elements.
   - `for ref x in s` can write to a shared array; **not allowed when the element is a class/interface** (the element is a handle, iterate with value binding);
-    `string` also cannot use `for ref` (immutable).
+    `string` also cannot use `for ref` (immutable) — use `for ref const` (read-only) or value binding.
   - Null value: `T[] s = null;` and `T[] s = {};` are equivalent (both null handles); but **a slice cannot be compared with `null`**
     (use `s.length() == 0`).
   - Releasing a dynamic array: setting the handle to empty (`s = {}` / `s = null`) releases it once; `del` was removed (0.0.47).
@@ -304,9 +309,10 @@ where  move  typeof
   - Size: `sizeof(string)` is defined by the library (currently 24 bytes: `byte* p; isize n; byte[] owner`);
     to pass strings across the ABI use `const char*`.
   - **A `string` may be a unit-level variable** (9.1): it is a struct with reference-counted fields
-    and is destroyed by the exit sequence. A `const` unit-level `string` is still an error, because a
-    unit-level `const` must be a compile-time constant; write `string G = "hi";` (mutable binding),
-    or use `const char* G = "hi";` and convert at the use point.
+    and is destroyed by the exit sequence. A `const` unit-level `string` is allowed (decided 2026-11-17):
+    it is initialized at run time by the unit initializer and is **not** a compile-time constant, so it
+    cannot be used in `#if`/array lengths/`step`. Write `const char* G = "hi";` when a compile-time
+    constant is needed.
   - Construction and operations (`string(const char*)`, `length()`, `at`, `sub`, `concat`, `operator[]`,
     `operator==`, `cstr`, `strlen`, ...) are **library API**, see the library docs; they are not part of the
     language specification. Everything about `string` that used to be compiler magic (`s[i]`, `for-in`,
@@ -337,7 +343,7 @@ struct Point {
   `this` is a reference to the current object (not a pointer), available implicitly, or written explicitly as `this` to access fields/call methods;
   methods can be overloaded, and cannot share a name with a field.
   Methods do not change the C layout (field order/alignment still match C).
-- Can declare **type-level compile-time constants**: `const int K = 3;`—occupies no instance storage, does not affect layout, accessed as `Point.K`, see 3.7.1.
+- Can declare **`const` fields** (decided 2026-11-17): `const int id;` is a per-instance read-only field, initialized by every constructor (member initializer list or a default member initializer) and read-only afterwards; it occupies instance storage and participates in layout like any other field (see 3.7). Type-level compile-time constants are gone — use a unit-level `const` instead.
 - Can declare **constructors/destructors**:
   - `S(...)` constructors can be overloaded; `S s;` calls the parameterless constructor; `S s = S(args);` constructs in place;
     with a constructor present, non-empty aggregate initialization is forbidden; use `{}` for the zero value (no constructor call, just zeroing);
@@ -377,9 +383,12 @@ struct Point {
 - Fields also support multiple names sharing a type: `int x, y;`; the type-first fixed-size array form is also allowed, e.g. `char[20] name;`.
 - **Move semantics (implemented, 0.0.137)**: `move x` transfers ownership out of a local variable or
   parameter; `S b = move a;`, `b = move a`, `f(move x)` and `return move x;` are the positions.
+  - **`move` is C++'s `&&`** (decided 2026-11-17): `move T` is a **non-const rvalue reference**. `const`
+    and `move` cannot qualify the same parameter (`const move T` / `move const T` are errors), and `move`
+    applied to a `const` object is an error — it does not silently degrade to a copy.
   - Only a whole name may be moved: `move o.field` / `move a[i]` are compile errors. A value type is meant
     to be small and self-contained; needing to move a single field out of one is the signal that the object
-    should be modelled as a `class` instead (heap entity, reference semantics, shareable). `const` bindings
+    should be modelled as a `class` instead (heap entity, reference semantics, shareable). `const` objects
     and `ref` borrows cannot be moved.
   - A type with a user destructor (or `nocopy`) is movable **only** when it declares `T(move T other)`;
     every other movable type is transferred by the compiler (copy the bytes, zero the source), which is the
@@ -429,7 +438,7 @@ struct Point {
     `nocopy` + a move constructor is the move-only type (`agents/value-semantics.md` §8.6).
 
 - **Layout modifiers `packed` / `align(N)`** (**implemented, 0.0.42**):
-  - Both are **declaration modifiers** (in the same class as `public`/`private`/`const`), written before the `struct` declaration (equally applicable once `union` lands,
+  - Both are **declaration modifiers** (the same position as `public`/`private`/`nocopy`), written before the `struct` declaration (equally applicable once `union` lands,
     see U14), order does not matter, usable alone or combined: `packed align(8) struct Msg { ... }` and
     `align(8) packed struct Msg { ... }` are equivalent.
   - `class` / `interface` / `enum` do not accept layout modifiers (layout is not part of their ABI); writing one is a compile error.
@@ -535,8 +544,12 @@ enum Color { Red, Green, Blue }
 - Implicit conversions are allowed only for widenings that **do not lose values**:
   - unsigned small type → wider signed/unsigned (e.g. `byte`→`int`, `uint`→`ulong`).
   - signed small type → wider signed.
-  - `T*` → `void*`; `T*` → `const T*`.
+  - `T*` → `void*`; `T*` → `const T*`; `T* const` → `T*` (top-level const is dropped on copy).
   - `T[]` → `const T[]`; the reverse (removing const) requires an explicit `as`.
+  - **Const may be added only at the outermost pointer level that is being viewed** (C++ rule):
+    `T** → const T**` has **no implicit conversion** — adding const to an inner level would let a mutable
+    pointer observe a const object. As in C++, `as` can force it (it is `const_cast`-equivalent; writing
+    through the result to a const object is UB).
   - `T[N]` → `T*` (array-to-pointer decay, C99 6.3.2.1; same element type, const may only be relaxed;
     also applies to `void*`). This is the only conversion that drops information (the bound).
   - `T[N]` → `T[]`, `T[m,n,...]` → `T[,]` (array to dynamic array: allocates and copies).
@@ -561,97 +574,111 @@ enum Color { Red, Green, Blue }
   - the conversion is a constructor call, i.e. its cost (allocation, copy) is visible in the constructor body.
 - `as` can be used for: numeric truncation/extension, pointer/integer conversion, `const` removal (explicit and unsafe).
 
-### 3.7 Mutability: `const` (C model)
+### 3.7 Mutability: `const` (C++ model; decided 2026-11-17)
 
-- `const` is a **prefix qualifier**; the position where it applies determines its meaning:
-  - `const` on a named type (scalar / enum / struct / class) is a **read-only binding marker** (constrains the binding, does not enter the type):
-    `const Cat c`, `const S s`, `const int n` all make **this binding** read-only;
-  - `const` on pointers / dynamic arrays qualifies the **pointee**: `const T*`, `const T[]` are read-only views;
-  - A read-only pointer binding itself (C's `T* const`) is **not provided**, see below.
-- Mutable by default; `const` bindings must be initialized.
+`const` is a **cv qualifier that belongs to the type**: `const T` and `T` are different types. This is the
+C++ model, with the deliberate omissions listed at the end of this section.
 
-```c
-int x = 0;              // mutable
-const int y = 1;        // y cannot be assigned
-const int* p = &x;      // *p is not writable; p can be retargeted
-const int[] a = ...;    // a[i] is not writable; a can be reassigned
-const int** s;          // **s is not writable; *s (the intermediate pointer) is writable
-```
+- **Levels.** `const` qualifies the object it is written on:
+  - `const int x` — the **object** is read-only (top-level const);
+  - `const int* p` — the **pointee** is read-only (low-level const); `p` itself can be retargeted;
+  - `int* const p` — the **pointer** is read-only (top-level const); `*p` can be written;
+  - `const int* const p` — both;
+  - `int* const* q` — the intermediate pointer is read-only; `*q` and `**q` are writable.
+- **Repeated `const` is allowed and folds**: `const const int` ≡ `const int`; a declaration may repeat it at
+  different levels.
+- **Top-level const is dropped on copy/assignment**: `int y = const int x;` is legal; `T* const → T*` is
+  implicit. Low-level const may only be **added**: `int* → const int*` is implicit; `const int* → int*`
+  requires `as` (explicit and unsafe). `T** → const T**` has **no implicit conversion** (adding const at an
+  inner level would let a mutable pointer observe a const object); as in C++, `as` can force it.
+- **Signatures.** Top-level const is ignored in a function signature (`f(const int)` ≡ `f(int)`); low-level
+  const is part of it (`f(int*)` and `f(const int*)` are different overloads). `const` therefore participates
+  in overloading and in symbol names (9).
+- `const` objects must be initialized. A local `const` may use a runtime expression (`const int x = f();`).
+- **Pointers, slices, arrays.** `const T*` / `const T[]` are read-only views; the view itself can be
+  reassigned. A `const T[N]` array has read-only elements and decays to `const T*`. `const` applies to the
+  innermost base type: `const int**` is "pointer to pointer to const int".
+- **`const` objects are deep read-only (C++ semantics).** Through a `const` object no field or element may be
+  written (`s.x = 1`, `c.a = 1` are errors), and only `const` methods may be called (3.11). A by-value
+  `const S` parameter protects the copy inside the body and does not affect the caller. For a `class` handle
+  the object is shared: `const` protects this view, not the object's identity (3.8).
+- **`const` fields.** `const T x;` is a per-instance read-only field: it must be initialized by every
+  constructor (member initializer list `C(...) : x(v) { }`, or a default member initializer
+  `const int x = 5;`), cannot be written afterwards, and participates in layout like any field. For a type
+  without constructors, aggregate initialization (`S s = {x = 1, y = 2}`, `S s = {}`) counts as
+  initialization. A type with a `const` field is still copy-constructible; assignment is **allowed** and
+  runs as copy-and-swap, i.e. the destination is rebuilt as a whole rather than written field by field
+  (decided 2026-11-17; C++ deletes the assignment instead).
+- **Reassignment.** A top-level `const` variable cannot be reassigned (`const int x = 0; x = 1;` is an error).
+  A `const struct` / `const class` variable has no top-level const (only its fields/methods are const), so
+  it may be reassigned as a whole — see the `const struct` item below.
+- **`const` methods.** `T f() const` declares a read-only method: `this` is `const Self`, fields cannot be
+  written, and `f()` / `f() const` may coexist as overloads. A const object can only call const methods.
+  Constructors and destructors cannot be `const` (3.11).
+- **`const struct` / `const class`.** A declaration modifier (decided 2026-11-17): every field is implicitly
+  `const` and every method is implicitly `const`. **An object's content is fixed once constructed**: no
+  field can be written and no method can mutate it. It can be **copied and moved** (a new object is
+  constructed). The **type name itself does not carry cv**, so `S(move S other)` is legal. A variable of such
+  a type may be **reassigned as a whole** — semantically the old value is replaced by a newly constructed
+  one (the implementation may use copy-and-swap); it never writes the old object's fields. A `const S`
+  variable (top-level const) cannot be reassigned. Inheritance and interfaces must match in constness
+  (`const class D : const C`).
+- **Address-of and iteration.** `&const_local` / `&s.const_field` / `&const_slice[i]` yield `const T*`.
+  `for ref const x in s` is read-only iteration; `for x in s` copies (a copy of a const element is mutable).
+- **No backdoors.** `const_cast` is not provided — use `as` (explicit and unsafe, 4.3); `mutable` is not
+  provided; `volatile` is not provided. `constexpr` / `consteval` / `constinit` are **not** introduced.
+- `const` does not change layout/ABI and is **not an optimization promise**. A unit-level `const` whose
+  initializer is a compile-time constant may be placed in read-only storage; writing it after `as` is UB.
+- **Not allowed:** on `union` (members are always public fields) and on an anonymous function type
+  (`(int) => int`). A **top-level `const` return type is accepted but ignored** (`const int f()` is treated
+  as `int f()`, as in C++); `const char* f()` is a low-level const pointer and keeps its const.
+- `weak const T` / `const weak T` are errors (a read-only weak reference has no use).
 
-- `const` applies to the **base type (innermost)**: `const int**` reads as "pointer to pointer to const int".
-- Only relaxing, never tightening: `int* → const int*` is implicit; `const int* → int*` requires an explicit `as` (unsafe).
-- A `string` no longer converts to a pointer implicitly: use `s.cstr()` (3.3).
-- `const` on a named-type binding constrains **this binding** only; it is not a read-only view and does not change the type:
-  - Local / parameter: cannot be rebound (`c = null` is an error), and fields or elements cannot be written directly through it (`c.a = 1`, `s.x = 1` are errors);
-  - a `class` handle can still be copied out and written through as usual; through a `const` binding **methods that modify the object can also be called**—the language provides no `const` methods (see 3.11, 12 table 98);
-  - when a truly read-only API boundary is needed, express it with a read-only `interface` (split the read-only methods into an interface and let the class implement it).
-- Passing a struct by value is a copy: a `const S` parameter protects the copy inside the function body and does not affect the caller.
-- **Instance fields cannot be declared `const`**: there are no "read-only fields", and no "`readonly` members assigned only in the constructor" are provided.
-  Inside a type body `const` has only one meaning—**type-level compile-time constant** (see 3.7.1);
-  a form without an initializer such as `const int x;` is an error (``const member `x` must be initialized``).
-  Earlier versions silently accepted it with a half effect (`&s.x` unexpectedly became `const int*`, while `s.x = 2` was still legal); converged together since 0.0.59.
-- Enforced checks: assigning to a `const` binding (local / parameter / global constant), writing fields or elements directly through a `const` binding,
-  writing the target through `const T*` / `const T[]`, using `for ref` on a `const` slice.
-- **`T* const` (read-only pointer binding) is not provided**: it is only a defensive constraint, used rarely, and offers no protection to the caller when passing by value; when a fixed pointer is needed, use a local read-only variable or a naming convention. A read-only intermediate level in a multi-level pointer is likewise not expressible.
-- `const` does not participate in layout/ABI and is **not an optimization promise**; there are no backdoors such as `const_cast`/`mutable`.
-- `const` does not require compile-time evaluation; when a true compile-time constant is needed, use a **type-level `const` member** (3.7.1) or a constant expression (3.7.2),
-  no `constexpr` keyword is introduced.
+### 3.7.1 Type-level compile-time constants (removed 2026-11-17)
 
-### 3.7.1 Type-level compile-time constants (`const` members; implemented 0.0.59)
+Type-level constants are no longer part of the language. `const int K = 3;` inside a `struct` / `class` body
+now declares an ordinary **`const` field** (3.7), not a storage-free constant.
 
-```c
-class Cat {
-public:
-    const int MaxAge = 20;
-    const int Twice  = MaxAge * 2;      // references other constants of the same type
-    const int W      = sizeof(int) as int;
-    int age;
-    int limit() { return MaxAge + W; }  // can be written bare inside method bodies
-}
-int x = Cat.MaxAge;                     // access qualified by the type name
-```
+- Constants live at **unit level**: `const int K = 3;` at the top of a unit, referenced as `K` (same unit) or
+  `unit.K` (after `use`); a `public const` is visible across units.
+- `Type.NAME` (`Point.K`) is gone. Enum members keep their qualified form (`Color.Red`, 3.5), because they are
+  still constants of the enum type.
+- A generic struct/class can have `const` fields like any other type; there is no special "generic const
+  member" rule anymore.
 
-- Syntax: `const T NAME = <const-expr>;` inside a `struct` / `class` body—must be initialized, one name at a time
-  (`const int a = 1, b = 2;` is not supported; use two declarations).
-- Semantics: **type-level constants that occupy no instance storage**—they do not enter the field table and do not affect `sizeof` / `alignof` / layout / ABI,
-  do not participate in construction, destruction, or RC; and generate no runtime initialization code.
-- Types: scalars (`bool` / `byte` / `char` / `short` / `ushort` / `int` / `uint` / `long` / `ulong` /
-  `float` / `double` / `usize` / `isize`) or enums. `string` / struct / class / pointers / slices / fixed-size arrays are not supported.
-- The initializer must be a **compile-time constant expression** (3.7.2); it cannot call functions or reference local variables or non-const global variables.
-- Access:
-  - `Type.NAME` (the same resolution as the enum member `Color.Red`)—across units write `unit.Type.NAME`;
-  - inside the methods / constructors / destructors of the type that declares it, `NAME` can be written bare;
-  - lookup follows the base class chain: both `Derived.NAME` and a bare `NAME` inside a derived-class method body resolve to base class constants;
-  - `obj.NAME` and `this.NAME` **are compile errors** (constants occupy no instance memory), with a hint to use `Type.NAME` instead.
-- Read-only: cannot be assigned, cannot have its address taken, cannot be a `ref` / `for ref` target.
-- Visibility: follows the `public:` / `private:` sections and the member prefix (class defaults to private, struct defaults to public);
-  accessing a private constant across units is an error.
-- Name clashes: sharing a name with a field / method / constructor / another constant is a compile error.
-- Not allowed inside `union` / `interface`.
-- "Read-only member variables assigned only in the constructor" are explicitly **not supported**, and there is no `readonly` keyword; when per-instance read-only is needed,
-  use a `const` binding (`const S s = ...;`) or encapsulation (private fields + methods).
+### 3.7.2 Compile-time constant expressions (decided 2026-11-17)
 
-### 3.7.2 Compile-time constant expressions (implemented 0.0.59)
+Compile-time constants are the values that can be computed before the program runs. The same evaluator is used
+for **unit-level `const` initializers**, array lengths `T[N]`, `step`, `align(N)`, `switch` case-range
+endpoints, and `#if` conditions (9.2).
 
-Usable for unit-level `const`, type-level `const` members, and enum member values:
-
-- Literals: integer, floating point, character, boolean;
-- Unary `-` `+` `not`; binary `+ - * / %`, `& | ^ << >>`, `< <= > >= == !=`, `and` `or`;
-- `as` conversions (the same truncation / sign extension / integer↔float conversion semantics as at runtime);
-- References to other constants: unit-level `const` of this unit, enum members (`Color.Red` or a bare `Red`),
-  type-level `const` members (`Type.NAME`); **forward references and arbitrary declaration order are supported** (`const int A = B; const int B = 1;`);
-- Built-in `sizeof(T)` / `alignof(T)`: the result is `isize`; assigning it to `int` and similar types requires an explicit `as`
-  (`const int W = sizeof(int) as int;`; `const int W = sizeof(int);` still fails under the strict typing rules);
-- Errors: division by zero / modulo by zero, signed division/remainder overflow (`MIN / -1`), circular dependency (`circular constant definition involving ...`), nesting depth exceeding 512 levels;
-- In constant expressions `and` / `or` **evaluate both sides** (at runtime they short-circuit); therefore `false and (1 / 0 == 0)` reports division by zero in a constant context;
-- Despite forward references and arbitrary declaration order, constants of the same name coming from `use` still **report ambiguity** under the normal name-resolution rules (they do not silently take the first);
-- Not supported: function calls (there are no `constexpr` functions), `?:` conditional expressions, pointers/strings/aggregate values participating in evaluation.
-  Aggregate constants follow the old rules (`const int[] G = {10, 20, 30};` keeps working). **A `string` cannot be a
-  unit-level variable** (it holds reference-counted data, 3.3), so `const string S = "hi";` is a compile error —
-  write `const char* S = "hi";` and convert at the use point.
-- Enums are nominal types: enum members still require an explicit `as` to participate in arithmetic/comparison (`(Color.Red as int) * 2`).
-- **Initializers of unit-level variables** (including non-`const` globals such as `int g = 1 + 2;`, `int G = Cat.MaxAge;`) also go through this evaluator:
-  if a constant can be computed it is emitted to the global data area as a constant; otherwise it falls back to the old literal/aggregate rules, and if that still fails it reports "must be a compile-time constant".
+- Literals: integer, floating point, character, boolean.
+- Unary `-` `+` `not`; binary `+ - * / %`, `& | ^ << >>`, `< <= > >= == !=`, `and` `or`.
+- `as` conversions (the same truncation / sign extension / integer↔float semantics as at runtime).
+- References to other constants that are **already declared and visible at this point**: an earlier unit-level
+  `const` of this unit, an enum member (`Color.Red` or a bare `Red`), or a `public const` of a unit that was
+  `use`d before this point. **Forward references are not supported** (`const int A = B; const int B = 1;` is
+  an error: `B` is not declared yet).
+- Built-in `sizeof(T)` / `alignof(T)`: the result is `isize`; assigning it to `int` and similar types
+  requires an explicit `as` (`const int W = sizeof(int) as int;`).
+- Errors: division by zero / modulo by zero, signed division/remainder overflow (`MIN / -1`), a reference to
+  a constant that is not yet evaluated (self-reference or a failed initializer), and nesting depth above 512.
+- In constant expressions `and` / `or` **evaluate both sides** (at runtime they short-circuit); therefore
+  `false and (1 / 0 == 0)` reports division by zero in a constant context.
+- Constants of the same name coming from different `use`d units still **report ambiguity** under the normal
+  name-resolution rules (they do not silently take the first).
+- Not supported: function calls (there are no `constexpr` functions), `?:` conditional expressions, and
+  pointers / strings / aggregate values participating in evaluation. Aggregate constants are written as
+  literals or aggregate initialization (`const int[] G = {10, 20, 30};`), not computed.
+- **A `const` variable is not automatically a compile-time constant.** A unit-level `const` whose initializer
+  the evaluator can fold **is** a compile-time constant; any other unit-level `const` (e.g.
+  `const string S = "hi";`, `const int x = f();`) is initialized at run time by the unit initializer (9.1)
+  and cannot appear in the positions listed above. Local `const` variables are always run-time values.
+- Enums are nominal types: enum members still require an explicit `as` to participate in arithmetic or
+  comparison (`(Color.Red as int) * 2`).
+- **Initializers of unit-level variables** (including non-`const` globals such as `int g = 1 + 2;`) also go
+  through this evaluator: if the value can be computed it is emitted to the global data area as a constant;
+  otherwise the variable is initialized at run time (9.1).
 
 ### 3.8 Reference type `class` (RC + weak; implemented, including automatically nulling weak targets upon destruction)
 
@@ -667,7 +694,7 @@ class Cat {
 
 - **The type is the handle**: `Cat` *is* the reference type; there is no `&` type suffix, and `&` only means address-of.
 - `class` and `struct` are both unit-level type declarations; they may declare fields, methods, and constructors, and support single inheritance and interfaces (see 3.9–3.12).
-- They may also declare **type-level compile-time constants** such as `const int K = 3;` (no instance storage, accessed via `Cat.K`, see 3.7.1); class members are private by default.
+- They may also declare **`const` fields** (decided 2026-11-17): `const int id;` is a per-instance read-only field initialized by the constructor (3.7); class members are private by default. Type-level constants are gone — use a unit-level `const`.
 - Construction: `new Cat(...)`; the parameter rules are the same as for struct construction (positional or named, all fields must be given).
   `new Cat` / `new Cat()` means all fields are zero-initialized (numeric 0, references null, `string` empty).
   A failed `new` means `abort()` (allocation failure is not reported through exceptions; a constructed reference is never null).
@@ -682,7 +709,7 @@ class Cat {
 - Member access auto-dereferences: `c.name`, `c.parent.name`; writes are constrained by `const`.
 - **Early release** (`del` was removed as of 0.0.47): just set the handle to null; `c = null;` releases one strong reference and sets `c` to null.
   The object is destroyed when the strong reference count reaches zero; for a shared object only your own reference is decremented. The target must be a writable class/interface
-  reference lvalue (a `const` binding cannot be assigned); function parameters and `for`/`for-in` loop variables are likewise owning bindings,
+  reference lvalue (a `const` object cannot be reassigned); function parameters and `for`/`for-in` loop variables are likewise owning bindings,
   and can be set to null (see 4); `this` cannot be assigned.
 - `weak Cat p;`:
   - can only be a class field (not a local variable, parameter, or return value);
@@ -694,13 +721,15 @@ class Cat {
   per-field RC, see 3.4).
 - **class dynamic arrays**: `Cat[]` is allowed (`new Cat[n]`); the array holds the element handles and decrements each element by -1 on destruction. The dynamic array
   handle itself is copied/released according to the RC rules of 3.3.
-- `const Cat c` (implemented, 0.0.61): a **read-only binding marker** — `c` cannot be rebound, and fields cannot be written directly through `c` (`c.a = 1` is an error).
-  It is not a deep read-only view: a copied-out handle is still writable, and calling a method that modifies the object through `c` is also legal (there are no `const` methods, see 3.11).
+- `const Cat c` (C++ model, decided 2026-11-17): `c` is a **const handle**. Through it no field can be
+  written (`c.a = 1` is an error) and only `const` methods can be called; a non-const handle cannot be
+  obtained from `c` without `as`. Because a class is shared, the object may still be mutated through another
+  non-const handle — `const` protects this view, not the object's identity.
 - **`ref` is a binding mode, not a storable type** (since 0.0.62; extended in 0.0.63): borrows appear in exactly two places, **parameters** and **return types**,
   written as the prefix keyword `ref T p` / `const ref T p` (or its older spelling `ref const T p`) / `ref T f()`; **no `T&` type suffix is introduced**. The reason: `&` in this language already is
   the unary address-of operator and the binary bitwise-and operator; modifiers in type position uniformly use a lowercase prefix (`weak`, `const`, `ref`).
   A borrow cannot be the type of a variable, field, or array element (`ref T x;` and `T&[]` are both errors, and the compiler emits a clear diagnostic).
-- The borrow family shares one rule: **not storable** — the results of `for ref x in s`, `ref T p`, and `ref T f()` must not be assigned to another variable or field,
+- The borrow family shares one rule: **not storable** — the results of `for ref x in s` / `for ref const x in s`, `ref T p`, and `ref T f()` must not be assigned to another variable or field,
   must not have their address taken, and must not outlive the expression that produced them.
 - `ref T` parameters (0.0.62; scalars supported since 0.0.63): `void f(ref Point p)` / `void inc(ref int x)` borrow the caller's variable;
   the callee may write to it; it cannot be rebound.
@@ -734,7 +763,7 @@ class Cat {
     and retain/release could be bypassed (backlog U21). When an in-place borrow is needed, copy it to a local variable first and assign it back when done:
     `S tmp = c.s; api(&tmp); c.s = tmp;`. Taking the address of a pure-value struct / fixed-size array element / pointer variable is unaffected.
   - `weak` on local variables, parameters, or return values;
-  - `const` **methods / deep read-only views** (decided not to do, see 3.11 and 12 table 98).
+  - `const_cast` / `mutable` / `volatile` (use `as` for an explicit const removal, 3.7);
 - Memory: atomic reference counting (relaxed increments, release decrement + acquire fence before destruction); fields are released in reverse declaration order; weak references are not counted.
 - Threads: objects may be shared across threads; the destructor runs on the thread that releases the last reference and must be thread-safe.
 
@@ -796,8 +825,8 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
   (`Self operator<<(Self b, byte c)`, `Self operator*(Self a, int k)`, `bool operator<(Self a, int b)`).
   The receiver may borrow: `ref Self` (mutate in place) or `ref const Self` (read-only). A `ref Self`
   receiver needs a free `operator` whose first parameter is `ref` (or a struct member operator, whose
-  `this` is borrowed); a `ref const Self` receiver needs a free `ref const` (or by-value) first parameter,
-  because there are no `const` methods.
+  `this` is borrowed); a `ref const Self` receiver is satisfied by a free `ref const` (or by-value) first
+  parameter, or by a `const` member operator (whose `this` is `const Self`, 3.11).
 - A default method may only call interface methods and cannot access fields; when two interfaces provide default implementations with the same signature, the class must explicitly override them, otherwise it is a compile error (a default declared on a derived interface refines the base interface's default and wins).
 - An interface value is laid out as two machine words `{object pointer, class descriptor pointer}`; it may be `null`.
 - Conversions: `class → interface` is implicit; `interface A → interface B` (A inherits B) is a static conversion;
@@ -837,8 +866,13 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
 - Class method: `ret name(params) { ... }`; `this` is a reference to the current object (for a class, the object handle; for a struct, an lvalue alias of the object itself),
   and is implicitly available; write `this` explicitly when disambiguation is needed; `this` is not a pointer and its address cannot be taken.
 - Fields can be accessed directly inside a method; `this` cannot be rebound.
-- **No `const` methods are provided** (decided not to do, see 12 table 98): methods have no read-only/mutable distinction, `this` is always writable;
-  use a read-only `interface` when read-only must be expressed at an API boundary.
+- **`const` methods** (C++ model, decided 2026-11-17): a method declared `ret name(params) const` is a
+  read-only method — `this` is `const Self`, fields/elements cannot be written through it, and it may be
+  called on a `const` object. `f()` and `f() const` may coexist as overloads; a `const` object selects the
+  `const` overload, a non-const object prefers the non-const one. `const` is part of the signature and
+  participates in overriding (an `override` must match the base method's constness). Constructors and
+  destructors cannot be `const`.
+- A read-only API boundary may also use a read-only `interface` (3.10); both mechanisms coexist.
 - Methods are **static-dispatch by default** (build 160): `virtual` marks a method a subclass may replace, and `override` must have a signature identical to the base class/interface method. A subclass may not redeclare a non-virtual base method (compile error, not silent shadowing).
 
 **Overloading** (free functions, methods, constructors, operators):
@@ -944,6 +978,11 @@ class Button : Widget {
   constructor as the implicit conversion path (see 3.6). It must be `public`, and writing it in a class body or
   union is a compile error. The marker is contextual: `implicit` is a modifier only in front of a constructor name.
 - On allocation: the object's memory is fully zeroed, `rc = 1`, and the vtable points to the topmost base class.
+- **Member initializer list** (decided 2026-11-17): `C(int a) : x(a), y(a * 2) { ... }` initializes fields
+  before the body runs. It is the way to initialize `const` fields (3.7); every constructor must initialize
+  every `const` field exactly once, either in the list or through a default member initializer
+  (`const int x = 5;`). A missing initialization is a compile error. The same form is available to `struct`
+  constructors (3.4).
 - `super(args)` must be the first statement; if omitted, the base class's zero-argument constructor is called (an error if it does not exist).
 - Construction order: layer by layer `super` → derived field assignments (in the constructor body); on entering each constructor layer, the vtable is updated to that layer.
 - Virtual calls during construction are C++-style: they dispatch only to the current construction layer and above, and never enter a derived implementation that has not been constructed yet.
@@ -1114,8 +1153,8 @@ T: A | B  →  type set is the union (wider)  →  available members of T are th
   (read-only). Satisfaction requires a matching implementation form: a mutable `ref Self` needs a free
   `operator` whose first parameter is `ref`, or a struct member operator (its `this` is borrowed); a
   by-value implementation only touches a copy and does not satisfy it. A `ref const Self` is satisfied by
-  a free `ref const` (or by-value) first parameter; a member operator does not qualify, because `this` is
-  writable and there are no `const` methods. Only the receiver may be a `ref` parameter in an interface
+  a free `ref const` (or by-value) first parameter, or by a `const` member operator (`this` is
+  `const Self`, 3.11). Only the receiver may be a `ref` parameter in an interface
   operator declaration; the remaining operands are ordinary values.
 - A `ref T` return satisfies a declared `T` (a borrow is usable as a value), and a declared `ref T` needs a
   `ref` implementation — the same rule as the subscript above. In an interface declaration only
@@ -1176,7 +1215,7 @@ type `Money` does not satisfy `IAdd` for type parameter `T`: no `operator+` acce
 
 | Limitation | Description |
 |---|---|
-| A generic struct/class does not support `const` members | Type-level compile-time constants are not wired up yet |
+| ~~A generic struct/class does not support `const` members~~ | **Lifted 2026-11-17**: `const` fields in a generic type are ordinary per-instance fields (type-level constants are gone) |
 | Not supported | Method-level generics, type argument deduction, associated types, specialization, generic `extern`, generic type aliases |
 
 Lifted since 0.0.72 (kept here so the old table's rows are not misread as current): a generic interface is
@@ -1352,7 +1391,7 @@ type Op = delegate (int, int) => int;
   Rationale: "declaration vs expression statement" stays a single-token decision (a declaration starts with a keyword
   or an identifier), and `(int) => int f` would read like a cast.
 - `const` cannot qualify an **anonymous** function type: there is no pointee to protect, and a declaration cannot begin
-  with `(` anyway. Name the type with `type` when a read-only binding is needed (`type F = (int) => int; const F f = ...`).
+  with `(` anyway. Name the type with `type` when a read-only variable is needed (`type F = (int) => int; const F f = ...`).
 
 #### 3.16.2 Function values
 
@@ -1631,6 +1670,9 @@ on the execution engine.
 - Block scope; a variable is visible after its declaration point.
 - Duplicate declarations in the same scope are not allowed; **an inner scope may shadow an outer variable of the same name** (implemented).
 - `const` applies to all variables in the whole declaration: `const int a = 1, b = 2;`.
+- `auto` drops **top-level** const: `const auto x = expr;` keeps an explicit const, while `auto y = const_x;`
+  deduces the unqualified type (a copy of a const value is mutable, as in C++). Low-level const is preserved
+  (`auto p = const_ptr;` deduces `const T*`).
 - Local type inference: `auto name = expr;`
   - Local variables only; an initializer is required; cannot be used for parameters, return values, fields, or unit-level variables.
   - Multiple declarators in the same declaration must deduce the same type: `auto a = 1, b = 2;` is legal; `auto a = 1, b = 2.0;` is an error.
@@ -1639,15 +1681,23 @@ on the execution engine.
   - `auto` only takes the expression type directly; it does not perform Hindley-Milner unification.
 - Except for `auto`, parameters, return values, fields, and unit-level variables must all have an explicit type.
 - Unit-level variables are declared directly (`int g = 1;`) and are `private` by default (visible within the unit); use `public` across units; `extern` denotes an external symbol.
-- **Initializers of unit-level variables**: must be a **compile-time constant expression** (rules in 3.7.2; the same requirement applies to both `const` and non-`const` globals) —
-  literals, unary `-`/`+`/`not`, `as`, arithmetic/bitwise/comparison/`and`/`or`, and **references to other constants**
-  (unit-level `const`, enum members, type-level `const` members) as well as `sizeof(T)` / `alignof(T)`;
-  forward references are supported; `const int B = A + 1;`, `int g = 1 + 2;`, `int G = Cat.MaxAge;` are all legal. Cyclic dependencies and division by zero are errors.
-  Aggregate constants are still written as literals or aggregate initialization (`const int[] G = {10, 20, 30};`).
-  A `const` unit-level `string` is still not allowed (a unit-level `const` must be a compile-time constant):
-  write `string S = "hi";` for a mutable global, or `const char* S = "hi";` when a compile-time literal is enough.
+- **Initializers of unit-level variables** (decided 2026-11-17): an initializer that the constant evaluator can
+  fold (3.7.2) is emitted as a compile-time constant; any other initializer is evaluated at run time by the
+  unit initializer (9.1). The same rule applies to `const` and non-`const` globals.
+  - Compile-time constants: literals, unary `-`/`+`/`not`, `as`, arithmetic/bitwise/comparison/`and`/`or`,
+    references to **already-declared** constants (unit-level `const`, enum members) and `sizeof(T)` /
+    `alignof(T)`; `const int B = A + 1;`, `int g = 1 + 2;` are compile-time constants. **Forward references
+    are not allowed** (`const int A = B; const int B = 1;` is an error). Division by zero and a reference to
+    a not-yet-evaluated constant are errors.
+  - Runtime-initialized globals: `const string S = "hi";`, `const int x = f();`, and non-`const` globals with
+    a call initializer. They are **`const` objects but not compile-time constants**: they cannot be used in
+    `#if`, array lengths, `step`, `align(N)`, or `switch` ranges.
+  - Aggregate constants are written as literals or aggregate initialization
+    (`const int[] G = {10, 20, 30};`).
 - **Local `const`** may be initialized with a runtime expression (`const int x = f();` is legal); it simply cannot be assigned again after initialization.
-- A `const` inside a type body is a **type-level constant**, must be initialized on the spot, and must be a compile-time constant; see 3.7.1.
+- A `const` inside a type body is a **`const` field** (3.7): it must be initialized by every constructor
+  (member initializer list or a default member initializer), occupies instance storage, and is read-only
+  afterwards. There are no type-level constants.
 - `static` has been removed (0.0.32): unit-level variables naturally have static storage duration; `static` local variables inside functions and `static` functions are not supported.
 - Parameters are mutable local bindings (phase one, C semantics); whether they become immutable by default is pending.
 - **Parameters are owning local variables** (since 0.0.47, consistent with 3.8): parameter values are retained on entry and released on exit;
@@ -1660,6 +1710,11 @@ on the execution engine.
 - `ref const T p` is a **read-only borrow**: it cannot be rebound, and fields/elements cannot be written through the borrow; the argument must be addressable (temporaries are not allowed).
 - **`ref` is a binding mode, not a storable type**: it does not introduce `T&`; a borrow cannot be the type of a variable/field/element/array element
   (no `ref T x;`, no `T&[]`), sharing the "not storable" rule with `for ref` (see 3.8).
+- **`move` is a binding mode too** (C++ `&&`; decided 2026-11-17): `move T` is a non-const rvalue reference.
+  `const` and `move` cannot qualify the same parameter (`const move T` / `move const T` are errors), and
+  `move` applied to a `const` object is an error. It appears in a move constructor (`T(move T other)`) and in
+  a transfer position (`S b = move a;`, `b = move a`, `f(move x)`, `return move x;`). A `const` object can be
+  copied but never moved.
 
 ### 4.5 Type aliases (`type`, 0.0.62)
 
@@ -1811,9 +1866,10 @@ while true { ... }   // infinite loop, exited via break
 ### 6.4 for-in
 
 ```c
-for x in seq { ... }       // x is the value binding for each iteration (copied by default)
-for ref x in seq { ... }   // x is a mutable reference to the element
-for i, x in seq { ... }    // with index/ordinal (see 6.4.4)
+for x in seq { ... }            // x is the value binding for each iteration (copied by default)
+for ref x in seq { ... }        // x is a mutable reference to the element
+for ref const x in seq { ... }  // x is a read-only reference (usable on a `const` sequence, decided 2026-11-17)
+for i, x in seq { ... }         // with index/ordinal (see 6.4.4)
 ```
 
 - The parenthesized forms `for (x in seq)` / `for (i, x in seq)` / `for (ref x in seq)` are also accepted; canonical style omits the parentheses.
@@ -1825,9 +1881,12 @@ for i, x in seq { ... }    // with index/ordinal (see 6.4.4)
   built-in sequences do not participate in form matching.
 - `x` is scoped to the loop body only; immutable and bound by value by default; `x` is an **owning local variable** (0.0.47 semantics), so when the element is a
   class/interface it is retained on entry and released on exit of each round; the `ref` form can write to elements.
+- **`for ref const x in seq`** (decided 2026-11-17) is read-only iteration: `x` is a `ref const` borrow, it can
+  be read but not written, and it is the only `for ref` form accepted on a `const` sequence (`const T[]`,
+  `const T[N]`, or a const container). `for x in` always copies, so a copy of a const element is mutable.
 - `seq` is evaluated only once; its length is fixed at the start; elements must not be added or removed during iteration (UB or a runtime error).
   - A simple lvalue (a variable, a member access chain) is iterated directly; other expressions are evaluated by the compiler first, stored, and then iterated.
-  - The sequence of `for ref` must be a variable or member access (it must be addressable); `for ref v in arr[f()]` is an error.
+  - The sequence of `for ref` / `for ref const` must be a variable or member access (it must be addressable); `for ref v in arr[f()]` is an error.
 - `continue` → the next iteration; `break` → exit.
 - An empty sequence iterates zero times.
 - Ranges: half-open `a..b` by default (includes `a`, excludes `b`); `..=` includes the upper bound; an optional `step n` (must be a non-zero compile-time constant).
@@ -1858,6 +1917,7 @@ int operator[](Vec v, isize i) { return v.data[i]; }   // free-function operator
 - `length()` must equal the number of valid indices of `[]`; a mismatch is a user error (debug bounds checks catch it).
 - In `for i, x`, `i` is the real `isize` index.
 - `for ref` requires `operator[]` to return `ref T` (the element is then addressable); when `[]` returns a value, use `for i, x` + `c[i] = ...`.
+  `for ref const` accepts an `operator[]` returning `ref T` or `ref const T` and binds a read-only element.
 - **Copy cost**: a subscript is **always a member operator** (6.4.1, build 161), whose receiver is the
   implicit `this`: the object address for a `struct`, the handle for a `class`. Both are borrowed, so an
   iteration is a plain indexed load with no copy and no retain/release.
@@ -2238,6 +2298,8 @@ unit example;
 - A string literal is a NUL-terminated `const char*` and can be passed to C directly.
 - Symbol mangling is injective (12 #88): `mu$<unit>$<name>$<param>...`, with the components separated
   by `$`, every literal `_` doubled and every other non-alphanumeric byte written `_XX` (uppercase hex).
+  **Low-level `const` is part of a parameter's type code** (decided 2026-11-17), so `f(int*)` and
+  `f(const int*)` get distinct symbols; top-level `const` is already dropped when the signature is formed.
   `extern` declarations keep the C name; `main` is special.
 
 ### 9.1 Unit-level initialization and cleanup (implemented 0.0.102)
@@ -2256,14 +2318,20 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
   declarations in source order, depth-first, and append each unit in **post-order** on first visit.
   That sequence initializes the units; cleanup runs the **exact reverse** of the same sequence. The
   order depends only on the source — never on link order, file names or the order units are compiled in.
+  **The same sequence also orders compile-time constant evaluation and `#if` selection (9.2/3.7.2)**: a
+  constant may reference a unit that was already completed in the sequence, i.e. one that is `use`d before
+  the reference point. There is exactly one order in the language.
 - **Within a unit**, variables initialize in declaration order and clean up in reverse declaration
-  order; together with the previous rule, cleanup is the strict reverse of construction.
+  order; together with the previous rule, cleanup is the strict reverse of construction. Constants are
+  evaluated in the same declaration order.
 - **Who participates.** Compile-time `const`s, `extern` declarations, and variables without an
   initializer whose type has no constructor stay in the static data area and run no code (a struct
   with a parameterless constructor is constructed by the sequence, like a local `S s;`). An
-  initializer the constant evaluator can fold (3.7.2) also stays static. A variable whose type needs
-  cleanup is registered for cleanup even when it is zero-initialized, because the program may assign
-  it later.
+  initializer the constant evaluator can fold (3.7.2) also stays static. A `const` whose initializer is
+  **not** foldable (e.g. `const string S = "hi";`) is still a `const` object but is initialized at run
+  time by this sequence, and cannot be used in `#if`/array lengths/`step`/`align(N)`. A variable whose
+  type needs cleanup is registered for cleanup even when it is zero-initialized, because the program may
+  assign it later.
 - **What an initializer may observe.** Its own unit's earlier declarations and `public` declarations of
   units it `use`s — which are exactly the units already initialized, because a `use` edge is what makes
   them nameable. A direct reference to a variable declared **later in the same unit** is a compile
@@ -2289,12 +2357,13 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
   assemble the same sequence at link time; only the entry unit materializes the call sequence today.
   A build without an entry unit (a library check) generates no sequence at all.
 
-### 9.2 Compiler directives: `#if` (implemented, build 158)
+### 9.2 Compiler directives: `#if` (implemented, build 158; evaluation model redesigned 2026-11-17)
 
 `#if` is a **compiler directive**, not a preprocessor: it selects which code *exists* in this build.
 There are no macros, no textual substitution and no `#include`.
 
 ```c
+use comptime;                                  // required before using os/arch/...
 #if os == OS.Windows and arch == Arch.X86_64 {
     extern void* CreateFileW(const ushort* name, uint access, uint share,
                              void* sec, uint disp, uint flags, void* tmpl);
@@ -2320,19 +2389,87 @@ There are no macros, no textual substitution and no `#include`.
 - **Syntax**: `#` must be the first non-blank character of its line; an arm is `#if <cond> { … }`,
   continued by `#elif <cond> { … }` / `#else { … }`. There is no `#endif`. `#error "message"` fails the
   compilation when it is reached.
-- **Conditions**: a compile-time `bool` built from the build constants — `os`, `arch`, `abi`,
-  `ptr_bits`, `endian`, `debug`, `bounds`, `single_thread`, whose types (`OS`, `Arch`, `Abi`, `Endian`)
-  live in `std.target` — plus literals, arithmetic, comparisons and `and` / `or` / `not`. A runtime
-  value, a local variable, `sizeof` or a call is an error: the condition is evaluated while parsing,
-  before names and layouts exist.
+- **When it is evaluated** (decided 2026-11-17): in the same pass as compile-time constant evaluation,
+  following the single sequence of 9.1 — entry unit DFS post-order over `use`, declaration order inside a
+  unit. The condition sees exactly the constants visible at that source position:
+  - the `comptime` builtins and functions (9.3) after `use comptime`;
+  - earlier unit-level `const`s of this unit that are compile-time constants (3.7.2);
+  - `public const`s of units already completed in the sequence, i.e. `use`d before this point.
+  A constant declared later in the same unit, a `const` that is not a compile-time constant, a local
+  variable, a runtime value, `sizeof`/`alignof`/`offsetof`, and ordinary function calls are errors. Calls
+  to `comptime` builtin functions are allowed (9.3).
+- **One name-resolution rule.** `#if` conditions use the same name resolution as a constant initializer:
+  cross-unit names require a preceding `use` (and `use comptime` for the builtins), a later declaration is
+  not visible, and ambiguity is reported as usual. Dependencies exist only through `use` edges — a constant
+  reference does not create an implicit unit dependency.
 - **`use` inside an arm** is allowed, and only the units of selected arms join the dependency graph.
-- `muc dump-config` prints every build constant; that output plus the platform spec is the
-  reproduction key of a build.
+- `muc dump-config` prints every builtin value; that output plus the platform spec is the reproduction
+  key of a build.
 - **Deliberately not supported** (decided 2026-11-16): `#if` **inside** an enum variant list or a
   single parameter list. A conditional variant would silently shift the implicit values of every later
   variant, and a conditional parameter would need the comma list split; the granularity is too fine to
-  pay for. Wrap the whole declaration instead — a declaration list is a supported position. Conditions
-  that reference library `const`s are not implemented yet either.
+  pay for. Wrap the whole declaration instead — a declaration list is a supported position.
+
+### 9.3 The `comptime` unit and `builtin` declarations (decided 2026-11-17)
+
+`comptime` is an **ordinary unit** shipped with the toolchain: its position, visibility, import and
+reference rules are exactly those of any other unit. What is special is the `builtin` modifier: it binds a
+name to the compiler's built-in table.
+
+```c
+// comptime unit
+public enum OS { Windows, Linux, MacOS }
+public enum Arch { X86_64, AArch64 }
+public enum Abi { Msvc, Ucrt, Gnu, None }
+public enum Endian { Little, Big }
+
+public builtin const OS     os;
+public builtin const Arch   arch;
+public builtin const Abi    abi;
+public builtin const int    ptr_bits;
+public builtin const Endian endian;
+public builtin const bool   debug;
+public builtin const bool   bounds;
+public builtin const bool   single_thread;
+
+public builtin bool is_windows();
+public builtin bool is_linux();
+
+// platform-specific symbols: recommended home (library policy, not a language restriction)
+#if os == OS.Windows {
+    public type File = void*;
+    public extern File open_file(const char* path);
+}
+#elif os == OS.Linux {
+    public type File = int;
+    public extern File open_file(const char* path);
+}
+```
+
+- **Declaration form**: `builtin` constant = `builtin const T name;` (no initializer); `builtin` function =
+  `builtin T name(params);` (no body). The compiler supplies the value/implementation; the "a `const`
+  variable must be initialized" rule (3.7) does not apply to a `builtin` constant.
+- **Positions are unrestricted**: any unit may write a `builtin` declaration. The compiler checks the name
+  against its built-in table: a name not in the table is an error
+  (`builtin 'X' is not provided by this compiler`); the same name may be declared **once across the whole
+  program** (a duplicate is an error). A type/signature mismatch is an error.
+- **Visibility and reference** follow ordinary units: `public` is needed across units; after `use comptime`
+  the names are usable **without a qualifier** (`os`, `is_windows()`), and the qualified form
+  (`comptime.os`) is also accepted.
+- **Explicit import**: a unit (including its `#if` conditions) must `use comptime` before the names become
+  visible. There is no implicit visibility of the builtins.
+- **Types**: builtin constants and function parameters/returns are limited to scalars, `bool` and enums;
+  pointers, strings and aggregates cannot be `builtin`.
+- A `builtin` declaration produces **no symbol and no ABI**: it is resolved and folded by the compiler, and
+  cannot be `extern`.
+- **Contract**: the `comptime` unit is the language's contract with the compiler — every name it declares
+  must be provided with the declared type and semantics, and the compiler may not silently omit one.
+  Adding, removing, or changing the type of a builtin is a breaking change and is recorded in
+  `docs/versions.md`.
+- **Runtime use**: calling a builtin function outside a compile-time context is folded to its value (it has
+  no runtime implementation); the same holds for a builtin constant.
+- `std.target` is superseded by `comptime`; the old "compiler rewrites the initializer of `std.target`"
+  mechanism is removed.
 
 ---
 
@@ -2453,7 +2590,7 @@ switch v {
 
 | Topic | C | Mulan |
 |---|---|---|
-| Mutability | `const` qualifier | Mutable by default; `const` type qualifier (C model) |
+| Mutability | `const` qualifier | **C++-model cv-qualified types** (top-level + low-level const, `const` methods, `const` fields); no `constexpr`/`consteval`/`constinit`, no `mutable`/`const_cast` (use `as`) |
 | Variadic parameters | `...` + `va_arg` (user-definable) | Only `extern` declarations may have `...`; `va_list` is not provided |
 | Declarations | Declarators mixed with types | Type first; multiple variables share the type (including pointers/arrays) |
 | No return value | The return type may be omitted (C89) | `void` must be written explicitly |
@@ -2499,14 +2636,14 @@ switch v {
 | 1 | Declaration syntax | Decided: C# style, type first, multiple variables share the type |
 | 2 | Whether condition parentheses are mandatory | Decided: optional, omitted in the spec; C style remains legal |
 | 3 | Fixed-width type naming (C names vs `i32`) | Use C names first |
-| 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are allowed since 9.1 (a `const` one is still an error: unit-level `const` must be a compile-time constant) |
+| 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are allowed since 9.1; a `const` one is allowed too (runtime-initialized, not a compile-time constant) |
 | 5 | Whether arrays implicitly decay to pointers | **Decided (0.0.106): yes, as in C99.** An array in value position decays to a pointer to its first element (initializer, assignment, argument, struct-field access, row of a static multi-dimensional array); `sizeof`/`alignof` do not decay. The array object itself is **not assignable** (`a = b`, `int[N] b = a`, `s.v = a` are errors) and a `T[N]` parameter is `T*` (6.7.5.3p7). Kept as Mu extensions: an array-typed `return` copies, and a prvalue array (function result) can initialize an array. Arrays of class/interface elements keep value semantics (no pointer-to-reference type exists) |
 | 6 | Whether dynamic arrays are included in phase one | Decided: included. `T[]` / `T[,]` / `T[,,]` are **built-in types** (2026-11-16, superseding the earlier "sugar for `Array<T>`" rule): the compiler owns the representation `{rc,len,data}` (no capacity field — a block never grows, so its addresses stay valid), the built-in members are only `length()` / `operator[]` / `ptr()`, and `new T[n]` zeroes the elements unless written `uninit new T[n]` (trivial element types only). The `buffer<T>` name is removed. A library container (`Array<T>` and friends) wraps a `T[]` and adds methods |
 | 7 | Bounds checking strategy | Managed sequences checked by default (`--bounds=on` / `--bounds=off`), a violation throws `BoundsError`; static arrays and `T*` unchecked |
 | 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, and a constant expression reports it |
 | 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
 | 10 | `goto`/`typedef`/function pointers/varargs | `goto` is not done (phase one); function pointers and lambdas are implemented in 3.16 (0.0.84); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
-| 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding by default; `for i, x` provides an `isize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; **`for ref` works for user types in the index form when the container's `operator[]` returns a mutable `ref T`** — either spelling of the operator (member or free function, 6.4.1); it is unavailable for ranges, `string`, the cursor form, `const` sequences and class/interface elements; **multi-dimensional arrays forbid `for-in`** |
+| 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding by default; `for i, x` provides an `isize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; **`for ref` works for user types in the index form when the container's `operator[]` returns a mutable `ref T`** — either spelling of the operator (member or free function, 6.4.1); it is unavailable for ranges, `string`, the cursor form, class/interface elements and `const` sequences (a `const` sequence uses **`for ref const`** for read-only iteration); **multi-dimensional arrays forbid `for-in`** |
 | 12 | `..=` / `step` / reverse order for ranges | Implemented (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`) and must be a non-zero compile-time constant; reverse order relies on an **explicit negative step** (`a..b` does not reverse automatically); switch case ranges support `..=` and **do not support `step`** |
 | 13 | Local type inference | Decided: `auto x = expr;`; locals only, an initializer is required; all declarators must have the same type |
 | 14 | Default mutability of parameters | Mutable (C semantics) |
@@ -2519,8 +2656,8 @@ switch v {
 | 21 | Whether `elif` is syntax sugar | Decided (implemented): supported, equivalent to `else if` |
 | 22 | Storage and lifetime of dynamic array literals | `T[] a = {...}` allocates a new array (RC); borrowed views are not supported |
 | 23 | Signedness and naming of `byte`/`char` | `byte`=u8 (the only unsigned 8-bit name, no alias); `char`=i8 (C-style signed) |
-| 24 | Whether `const` requires a compile-time constant | Locals do not (they may be initialized at run time); **unit-level `const` initializers must be compile-time constants** (see 4); `constexpr` comes later |
-| 25 | How to read `const int* p` | C model: `const int*` = pointer to a read-only int; `const int x` = a read-only binding; `T* const` is not provided |
+| 24 | Whether `const` requires a compile-time constant | **Redesigned (2026-11-17)**: local `const` may be a run-time value; a unit-level `const` whose initializer folds is a compile-time constant, otherwise it is a run-time-initialized `const` object (9.1). Only compile-time constants may appear in `#if`, array lengths, `step`, `align(N)` and `switch` ranges. `constexpr` is not introduced |
+| 25 | How to read `const int* p` | **C++ model (2026-11-17)**: `const int x` = a const object (top-level); `const int* p` = pointer to a read-only int (low-level); `int* const p` = read-only pointer (top-level, supported); `const int* const p` = both; `T** → const T**` has no implicit conversion (as in C++, `as` can force it) |
 | 26 | Whether a parameter list allows multiple variables to share a type | Decided: **not allowed**; each parameter writes its own `type name` (`int f(int a, b)` is an error), see 7 for the implementation |
 | 27 | Struct aggregate initialization | Declaration `S s = {x=..., y=...}`; expression `S(...)`; positional and named forms cannot be mixed; all fields must be given |
 | 28 | Named-argument syntax `=` vs `:` | Use `=` first; `:` as an alternative |
@@ -2561,7 +2698,7 @@ switch v {
 | 63 | Floating-point literal narrowing | Decided: literals adapt to the context (`float f = 1.5;` is legal), but variables still require `as` |
 | 64 | Integer ↔ enum conversions | Decided: no implicit conversion in either direction, `as` is required (an enum is not a widening target for an integer, and an integer is not an implicit source for an enum) |
 | 65 | Upper limit of integer literals | Decided: `2^63-1`, exceeding it is an error |
-| 66 | Writability checks for `const`/`const`/`string` | Decided: the compiler must reject writes (see 3.7) |
+| 66 | Writability checks for `const` objects / const views / `string` | Decided: the compiler must reject writes (see 3.7) |
 | 67 | Object model | Decided: struct values / class references; RC + weak; no cycle collector (see 3.8 / 8.3) |
 | 68 | Scope of `weak` | Class fields only; locals/parameters/return values are forbidden |
 | 69 | Semantics of `del` | **Removed (0.0.47)**: `del x;` is equivalent to `x = null;`, it has no separate semantics and has been deleted from the language (the keyword is kept only for migration diagnostics) |
@@ -2583,7 +2720,7 @@ switch v {
 | 85 | Arrays/dynamic arrays of class | Supported; the Widget tree still recommends `first_child/next_sibling` |
 | 86 | `sizeof`/`alignof` on a class | Decided (implemented): same as #73 (class=8, interface=16) |
 | 87 | Multithreaded RC | Decided (same as 94): atomic RC (relaxed increments, release decrement + acquire fence); the thread-local heap scheme has been rejected; `--single-thread` is an opt-in non-atomic build that forbids concurrency (see 74) |
-| 88 | Name mangling | Decided (injective): `mu$<unit>$<name>$<param>...`; components are separated by `$`, every literal `_` is doubled and every other non-alphanumeric byte is `_XX` (uppercase hex), so no two declarations share a symbol; `extern` keeps the original name; `main` is special |
+| 88 | Name mangling | Decided (injective): `mu$<unit>$<name>$<param>...`; components are separated by `$`, every literal `_` is doubled and every other non-alphanumeric byte is `_XX` (uppercase hex), so no two declarations share a symbol; **low-level `const` is part of the parameter type code** (2026-11-17), while top-level const is dropped from the signature; `extern` keeps the original name; `main` is special |
 | 89 | Unary `~` overloading | Allowed (`operator~`, 1 parameter) |
 | 90 | Static arrays of class | Decided: allowed (forbidden for structs); retain/release per element |
 | 91 | `[]` overloading | Decided: only `operator[]`; return `ref T` for a writable subscript (`operator[]=` was removed in 0.0.101) |
@@ -2593,20 +2730,20 @@ switch v {
 | 95 | Generics roadmap | Decided + implemented (0.0.64–0.0.72): monomorphization, `<>` syntax, structural constraints, `Self`; see 3.15 for details |
 | 96 | Reserved words | Decided: see 2.5 |
 | 97 | Exception unwinding ABI | Resolved by B2 (0.0.81): no platform unwinding ABI; a thread-local pending slot + call-site checks; no `.eh_frame`/`.pdata`/personality dependency |
-| 98 | `const` class views / `const` methods | Decided (0.0.61): **explicitly not done** — no const view types are introduced and no const methods are provided; `const` serves only as a **read-only binding marker** for named types (locals/parameters: not rebindable, fields cannot be written directly through them) and as a qualifier for the pointee of pointers/slices; use a read-only `interface` when a read-only API boundary is needed |
+| 98 | `const` class views / `const` methods | **Redesigned (2026-11-17)**: `const` methods are provided (`ret f() const`, `this` is `const Self`, `f()` / `f() const` overload); a `const` object is deeply read-only (only const methods may be called, fields cannot be written); `const struct` / `const class` makes every field/method implicitly const without putting cv on the type name — the object's content is fixed once constructed, it can be copied and moved, and a variable of such a type can be reassigned as a whole (destroy-and-construct). `const_cast`/`mutable` are not provided (use `as` for an explicit const removal) |
 | 99 | `ref` parameters / return values | Implemented (0.0.62 for parameters; extended in 0.0.63): `ref` is a binding mode rather than a storable type — `ref T p` / `ref const T p` / `ref T f()`, and no `T&` is introduced; primitive types/enums/pointers/pure-value structs can be borrowed; a returned borrow must originate from a `ref` parameter, `this`, a global, or pointer/slice storage, and the result is not storable (it can only be written through on the spot / passed as a borrow / used with `for ref`); borrowing a local, a by-value parameter, or a temporary is a compile error; method/constructor parameters and `extern` do not support it (see 3.8, backlog U8) |
 | 100 | Downcast from an `interface` to a derived `interface` | Decided: not supported in phase one (only upcasts are allowed; `as` is an error) |
 | 101 | Non-ASCII character literals | Decided: not supported in phase one (a literal is a single-byte `byte`; use `'\xNN'` or `string`) |
 | 102 | Enum comparison | Decided: only between the same enum; `== != < <= > >=` are supported, the order is the order of the underlying integer values; cross-enum or integer comparisons require `as` (see §3.5) |
 | 103 | Qualified references to enum members | Decided: `Color.Red` is equivalent to the unprefixed `Red`; across units write `unit.Color.Red`; members are constants (not assignable, and their address cannot be taken) |
 | 104 | Conditional expression `?:` | Decided (0.0.46): `cond ? a : b`, right-associative; the condition must be `bool`; only one branch is evaluated; the two sides must have the same type / implicit widening / `null` adaptation, otherwise `as` is required; the result is not an lvalue; see 5.2 |
-| 105 | `const` on field declarations | Decided (0.0.59): **instance fields cannot be `const`** (there are no read-only fields, nor `readonly` assigned in a constructor); `const` inside a type body only denotes a **type-level compile-time constant** (no instance storage, accessed via `Type.NAME`), see 3.7.1; `const int x;` is an error |
+| 105 | `const` on field declarations | **Redesigned (2026-11-17)**: `const` fields are allowed (`const int x;`), must be initialized by every constructor (member initializer list `C(...) : x(v) {}` or a default member initializer `const int x = 5;`), and are read-only afterwards. Type-level constants are removed; `const` inside a type body means a field |
 | 106 | Floating-point `%` | Decided (implemented): legal, the semantics are LLVM `frem` / C `fmod` (the sign follows the dividend) |
-| 107 | Unit-level `const` referencing other `const`s/enum members | Implemented (0.0.59): the compile-time constant evaluator supports referencing unit-level `const`s, enum members, and type-level `const` members, and supports forward references; `const int B = A + 1;` and `const int C = sizeof(int) as int;` are legal; cyclic dependencies/division by zero are errors (see 3.7.2) |
-| 108 | Type-level `const` constants (`const` members) | Decided (0.0.59): `const T NAME = <const-expr>;` inside a struct/class body, semantically a compile-time constant with no instance storage; accessed via `Type.NAME` / as a bare name inside a type method body / through the base-class chain; `obj.NAME`, `this.NAME`, assignment and taking the address are all errors; not allowed in unions/interfaces (see 3.7.1) |
+| 107 | Unit-level `const` referencing other `const`s/enum members | **Redesigned (2026-11-17)**: the evaluator supports references to **already declared and imported** constants (unit-level `const`, enum members); **forward references are gone** (`const int A = B; const int B = 1;` is an error). `const int B = A + 1;` and `const int C = sizeof(int) as int;` are legal; division by zero and a not-yet-evaluated reference are errors (3.7.2) |
+| 108 | Type-level `const` constants (`const` members) | **Removed (2026-11-17)**: there are no type-level constants (`Type.K` is gone); `const int K = 3;` inside a type body is a `const` instance field (3.7). Constants live at unit level; enum members keep `Color.Red` |
 | 109 | Bit-fields | Decided (0.0.62): **explicitly not done**. No C-style `int x : 3;` is provided, nor is any Zig/Rust-style explicit bit-width syntax; the allocation order and cross-unit boundaries are implementation-defined, which conflicts with predictable layout. Alternatives: mask+shift / `byte[N]`+offset / `packed`+accessors / a C shim (see 3.4) |
 | 110 | A generic interface as a value type / a value type as an interface value | **Split (0.0.108).** (a) *Generic interface as a value type*: **implemented** — `IIterator<int> x`, `class C : IIterator<int>`, `class Src<T> : IIterable<T>`, interface-valued returns/fields/locals, `T: IIterable<int>` constraints, `as` downcasts; two words `{obj, desc}`, itable slots keyed by the concrete signature, no boxing. (b) *Value type → interface value*: **still explicitly not done** (0.0.75 decision stands) — a struct would have to be boxed, so `Animal a = cat;` is a compile error and `struct S : I` is a compile-time contract only |
-| 111 | `const` members in generic types / generic interface inheritance | **Generic interface inheritance implemented (0.0.108)**: `interface Derived<T> : Base<T>` instantiates per level and both levels are interface values of their own type. Still an error: `const` members in generic structs/classes (not wired up) |
+| 111 | `const` members in generic types / generic interface inheritance | **Generic interface inheritance implemented (0.0.108)**: `interface Derived<T> : Base<T>` instantiates per level and both levels are interface values of their own type. **`const` fields in generic structs/classes are ordinary fields since 2026-11-17** (type-level constants are gone), so no special wiring is needed |
 | 112 | Type alias `type A = B;` | Decided (0.0.62): `type` is a **contextual keyword** (it is parsed as an alias only at the start of a declaration, `type Ident =`; elsewhere it is still an identifier, which protects the `type` field of C-interop structs); each declaration declares one alias; aliases are transparent (not newtypes) (see 4.5) |
 | 113 | Range extensions `..=` / `step` / reverse order | Decided (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`); reverse order relies on an **explicit negative step**, `a..b` does not reverse automatically; `step 0` is a compile error; the step size is limited to compile-time constants (see 6.4) |
 | 114 | Range expansion in array initialization | Decided (0.0.62): in `int[10] a = {1, 2, 5..9, 10};` the `5..9` expands to 5,6,7,8; the endpoints must be compile-time constants; only `..` is supported inside braces (it does not take `..=`/`step`); after expansion it participates in "zero-pad when short / error when too long" (see 4.1) |
@@ -2621,10 +2758,13 @@ switch v {
 | 123 | Detached tasks (`nowait`) | **Decided: not provided.** A task with no joiner breaks the frame-lifetime rule that makes capture-by-static-link sound; long-lived work is a service task driven by a channel |
 | 124 | `thread` in `para` | Contextual keyword (2.3): run the section/item on the **bounded compute pool** — a dedicated OS thread, may block, OS stack. It is an intent hint, not a checked property |
 | 125 | Single-task `para` (`s = para f()`) | **Decided: not provided.** In a stackful model the call itself is the suspension, so "start then immediately join" is pure overhead; use the library task group when the join must be deferred |
-| 126 | Unit-level initialization and cleanup | **Implemented (9.1, 0.0.102).** Runtime initializers are allowed; the order is a DFS post-order over `use` edges from the entry unit (declaration order inside `use` lists), cleanup is its exact reverse, declaration order inside a unit. Only `use` dependencies are tracked; indirect dependencies (function pointer, interface dispatch, `extern` C symbol, a later variable reached through a function body) are undefined. An exception escaping an initializer aborts without cleanup; `atexit` makes `exit()` clean up. Lifted the three "no exit-time destruction" restrictions (3.3 `String`, 3.4 reference fields, 3.4 user destructors). Deferred: lazy first-use initialization, explicit `init(N)` priorities, debug-mode lifecycle assertions, link-time sequencing for split compilation |
+| 126 | Unit-level initialization and cleanup | **Implemented (9.1, 0.0.102).** Runtime initializers are allowed; the order is a DFS post-order over `use` edges from the entry unit (declaration order inside `use` lists), cleanup is its exact reverse, declaration order inside a unit. **The same sequence orders compile-time constant evaluation and `#if` selection (decided 2026-11-17, 9.2).** Only `use` dependencies are tracked; indirect dependencies (function pointer, interface dispatch, `extern` C symbol, a later variable reached through a function body) are undefined. An exception escaping an initializer aborts without cleanup; `atexit` makes `exit()` clean up. Lifted the three "no exit-time destruction" restrictions (3.3 `String`, 3.4 reference fields, 3.4 user destructors). Deferred: lazy first-use initialization, explicit `init(N)` priorities, debug-mode lifecycle assertions, link-time sequencing for split compilation |
 | 127 | `export` and the binary export surface | **Decided and implemented (0.0.103).** `export` is a top-level declaration modifier that implies `public` and marks the declaration as part of the binary export surface; it cannot be combined with `private`/`extern`/`use` or used inside a type body (export the type, which exports its public methods and class metadata). `--exports=export` (default) keeps only `export` declarations externally visible, `--exports=public` keeps every `public` declaration; `--export <name>` still adds individual names. In an executable everything outside the surface is internalized and dead-code-eliminated; library targets keep the surface visible (toolchain plan §11) |
 | 127 | Member promotion (Go-style embedding) / mixin | **Decided (2026-11-14): explicitly not done.** No `mixin`/`embed` member form: a method call never falls back to a field's type. Rationale: (a) it cannot satisfy an interface without an offset thunk, and after such a thunk `this` is the embedded subobject, so identity comparisons and stored `this` silently change meaning; (b) the set of callable names would depend on another type's evolution across units — adding a method to the embedded type silently turns a remote compile error into legal code, and can silently change overload resolution (violates the "information must be locally expressible" criterion); (c) it saves a few lines of forwarding while adding a resolution hop at every call site, whose verification cost is the expensive one. Reuse instead: `struct S : I` with explicit forwarding methods (3.10, 3.15.7), or field composition. Reopen conditions and rejected variants: `agents/design-backlog.md` U40 |
 | 128 | Signed or unsigned index / length type | **Decided (2026-11-16): `isize`.** `length()`, subscripts, `for i, x` ordinals, `find` offsets, `sizeof`/`alignof`/`offsetof` and the `alloc`/`realloc` byte counts are all `isize`; `usize` is kept for unsigned arithmetic and for C-facing sizes (`cstd.*`, `c_size`), where an explicit `as` is required. Rationale: `length() - 1` on an empty sequence must not wrap to `2^64-1`, descending loops need a signed counter, `find` already returns `-1`, and the emitted bounds check (`icmp uge` on the 64-bit index) catches a negative index with no extra instruction |
+| 129 | `const` redesign (C++ model) | **Decided 2026-11-17**: cv is part of the type at every level; top-level const is ignored in signatures (and a top-level `const` return type is accepted but ignored), low-level const participates in overloads and mangling; `const` fields and `const` methods; `const struct` / `const class` is a declaration modifier without cv on the type name (content fixed after construction; copy/move allowed; whole-variable reassignment allowed); `T* const` is supported; `T** → const T**` has no implicit conversion (`as` can force it, as in C++); a const object is deeply read-only; `const_cast` is replaced by `as`; no `constexpr`/`consteval`/`constinit`, no `mutable`/`volatile` (3.7) |
+| 130 | `move` is `&&` | **Decided 2026-11-17**: `move T` is a non-const rvalue reference; `const` and `move` cannot qualify the same parameter; `move` on a const object is an error (no silent copy); used in move construction and transfer positions (3.4, 3.8, 4.4) |
+| 131 | `comptime` unit / `builtin` | **Decided 2026-11-17**: `comptime` is an ordinary unit shipped with the toolchain; `builtin` declares compiler-provided constants/functions with no initializer and no body; any unit may declare one, but only names in the compiler's built-in table are accepted and a name may be declared once; explicit `use comptime` (no implicit visibility); replaces `std.target` (9.3) |
 
 ---
 
@@ -2648,7 +2788,7 @@ See [`examples/example.mu`](../examples/example.mu) and [`examples/math.mu`](../
     overload resolution, operator dispatch (including unary and `[]`/`[]=`), interface default method conflicts, abstract class deduction, inheritance cycle checks, `weak` fields.
   - 2026-11-09 (0.0.3–0.0.13): object header/desc/vtable/itable, construction and destruction chains, atomic RC, cleanup of local references,
     per-element RC for reference arrays, `as` downcasts (desc base-class chain), release of temporaries; 41 end-to-end test cases.
-  - **Not supported in phase one**: `const` **methods / deep read-only views (decided not to do)**, `ref` parameters, downcasts from an `interface` to a derived interface (see 12 table 98–100);
+  - **Not supported in phase one**: `const_cast` / `mutable` / `volatile` (use `as` for an explicit const removal, 3.7), `ref` parameters, downcasts from an `interface` to a derived interface (see 12 table 98–100);
     cross-thread RC stress validation will follow.
   - See `object-model-plan.md` for the feature matrix and the deviations.
 - **Exceptions**: `throw`/`try`/`catch`/`finally`, class matching and RC cleanup are implemented in 0.0.81–0.0.82 using the B2 lowering (3.14); 0.0.83 adds a conservative module-local may-throw optimization with external/unknown targets always conservatively checked. No platform EH ABI is involved.

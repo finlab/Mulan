@@ -38,8 +38,10 @@ namespace muc_detail {
                     if (bound != type_bind_.end()) return bound->second;
                 }
                 TypePtr t = resolve_named_type(spec->name, u, spec);
-                // C model: const on a prim needs its own type node (the prim factory has a singleton cache, so it cannot be mutated in place)
-                if (spec->is_const && t && t->kind == TypeKind::Prim) {
+                // cv belongs to the type (decided 2026-11-17): a const named type needs its own node.
+                // The factories cache prims/singletons, so the flag is applied to a copy.
+                if (spec->is_const && t && !t->is_const) {
+                    if (t->kind == TypeKind::Module) err_ts("`const` cannot qualify a unit name", spec);
                     auto c = std::make_shared<Type>(*t);
                     c->is_const = true;
                     return c;
@@ -554,9 +556,11 @@ namespace muc_detail {
         }
         // Try the new compile-time evaluator first (applies to both const and non-const globals; the result is cached for the backend);
         // fall back to the old is_const_expr when it cannot compute a value (aggregate initialization / string literals, etc.)
+        bool const_eval_ok = false;
         {
             ConstVal v;
-            if (eval_global_const(g, cur_->name, v)) return;
+            const_eval_ok = eval_global_const(g, cur_->name, v);
+            if (const_eval_ok) return;
         }
         // A data-area constant can only express what `constValue` knows. Reference-holding types need
         // runtime work (RC / constructor calls) even when the expression itself folds, e.g.
@@ -574,12 +578,6 @@ namespace muc_detail {
         const bool needs_runtime =
             !zero_init && (g->rty->needs_cleanup() ||
                            (g->rty->kind == TypeKind::Struct && !g->rty->ctors.empty()));
-        if (g->is_const && g->rty->needs_cleanup()) {
-            err("`const` unit-level variable `" + g->name +
-                    "` cannot hold a type that needs runtime cleanup (unit-level `const` must be a "
-                    "compile-time constant)",
-                g);
-        }
         const bool foldable = is_const_expr(g->init.get());
         bool func_init = false;
         if (!foldable && g->rty->kind == TypeKind::Func) {
@@ -604,16 +602,17 @@ namespace muc_detail {
             }
         }
         if (!func_init && (!foldable || needs_runtime)) {
-            if (g->is_const) {
-                if (!g->rty->needs_cleanup()) {
-                    err("initializer of `const` unit-level variable `" + g->name +
-                            "` must be a compile-time constant",
-                        g);
-                }
-            } else {
-                // 9.1: a runtime initializer; the unit init sequence evaluates it before `main`.
-                g->runtime_init = true;
+            // A syntactically foldable initializer that the evaluator rejected is an invalid constant
+            // expression (division by zero / signed overflow), not a runtime initializer.
+            if (g->is_const && foldable && !needs_runtime && !const_eval_ok) {
+                err("initializer of `const` unit-level variable `" + g->name +
+                        "` is not a valid compile-time constant (division by zero or signed overflow)",
+                    g);
             }
+            // 9.1: a runtime initializer; the unit init sequence evaluates it before `main`. A `const`
+            // object may be runtime-initialized: it is still read-only in the language, but its
+            // initializer is not a compile-time constant (3.7.2).
+            g->runtime_init = true;
         }
         check_decl_init(g->zero, g->rty, g->init.get(), "global initialization", g);
     }
@@ -621,7 +620,8 @@ namespace muc_detail {
     void Sema::check_global_init_order(GlobalVar* g, Expr* at) {
         if (!cur_global_ || !g) return;
         // Compile-time constants and `extern` storage have no runtime position in the sequence.
-        if (g->is_const || g->is_extern) return;
+        // A runtime-initialized `const` does have one (9.1).
+        if ((g->is_const && !g->runtime_init) || g->is_extern) return;
         if (g == cur_global_) {
             err("initializer of unit-level variable `" + g->name + "` cannot reference itself", at);
             return;

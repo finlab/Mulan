@@ -8,6 +8,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "ast.hpp"
@@ -36,5 +37,18 @@ bool builtin_enum_members(const std::string& type, std::vector<std::string>& mem
 // The compiler's value of a build constant (`os`, `arch`, `ptr_bits`, ...); false when `name` is not one.
 bool builtin_const(const std::string& name, long long& value);
 
+// A user compile-time constant visible to `#if` (decided 2026-11-17): a unit-level `const` whose
+// initializer folds in the directive evaluator. `#if` conditions use the same name resolution as
+// constant initializers (a later declaration is not visible).
+struct UserConst {
+    long long value = 0;
+    bool is_bool = false;
+};
+using UserConstTable = std::unordered_map<std::string, UserConst>;
+
 // Evaluates an `#if` condition. Returns false and fills `why` on failure; the caller attaches the position.
-bool eval_directive_cond(const Expr& e, std::string& why);
+// `user_consts` extends the evaluator with the constants visible at this point (may be null).
+bool eval_directive_cond(const Expr& e, std::string& why, const UserConstTable* user_consts = nullptr);
+
+// Evaluates a unit-level const initializer into `out` (used to record it for later `#if` conditions).
+bool eval_user_const(const Expr& e, const UserConstTable& table, UserConst& out, std::string& why);

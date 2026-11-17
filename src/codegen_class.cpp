@@ -89,7 +89,7 @@ namespace muc_detail {
         for (size_t i = 0; i < slot.params.size(); ++i) ip.push_back(lt(slot.params[i]));
         if (impl.owner->kind == TypeKind::Interface) ip[0] = ifaceTy;
         FunctionCallee target = mod->getOrInsertFunction(
-            method_cname(impl.owner->unit, impl.owner->name, impl.name, impl.params),
+            method_cname(impl.owner->unit, impl.owner->name, impl.name, impl.params, impl.is_const),
             FunctionType::get(lt(impl.ret), ip, false));
         Value* r = hb.CreateCall(target, args);
         if (fn->getReturnType()->isVoidTy()) hb.CreateRetVoid();
@@ -209,7 +209,7 @@ namespace muc_detail {
         std::vector<LType*> ptys{ptrTy()};
         for (auto& t : sig->params) ptys.push_back(lt(t));
         return mod->getOrInsertFunction(
-            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
+            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params, sig->is_const),
             FunctionType::get(lt(sig->ret), ptys, false));
     }
 
@@ -345,6 +345,22 @@ namespace muc_detail {
         finishBody(fn, c->name + "." + m->name);
     }
 
+    // Store the member initializer list (`C(...) : x(v) { }`) before the body runs. The destination
+    // fields are zeroed at allocation (class) or default-constructed by the member step (struct), so a
+    // simple store is correct for trivial field types; a managed field type is retained below.
+    void Emitter::emitCtorInitList(Value* self, const TypePtr& ty, CtorDecl* ctor) {
+        if (!self || !ty || !ctor || ctor->init_list.empty()) return;
+        for (auto& item : ctor->init_list) {
+            const int idx = ty->field_index(item.first);
+            if (idx < 0) continue;  // sema already reported
+            const Field& f = ty->fields[static_cast<size_t>(idx)];
+            Value* dst = fieldAddr(self, ty, idx);
+            Value* v = eval(item.second.get());
+            if (f.type) v = coerce(item.second.get(), f.type);
+            b.CreateStore(v, dst);
+        }
+    }
+
     void Emitter::emitCtor(ClassDecl* c, CtorDecl* ctor) {
         resetDebugScope();
         std::vector<LType*> ptys{ptrTy()};
@@ -398,6 +414,7 @@ namespace muc_detail {
         const size_t progressMark = ctorProgress.size();
         pushCtorProgress(b.CreateLoad(ptrTy(), thisSlot), c->ty, baseCount, false);
         if (!ctor->has_explicit_super) emitMemberInits(b.CreateLoad(ptrTy(), thisSlot), c->ty);
+        emitCtorInitList(b.CreateLoad(ptrTy(), thisSlot), c->ty, ctor);
         block(ctor->body.get());
         ctorProgress.resize(progressMark);
         popRefScope();
@@ -848,6 +865,7 @@ namespace muc_detail {
             }
         }
         markCtorProgressBody(progress);
+        emitCtorInitList(b.CreateLoad(ptrTy(), thisSlot), sd->ty, ctor);
         block(ctor->body.get());
         ctorProgress.resize(progressMark);
         popRefScope();

@@ -27,6 +27,98 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 172 — 2026-11-17
+
+**`#if` user constants inside type bodies and function bodies.**
+
+- The same `user_consts_` table is visible in every `#if` position, so a constant declared earlier in the
+  unit works inside a struct/class body and a function body, and `as` is supported in the initializer.
+- Cross-unit constants are **not** available in the parse-time model: the loader parses the current unit
+  before visiting its `use` dependencies (`loader.cpp`), so a dependency's constants are not evaluated yet.
+  Cross-unit `#if` constants require the full Pass B (P3 in `agents/directive-pass-design.md`).
+- Tests: `if_user_const_scope` (run).
+
+Full suite: 701/701 (258 run, 405 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
+#### build 171 — 2026-11-17
+
+**`#if` can read unit-level compile-time constants (first step of the directive-pass plan).**
+
+- A unit-level `const` whose initializer folds in the directive evaluator is recorded while parsing; a later
+  `#if` in the same unit may use it (`const bool DEBUG = true; #if DEBUG { ... }`,
+  `const int LEVEL = 2; #if LEVEL == 2 { ... }`). A constant declared later is not visible (the same rule as
+  constant initializers).
+- The directive evaluator now guards `MIN / -1` and `MIN % -1`; previously recording such a constant executed
+  the UB in the parser and crashed `muc`.
+- Tests: `if_user_const` (run), `if_user_const_later` (must-fail).
+- Pending: cross-unit constants (`use` + prior declaration), user constants inside type-body/function-body
+  conditions, the full Pass B (single DFS post-order), `comptime`/`builtin`, `for ref const`.
+
+Full suite: 700/700 (257 run, 405 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
+#### build 170 — 2026-11-17
+
+**Const-field initialization enforcement and runtime-initialized unit-level `const`.**
+
+- A constructor must initialize every `const` field in its member initializer list; a missing entry is a
+  compile error, and writing a `const` field in a constructor body is rejected (use the initializer list).
+- A unit-level `const` may be initialized at run time (9.1): `const string S = "hi";` and
+  `const int x = f();` are accepted and initialized by the unit init sequence. They are `const` objects
+  but not compile-time constants (3.7.2); compile-time folding still applies when possible. A `builtin`
+  constant (9.3, not implemented yet) is exempt from the initializer rule.
+- Runtime-initialized `const` globals participate in the 9.1 sequence (declaration order, cleanup
+  reverse); codegen does not mark their storage as an LLVM constant, and the unit hooks no longer skip them.
+- Tests: `const_field_uninit`, `const_global_runtime`, `const_global_runtime_write`; the obsolete
+  `string_global` / `unit_init_const_nonconst` must-fail cases are removed.
+- Still pending: the `#if` evaluation pass, `comptime`/`builtin`, and `for ref const`.
+
+Full suite: 698/698 (256 run, 404 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
+#### build 169 — 2026-11-17
+
+**`const` fields, `const` methods and `const struct` / `const class`.**
+
+- `const T name;` in a struct/class body is an instance field (not a type-level constant). It is initialized
+  by a constructor member initializer list (`C(...) : x(v), y(w) { }`) and is read-only everywhere except
+  inside a constructor body. Type-level constants are gone; a unit-level `const` replaces them.
+- `T f() const` declares a read-only method: `this` is a const view, fields cannot be written, `f()` and
+  `f() const` are distinct overloads, and the const is part of the signature (override/interface matching)
+  and of the symbol name. A const object can only call const methods; a mutable object prefers the
+  non-const overload.
+- `const struct S` / `const class C` makes every field and method implicitly const; the type name carries
+  no cv, so copy/move and whole-variable reassignment work. `const` cannot modify a union/enum/interface.
+- `move` on a const value is rejected (`... copy it instead`).
+- The standard library's read-only `String` methods are marked `const`; the old `const_member_*` tests are
+  replaced by `const_field` / `const_method` / `const_struct` cases (and `move_const`,
+  `const_field_assign`, `const_method_*`, `const_struct_field_write`).
+- Still pending: unit-level dynamic initialization, `#if` evaluation changes, `comptime`/`builtin`, a
+  general `move`/`&&` parameter form, and the `T** → const T**` diagnostic.
+
+Full suite: 697/697 (255 run, 404 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
+#### build 168 — 2026-11-17
+
+**`const` enters the type system (first step of the C++ `const` redesign).**
+
+- Type nodes carry cv: `const T` and `T` are different types. The top-level const is `is_const`; a pointee
+  const lives on the element node (`const T*` is `Ptr(elem = const T)`, `T* const` is a const pointer).
+  `same_type` is cv-sensitive; `same_type_sig` ignores the top-level const for signatures (overloads,
+  duplicate definitions, interface matching), as in C++.
+- Conversions: a top-level const is dropped on copy/assignment; a pointee const may only be added
+  (`T* → const T*`), while `T** → const T**` still requires `as`. A `const S` value is copied out as a
+  mutable `S`.
+- The parser keeps `const` in the type specification for locals, parameters and globals (it used to strip
+  it into a binding flag); `T* const` is parsed. Address-of now yields `const T*` for a const object.
+- Symbol mangling encodes the low-level const (`f(int*)` and `f(const int*)` are distinct); the top-level
+  const is dropped from signatures.
+- Value-compatibility checks (initialization, arguments, `swap`, enum comparison, slice conversion) use the
+  signature comparison; `readonly_drop` pins the new diagnostic wording.
+- Still pending from the redesign: `const` fields and member initializer lists, `const` methods,
+  `const struct`/`const class`, `move` vs `const`, unit-level constants, `#if` evaluation and the
+  `comptime` unit.
+
+Full suite: 716/716 (253 run, 425 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 167 — 2026-11-17
 
 **Assignment fast path for the identical handle.**
@@ -42,6 +134,17 @@
   `where` / `typeof` reserved-word rejection that SPEC 2.5 already required.
 
 Full suite: 716/716 (253 run, 425 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
+Documentation (no build bump): SPEC 3.7/3.7.1/3.7.2 rewritten for the C++ `const` model (cv belongs to the
+type, top-level and low-level const, `const` fields and methods, `const struct`/`const class`, `T* const`,
+the `T** → const T**` rejection, `as` in place of `const_cast`); `move` defined as `&&` and made mutually
+exclusive with `const` (3.4, 3.8, 4.4); `#if` evaluation tied to the single 9.1 DFS post-order sequence and
+given the same name resolution as constant initializers; new 9.3 for the `comptime` unit and `builtin`
+declarations (replacing `std.target`); 12 table entries 24/25/98/105/107/108/111 re-judged and 129–131
+added. Review pass: `const struct` keeps its content fixed after construction (copy/move allowed, a variable
+may be reassigned as a whole), a top-level `const` return type is accepted and ignored, and
+`T** → const T**` has no implicit conversion but `as` can force it (C++ rules). Implementation of these
+decisions is pending; compiler behaviour is unchanged in this build.
 
 #### build 166 — 2026-11-17
 

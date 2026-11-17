@@ -192,7 +192,7 @@ namespace muc_detail {
             src->elem && dst->elem && src->elem->is_const && !dst->elem->is_const) {
             return false;
         }
-        if (same_type(src, dst)) return true;
+        if (same_type_sig(src, dst)) return true;
         if (auto il = dynamic_cast<IntLit*>(e)) {
             if (promote_int_literal(il->value, dst)) {
                 il->ty = dst;
@@ -234,7 +234,7 @@ namespace muc_detail {
                 base = base->elem;
                 depth++;
             }
-            if (static_cast<int>(depth) == dst->rank && same_type(base, dst->elem)) {
+            if (static_cast<int>(depth) == dst->rank && same_type_sig(base, dst->elem)) {
                 if (type_align(base) > 8) err_slice_elem_align(base, e);
                 return true;
             }
@@ -328,7 +328,7 @@ namespace muc_detail {
     void Sema::convert_const_to(Sema::ConstVal& v, const TypePtr& dst, const Node* at,
                           const std::string& what) {
         if (!dst) return;
-        if (same_type(v.ty, dst)) {
+        if (same_type_sig(v.ty, dst)) {
             v.ty = dst;
             return;
         }

@@ -198,7 +198,7 @@ std::string Type::str() const {
 
         case TypeKind::Ptr: {
             std::string base = elem_str(elem) + "*";
-            return is_const ? "const " + base : base;
+            return is_const ? base + " const" : base;
         }
         case TypeKind::Ref: {
             std::string base = elem_str(elem);
@@ -222,14 +222,16 @@ std::string Type::str() const {
         }
         case TypeKind::Slice: {
             std::string base = elem_str(elem) + "[" + std::string(rank - 1, ',') + "]";
-            return is_const ? "const " + base : base;
+            return is_const ? base + " const" : base;
         }
         case TypeKind::Struct:
         case TypeKind::Enum:
         case TypeKind::Class:
         case TypeKind::Interface:
-        case TypeKind::Sum:
-            return unit.empty() ? name : unit + "." + name;
+        case TypeKind::Sum: {
+            std::string base = unit.empty() ? name : unit + "." + name;
+            return is_const ? "const " + base : base;
+        }
         case TypeKind::Module:
             return unit;
         case TypeKind::Null:
@@ -657,10 +659,11 @@ bool is_prim_name(const std::string& n) {
 
 // ---------------------------------------------------------------- Type equality
 
-bool same_type(const TypePtr& a, const TypePtr& b) {
+static bool same_type_impl(const TypePtr& a, const TypePtr& b, bool ignore_top_const) {
     if (a == b) return true;
     if (!a || !b) return false;
     if (a->kind != b->kind) return false;
+    if (!ignore_top_const && a->is_const != b->is_const) return false;
     switch (a->kind) {
         case TypeKind::Void:
         case TypeKind::Null:
@@ -671,10 +674,9 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
         case TypeKind::Ptr:
         case TypeKind::Slice:
         case TypeKind::Ref:
-            // C model: const is only a view qualifier and does not change type equality
-            return a->rank == b->rank && same_type(a->elem, b->elem);
+            return a->rank == b->rank && same_type_impl(a->elem, b->elem, false);
         case TypeKind::Array:
-            return a->array_size == b->array_size && same_type(a->elem, b->elem);
+            return a->array_size == b->array_size && same_type_impl(a->elem, b->elem, false);
         case TypeKind::Struct:
         case TypeKind::Enum:
         case TypeKind::Class:
@@ -686,14 +688,24 @@ bool same_type(const TypePtr& a, const TypePtr& b) {
             return a->unit == b->unit;
         case TypeKind::Func:
         case TypeKind::Delegate:
-            if (!same_type(a->fret, b->fret)) return false;
+            // A function type's parameter/return top-level const is ignored (C++: it is not part of the
+            // function type); a pointee const still participates.
+            if (!same_type_impl(a->fret, b->fret, true)) return false;
             if (a->fparams.size() != b->fparams.size()) return false;
             for (size_t i = 0; i < a->fparams.size(); ++i) {
-                if (!same_type(a->fparams[i], b->fparams[i])) return false;
+                if (!same_type_impl(a->fparams[i], b->fparams[i], true)) return false;
             }
             return true;
     }
     return false;
+}
+
+bool same_type(const TypePtr& a, const TypePtr& b) {
+    return same_type_impl(a, b, false);
+}
+
+bool same_type_sig(const TypePtr& a, const TypePtr& b) {
+    return same_type_impl(a, b, true);
 }
 
 // ---------------------------------------------------------------- Conversion rules
@@ -764,7 +776,7 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
             }
         }
     }
-    if (same_type(src, dst)) return true;
+    if (same_type_sig(src, dst)) return true;
     if (!src || !dst) return false;
 
     // null -> pointer / slice / class / interface / function value / delegate
@@ -801,7 +813,7 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
             return false;
         }
         if (dst->elem && dst->elem->kind == TypeKind::Void) return true;
-        return same_type(src->elem, dst->elem);
+        return same_type_sig(src->elem, dst->elem);
     }
 
     // Array -> pointer (C99 6.3.2.1 decay): the array's first element address; same element type,
@@ -810,17 +822,17 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         if (!dst->elem) return false;
         if (dst->elem->kind == TypeKind::Void) return true;
         if (src->elem && src->elem->is_const && !dst->elem->is_const) return false;
-        return same_type(src->elem, dst->elem);
+        return same_type_sig(src->elem, dst->elem);
     }
 
     // Array -> slice
     if (src->kind == TypeKind::Array && dst->kind == TypeKind::Slice) {
-        return same_type(src->elem, dst->elem);
+        return same_type_sig(src->elem, dst->elem);
     }
 
     // Slice: T[] -> const T[]; the reverse requires an explicit as
     if (src->kind == TypeKind::Slice && dst->kind == TypeKind::Slice) {
-        if (!same_type(src->elem, dst->elem)) return false;
+        if (!same_type_sig(src->elem, dst->elem)) return false;
         if (src->elem && src->elem->is_const && !(dst->elem && dst->elem->is_const)) {
             return false;
         }

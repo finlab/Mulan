@@ -48,21 +48,21 @@ public:
 
     // ---------------------------------------------------------------- basic info
 
-    isize length() {
+    isize length() const {
         return n;
     }
 
-    bool empty() {
+    bool empty() const {
         return n == 0;
     }
 
-    bool is_empty() {
+    bool is_empty() const {
         return n == 0;
     }
 
     // Out of range returns 0. `at` is the clamping accessor; the subscript below stays unchecked
     // (C-shaped raw access), so this one has to reject negatives explicitly now that the index is signed.
-    byte at(isize i) {
+    byte at(isize i) const {
         if i < 0 or i >= n {
             return 0;
         }
@@ -72,7 +72,7 @@ public:
     // NUL-terminated view of the logical value. The zero value (p == null) is the empty string;
     // every other representation ends its buffer with a 0 at n: the constructor, `concat` and `sub`
     // each allocate their own buffer, so the view cannot expose bytes beyond the value (#32).
-    const char* cstr() {
+    const char* cstr() const {
         if p == null {
             return "";
         }
@@ -84,14 +84,14 @@ public:
     // `s[i]`: byte access, bounds-checked like `T[]` (SPEC 3.7: indexing is bounds-checked). The
     // check is written in the library rather than emitted by the compiler, so `--bounds=off` does
     // not remove it: a byte past the buffer is a heap read, not a value worth exposing.
-    byte operator[](isize i) {
+    byte operator[](isize i) const {
         if i < 0 or i >= n {
             throw new BoundsError(i, n, 0);
         }
         return p[i];
     }
 
-    bool operator==(String o) {
+    bool operator==(String o) const {
         if n != o.n {
             return false;
         }
@@ -106,7 +106,7 @@ public:
     }
 
     // compare with a NUL-terminated C string (literals): `s == "abc"`
-    bool operator==(const char* c) {
+    bool operator==(const char* c) const {
         isize i = 0;
         while i < n {
             if c[i] == 0 or p[i] != (c[i] as byte) {
@@ -119,11 +119,11 @@ public:
 
     // `s + "literal"`: the literal is a `const char*` (3.6 implicit conversion is not used inside
     // expressions, so the overload is explicit here)
-    String operator+(const char* c) {
+    String operator+(const char* c) const {
         return concat(String(c));
     }
 
-    String operator+(String o) {
+    String operator+(String o) const {
         return concat(o);
     }
 
@@ -132,7 +132,7 @@ public:
     // A substring copies into its own NUL-terminated buffer. A view into the source would share
     // the trailing bytes after the range, so `cstr()` could expose them (#32); out-of-range
     // arguments are clamped to the source length instead of producing a read past the buffer (#33).
-    String sub(isize start, isize count) {
+    String sub(isize start, isize count) const {
         if start < 0 {
             start = 0;
         }
@@ -159,7 +159,7 @@ public:
         return r;
     }
 
-    String concat(String other) {
+    String concat(String other) const {
         isize total = n + other.n;
         byte[] buf = new byte[total + 1];
         isize i = 0;
@@ -185,7 +185,7 @@ public:
     // returns the byte offset of the first occurrence, or -1 if not found.
     // `long` represents every offset on the supported 64-bit targets; `int` could turn a match
     // beyond 2^31-1 into a negative value indistinguishable from "not found" (#34).
-    isize find(String needle) {
+    isize find(String needle) const {
         if needle.n == 0 {
             return 0;
         }
@@ -211,7 +211,7 @@ public:
         return -1;
     }
 
-    bool starts_with(String prefix) {
+    bool starts_with(String prefix) const {
         if prefix.n > n {
             return false;
         }
@@ -225,7 +225,7 @@ public:
         return true;
     }
 
-    bool ends_with(String suffix) {
+    bool ends_with(String suffix) const {
         if suffix.n > n {
             return false;
         }
@@ -242,7 +242,7 @@ public:
 
     // ---------------------------------------------------------------- trimming
 
-    String trim() {
+    String trim() const {
         isize start = 0;
         while start < n and is_space_byte(p[start]) {
             start += 1;
@@ -255,7 +255,7 @@ public:
     }
 
 private:
-    bool is_space_byte(byte c) {
+    bool is_space_byte(byte c) const {
         return c == ' ' or c == '\t' or c == '\n' or c == '\r';
     }
 }

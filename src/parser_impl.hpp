@@ -18,6 +18,7 @@
 
 #include "ast.hpp"
 #include "common.hpp"
+#include "directive.hpp"
 #include "lexer.hpp"
 
 namespace muc_detail {
@@ -169,6 +170,9 @@ private:
     };
     std::vector<DirectiveGroup> groups_;
     int discard_depth_ = 0;  // > 0: this arm is not compiled, so its nested conditions are not evaluated
+    // Unit-level compile-time constants already declared in this unit: a later `#if` may read them
+    // (the same "declared before use" rule as ordinary constant initializers).
+    UserConstTable user_consts_;
 
     // One list element is parsed at a time; while the element sits in an arm that is not compiled the
     // arm must still be parsed (syntax is checked) but nothing may reach the AST. The undo action
@@ -208,6 +212,9 @@ private:
     std::string parse_qualified_name();
     std::vector<std::unique_ptr<GlobalVar>> parse_global();
     std::vector<std::unique_ptr<GlobalVar>> parse_global_list(TypeSpecPtr spec, bool is_const);
+    // Record a unit-level `const` whose initializer folds, so a later `#if` in this unit can read it
+    // (decided 2026-11-17).
+    void record_user_const(GlobalVar* g);
     std::unique_ptr<FuncDecl> parse_func(std::string name, TypeSpecPtr ret, bool ret_ref, const Token& tk);
     std::vector<std::unique_ptr<Param>> parse_params(bool* varargs = nullptr, bool allow_ref = false,
                                                      bool allow_move = false);

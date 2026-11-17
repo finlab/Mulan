@@ -15,6 +15,22 @@ using namespace muc_detail;
 
 // ---------------------------------------------------------------- unit
 
+void Parser::record_user_const(GlobalVar* g) {
+    if (!g || !g->is_const || !g->init || !g->spec) return;
+    if (g->spec->kind != TypeSpec::K::Named) return;
+    const std::string& tn = g->spec->name;
+    static const std::unordered_set<std::string> scalars = {
+        "bool", "byte", "char", "short", "ushort", "int", "uint", "long", "ulong", "usize", "isize"};
+    if (!scalars.count(tn)) return;
+    auto* ie = dynamic_cast<InitExpr*>(g->init.get());
+    if (!ie || !ie->expr) return;
+    UserConst uc;
+    std::string why;
+    if (!eval_user_const(*ie->expr, user_consts_, uc, why)) return;
+    if (tn == "bool") uc.is_bool = true;
+    user_consts_[g->name] = uc;
+}
+
 std::unique_ptr<Unit> Parser::parse_unit() {
     const Token t = peek();
     bool unit_public = false;
@@ -55,6 +71,8 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         bool packed = false;
         bool nocopy = false;
         Token nocopy_tok = tk;
+        bool is_const_decl = false;
+        Token const_tok = tk;
         ExprPtr align_expr;
         bool has_layout = false;
         Token layout_tok = tk;
@@ -98,6 +116,17 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 advance();  // (
                 align_expr = parse_expr();
                 expect_op(")");
+                continue;
+            }
+            // `const struct S` / `const class C` is a declaration modifier (decided 2026-11-17): every
+            // field and method is implicitly const. It is distinguished from a `const T` variable
+            // declaration by the following keyword.
+            if (at_kw("const") &&
+                (peek(1).text == "struct" || peek(1).text == "class" || peek(1).text == "union")) {
+                if (is_const_decl) throw err_at("duplicate modifier `const`", peek());
+                is_const_decl = true;
+                const_tok = peek();
+                advance();
                 continue;
             }
             break;
@@ -256,12 +285,20 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 sd->is_union = is_union;
                 sd->nocopy = nocopy;
                 sd->align_expr = std::move(align_expr);
+                if (is_const_decl) {
+                    if (is_union) throw err_at("`const` cannot modify a `union` (members are always public fields)", const_tok);
+                    for (auto& f : sd->fields) {
+                        if (f.second) f.second->is_const = true;
+                    }
+                    for (auto& m : sd->methods) m->is_const = true;
+                }
             }
             unit->decls.push_back(std::move(d));
             continue;
         }
 
         if (at_kw("enum")) {
+            if (is_const_decl) throw err_at("`const` can only modify a `struct` or `class` declaration", const_tok);
             if (has_layout) {
                 throw err_at("`enum` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
             }
@@ -279,11 +316,20 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             auto d = parse_class();
             d->is_public = is_pub;
             d->is_export = is_export;
+            if (is_const_decl) {
+                if (auto* cd = dynamic_cast<ClassDecl*>(d.get())) {
+                    for (auto& f : cd->fields) {
+                        if (f.second) f.second->is_const = true;
+                    }
+                    for (auto& m : cd->methods) m->is_const = true;
+                }
+            }
             unit->decls.push_back(std::move(d));
             continue;
         }
 
         if (at_kw("interface")) {
+            if (is_const_decl) throw err_at("`const` can only modify a `struct` or `class` declaration", const_tok);
             if (has_layout) {
                 throw err_at("`interface` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
             }
@@ -323,6 +369,9 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             // const variable: `const` is a declaration marker on a bare `const T`
             const bool is_const = spec->kind == TypeSpec::K::Named && spec->is_const;
             auto globals = parse_global_list(std::move(spec), is_const);
+            if (discard_depth_ == 0) {
+                for (auto& g : globals) record_user_const(g.get());
+            }
             for (auto& g : globals) g->is_public = is_pub;
             for (auto& g : globals) g->is_export = is_export;
             for (auto& g : globals) unit->decls.push_back(std::move(g));
@@ -531,29 +580,33 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
                          name_tok);
         }
         if (spec->is_const) {
-            // type-level compile-time constant: `const T NAME = <const-expr>;`
+            // `const T name;` is an instance field (decided 2026-11-17). Type-level constants are gone:
+            // a const field is initialized by every constructor, not by an initializer here.
             if (is_union) {
-                throw err_at("union `" + name + "` does not support const members (union members are always public fields)",
+                throw err_at("union `" + name + "` does not support const fields (union members are always public fields)",
                              name_tok);
             }
-            auto cm = std::make_unique<ConstMember>();
-            cm->name = name_tok.text;
-            spec->is_const = false;  // `const` is a declaration marker, not a type qualifier
-            cm->spec = std::move(spec);
-            cm->is_public = member_pub;
-            cm->line = name_tok.line;
-            cm->col = name_tok.col;
-            if (!at_op("=")) {
-                throw err_at("const member `" + cm->name + "` must be initialized", name_tok);
+            if (at_op("=")) {
+                throw err_at("type-level constants are gone: write a unit-level `const`, or initialize this "
+                             "`const` field in the constructor initializer list (`C(...) : name(value) { }`)",
+                             name_tok);
             }
-            advance();
-            cm->init = parse_expr();
-            if (at_op(",")) {
-                throw err("const member `" + cm->name +
-                          "` must be declared one per statement (write a separate `const` declaration for each)");
+            decl->fields.emplace_back(name_tok.text, clone_spec(*spec));
+            decl->field_visibility[name_tok.text] = member_pub;
+            for (;;) {
+                if (!at_op(",")) break;
+                advance();
+                const Token extra = expect_ident("field name");
+                if (at_op(":")) {
+                    throw err_at(
+                        "bit-fields are not supported: use explicit shifts/masks or a `byte[N]` field with offset constants",
+                        extra);
+                }
+                std::string fname = extra.text;
+                decl->field_visibility[fname] = member_pub;
+                decl->fields.emplace_back(std::move(fname), clone_spec(*spec));
             }
             semicolon();
-            decl->const_members.push_back(std::move(cm));
             continue;
         }
         decl->fields.emplace_back(name_tok.text, clone_spec(*spec));
@@ -709,6 +762,10 @@ std::unique_ptr<MethodDecl> Parser::parse_method(TypeSpecPtr ret, bool ret_ref, 
     m->line = name_tok.line;
     m->col = name_tok.col;
     m->params = parse_params();
+    if (at_kw("const")) {
+        advance();
+        m->is_const = true;
+    }
     if (at_kw("override")) {
         advance();
         m->is_override = true;
@@ -726,6 +783,19 @@ std::unique_ptr<CtorDecl> Parser::parse_ctor(const Token& name_tok) {
     c->line = name_tok.line;
     c->col = name_tok.col;
     c->params = parse_params(nullptr, /*allow_ref=*/true, /*allow_move=*/true);
+    // `: x(v), y(w)` — member initializer list (decided 2026-11-17)
+    if (at_op(":")) {
+        advance();
+        for (;;) {
+            const Token fname = expect_ident("field name");
+            expect_op("(");
+            ExprPtr init = parse_expr();
+            expect_op(")");
+            c->init_list.emplace_back(fname.text, std::move(init));
+            if (!at_op(",")) break;
+            advance();
+        }
+    }
     c->body = parse_block();
     return c;
 }
@@ -875,26 +945,24 @@ std::unique_ptr<Decl> Parser::parse_class() {
         if (prefix_virtual) throw err_at("`virtual` can only be used on a method", name_tok);
         if (prefix_override) throw err_at("`override` can only be used on methods", name_tok);
         if (spec->is_const) {
-            // type-level compile-time constant: `const T NAME = <const-expr>;`
-            if (prefix_weak) throw err_at("`weak` can only be used on fields", name_tok);
-            auto cm = std::make_unique<ConstMember>();
-            cm->name = name_tok.text;
-            spec->is_const = false;  // `const` is a declaration marker, not a type qualifier
-            cm->spec = std::move(spec);
-            cm->is_public = member_pub;
-            cm->line = name_tok.line;
-            cm->col = name_tok.col;
-            if (!at_op("=")) {
-                throw err_at("const member `" + cm->name + "` must be initialized", name_tok);
+            // `const T name;` is an instance field (decided 2026-11-17). Type-level constants are gone.
+            if (prefix_weak) throw err_at("`weak` cannot be combined with a `const` field", name_tok);
+            if (at_op("=")) {
+                throw err_at("type-level constants are gone: write a unit-level `const`, or initialize this "
+                             "`const` field in the constructor initializer list (`C(...) : name(value) { }`)",
+                             name_tok);
             }
-            advance();
-            cm->init = parse_expr();
-            if (at_op(",")) {
-                throw err("const member `" + cm->name +
-                          "` must be declared one per statement (write a separate `const` declaration for each)");
+            cd->fields.emplace_back(name_tok.text, clone_spec(*spec));
+            cd->field_visibility[name_tok.text] = member_pub;
+            for (;;) {
+                if (!at_op(",")) break;
+                advance();
+                const Token extra = expect_ident("field name");
+                std::string fname = extra.text;
+                cd->field_visibility[fname] = member_pub;
+                cd->fields.emplace_back(std::move(fname), clone_spec(*spec));
             }
             semicolon();
-            cd->const_members.push_back(std::move(cm));
             continue;
         }
         cd->fields.emplace_back(name_tok.text, clone_spec(*spec));
@@ -1034,6 +1102,10 @@ std::unique_ptr<MethodDecl> Parser::parse_member_operator(TypeSpecPtr ret, bool 
     m->line = tk.line;
     m->col = tk.col;
     m->params = parse_params();
+    if (at_kw("const")) {
+        advance();
+        m->is_const = true;
+    }
     if (at_op(";")) {
         advance();
     } else {

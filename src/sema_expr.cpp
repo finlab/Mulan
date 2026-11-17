@@ -1262,7 +1262,7 @@ namespace muc_detail {
 
         // An enum is a nominal type: only comparable with the same enum type; there is no implicit conversion to or from integers (`as` is required in both directions)
         if (is_enum_t(lt) || is_enum_t(rt)) {
-            if (!(is_enum_t(lt) && is_enum_t(rt)) || !same_type(lt, rt)) {
+            if (!(is_enum_t(lt) && is_enum_t(rt)) || !same_type_sig(lt, rt)) {
                 const TypePtr& en = is_enum_t(lt) ? lt : rt;
                 err("enum `" + en->str() + "` can only be compared or combined with values of the same enum type; there is no implicit" +
                         " conversion between enums and integers (write `as`)",
@@ -1489,7 +1489,7 @@ namespace muc_detail {
         if (!lv) {
             err("`move` can only transfer a local variable or a parameter; `" + nm->ident + "` is not one", mv);
         }
-        if (lv->is_const) err("cannot move `" + nm->ident + "`: the binding is `const`", mv);
+        if (lv->is_const) err("cannot move `" + nm->ident + "`: it is a `const` value; copy it instead", mv);
         if (lv->by_ref) {
             err("cannot move `" + nm->ident + "`: it is a `ref` borrow, and borrowing never transfers ownership",
                 mv);
@@ -1542,7 +1542,10 @@ namespace muc_detail {
         TypePtr tb = check_expr(sw->b.get());
         if (!ta || !tb) return t_void();
         if (is_void(ta) || is_void(tb)) err("`swap` cannot exchange `void` values", sw);
-        if (!same_type(ta, tb)) {
+        // A const place is reported before the type mismatch (the message names `const`, not the type).
+        check_writable(sw->a.get());
+        check_writable(sw->b.get());
+        if (!same_type_sig(ta, tb)) {
             err("`swap` needs two places of the same type (found `" + ta->str() + "` and `" + tb->str() +
                     "`)",
                 sw);

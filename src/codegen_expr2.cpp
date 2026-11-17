@@ -131,7 +131,7 @@ using ArgPack = Emitter::ArgPack;
         std::vector<LType*> pty{ptrTy()};
         for (const auto& p : sig->params) pty.push_back(lt(p));
         FunctionCallee callee = mod->getOrInsertFunction(
-            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
+            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params, sig->is_const),
             FunctionType::get(lt(sig->ret), pty, false));
         std::vector<Value*> args{recvAddr};
         for (auto* v : idxVals) args.push_back(v);
@@ -142,7 +142,7 @@ using ArgPack = Emitter::ArgPack;
 
     Value* Emitter::emitMemberIndexSet(const MethodSig* sig, Value* recvAddr, Value* idxVal, Expr* value) {
         FunctionCallee callee = mod->getOrInsertFunction(
-            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
+            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params, sig->is_const),
             FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), lt(sig->params[0]), lt(sig->params[1])}, false));
         ArgPack pack;
         Value* v = coerce(value, sig->params[1]);
@@ -492,7 +492,7 @@ using ArgPack = Emitter::ArgPack;
                 std::vector<LType*> ptys{ptrTy()};
                 for (auto& t : sig->params) ptys.push_back(lt(t));
                 FunctionCallee callee = mod->getOrInsertFunction(
-                    method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params),
+                    method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params, sig->is_const),
                     FunctionType::get(lt(sig->ret), ptys, false));
                 std::vector<Expr*> rawArgs;
                 for (auto& a : c->args) rawArgs.push_back(a.get());

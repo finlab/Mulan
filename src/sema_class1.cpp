@@ -62,6 +62,9 @@ namespace muc_detail {
 
     bool Sema::same_sig(const MethodSig& a, const MethodSig& b) {
         if (a.name != b.name) return false;
+        // `const` is part of a method's signature (decided 2026-11-17): `m()` and `m() const` are
+        // different overloads, and an override must match its base method's constness.
+        if (a.is_const != b.is_const) return false;
         // Only an **operator**'s first `Self` operand is the receiver (SPEC 3.11: "the receiver is the
         // first operand and must be spelled `Self`"); a member operator takes it as the implicit
         // `this`, so the two parameter lists differ by exactly that entry. A plain method's `Self` is
@@ -152,11 +155,14 @@ namespace muc_detail {
     void Sema::check_method(ClassDecl* c, MethodDecl* m) {
         if (!m->body) return;  // abstract method
         begin_member(c->ty, m->rty, c->name + "." + m->name, m->line, m->col);
+        const bool saved_const = cur_method_const_;
+        cur_method_const_ = m->is_const;
         declare_params(m->param_locals, m->params, m->pty);
         check_block(m->body.get());
         if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
             err("method `" + m->name + "` may reach the end of its body without returning a value", m);
         }
+        cur_method_const_ = saved_const;
         end_member();
     }
 
@@ -164,6 +170,7 @@ namespace muc_detail {
         begin_member(c->ty, t_void(), c->name + " constructor", ctor->line, ctor->col);
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
+        check_ctor_init_list(c->ty, ctor);
 
         bool needs_super = false;
         if (c->ty->base) {
@@ -189,6 +196,11 @@ namespace muc_detail {
             err("constructor must call `super(...)` as its first statement", ctor);
         }
         ctor->has_explicit_super = first_super;
+        if (first_super && !ctor->init_list.empty()) {
+            err("an initializer list cannot be combined with an explicit `super(...)` yet: the base "
+                "constructor already runs the member step",
+                ctor);
+        }
 
         push();
         size_t start = 0;
@@ -223,11 +235,14 @@ namespace muc_detail {
             err("struct method `" + m->name + "` must have a body", m);
         }
         begin_member(sd->ty, m->rty, sd->name + "." + m->name, m->line, m->col);
+        const bool saved_const = cur_method_const_;
+        cur_method_const_ = m->is_const;
         declare_params(m->param_locals, m->params, m->pty);
         check_block(m->body.get());
         if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
             err("method `" + m->name + "` may reach the end of its body without returning a value", m);
         }
+        cur_method_const_ = saved_const;
         end_member();
     }
 
@@ -235,8 +250,45 @@ namespace muc_detail {
         begin_member(sd->ty, t_void(), sd->name + " constructor", ctor->line, ctor->col);
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
+        check_ctor_init_list(sd->ty, ctor);
         check_block(ctor->body.get());
         end_member();
+    }
+
+    // `C(...) : x(v), y(w) { }`: validate the member initializer list (decided 2026-11-17). The entries
+    // are lowered by codegen before the body; a base-class field cannot be named here (the base
+    // constructor owns it), and every `const` field must be initialized here.
+    void Sema::check_ctor_init_list(const TypePtr& ty, CtorDecl* ctor) {
+        size_t baseCount = 0;
+        if (ty->base && ty->base->kind == TypeKind::Class) baseCount = ty->base->fields.size();
+        std::unordered_set<std::string> inited;
+        for (auto& item : ctor->init_list) {
+            const int idx = ty->field_index(item.first);
+            if (idx < 0) {
+                err("constructor initializer names an unknown field `" + item.first + "`", item.second.get());
+            }
+            if (static_cast<size_t>(idx) < baseCount) {
+                err("cannot initialize the base class field `" + item.first +
+                        "` here: the base constructor initializes it",
+                    item.second.get());
+            }
+            if (!inited.insert(item.first).second) {
+                err("field `" + item.first + "` is initialized twice", item.second.get());
+            }
+            check_assign(item.second.get(), ty->fields[static_cast<size_t>(idx)].type,
+                         "constructor initializer for `" + item.first + "`");
+        }
+        // A const field has no other way to be initialized (it cannot be written in the body).
+        // A `builtin` constant (the `comptime` unit, 9.3) is compiler-provided and is exempt.
+        for (size_t i = baseCount; i < ty->fields.size(); ++i) {
+            const Field& f = ty->fields[i];
+            if (!f.type || !f.type->is_const) continue;
+            if (!inited.count(f.name)) {
+                err("const field `" + f.name +
+                        "` must be initialized in the constructor initializer list",
+                    ctor);
+            }
+        }
     }
 
     void Sema::check_struct_dtor(StructDecl* sd) {
@@ -334,7 +386,7 @@ namespace muc_detail {
         gen->rty = sig.ret;
         gen->ret_ref = is_borrow_type(sig.ret);
         gen->pty = sig.params;
-        gen->cname = method_cname(sd->ty->unit, sd->name, gen->name, gen->pty);
+        gen->cname = method_cname(sd->ty->unit, sd->name, gen->name, gen->pty, gen->is_const);
         MethodSig ms;
         ms.name = gen->name;
         ms.ret = sig.ret;
@@ -460,7 +512,7 @@ namespace muc_detail {
             Node* where = m->from_iface_default ? static_cast<Node*>(sd) : static_cast<Node*>(m.get());
             std::string key = m->name + "(";
             for (auto& p : m->pty) key += p->str() + ",";
-            key += ")";
+            key += m->is_const ? ") const" : ")";
             if (!seen.insert(key).second) {
                 err("duplicate method `" + key + "` in struct `" + sd->name + "`", where);
             }
@@ -514,10 +566,11 @@ namespace muc_detail {
         for (auto& m : c->methods) {
             MethodSig sig;
             sig.name = m->name;
+            sig.is_const = m->is_const;
             sig.params = m->pty;
             std::string key = m->name + "(";
             for (auto& p : m->pty) key += p->str() + ",";
-            key += ")";
+            key += m->is_const ? ") const" : ")";
             if (!seen.insert(key).second) {
                 err("duplicate method `" + key + "` in class `" + c->name + "`", m.get());
             }

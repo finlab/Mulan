@@ -309,6 +309,11 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
             auto ptr = std::make_unique<TypeSpec>();
             ptr->kind = TypeSpec::K::Ptr;
             ptr->elem = std::move(spec);
+            // `T* const`: the pointer itself is read-only (the pointee const is carried by the elem spec)
+            if (at_kw("const")) {
+                advance();
+                ptr->is_const = true;
+            }
             ptr->line = tok.line;
             ptr->col = tok.col;
             spec = std::move(ptr);

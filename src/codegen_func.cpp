@@ -270,8 +270,9 @@ namespace muc_detail {
                 }
                 auto linkage = g->is_public ? GlobalValue::ExternalLinkage
                                             : GlobalValue::InternalLinkage;
-                auto* gv = new GlobalVariable(*mod, ty, g->is_const, linkage, init, g->cname);
-                if (g->is_const) gv->setConstant(true);
+                const bool llvm_const = g->is_const && !g->runtime_init;
+                auto* gv = new GlobalVariable(*mod, ty, llvm_const, linkage, init, g->cname);
+                if (llvm_const) gv->setConstant(true);
                 uint64_t ga = alignOf(g->rty);
                 if (ga > 1) gv->setAlignment(llvm::Align(ga));
             }

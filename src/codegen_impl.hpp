@@ -772,6 +772,8 @@ struct Emitter {
     void emitMethod(ClassDecl* c, MethodDecl* m);
 
     void emitCtor(ClassDecl* c, CtorDecl* ctor);
+    // `C(...) : x(v), y(w) { }`: store the member initializer list before the body runs.
+    void emitCtorInitList(Value* self, const TypePtr& ty, CtorDecl* ctor);
 
     void emitReleaseValue(Value* addr, const TypePtr& ty, bool unaligned = false);
 

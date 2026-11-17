@@ -4,7 +4,7 @@ class Cat {
 public:
     int age;
     Cat() { age = 2; }
-    int get() { return age; }
+    int get() const { return age; }
 }
 
 struct Point {

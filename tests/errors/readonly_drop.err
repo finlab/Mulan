@@ -1,1 +1,1 @@
-argument of call to `f`: cannot assign const int* to int*
+function `f` argument: cannot assign const int* to int*

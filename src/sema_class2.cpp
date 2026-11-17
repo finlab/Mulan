@@ -202,6 +202,14 @@ namespace muc_detail {
         return false;
     }
 
+    bool Sema::root_is_this(Expr* e) {
+        if (!e) return false;
+        if (auto n = dynamic_cast<Name*>(e)) return n->ident == "this" || n->implicit_this;
+        if (auto m = dynamic_cast<Member*>(e)) return root_is_this(m->obj.get());
+        if (auto ix = dynamic_cast<Index*>(e)) return root_is_this(ix->base.get());
+        return false;
+    }
+
     void Sema::check_writable(Expr* t) {
         if (auto n = dynamic_cast<Name*>(t)) {
             if (n->ident == "this") err("cannot assign to `this`", t);
@@ -216,10 +224,31 @@ namespace muc_detail {
                 }
             }
             if (root_is_const(t)) err("`" + n->ident + "` is a `const` binding and cannot be assigned", t);
+            // An implicit `this.field`: a field declared `const` is read-only outside the constructor.
+            if (cur_method_const_ && (n->ident == "this" || n->implicit_this)) {
+                err("cannot modify the object inside a `const` method", t);
+            }
+            if (n->kind == "field" && n->implicit_this && cur_class_ && n->field_index >= 0 &&
+                static_cast<size_t>(n->field_index) < cur_class_->fields.size()) {
+                const Field& f = cur_class_->fields[static_cast<size_t>(n->field_index)];
+                if (f.type && f.type->is_const)
+                    err("cannot assign to a read-only (`const`) field `" + n->ident + "`", t);
+            }
             return;
         }
-        if (dynamic_cast<Member*>(t)) {
+        if (auto m = dynamic_cast<Member*>(t)) {
+            if (cur_method_const_ && root_is_this(t)) {
+                err("cannot modify the object inside a `const` method", t);
+            }
             if (root_is_const(t)) err("cannot modify a member of a `const` binding", t);
+            TypePtr ot = m->obj ? m->obj->ty : nullptr;
+            if (ot &&
+                (ot->kind == TypeKind::Struct || ot->kind == TypeKind::Class) && m->field_index >= 0 &&
+                static_cast<size_t>(m->field_index) < ot->fields.size()) {
+                const Field& f = ot->fields[static_cast<size_t>(m->field_index)];
+                if (f.type && f.type->is_const)
+                    err("cannot assign to a read-only (`const`) field `" + m->name + "`", t);
+            }
             return;
         }
         if (auto ix = dynamic_cast<Index*>(t)) {

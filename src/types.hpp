@@ -36,6 +36,9 @@ struct MethodSig {
     // in codegen still upgrades virtual calls whose signature no subclass overrides).
     bool is_virtual = false;
     bool is_public = true;  // the private-by-default is explicitly overridden by class methods; struct/interface methods are always public
+    // `f() const`: a read-only method. `this` is `const Self`, fields cannot be written, and it may be
+    // called on a const object (decided 2026-11-17).
+    bool is_const = false;
     TypePtr owner;  // the class/interface that declares this method (filled by sema)
     // The two forms of interface members (U34 M3):
     //   is_operator = true  → static signature (`T operator+(T,T)`), no this, used only for constraints
@@ -58,7 +61,8 @@ struct Type {
     TypePtr elem;
     size_t array_size = 0;
     int rank = 1;               // Slice: rank (1=T[], 2=T[,], ...)
-    bool is_const = false;      // C model: whether this type node is const (per level)
+    bool is_const = false;      // cv: this type node is const (top-level; for Ptr/Slice/Ref the pointee
+                                // const is carried by `elem`, so `const T*` is Ptr(elem = const T))
     std::vector<Field> fields;  // used by Struct/Class (a placeholder is created first and filled in later; Class stores flattened fields)
     std::vector<MethodSig> methods;  // used by Class/Interface
     std::vector<std::vector<TypePtr>> ctors;  // class constructor parameter lists (overloads)
@@ -159,6 +163,10 @@ const std::vector<std::string>& prim_names();
 bool is_prim_name(const std::string& n);
 
 bool same_type(const TypePtr& a, const TypePtr& b);
+// Signature comparison (overloads, duplicate definitions, interface matching): the **top-level** const
+// of both sides is ignored, as in C++ (`f(const int)` and `f(int)` are the same signature). Low-level
+// const (the pointee) still participates.
+bool same_type_sig(const TypePtr& a, const TypePtr& b);
 
 // Layout (a Struct's packed / align(N) is implemented only here; codegen delegates to it so that the two layouts cannot drift apart)
 size_t type_align(const TypePtr& t);

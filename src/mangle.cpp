@@ -27,21 +27,24 @@ static std::string ident_safe(const std::string& s) {
     return out;
 }
 
-std::string type_code(const TypePtr& t) {
+static std::string type_code_impl(const TypePtr& t, bool top);
+
+static std::string type_code_impl(const TypePtr& t, bool top) {
     if (!t) return "v";
+    const bool cv = t->is_const && !top;  // top-level const is ignored in signatures (C++ rule)
     switch (t->kind) {
         case TypeKind::Void: return "v";
-        case TypeKind::Prim: return t->name;
-        case TypeKind::Ptr: return "p$" + type_code(t->elem);
-        case TypeKind::Ref: return "r$" + type_code(t->elem);
-        case TypeKind::Array: return "a" + std::to_string(t->array_size) + "$" + type_code(t->elem);
+        case TypeKind::Prim: return (cv ? std::string("K$") : std::string()) + t->name;
+        case TypeKind::Ptr: return (cv ? std::string("K$") : std::string()) + "p$" + type_code_impl(t->elem, false);
+        case TypeKind::Ref: return (cv ? std::string("K$") : std::string()) + "r$" + type_code_impl(t->elem, false);
+        case TypeKind::Array: return (cv ? std::string("K$") : std::string()) + "a" + std::to_string(t->array_size) + "$" + type_code_impl(t->elem, false);
         case TypeKind::Slice:
-            return "s" + std::to_string(t->rank) + "$" + type_code(t->elem);
-        case TypeKind::Struct: return "S$" + t->unit + "$" + ident_safe(t->name);
-        case TypeKind::Enum: return "E$" + t->unit + "$" + ident_safe(t->name);
-        case TypeKind::Class: return "C$" + t->unit + "$" + ident_safe(t->name);
-        case TypeKind::Interface: return "I$" + t->unit + "$" + ident_safe(t->name);
-        case TypeKind::Sum: return "U$" + t->unit + "$" + ident_safe(t->name);
+            return (cv ? std::string("K$") : std::string()) + "s" + std::to_string(t->rank) + "$" + type_code_impl(t->elem, false);
+        case TypeKind::Struct: return (cv ? std::string("K$") : std::string()) + "S$" + t->unit + "$" + ident_safe(t->name);
+        case TypeKind::Enum: return (cv ? std::string("K$") : std::string()) + "E$" + t->unit + "$" + ident_safe(t->name);
+        case TypeKind::Class: return (cv ? std::string("K$") : std::string()) + "C$" + t->unit + "$" + ident_safe(t->name);
+        case TypeKind::Interface: return (cv ? std::string("K$") : std::string()) + "I$" + t->unit + "$" + ident_safe(t->name);
+        case TypeKind::Sum: return (cv ? std::string("K$") : std::string()) + "U$" + t->unit + "$" + ident_safe(t->name);
         case TypeKind::Module: return "m$" + t->unit;
         case TypeKind::Null: return "null";
         case TypeKind::Range: return "rng";
@@ -50,13 +53,15 @@ std::string type_code(const TypePtr& t) {
             // The arity is part of the code, so the parameter/return boundary is unambiguous.
             std::string s = t->kind == TypeKind::Delegate ? "dlg" : "fn";
             s += std::to_string(t->fparams.size()) + "$";
-            for (const auto& p : t->fparams) s += type_code(p) + "$";
-            s += type_code(t->fret);
+            for (const auto& p : t->fparams) s += type_code_impl(p, true) + "$";
+            s += type_code_impl(t->fret, true);
             return s;
         }
     }
     return "x";
 }
+
+std::string type_code(const TypePtr& t) { return type_code_impl(t, /*top=*/true); }
 
 std::string op_code(const std::string& sym) {
     if (sym == "+") return "add";
@@ -103,8 +108,10 @@ std::string func_cname(const std::string& unit, FuncDecl* f) {
 }
 
 std::string method_cname(const std::string& unit, const std::string& owner,
-                         const std::string& name, const std::vector<TypePtr>& params) {
+                         const std::string& name, const std::vector<TypePtr>& params,
+                         bool is_const) {
     std::string out = "mu$" + unit + "$M" + ident_safe(owner) + "$" + func_code_name(name);
+    if (is_const) out += "$K";
     for (auto& t : params) out += "$" + type_code(t);
     return out;
 }
