@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 186 — 2026-11-17
+
+**P3.3a: top-level `#if` is evaluated only by collect (the parser no longer evaluates declaration arms).**
+
+- Parser declaration-mode arms are collected without evaluation; `#error` becomes an `ErrorDecl` and a
+  `use` inside an arm becomes a `UseDecl` in the arm, both resolved by collect after selection.
+- The loader scans candidate `use`s inside conditional arms and loads those that exist; a missing one is
+  reported only if the selected arm actually uses it.
+- Collect evaluates the arms with text-order unit constants + `use` public constants + `std.comptime`
+  builtins, keeps the enum identity, and reports ambiguous bare names.
+- `sizeof` in a constant initializer is still not visible to `#if` (the layout must be computed in collect,
+  P3.3b).
+
+Full suite: 707/707 (262 run, 407 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 185 — 2026-11-17
 
 **P3.2b: collect evaluates the top-level `#if` arms.**

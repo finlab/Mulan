@@ -376,6 +376,12 @@ struct DirectiveDecl : Decl {
     std::vector<Arm> arms;
 };
 
+// `#error "msg"` inside a conditional declaration arm: collected by the parser and raised by the
+// semantic pass only when the arm is actually selected (P3.3).
+struct ErrorDecl : Decl {
+    std::string message;
+};
+
 struct UseDecl : Decl {
     std::string unit_name;
 };

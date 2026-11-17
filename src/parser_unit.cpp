@@ -198,7 +198,13 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             use->unit_name = std::move(uname);
             use->line = tk.line;
             use->col = tk.col;
-            if (discard_depth_ == 0) {
+            const bool in_decl_arm = !groups_.empty() && groups_.back().decl_mode && cur_decls_;
+            if (in_decl_arm) {
+                // The arm may not be selected: the semantic pass decides and then adds the `use`
+                // (P3.3). The dependency is still discovered by the loader's candidate scan.
+                module_names_.insert(use->unit_name);
+                push_decl(std::move(use));
+            } else if (discard_depth_ == 0) {
                 module_names_.insert(use->unit_name);
                 unit->uses.push_back(std::move(use));
             }

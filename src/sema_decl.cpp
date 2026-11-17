@@ -163,19 +163,36 @@ namespace muc_detail {
             cur_ = u.get();
             UnitInfo& ui = infos_.at(u->name);
             // The declaration list is processed in place: a `DirectiveDecl` (P3.2) is expanded to the
-            // declarations of its selected arm before the loop moves on.
+            // declarations of its selected arm before the loop moves on. `current_consts` follows the
+            // text order, so a later constant is not visible to an earlier `#if` (SPEC 5.1).
+            UserConstTable current_consts;
             for (size_t di = 0; di < u->decls.size();) {
                 if (auto* dd = dynamic_cast<DirectiveDecl*>(u->decls[di].get())) {
                     // Evaluate the arms with the constants visible at this point: the public constants
-                    // of the `use`d units plus every compile-time constant of this unit (P3.2b).
+                    // of the `use`d units (and the compiler builtins after `use std.comptime`) plus the
+                    // unit's own constants declared before this point (text order, P3.3).
                     UserConstTable table;
+                    std::unordered_map<std::string, std::string> const_src;
+                    std::unordered_set<std::string> ambiguous;
                     for (auto& use : u->uses) {
-                        if (const UserConstTable* t = unit_public_consts(use->unit_name)) {
-                            for (const auto& [k, v] : *t) table.emplace(k, v);
+                        if (use->unit_name == "std.comptime") {
+                            add_builtin_constants(table);
+                            for (const auto& [k, v] : table) const_src.emplace(k, "std.comptime");
+                            continue;
+                        }
+                        const UserConstTable* t = unit_public_consts(use->unit_name);
+                        if (!t) continue;
+                        for (const auto& [k, v] : *t) {
+                            auto it = const_src.find(k);
+                            if (it == const_src.end()) const_src[k] = use->unit_name;
+                            else if (it->second != use->unit_name) ambiguous.insert(k);
+                            table.emplace(k, v);
+                            table[use->unit_name + "." + k] = v;  // the qualified form
                         }
                     }
-                    if (const UserConstTable* t = unit_all_consts(u->name)) {
-                        for (const auto& [k, v] : *t) table[k] = v;  // this unit wins
+                    for (const auto& [k, v] : current_consts) {
+                        table[k] = v;  // this unit wins; a same-name constant is not ambiguous
+                        ambiguous.erase(k);
                     }
                     DirectiveDecl::Arm* chosen = nullptr;
                     bool taken = false;
@@ -185,18 +202,34 @@ namespace muc_detail {
                             break;
                         }
                         std::string why;
-                        if (eval_directive_cond(*arm.cond, why, &table, nullptr)) {
+                        if (eval_directive_cond(*arm.cond, why, &table, &ambiguous)) {
                             chosen = &arm;
                             taken = true;
                             break;
                         }
+                        if (!why.empty()) err("`#if` condition: " + why, arm.cond.get());
                     }
                     std::vector<std::unique_ptr<Decl>> picked;
                     if (chosen) picked = std::move(chosen->decls);
+                    // The selected arm may carry `use` (added to the unit now) and `#error`.
+                    std::vector<std::unique_ptr<Decl>> kept;
+                    for (auto& pd : picked) {
+                        if (auto* uu = dynamic_cast<UseDecl*>(pd.get())) {
+                            if (!infos_.count(uu->unit_name)) {
+                                err("cannot find unit `" + uu->unit_name + "`", uu);
+                            }
+                            u->uses.push_back(std::unique_ptr<UseDecl>(static_cast<UseDecl*>(pd.release())));
+                            continue;
+                        }
+                        if (auto* ee = dynamic_cast<ErrorDecl*>(pd.get())) {
+                            err("#error " + ee->message, ee);
+                        }
+                        kept.push_back(std::move(pd));
+                    }
                     u->decls.erase(u->decls.begin() + static_cast<long>(di));
                     u->decls.insert(u->decls.begin() + static_cast<long>(di),
-                                    std::make_move_iterator(picked.begin()),
-                                    std::make_move_iterator(picked.end()));
+                                    std::make_move_iterator(kept.begin()),
+                                    std::make_move_iterator(kept.end()));
                     continue;  // reprocess the same index
                 }
                 auto& d = u->decls[di];
@@ -223,6 +256,13 @@ namespace muc_detail {
                     if (ui.globals.count(g->name)) err("duplicate definition of variable `" + g->name + "`", g);
                     ui.globals[g->name] = g;
                     g->cname = g->is_extern ? g->name : mangle(u->name, g->name);
+                    if (g->is_const) {
+                        // The value was folded by the parser; it becomes visible to a later `#if`.
+                        if (const UserConstTable* t = unit_all_consts(u->name)) {
+                            auto it = t->find(g->name);
+                            if (it != t->end()) current_consts[g->name] = it->second;
+                        }
+                    }
                 }
                 ++di;
             }

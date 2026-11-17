@@ -517,6 +517,30 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         in_progress.insert(name);
         Unit* raw = unit.get();
         owned[name] = std::move(unit);
+        // A `use` inside a conditional declaration arm is not in `raw->uses` yet (the arm is selected
+        // by the semantic pass), but its dependency must still be available. Load every candidate
+        // first; a missing one is reported only if the selected arm actually uses it (P3.3).
+        std::vector<std::string> candidate_uses;
+        std::function<void(Decl*)> scan_uses = [&](Decl* d) {
+            if (!d) return;
+            if (auto* dd = dynamic_cast<DirectiveDecl*>(d)) {
+                for (auto& arm : dd->arms) {
+                    for (auto& inner : arm.decls) scan_uses(inner.get());
+                }
+                return;
+            }
+            if (auto* u = dynamic_cast<UseDecl*>(d)) candidate_uses.push_back(u->unit_name);
+        };
+        for (auto& d : raw->decls) scan_uses(d.get());
+        for (const auto& cu : candidate_uses) {
+            std::string dep_path;
+            try {
+                dep_path = find_file(cu);
+            } catch (const MuError&) {
+                continue;  // the semantic pass reports it only if the arm is selected
+            }
+            (void)visit(dep_path);
+        }
         for (auto& use : raw->uses) {
             check_unit_name(use->unit_name, use->line, use->col, raw->filename);
             Unit* dep = visit(find_file(use->unit_name));

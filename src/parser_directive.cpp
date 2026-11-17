@@ -14,6 +14,12 @@ namespace muc_detail {
 void Parser::directive_begin_arm(const Expr* cond, const Token& at) {
     DirectiveGroup& g = groups_.back();
     g.awaiting = false;
+    if (g.decl_mode) {
+        // The semantic pass evaluates declaration arms after the units are parsed (P3.3); the parser
+        // only collects them, so `#error` and `use` are deferred with the declarations.
+        g.arm_taken = false;
+        return;
+    }
     bool take = false;
     // A nested condition inside an arm that is already dropped is not evaluated: its constants (or
     // its errors) belong to a configuration that is not being compiled.
@@ -44,6 +50,15 @@ void Parser::directive_header() {
         if (peek().kind != TokKind::Str) throw err_at("`#error` needs a string literal message", peek());
         const std::string msg = advance().bytes;
         if (at_op(";")) advance();
+        if (!groups_.empty() && groups_.back().decl_mode && cur_decls_) {
+            // Keep it for the semantic pass: the arm may not be selected (P3.3).
+            auto ed = std::make_unique<ErrorDecl>();
+            ed->message = msg;
+            ed->line = nm.line;
+            ed->col = nm.col;
+            push_decl(std::move(ed));
+            return;
+        }
         if (discard_depth_ == 0) throw err_at("#error " + msg, nm);
         return;
     }
@@ -115,7 +130,7 @@ void Parser::directive_arm_end() {
         g.decls.clear();
         g.arm_cond.reset();
     }
-    if (!g.arm_taken) --discard_depth_;
+    if (!g.decl_mode && !g.arm_taken) --discard_depth_;
     g.arm_taken = false;
     // Another arm of the same chain follows: `directive_header` continues it on the next iteration.
     if (peek().is_op("#") && (peek(1).text == "elif" || peek(1).text == "else")) {
