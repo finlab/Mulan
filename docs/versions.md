@@ -27,6 +27,15 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 181 — 2026-11-17
+
+**P3.1 skeleton: conditional directive AST nodes.**
+
+- Added `DirectiveDecl` / `DirectiveStmt` / `DirectiveMembers` + `MemberGroup` to carry `#if` arms for the
+  planned collect-time expansion (agents/directive-pass-design.md P3). The parser still resolves `#if`
+  immediately, so there is **no behaviour change** yet.
+- Full suite: 707/707.
+
 #### build 180 — 2026-11-17
 
 **`std.target` removed; `std.comptime` is the only source of build constants.**

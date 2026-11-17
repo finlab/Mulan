@@ -344,6 +344,38 @@ struct Decl : Node {
     virtual ~Decl() = default;
 };
 
+// ---------------------------------------------------------------- conditional declaration lists (P3.1 skeleton)
+//
+// `#if` in a declaration/statement/member list keeps its arms as data so the semantic pass can pick one
+// after the constants are known (P3). The parser fills these nodes; until P3.2 lands the parser still
+// selects an arm immediately, so the nodes are not produced yet.
+
+// A type body's member lists (the parallel vectors of StructDecl/ClassDecl/InterfaceDecl).
+struct MemberGroup {
+    std::vector<std::pair<std::string, TypeSpecPtr>> fields;
+    std::unordered_map<std::string, bool> field_visibility;
+    std::vector<std::unique_ptr<ConstMember>> const_members;
+    std::vector<std::unique_ptr<MethodDecl>> methods;
+    std::vector<std::unique_ptr<CtorDecl>> ctors;
+    std::unique_ptr<DtorDecl> dtor;
+};
+
+struct DirectiveMembers : Node {
+    struct Arm {
+        ExprPtr cond;  // null: `#else`
+        MemberGroup members;
+    };
+    std::vector<Arm> arms;
+};
+
+struct DirectiveDecl : Decl {
+    struct Arm {
+        ExprPtr cond;  // null: `#else`
+        std::vector<std::unique_ptr<Decl>> decls;
+    };
+    std::vector<Arm> arms;
+};
+
 struct UseDecl : Decl {
     std::string unit_name;
 };
@@ -461,6 +493,15 @@ struct Stmt : Node {
     virtual ~Stmt() = default;
 };
 using StmtPtr = std::unique_ptr<Stmt>;
+
+// A statement-list `#if` (P3.1 skeleton; see DirectiveDecl).
+struct DirectiveStmt : Stmt {
+    struct Arm {
+        ExprPtr cond;  // null: `#else`
+        std::vector<StmtPtr> stmts;
+    };
+    std::vector<Arm> arms;
+};
 
 struct Block : Stmt {
     std::vector<StmtPtr> stmts;
