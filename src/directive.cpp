@@ -408,3 +408,22 @@ bool builtin_func(const std::string& name, const std::vector<long long>& args, l
     if (name == "is_macos") { value = os == "macos" ? 1 : 0; return true; }
     return false;
 }
+
+// Public constants of units already parsed in this invocation. `#if` in a later unit can read them
+// through its `use` (the loader parses dependencies first, P3).
+std::unordered_map<std::string, UserConstTable>& public_consts_table() {
+    static std::unordered_map<std::string, UserConstTable> t;
+    return t;
+}
+
+void register_unit_public_consts(const std::string& unit, const UserConstTable& table) {
+    public_consts_table()[unit] = table;
+}
+
+const UserConstTable* unit_public_consts(const std::string& unit) {
+    auto& t = public_consts_table();
+    auto it = t.find(unit);
+    return it == t.end() ? nullptr : &it->second;
+}
+
+void reset_unit_public_consts() { public_consts_table().clear(); }

@@ -173,7 +173,14 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             std::string uname = parse_unit_name();
             // `use std.comptime;` makes the compiler-provided compile-time constants visible here
             // (decided 2026-11-17). Before the use they are not visible, like any other name.
-            if (uname == "std.comptime") add_builtin_constants(user_consts_);
+            if (uname == "std.comptime") {
+                add_builtin_constants(user_consts_);
+            } else if (const UserConstTable* t = unit_public_consts(uname)) {
+                for (const auto& [k, v] : *t) {
+                    user_consts_.emplace(k, v);              // a bare name; an earlier declaration wins
+                    user_consts_[uname + "." + k] = v;       // the qualified form `unit.name`
+                }
+            }
             semicolon();
             auto use = std::make_unique<UseDecl>();
             use->unit_name = std::move(uname);
@@ -439,6 +446,17 @@ std::unique_ptr<Unit> Parser::parse_unit() {
     }
 
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", t);
+    // Public compile-time constants of this unit become visible to a later `use` in another unit (P3).
+    {
+        UserConstTable pub;
+        for (auto& d : unit->decls) {
+            if (auto* g = dynamic_cast<GlobalVar*>(d.get()); g && g->is_const && g->is_public) {
+                auto it = user_consts_.find(g->name);
+                if (it != user_consts_.end()) pub[g->name] = it->second;
+            }
+        }
+        register_unit_public_consts(unit->name, pub);
+    }
     return unit;
 }
 

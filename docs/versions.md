@@ -27,6 +27,22 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 178 — 2026-11-17
+
+**Cross-unit `#if` compile-time constants (first P3 step).**
+
+- The loader pre-scans a unit's `use` list, finishes its dependencies first, then parses the unit; a
+  dependency's public compile-time constants are registered and merged into the current unit's `#if`
+  table when the `use` is parsed (bare names and `unit.name` forms).
+- A `use` inside a dead `#if` arm is ignored by the pre-scan; a missing dependency is reported only if the
+  live parse reaches it. Dependencies are parsed before the unit, so post-order initialization stays
+  correct.
+- Tests: `if_cross_unit` (run) with `tests/cases/iflib/lib.mu` providing `public const K` / `ENABLED`.
+- Remaining P3 work: full constant evaluation inside the pass (`sizeof`/layout), ambiguity diagnostics for
+  same-name constants from several units, and removing the parser-side splice.
+
+Full suite: 706/706 (262 run, 406 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 177 — 2026-11-17
 
 **`std.comptime` and compiler-provided compile-time functions.**

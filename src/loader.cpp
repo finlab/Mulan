@@ -13,6 +13,7 @@
 #include "loader.hpp"
 
 #include <cstdlib>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -21,6 +22,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -425,7 +427,82 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
                       "`; looked for (platform shadow first, then the portable unit):" + list);
     };
 
+    // A cheap lexical pre-scan: the unit name and its `use` list (comments stripped). It lets the
+    // loader finish the dependencies before parsing the current unit, so `#if` can read their public
+    // compile-time constants (P3). A `use` inside a dead `#if` arm is not known here; a missing
+    // dependency is ignored and reported only if the live parse reaches it.
+    auto prescan = [](const std::string& path) {
+        std::ifstream in(path, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string clean;
+        clean.reserve(text.size());
+        for (size_t i = 0; i < text.size();) {
+            if (text[i] == '/' && i + 1 < text.size() && text[i + 1] == '/') {
+                i += 2;
+                while (i < text.size() && text[i] != '\n') ++i;
+                continue;
+            }
+            if (text[i] == '/' && i + 1 < text.size() && text[i + 1] == '*') {
+                i += 2;
+                while (i + 1 < text.size() && !(text[i] == '*' && text[i + 1] == '/')) ++i;
+                i += 2;
+                continue;
+            }
+            clean += text[i++];
+        }
+        std::string name;
+        std::vector<std::string> uses;
+        for (size_t i = 0; i < clean.size();) {
+            const char c = clean[i];
+            if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+                size_t j = i + 1;
+                while (j < clean.size() &&
+                       (std::isalnum(static_cast<unsigned char>(clean[j])) || clean[j] == '_' || clean[j] == '.'))
+                    ++j;
+                const std::string word = clean.substr(i, j - i);
+                if (word == "unit" || word == "use") {
+                    size_t k = j;
+                    while (k < clean.size() && std::isspace(static_cast<unsigned char>(clean[k]))) ++k;
+                    size_t m = k;
+                    while (m < clean.size() &&
+                           (std::isalnum(static_cast<unsigned char>(clean[m])) || clean[m] == '_' || clean[m] == '.'))
+                        ++m;
+                    size_t s = m;
+                    while (s < clean.size() && std::isspace(static_cast<unsigned char>(clean[s]))) ++s;
+                    if (m > k && s < clean.size() && clean[s] == ';') {
+                        const std::string id = clean.substr(k, m - k);
+                        if (word == "unit" && name.empty()) name = id;
+                        else if (word == "use") uses.push_back(id);
+                    }
+                }
+                i = j;
+                continue;
+            }
+            ++i;
+        }
+        return std::make_pair(name, uses);
+    };
+    std::set<std::string> prescan_stack;
+
     std::function<Unit*(const std::string&)> visit = [&](const std::string& path) -> Unit* {
+        const auto pre = prescan(path);
+        if (!pre.first.empty()) {
+            if (prescan_stack.count(pre.first)) {
+                throw MuError("unit circular dependency: " + pre.first);
+            }
+            if (auto done = owned.find(pre.first); done != owned.end()) return done->second.get();
+            prescan_stack.insert(pre.first);
+            for (const auto& u : pre.second) {
+                std::string dep_path;
+                try {
+                    dep_path = find_file(u);
+                } catch (const MuError&) {
+                    continue;  // may be a dead-branch use; the live parse reports it if reached
+                }
+                (void)visit(dep_path);
+            }
+            prescan_stack.erase(pre.first);
+        }
         auto unit = parse_file(path);
         std::string name = unit->name;
         check_unit_name(name, unit->line, unit->col, unit->filename);
