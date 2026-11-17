@@ -27,6 +27,19 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 182 — 2026-11-17
+
+**P3.1 parser slice: declaration, statement and struct-member `#if` arm containers.**
+
+- Unit-level `#if` collects each arm into a `DirectiveGroup` container and merges only the selected arm;
+  a `use` inside a dead arm is still rolled back.
+- Block-level `#if` does the same for statements (`cur_stmts_`).
+- Struct members collect into a `MemberGroup` per arm and are merged into the declaration after the
+  chain; `#if` in a struct body no longer needs `ArmDrop`.
+- Class/interface member lists still use the old discard scheme (next slice). Behaviour is unchanged.
+
+Full suite: 707/707 (262 run, 407 must-fail, 24 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 181 — 2026-11-17
 
 **P3.1 skeleton: conditional directive AST nodes.**

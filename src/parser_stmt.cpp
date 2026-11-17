@@ -156,10 +156,20 @@ std::vector<std::unique_ptr<GlobalVar>> Parser::parse_global() {
 
 // ---------------------------------------------------------------- statements
 
+void Parser::push_stmt(StmtPtr s) {
+    if (!cur_stmts_) throw MuError("internal: statement outside a statement list");
+    cur_stmts_->push_back(std::move(s));
+}
+
 std::unique_ptr<Block> Parser::parse_block() {
     NestGuard guard(*this, "block");
+    // A block is a statement list; a `#if` here collects each arm into its own container.
+    auto* saved_decls = cur_decls_;
+    auto* saved_stmts = cur_stmts_;
+    cur_decls_ = nullptr;
     const Token tk = expect_op("{");
     auto block = std::make_unique<Block>();
+    cur_stmts_ = &block->stmts;
     block->line = tk.line;
     block->col = tk.col;
     const size_t g0 = groups_.size();
@@ -170,12 +180,12 @@ std::unique_ptr<Block> Parser::parse_block() {
             break;
         }
         if (at_directive()) { directive_header(); continue; }
-        const size_t ns = block->stmts.size();
-        ArmDrop drop(*this, [&] { block->stmts.resize(ns); });
-        for (auto& s : parse_stmt()) block->stmts.push_back(std::move(s));
+        for (auto& s : parse_stmt()) push_stmt(std::move(s));
     }
     expect_op("}");
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
+    cur_stmts_ = saved_stmts;
+    cur_decls_ = saved_decls;
     return block;
 }
 

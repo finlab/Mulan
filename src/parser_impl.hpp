@@ -168,9 +168,42 @@ private:
         bool arm_taken = false;  // the arm being parsed is selected
         bool saw_else = false;
         bool awaiting = false;   // the arm just closed; `#elif` / `#else` may follow
+        // P3.1: a declaration-list arm is parsed into its own container and merged only if selected.
+        // The statement/member positions still use the old discard scheme until the next slice.
+        bool decl_mode = false;
+        std::vector<std::unique_ptr<Decl>>* outer_decls = nullptr;
+        std::vector<std::unique_ptr<Decl>> decls;
+        // A statement-list arm (P3.1, statement slice).
+        bool stmt_mode = false;
+        std::vector<StmtPtr>* outer_stmts = nullptr;
+        std::vector<StmtPtr> stmts;
+        // A type-body arm (P3.1, member slice).
+        bool member_mode = false;
+        MemberGroup* outer_members = nullptr;
+        MemberGroup members;
     };
     std::vector<DirectiveGroup> groups_;
     int discard_depth_ = 0;  // > 0: this arm is not compiled, so its nested conditions are not evaluated
+
+    // The current declaration-list target (`#if` arms point it at their own container).
+    std::vector<std::unique_ptr<Decl>>* cur_decls_ = nullptr;
+    void push_decl(std::unique_ptr<Decl> d);
+    // The current statement-list target (the statement slice).
+    std::vector<StmtPtr>* cur_stmts_ = nullptr;
+    void push_stmt(StmtPtr s);
+    // The current type-body target (the member slice).
+    MemberGroup* cur_members_ = nullptr;
+
+    // A type body is not a declaration list: clear the target for the duration of the member list.
+    struct DeclTargetScope {
+        Parser& p;
+        std::vector<std::unique_ptr<Decl>>* saved;
+        explicit DeclTargetScope(Parser& parser)
+            : p(parser), saved(parser.cur_decls_) { parser.cur_decls_ = nullptr; }
+        DeclTargetScope(const DeclTargetScope&) = delete;
+        DeclTargetScope& operator=(const DeclTargetScope&) = delete;
+        ~DeclTargetScope() { p.cur_decls_ = saved; }
+    };
     // Unit-level compile-time constants already declared in this unit: a later `#if` may read them
     // (the same "declared before use" rule as ordinary constant initializers).
     UserConstTable user_consts_;

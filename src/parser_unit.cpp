@@ -15,6 +15,11 @@ using namespace muc_detail;
 
 // ---------------------------------------------------------------- unit
 
+void Parser::push_decl(std::unique_ptr<Decl> d) {
+    if (!cur_decls_) throw MuError("internal: declaration outside a declaration list");
+    cur_decls_->push_back(std::move(d));
+}
+
 void Parser::record_user_const(GlobalVar* g, const std::string& unit_name) {
     if (!g || !g->is_const || !g->init || !g->spec) return;
     if (g->spec->kind != TypeSpec::K::Named) return;
@@ -54,15 +59,14 @@ std::unique_ptr<Unit> Parser::parse_unit() {
     unit->col = t.col;
 
     const size_t g0 = groups_.size();
+    cur_decls_ = &unit->decls;
     while (!at_eof()) {
         if (at_op("}") && groups_.size() > g0) { directive_arm_end(); continue; }
         if (at_directive()) { directive_header(); continue; }
-        const size_t nd = unit->decls.size();
         const size_t nu = unit->uses.size();
-        ArmDrop drop(*this, [&] {
-            unit->decls.resize(nd);
-            unit->uses.resize(nu);
-        });
+        // Declaration elements go to `cur_decls_` (a `#if` arm has its own container); a `use` inside
+        // a dead arm still needs the rollback because `uses` is not a `Decl` list.
+        ArmDrop drop(*this, [&] { unit->uses.resize(nu); });
         const Token tk = peek();
         bool is_pub = false;
         bool is_export = false;
@@ -160,7 +164,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             auto d = parse_builtin(builtin_tok);
             d->is_public = is_pub;
             d->is_export = is_export;
-            unit->decls.push_back(std::move(d));
+            push_decl(std::move(d));
             continue;
         }
 
@@ -207,7 +211,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` or `union` declaration", layout_tok);
             }
             advance();
-            unit->decls.push_back(parse_extern(tk));
+            push_decl(parse_extern(tk));
             continue;
         }
 
@@ -284,7 +288,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 sd->is_export = is_export;
                 sd->type_params = std::move(type_params);
                 type_names_.insert(sd->name);
-                unit->decls.push_back(std::move(sd));
+                push_decl(std::move(sd));
                 continue;
             }
             if (!type_params.empty()) {
@@ -309,7 +313,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             // The name is a type from here on: `is_type_start` must recognize it so that `sizeof(Op)` and
             // `Op x;` parse as a type rather than as an expression.
             type_names_.insert(d->name);
-            unit->decls.push_back(std::move(d));
+            push_decl(std::move(d));
             continue;
         }
 
@@ -332,7 +336,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                     for (auto& m : sd->methods) m->is_const = true;
                 }
             }
-            unit->decls.push_back(std::move(d));
+            push_decl(std::move(d));
             continue;
         }
 
@@ -344,7 +348,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             auto d = parse_enum();
             d->is_public = is_pub;
             d->is_export = is_export;
-            unit->decls.push_back(std::move(d));
+            push_decl(std::move(d));
             continue;
         }
 
@@ -363,7 +367,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                     for (auto& m : cd->methods) m->is_const = true;
                 }
             }
-            unit->decls.push_back(std::move(d));
+            push_decl(std::move(d));
             continue;
         }
 
@@ -375,7 +379,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             auto d = parse_interface();
             d->is_public = is_pub;
             d->is_export = is_export;
-            unit->decls.push_back(std::move(d));
+            push_decl(std::move(d));
             continue;
         }
 
@@ -402,7 +406,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 type_names_ = saved_type_names;
                 f->is_public = is_pub;
                 f->is_export = is_export;
-                unit->decls.push_back(std::move(f));
+                push_decl(std::move(f));
                 continue;
             }
             // const variable: `const` is a declaration marker on a bare `const T`
@@ -413,7 +417,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             }
             for (auto& g : globals) g->is_public = is_pub;
             for (auto& g : globals) g->is_export = is_export;
-            for (auto& g : globals) unit->decls.push_back(std::move(g));
+            for (auto& g : globals) push_decl(std::move(g));
             continue;
         }
 
@@ -426,7 +430,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             auto f = parse_operator_func(std::move(spec), ret_ref, tk);
             f->is_public = is_pub;
             f->is_export = is_export;
-            unit->decls.push_back(std::move(f));
+            push_decl(std::move(f));
             continue;
         }
         if (peek().kind == TokKind::Ident && (peek(1).is_op("(") || peek(1).is_op("<"))) {
@@ -439,7 +443,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             type_names_ = saved_type_names;
             f->is_public = is_pub;
             f->is_export = is_export;
-            unit->decls.push_back(std::move(f));
+            push_decl(std::move(f));
         } else {
             if (ret_ref) {
                 throw err_at("`ref` can only modify a return type (`ref T f(...)`); a variable cannot have a reference type",
@@ -449,11 +453,12 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             auto globals = parse_global_list(std::move(spec), false);
             for (auto& g : globals) g->is_public = is_pub;
             for (auto& g : globals) g->is_export = is_export;
-            for (auto& g : globals) unit->decls.push_back(std::move(g));
+            for (auto& g : globals) push_decl(std::move(g));
         }
     }
 
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", t);
+    cur_decls_ = nullptr;
     // Public compile-time constants of this unit become visible to a later `use` in another unit (P3).
     {
         UserConstTable pub;
@@ -526,6 +531,10 @@ std::unique_ptr<Decl> Parser::parse_builtin(const Token& tk) {
 }
 
 std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
+    DeclTargetScope decl_scope(*this);
+    MemberGroup members;
+    auto* saved_members = cur_members_;
+    cur_members_ = &members;
     const char* kw = is_union ? "union" : "struct";
     const Token tk = expect_kw(kw);
     std::string name = expect_ident(std::string(kw) + " name").text;
@@ -555,18 +564,8 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
             break;
         }
         if (at_directive()) { directive_header(); continue; }
-        const size_t nf = decl->fields.size();
-        const size_t nc = decl->const_members.size();
-        const size_t nm = decl->methods.size();
-        const size_t nct = decl->ctors.size();
-        const bool had_dtor = decl->dtor != nullptr;
-        ArmDrop drop(*this, [&] {
-            decl->fields.resize(nf);
-            decl->const_members.resize(nc);
-            decl->methods.resize(nm);
-            decl->ctors.resize(nct);
-            if (!had_dtor) decl->dtor.reset();
-        });
+        // The members of each arm collect into `cur_members_` (a `#if` arm has its own MemberGroup);
+        // an unselected arm is simply dropped when the chain is popped, so no rollback is needed.
         // section label: `public:` / `private:` switches the default visibility of following members
         if ((at_kw("public") || at_kw("private")) && peek(1).is_op(":")) {
             if (is_union) {
@@ -593,8 +592,8 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
         if (at_op("~")) {
             if (explicit_mod) throw err("destructor cannot use `public`/`private`");
             if (is_union) throw err("union `" + name + "` cannot have a destructor");
-            if (decl->dtor) throw err("struct `" + name + "` can only have one destructor");
-            decl->dtor = parse_dtor();
+            if (cur_members_->dtor) throw err("struct `" + name + "` can only have one destructor");
+            cur_members_->dtor = parse_dtor();
             continue;
         }
         // `implicit T(...)`: the constructor may be used as an implicit conversion (struct only)
@@ -607,9 +606,9 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
         if (peek().kind == TokKind::Ident && peek().text == name && peek(1).is_op("(")) {
             if (is_union) throw err("union `" + name + "` cannot have a constructor");
             const Token ctor_name = advance();
-            decl->ctors.push_back(parse_ctor(ctor_name));
-            decl->ctors.back()->is_public = member_pub;
-            decl->ctors.back()->is_implicit = implicit_ctor;
+            cur_members_->ctors.push_back(parse_ctor(ctor_name));
+            cur_members_->ctors.back()->is_public = member_pub;
+            cur_members_->ctors.back()->is_implicit = implicit_ctor;
             continue;
         }
         if (implicit_ctor) throw err("`implicit` can only modify a constructor");
@@ -635,16 +634,16 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
         TypeSpecPtr spec = parse_return_type(ret_ref);
         if (at_kw("operator")) {
             if (is_union) throw err("union `" + name + "` cannot have methods");
-            decl->methods.push_back(parse_member_operator(std::move(spec), ret_ref));
-            decl->methods.back()->is_public = member_pub;
+            cur_members_->methods.push_back(parse_member_operator(std::move(spec), ret_ref));
+            cur_members_->methods.back()->is_public = member_pub;
             continue;
         }
         const Token name_tok = expect_ident("field or method name");
         if (at_op("(")) {
             if (is_union) throw err("union `" + name + "` cannot have methods");
-            decl->methods.push_back(parse_method(std::move(spec), ret_ref, name_tok));
-            decl->methods.back()->is_public = member_pub;
-            if (prefix_override) decl->methods.back()->is_override = true;
+            cur_members_->methods.push_back(parse_method(std::move(spec), ret_ref, name_tok));
+            cur_members_->methods.back()->is_public = member_pub;
+            if (prefix_override) cur_members_->methods.back()->is_override = true;
             continue;
         }
         if (prefix_override) {
@@ -669,8 +668,8 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
                              "`const` field in the constructor initializer list (`C(...) : name(value) { }`)",
                              name_tok);
             }
-            decl->fields.emplace_back(name_tok.text, clone_spec(*spec));
-            decl->field_visibility[name_tok.text] = member_pub;
+            cur_members_->fields.emplace_back(name_tok.text, clone_spec(*spec));
+            cur_members_->field_visibility[name_tok.text] = member_pub;
             for (;;) {
                 if (!at_op(",")) break;
                 advance();
@@ -681,14 +680,14 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
                         extra);
                 }
                 std::string fname = extra.text;
-                decl->field_visibility[fname] = member_pub;
-                decl->fields.emplace_back(std::move(fname), clone_spec(*spec));
+                cur_members_->field_visibility[fname] = member_pub;
+                cur_members_->fields.emplace_back(std::move(fname), clone_spec(*spec));
             }
             semicolon();
             continue;
         }
-        decl->fields.emplace_back(name_tok.text, clone_spec(*spec));
-        decl->field_visibility[name_tok.text] = member_pub;
+        cur_members_->fields.emplace_back(name_tok.text, clone_spec(*spec));
+        cur_members_->field_visibility[name_tok.text] = member_pub;
         for (;;) {
             if (!at_op(",")) break;
             advance();
@@ -699,8 +698,8 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
                     extra);
             }
             std::string fname = extra.text;
-            decl->field_visibility[fname] = member_pub;
-            decl->fields.emplace_back(std::move(fname), clone_spec(*spec));
+            cur_members_->field_visibility[fname] = member_pub;
+            cur_members_->fields.emplace_back(std::move(fname), clone_spec(*spec));
         }
         semicolon();
     }
@@ -708,6 +707,13 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
     if (groups_.size() != g0) throw err_at("unterminated `#if` block: missing `}`", tk);
     if (at_op(";")) advance();
     type_names_ = saved_type_names;
+    decl->fields = std::move(members.fields);
+    decl->field_visibility = std::move(members.field_visibility);
+    decl->const_members = std::move(members.const_members);
+    decl->methods = std::move(members.methods);
+    decl->ctors = std::move(members.ctors);
+    decl->dtor = std::move(members.dtor);
+    cur_members_ = saved_members;
     return decl;
 }
 
@@ -891,6 +897,7 @@ std::unique_ptr<DtorDecl> Parser::parse_dtor() {
 }
 
 std::unique_ptr<Decl> Parser::parse_class() {
+    DeclTargetScope decl_scope(*this);
     const Token tk = expect_kw("class");
     const Token nm = expect_ident("class name");
     type_names_.insert(nm.text);
@@ -1061,6 +1068,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
 }
 
 std::unique_ptr<Decl> Parser::parse_interface() {
+    DeclTargetScope decl_scope(*this);
     const Token tk = expect_kw("interface");
     const Token nm = expect_ident("interface name");
     type_names_.insert(nm.text);

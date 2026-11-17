@@ -50,6 +50,21 @@ void Parser::directive_header() {
 
     if (d == "if") {
         groups_.push_back(DirectiveGroup{});
+        DirectiveGroup& g = groups_.back();
+        // A statement list collects each arm into its own container; a declaration list does the same.
+        if (cur_stmts_) {
+            g.stmt_mode = true;
+            g.outer_stmts = cur_stmts_;
+            cur_stmts_ = &g.stmts;
+        } else if (cur_members_) {
+            g.member_mode = true;
+            g.outer_members = cur_members_;
+            cur_members_ = &g.members;
+        } else if (cur_decls_) {
+            g.decl_mode = true;
+            g.outer_decls = cur_decls_;
+            cur_decls_ = &g.decls;
+        }
         ExprPtr cond = parse_expr();
         expect_op("{");
         directive_begin_arm(cond.get(), nm);
@@ -76,6 +91,27 @@ void Parser::directive_header() {
 void Parser::directive_arm_end() {
     advance();  // '}'
     DirectiveGroup& g = groups_.back();
+    if (g.member_mode && g.arm_taken) {
+        MemberGroup& dst = *g.outer_members;
+        MemberGroup& src = g.members;
+        for (auto& f : src.fields) dst.fields.push_back(std::move(f));
+        for (auto& [k, v] : src.field_visibility) dst.field_visibility[k] = v;
+        for (auto& cm : src.const_members) dst.const_members.push_back(std::move(cm));
+        for (auto& m : src.methods) dst.methods.push_back(std::move(m));
+        for (auto& c : src.ctors) dst.ctors.push_back(std::move(c));
+        if (src.dtor) dst.dtor = std::move(src.dtor);
+        src = MemberGroup{};
+    }
+    if (g.stmt_mode && g.arm_taken) {
+        for (auto& s : g.stmts) g.outer_stmts->push_back(std::move(s));
+        g.stmts.clear();
+    }
+    if (g.decl_mode && g.arm_taken) {
+        // Merge the selected arm into the enclosing declaration list (the unselected arms stay in
+        // their container and are dropped when the chain is popped).
+        for (auto& d : g.decls) g.outer_decls->push_back(std::move(d));
+        g.decls.clear();
+    }
     if (!g.arm_taken) --discard_depth_;
     g.arm_taken = false;
     // Another arm of the same chain follows: `directive_header` continues it on the next iteration.
@@ -83,6 +119,9 @@ void Parser::directive_arm_end() {
         g.awaiting = true;
         return;
     }
+    if (g.stmt_mode) cur_stmts_ = g.outer_stmts;
+    if (g.member_mode) cur_members_ = g.outer_members;
+    if (g.decl_mode) cur_decls_ = g.outer_decls;
     groups_.pop_back();
 }
 
