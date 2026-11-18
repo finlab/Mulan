@@ -202,6 +202,28 @@ namespace muc_detail {
         return false;
     }
 
+    // Is this expression a value subobject of the object being constructed/destroyed (`this`, or a nested
+    // struct / fixed-size array of one), rather than a separate object reached through a class handle
+    // field? Constructing and destroying are the writable phases (SPEC 3.7), and they cover only the
+    // object itself.
+    bool Sema::is_this_value(Expr* e) {
+        if (!e) return false;
+        if (auto n = dynamic_cast<Name*>(e)) {
+            return n->ident == "this" || (n->implicit_this && n->kind != "field");
+        }
+        if (auto m = dynamic_cast<Member*>(e)) {
+            TypePtr ot = m->obj ? m->obj->ty : nullptr;
+            if (ot && is_reference_type(ot)) return false;  // a handle: a different object
+            return is_this_value(m->obj.get());
+        }
+        if (auto ix = dynamic_cast<Index*>(e)) {
+            TypePtr bt = ix->base ? ix->base->ty : nullptr;
+            if (!bt || bt->kind != TypeKind::Array) return false;  // a slice points elsewhere
+            return is_this_value(ix->base.get());
+        }
+        return false;
+    }
+
     // True when binding this expression to a mutable `ref` parameter would hand out write access to a
     // read-only object: a `const` binding, a `const` field, or any expression of a `const class` / a
     // `const` handle (SPEC 3.7). `check_writable` is the assignment form of the same rule; a `ref`
@@ -293,7 +315,11 @@ namespace muc_detail {
             // Any expression of a `const class`, or a `const` handle, is a read-only view: the object's
             // content is fixed after construction, and that covers the fields it inherited as well
             // (SPEC 3.7). The field's own `const` is checked below, but an inherited field is mutable.
-            if (ot && read_only_view(ot)) {
+            //
+            // Constructors and the destructor are the writable phase, so a write through `this` there is
+            // allowed (a write to *another* read-only object is not).
+            const bool this_write_phase = (in_ctor_ || in_dtor_) && is_this_value(m->obj.get());
+            if (ot && read_only_view(ot) && !this_write_phase) {
                 err("cannot modify a member of a read-only (`const`) value (`" + ot->str() + "`)", t);
             }
             // `arr[0].x = ...` where `arr` is a `const P[N]`: the element is a const object even though the

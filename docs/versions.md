@@ -27,6 +27,24 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 214 — 2026-11-18
+
+**Fix: the writable phase of a `const class` also covers writes through `this`** (follow-up to build 213).
+
+Build 213 refused every member write on a read-only view, which also refused `this.v = 5` in a constructor
+— a legitimate write: constructing and destroying are the writable phases (SPEC 3.7), and the base
+subobject is mutable. The first attempt exempted anything reachable through `this`, which also exempted
+`item.v = 9` inside a *different* class's constructor (`item` being a `const class` field) — a real hole.
+
+- The exemption is now `is_this_value`: the written member's object must be `this`, or a nested **value**
+  subobject of it (a struct or fixed-size array). A class/interface handle reached through a field is a
+  different object and stays read-only; a slice points elsewhere, so it is not a value subobject either.
+- Tests: run `const_class_ctor_this_write` (`this.v = 5` in a constructor) and
+  `const_class_dtor_this_write` (the destructor); must-fail `const_class_ctor_other_write` (a constructor
+  writing a `const class` field of another object).
+
+Full suite: Windows 827/827, Linux (WSL) 824/824.
+
 #### build 213 — 2026-11-18
 
 **Fix: a `const class` object could still be written through its inherited fields** (SPEC 3.7).
@@ -56,7 +74,7 @@ New cases: must-fail `const_class_base_field_write`, `const_class_base_field_com
 `const_class_array_element`, `const_class_struct_hold`, `const_class_ref_field`,
 `const_class_mutating_operator_iface`, `const_struct_ref_field`; run `ctor_explicit_empty_base`.
 
-Full suite: Windows 824/824, Linux (WSL) 821/821.
+Full suite: Windows 824/824, Linux (WSL) 822/822.
 
 #### build 212 — 2026-11-18
 
@@ -3543,3 +3561,4 @@ Removed the C99 backend, making LLVM the only backend; cleaned up `--emit-c`/`-D
 Baseline: C++20 compiler (lexer/parser/sema), C99 backend, LLVM backend (LLVM C++ API → COFF), 58 regression cases, reference/object model design discussion
 
 **Tests**: C backend 58/58; LLVM backend 58/58; cold build with zero warnings
+
