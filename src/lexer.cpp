@@ -147,7 +147,8 @@ public:
             out.back().bol = out.back().kind != TokKind::Eof && out.back().line != prev_line;
             prev_line = out.back().line;
             if (out.back().kind == TokKind::Eof) return out;
-            if (out.size() >= kMaxTokens) {
+            // The EOF token does not count: exactly kMaxTokens tokens are allowed (#104).
+            if (out.back().kind != TokKind::Eof && out.size() > kMaxTokens) {
                 const Token& t = out.back();
                 throw MuError(filename_ + ":" + std::to_string(t.line) + ":" + std::to_string(t.col) +
                               ": a source file must not contain more than " +

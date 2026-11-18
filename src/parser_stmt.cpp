@@ -33,13 +33,6 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
     bool saw_varargs = false;
     if (!at_op(")")) {
         for (;;) {
-            // C says 127 parameters, C++ 256 ([implimits] §1.11): far above real code, and it keeps the
-            // call-site matching (which tries every parameter) bounded.
-            if (params.size() >= kMaxParams) {
-                throw err_at("a function cannot declare more than " + std::to_string(kMaxParams) +
-                                 " parameters; take a struct instead",
-                             peek());
-            }
             if (at_op("...")) {
                 const Token dots = advance();
                 if (!varargs) throw err_at("only `extern` functions can be variadic", dots);
@@ -51,6 +44,14 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
                     throw err_at("`...` must be the last parameter", peek());
                 }
                 break;
+            }
+            // C says 127 parameters, C++ 256 ([implimits] §1.11): far above real code, and it keeps the
+            // call-site matching (which tries every parameter) bounded. The check sits after `...`,
+            // which is not a parameter: `extern void f(<256 params>, ...)` is legal (#101).
+            if (params.size() >= kMaxParams) {
+                throw err_at("a function cannot declare more than " + std::to_string(kMaxParams) +
+                                 " parameters; take a struct instead",
+                             peek());
             }
             const Token ptok = peek();
             // each parameter must be written as `T name` on its own; C-style shared types (`int a, b`) are invalid.

@@ -828,7 +828,21 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
                 "`); SPEC 3.15.4 requires a finite expansion, so simplify the type arguments",
             c);
     }
+    // The chain of instantiations is bounded as well: `f0<T>` calling `f1<Box<T>>` … recurses through
+    // `instantiate_generic_func` once per link, so an unbounded chain overflows the compiler's stack
+    // (#107, #91). The type path counts the same budget.
+    if (generic_depth_ >= kGenericDepthLimit) {
+        err("recursive generic instantiation of `" + base + "` does not terminate (more than " +
+                std::to_string(kGenericDepthLimit) +
+                " nested instances; SPEC 3.15.4 requires a finite expansion)",
+            c);
+    }
     ++generic_instance_count_;
+    struct FnDepthGuard {
+        int& d;
+        explicit FnDepthGuard(int& x) : d(x) { ++d; }
+        ~FnDepthGuard() { --d; }
+    } fn_depth(generic_depth_);
     generic_busy_.insert(key);
     BusyGuard busy_guard{generic_busy_, key};
     // The instantiation chain + "why only now" hint for an unchecked parameter.

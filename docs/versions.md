@@ -27,6 +27,31 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 202 — 2026-11-18
+
+**The capacity limits accept their documented boundary** (audit batch #99–#107, #91).
+
+- **Count only what is there.** The postfix chain, the relational-chain loop and the type-suffix loop
+  incremented their counter at the top of every iteration, including the one that only discovers the end
+  of the chain, so a chain of exactly 2048 links / 256 declarators was rejected (#105, #99). The
+  terminating iteration no longer counts.
+- **Tokens**: the EOF token counted against the 2M budget, so a file with exactly 2,000,000 tokens was
+  rejected (#104).
+- **Parameters**: the cap was tested before the `...` branch, so `extern void f(<256 params>, ...)` was
+  rejected (#101); lambdas and function types now apply the same cap as named functions (#100).
+- **Type nesting**: the guard sat in `parse_type_base`, which the `Name<...>` path never takes, so 400
+  nested `Box<...>` compiled; every recursive type position goes through `parse_type`, which is guarded
+  now (256 accepted, 257 rejected, #102).
+- **Generic functions** never tracked chain depth — only the total instance count — so
+  `void f<T>() { f<Box<T>>(); }` instantiated without bound and overflowed the compiler's stack (#91,
+  #107). `instantiate_generic_func` now shares `generic_depth_` with the type path (256 links).
+- **Units**: a program with exactly 1024 units is accepted (the cap is checked at the insertion point,
+  after the "already loaded" lookup — build 199) and the 1025th is rejected (#106).
+- Tests: `type_links_256`, `params_varargs_256`, `type_nest_256` (check), `type_links_257`,
+  `type_nest_257`, `generic_fn_chain` (must-fail).
+
+Full suite: 773/773 (286 run, 436 must-fail, 37 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 201 — 2026-11-18
 
 **`#if` and the constant evaluator follow the language's own rules** (the build-196 audit batch).

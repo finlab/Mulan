@@ -176,6 +176,12 @@ Token Parser::expect_gt() {
 }
 
 TypeSpecPtr Parser::parse_type() {
+    // Every recursive type position comes through here (generic arguments, array elements, pointers,
+    // function parameter/result types), so this is where the nesting budget is spent; the guard used to
+    // sit in `parse_type_base`, which the `Name<...>` path does not take (#102).
+    // A declaration's outermost type spends one level before its first nested operand, so the budget is
+    // one more than the documented count of nested type operands.
+    NestGuard guard(*this, nest_type_, kMaxTypeNest + 1, kMaxTypeNest, "type");
     bool base_const = false;
     // Repeated `const` folds (`const const int` ≡ `const int`, SPEC 3.7).
     while (at_kw("const")) {
@@ -199,6 +205,12 @@ TypeSpecPtr Parser::parse_type() {
         fn->col = t.col;
         if (!at_op(")")) {
             for (;;) {
+                if (fn->params.size() >= kMaxParams) {
+                    throw err_at("a function type cannot declare more than " +
+                                     std::to_string(kMaxParams) +
+                                     " parameters; take a struct instead",
+                                 peek());
+                }
                 fn->params.push_back(parse_type());
                 if (at_op(",")) {
                     advance();
@@ -239,6 +251,13 @@ TypeSpecPtr Parser::parse_type() {
         fn->col = t.col;
         if (!at_op(")")) {
             for (;;) {
+                // The same parameter cap as a named function and a lambda (#100).
+                if (fn->params.size() >= kMaxParams) {
+                    throw err_at("a function type cannot declare more than " +
+                                     std::to_string(kMaxParams) +
+                                     " parameters; take a struct instead",
+                                 peek());
+                }
                 fn->params.push_back(parse_type());
                 if (at_op(",")) {
                     advance();
@@ -264,7 +283,6 @@ TypeSpecPtr Parser::parse_type() {
 }
 
 TypeSpecPtr Parser::parse_type_base() {
-    NestGuard guard(*this, nest_type_, kMaxTypeNest, kMaxTypeNest, "type");
     bool base_const = false;
     // Repeated `const` is allowed and folds (`const const int` ≡ `const int`, SPEC 3.7): a code
     // generator or a macro expansion may repeat a qualifier.
@@ -308,6 +326,9 @@ TypeSpecPtr Parser::parse_type_base() {
 TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
     int links = 0;
     for (;;) {
+        // Count only a suffix that is actually there: counting the terminating iteration rejected a
+        // declaration with exactly the documented number of declarators (#99).
+        if (!at_op("*") && !at_op("[")) break;
         note_link(links, "type", kMaxTypeLinks);
         if (at_op("*")) {
             const Token tok = advance();
@@ -488,19 +509,23 @@ ExprPtr Parser::parse_rel() {
     ExprPtr left = parse_bitor();
     int links = 0;
     for (;;) {
-        note_link(links, "expression");
-        if (at_op("<", "<=", ">", ">=")) {
-            const Token tok = advance();
-            ExprPtr right = parse_bitor();
-            left = make_binary(tok.text, std::move(left), std::move(right), tok);
-            continue;
-        }
+        const bool cmp = at_op("<", "<=", ">", ">=");
         // `x is Alt(a, b)` / `x is Cat d`: `is` is a contextual keyword (an ordinary identifier
         // everywhere else, so `int is = 1;` keeps working). A type name after `is` may be a keyword
         // type (`x is int`), which reaches sema and is rejected there with a clear message.
         const bool is_op = peek().kind == TokKind::Ident && peek().text == "is" &&
                            (peek(1).kind == TokKind::Ident ||
                             (peek(1).kind == TokKind::Kw && prims().count(peek(1).text) != 0));
+        // Only an actual link extends the chain; counting the terminating iteration rejected a chain of
+        // exactly `kMaxChainLinks` operators (#105).
+        if (!cmp && !is_op) break;
+        note_link(links, "expression");
+        if (cmp) {
+            const Token tok = advance();
+            ExprPtr right = parse_bitor();
+            left = make_binary(tok.text, std::move(left), std::move(right), tok);
+            continue;
+        }
         if (is_op) {
             const Token tok = advance();
             auto node = std::make_unique<IsExpr>();
@@ -769,8 +794,13 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
     std::vector<TypeSpecPtr> pending_type_args;  // type arguments of `f<int>(...)`
     int links = 0;
     for (;;) {
-        note_link(links, "expression");
         const Token t = peek();
+        // Count only an actual link, so a chain of exactly `kMaxChainLinks` links is accepted (#105).
+        const bool starts_link =
+            t.is_op("(") || t.is_op("[") || t.is_op("->") || t.is_op(".") || t.is_kw("as") ||
+            (t.is_op("<") && pending_type_args.empty() && dynamic_cast<Name*>(e.get()));
+        if (!starts_link) break;
+        note_link(links, "expression");
         // generic call: `name<...>(`. If the trial parse fails, fall back to a comparison expression.
         if (t.is_op("<") && pending_type_args.empty() && dynamic_cast<Name*>(e.get())) {
             const std::size_t save = pos_;
@@ -983,6 +1013,12 @@ ExprPtr Parser::parse_lambda() {
     if (!at_op(")")) {
         for (;;) {
             if (at_kw("ref")) throw err_at("a lambda cannot take a `ref` parameter (a borrow is not a value)", peek());
+            // The same parameter cap as a named function (#100).
+            if (node->params.size() >= kMaxParams) {
+                throw err_at("a lambda cannot declare more than " + std::to_string(kMaxParams) +
+                                 " parameters; take a struct instead",
+                             peek());
+            }
             auto p = std::make_unique<Param>();
             const Token ptok = peek();
             p->spec = parse_type();
