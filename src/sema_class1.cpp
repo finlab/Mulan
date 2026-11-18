@@ -722,7 +722,32 @@ namespace muc_detail {
                     err("override has a mismatched return type", m.get());
                 }
             } else if (m->is_override) {
-                err("`override` does not match any base class or interface method", m.get());
+                // A `const` mismatch is by far the most common way an `override` misses: the method is
+                // `const` (implicitly so in a `const class`) while the interface member is not, or the
+                // other way round. Say which direction it is instead of "does not match anything".
+                const MethodSig* loose = nullptr;
+                if (c->ty->base) loose = find_method(c->ty->base, sig.name, sig.params.size());
+                for (auto& i : c->ty->interfaces) {
+                    if (loose) break;
+                    if (auto s2 = find_method(i, sig.name, sig.params.size())) loose = s2;
+                }
+                if (loose && same_param_sig(loose->params, sig.params) &&
+                    loose->is_const != sig.is_const) {
+                    if (sig.is_const) {
+                        err("method `" + sig.name + "` is `const`, but `" + loose->owner->str() +
+                                "` declares it without `const`; declare it "
+                                "`" + (m->rty ? m->rty->str() : std::string("T")) + " " + sig.name +
+                                "(...) const;` in the interface, or make the implementation non-`const`",
+                            m.get());
+                    } else {
+                        err("method `" + sig.name + "` must be `const`: `" + loose->owner->str() +
+                                "` declares it `const`, and a method that may mutate cannot satisfy a "
+                                "read-only contract",
+                            m.get());
+                    }
+                } else {
+                    err("`override` does not match any base class or interface method", m.get());
+                }
             }
             check_method(c, m.get());
         }
@@ -898,10 +923,11 @@ namespace muc_detail {
                 std::vector<MethodSig> reqs;
                 collect_abstract_reqs(c->ty, reqs);
                 bool abs = false;
+                c->ty->missing_members.clear();
                 for (auto& req : reqs) {
                     if (!class_has_concrete(c->ty, req) && !iface_has_default(c->ty, req)) {
                         abs = true;
-                        break;
+                        c->ty->missing_members.push_back(req.owner->str() + "::" + req.name);
                     }
                 }
                 c->ty->is_abstract = abs;

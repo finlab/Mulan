@@ -632,6 +632,12 @@ C++ model, with the deliberate omissions listed at the end of this section.
 - **`const` methods.** `T f() const` declares a read-only method: `this` is `const Self`, fields cannot be
   written, and `f()` / `f() const` may coexist as overloads. A const object can only call const methods.
   Constructors and destructors cannot be `const` (3.11).
+- **`const struct` / `const class` and interfaces.** A `const class` implements an interface when the
+  interface declares those members `const` (`interface Sized { int size() const; }`): the class's methods
+  are implicitly `const`, which satisfies a read-only contract exactly. A mutating interface member
+  cannot be satisfied by it, and the diagnostic says which direction the mismatch is — declare the member
+  `const` in the interface, or drop `const` from the class. A class left with an unimplemented member is
+  abstract, and `new` names the missing members.
 - **`const struct` / `const class`.** A declaration modifier (decided 2026-11-17): every field is implicitly
   `const` and every method is implicitly `const`. **An object's content is fixed once constructed**: no
   field can be written and no method can mutate it. It can be **copied and moved** (a new object is
@@ -1090,6 +1096,10 @@ void g() {
 ---
 
 ### 3.15 Generics (implemented in 0.0.64–0.0.72)
+
+A member may be declared `const` (`interface Sized { int size() const; }`): it is a read-only contract,
+satisfied only by a `const` implementation and reachable through a `const I` view. This is how an
+immutable (`const class`) implementation participates (3.7).
 
 #### 3.15.1 Implementation strategy: monomorphization
 

@@ -1096,7 +1096,16 @@ namespace muc_detail {
             return Type::make_slice(t, false, static_cast<int>(ne->dims.size()));
         }
         if (t->kind != TypeKind::Class) err("`new` can only be used with a class or a dynamic array", ne);
-        if (t->is_abstract) err("abstract class `" + t->str() + "` cannot be instantiated with `new`", ne);
+        if (t->is_abstract) {
+            std::string missing;
+            for (auto& mm : t->missing_members) {
+                if (!missing.empty()) missing += ", ";
+                missing += "`" + mm + "`";
+            }
+            err("abstract class `" + t->str() + "` cannot be instantiated with `new`" +
+                    (missing.empty() ? "" : ": it does not implement " + missing),
+                ne);
+        }
         if (!ne->named.empty()) err("constructors do not support named arguments yet", ne);
 
         const auto& ctors = t->ctors;

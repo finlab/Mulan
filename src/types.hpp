@@ -71,6 +71,8 @@ struct Type {
     TypePtr base;               // the base class of a Class
     std::vector<TypePtr> interfaces;  // the interfaces implemented by a Class/Interface
     bool is_abstract = false;   // a Class has unimplemented methods
+    // Class: the interface members `is_abstract` is about (`I::f`), so the `new` diagnostic can name them.
+    std::vector<std::string> missing_members;
     bool has_dtor = false;      // the user declared a destructor (struct/class)
     bool is_packed = false;     // Struct: packed (the fields are tightly packed, with no internal or tail padding, and the default align is 1)
     bool is_union = false;      // Struct: union (all members at offset 0, size = max(member))

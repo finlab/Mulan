@@ -27,6 +27,28 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 208 — 2026-11-18
+
+**`const class` implements read-only interfaces; the diagnostics say why an `override` misses**
+(decision on #56).
+
+The language already had the right model: an interface member may be declared `const`
+(`interface Sized { int size() const; }`), and a `const class`'s methods are implicitly `const`, so such
+a class implements exactly the read-only members — verified end to end (`const class Item : Sized,
+Named` through `Sized`, `Named` and `const Sized` views). What was missing was the explanation:
+
+- A `const`/non-`const` mismatch now names the direction instead of "\`override\` does not match any base
+  class or interface method": "method `f` is `const`, but `I` declares it without `const`; declare it
+  `int f(...) const;` in the interface, or make the implementation non-`const`", and the reverse case
+  ("must be `const`: `I` declares it `const`, and a method that may mutate cannot satisfy a read-only
+  contract").
+- `new` on an abstract class names what is missing: "it does not implement `I::f`" (the interface members
+  are recorded while abstractness is computed).
+- SPEC 3.7 and 3.15 state the rule; tests: `const_class_iface` (run), `const_class_mutating_iface`,
+  `mutating_impl_const_iface`, `abstract_missing_member` (must-fail).
+
+Full suite: Windows 790/790, Linux (WSL) 788/788.
+
 #### build 207 — 2026-11-18
 
 **Values are movable by default; `nomove` is the opt-out; a user move constructor keeps the source alive**
