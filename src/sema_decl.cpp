@@ -4,6 +4,7 @@
 // This file holds fields/utilities/visibility/collection/signature checks/layout modifiers (definitions of Sema members).
 #include "sema_impl.hpp"
 
+#include <algorithm>
 #include <iterator>
 #include <limits>
 
@@ -159,8 +160,12 @@ bool has_sizeof_init(const Init* i) {
 // The const types whose initializer the `#if` evaluator can fold (the same set the parser used).
 bool is_scalar_const_type(const TypeSpec* spec) {
     if (!spec || spec->kind != TypeSpec::K::Named) return false;
+    // Floating-point `const`s are compile-time constants as well (SPEC 3.7.2 lists floating-point
+    // literals and `as` conversions), so a `#if VALUE > 1.0` can read one (#74).
     static const std::unordered_set<std::string> scalars = {
-        "bool", "byte", "char", "short", "ushort", "int", "uint", "long", "ulong", "usize", "isize"};
+        "bool",   "byte", "char",   "short", "ushort", "int",
+        "uint",   "long", "ulong",  "usize", "isize",  "float",
+        "double"};
     return scalars.count(spec->name) != 0;
 }
 }  // namespace
@@ -187,6 +192,16 @@ bool is_scalar_const_type(const TypeSpec* spec) {
             // declarations of its selected arm before the loop moves on. `current_consts` follows the
             // text order, so a later constant is not visible to an earlier `#if` (SPEC 5.1).
             UserConstTable current_consts;
+            // Visible to a `sizeof` pre-resolution that happens while this walk runs (#82).
+            struct CollectConstsGuard {
+                const UserConstTable*& slot;
+                const UserConstTable* saved;
+                explicit CollectConstsGuard(const UserConstTable*& s, const UserConstTable* v)
+                    : slot(s), saved(s) {
+                    slot = v;
+                }
+                ~CollectConstsGuard() { slot = saved; }
+            } collect_guard(collect_consts_, &current_consts);
             for (size_t di = 0; di < u->decls.size();) {
                 if (auto* dd = dynamic_cast<DirectiveDecl*>(u->decls[di].get())) {
                     // Evaluate the arms with the constants visible at this point: the public constants
@@ -239,6 +254,30 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                     ui.structs[s->name] = s;
                 } else if (auto e = dynamic_cast<EnumDecl*>(d.get())) {
                     ui.enums[e->name] = e;
+                    // Enum members are compile-time constants (SPEC 3.7.2), and `#if` uses the same name
+                    // resolution (SPEC 9.2). Each member is visible under both of its spellings: the
+                    // unqualified `Red` (members share the unit's unqualified namespace) and the
+                    // qualified `Color.Red`.
+                    {
+                        long long v = 0;
+                        bool has = false;
+                        for (auto& [m, val] : e->members) {
+                            if (val) {
+                                v = *val;
+                                has = true;
+                            } else if (has) {
+                                v += 1;
+                            } else {
+                                v = 0;
+                                has = true;
+                            }
+                            UserConst uc;
+                            uc.value = v;
+                            uc.enum_ns = e->name;  // keeps the enum identity for `#if` comparisons
+                            current_consts.emplace(m, uc);
+                            current_consts[e->name + "." + m] = uc;
+                        }
+                    }
                 } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
                     if (ui.classes.count(c->name)) err("duplicate definition of class `" + c->name + "`", c);
                     ui.classes[c->name] = c;
@@ -264,8 +303,22 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                             if (auto* ie = dynamic_cast<InitExpr*>(g->init.get()); ie && ie->expr) {
                                 UserConst uc;
                                 std::string why;
-                                if (eval_user_const(*ie->expr, current_consts, uc, why)) {
-                                    if (g->spec->name == "bool") uc.is_bool = true;
+                                // The initializer sees exactly what a `#if` at this position sees: this
+                                // unit's constants declared so far plus the `public const`s (and public
+                                // enum members) of the `use`d units, so `use dep; const int ALIAS = K + 1;`
+                                // folds (#81).
+                                const DirectiveScope init_scope = directive_scope(u.get(), &current_consts, g->line);
+                                if (eval_user_const(*ie->expr, init_scope.table, uc, why)) {
+                                    // The declared type fixes the width every later use folds at.
+                                    const std::string& tn = g->spec->name;
+                                    uc.is_bool = tn == "bool";
+                                    uc.bits = tn == "byte" || tn == "char" || tn == "bool"    ? 8
+                                              : tn == "short" || tn == "ushort"              ? 16
+                                              : tn == "long" || tn == "ulong" || tn == "usize" ||
+                                                        tn == "isize"                        ? 64
+                                                                                            : 32;
+                                    uc.is_signed = tn != "uint" && tn != "ulong" && tn != "usize" &&
+                                                   tn != "byte";
                                     current_consts[g->name] = uc;
                                     have = true;
                                 }
@@ -306,6 +359,15 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                     if (auto* g = dynamic_cast<GlobalVar*>(d.get()); g && g->is_const && g->is_public) {
                         auto it = current_consts.find(g->name);
                         if (it != current_consts.end()) pub[g->name] = it->second;
+                    } else if (auto* e = dynamic_cast<EnumDecl*>(d.get()); e && e->is_public) {
+                        // A public enum exports its members (`dep.Red`, `dep.Color.Red`), like a public
+                        // `const` exports its value.
+                        for (auto& [m, val] : e->members) {
+                            auto it = current_consts.find(e->name + "." + m);
+                            if (it == current_consts.end()) continue;
+                            pub[m] = it->second;
+                            pub[e->name + "." + m] = it->second;
+                        }
                     }
                 }
                 register_unit_public_consts(u->name, pub);
@@ -695,100 +757,59 @@ bool is_scalar_const_type(const TypeSpec* spec) {
         c->fields_resolved = true;
     }
 
-    bool Sema::eval_const_int(Expr* e, long long& out) {
+    bool Sema::eval_const_int(Expr* e, long long& out, int* bits, bool* sgn) {
         if (!e) return false;
-        if (auto il = dynamic_cast<IntLit*>(e)) {
-            out = il->value;
-            return true;
-        }
-        if (auto cl = dynamic_cast<CharLit*>(e)) {
-            out = cl->value;
-            return true;
-        }
-        // A unit-level compile-time constant (SPEC 3.3.2: `step`, `align(N)`, `switch` ranges and array
-        // lengths accept one). A local of the same name shadows it and is not a compile-time value.
-        if (auto* nm = dynamic_cast<Name*>(e)) {
-            if (lookup_local(nm->ident)) return false;
-            if (auto* t = directive_const_table()) {
-                auto it = t->find(nm->ident);
-                if (it != t->end() && !it->second.is_bool) {
-                    out = it->second.value;
-                    return true;
-                }
-            }
-            return false;
-        }
-        // `std.comptime.ptr_bits` (and the enum members `std.comptime.OS.Windows`).
-        if (auto* mem = dynamic_cast<Member*>(e)) {
-            const std::string full = expr_dotted_name(*mem);
-            if (!full.empty()) {
-                if (auto* t = directive_const_table()) {
-                    auto it = t->find(full);
-                    if (it != t->end() && !it->second.is_bool) {
-                        out = it->second.value;
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-        if (auto u = dynamic_cast<Unary*>(e)) {
-            long long v = 0;
-            if (!eval_const_int(u->operand.get(), v)) return false;
-            if (u->op == "-") {
-                // `-LLONG_MIN` has no 64-bit result; the host would trap, and reporting "not a constant"
-                // lets the caller produce the ordinary diagnostic.
-                if (v == std::numeric_limits<long long>::min()) return false;
-                out = -v;
-                return true;
-            }
-            if (u->op == "+") {
-                out = v;
-                return true;
-            }
-            return false;
-        }
-        if (auto c = dynamic_cast<Cast*>(e)) return eval_const_int(c->expr.get(), out);
-        if (auto b = dynamic_cast<Binary*>(e)) {
-            long long l = 0, r = 0;
-            if (!eval_const_int(b->left.get(), l) || !eval_const_int(b->right.get(), r)) {
-                return false;
-            }
-            // The folding is host C++ code, so it must not invoke undefined behaviour: `l + r` on
-            // overflowing operands and `l / -1` on LLONG_MIN are UB (the latter traps on x86), and an
-            // evaluator that crashes the compiler on a `const` initializer is not a diagnostic
-            // (#70, #78). Sums, differences and products wrap through unsigned arithmetic, which is
-            // defined; the language-level width (`int` vs `long`) is a separate check.
-            const std::string& op = b->op;
-            const auto ul = static_cast<unsigned long long>(l);
-            const auto ur = static_cast<unsigned long long>(r);
-            if (op == "+") out = static_cast<long long>(ul + ur);
-            else if (op == "-") out = static_cast<long long>(ul - ur);
-            else if (op == "*") out = static_cast<long long>(ul * ur);
-            else if (op == "/") {
-                if (r == 0) return false;
-                if (l == std::numeric_limits<long long>::min() && r == -1) return false;
-                out = l / r;
-            } else if (op == "%") {
-                if (r == 0) return false;
-                if (l == std::numeric_limits<long long>::min() && r == -1) return false;
-                out = l % r;
-            } else if (op == "<<") {
-                if (r < 0 || r > 63) return false;
-                out = static_cast<long long>(ul << r);
-            } else if (op == ">>") {
-                if (r < 0 || r > 63) return false;
-                out = l >> r;
-            } else if (op == "&") out = l & r;
-            else if (op == "|") out = l | r;
-            else if (op == "^") out = l ^ r;
-            else return false;
-            return true;
-        }
-        return false;
+        // One evaluator: the language fixes a single constant-expression evaluator (SPEC 3.7.2) and it
+        // knows the integer width of every operand, so `const int MAX = 2147483647; MAX + 1` wraps at 32
+        // bits here exactly as it does in `#if` (#76). The `#if` evaluator in directive.cpp is that one.
+        static const UserConstTable kEmpty;
+        const UserConstTable* table = directive_const_table();
+        UserConst uc;
+        std::string why;
+        if (!eval_user_const(*e, table ? *table : kEmpty, uc, why)) return false;
+        if (uc.is_float) return false;  // an array length / `step` / `align(N)` is an integer
+        out = uc.value;
+        if (bits) *bits = uc.bits;
+        if (sgn) *sgn = uc.is_signed;
+        return true;
     }
 
     bool Sema::is_pow2(long long n) { return n > 0 && (n & (n - 1)) == 0; }
+
+    void Sema::prune_unreachable_units() {
+        std::unordered_map<std::string, const Unit*> by_name;
+        for (auto& u : units_) by_name[u->name] = u.get();
+
+        std::unordered_set<std::string> reachable;
+        std::vector<const Unit*> work;
+        for (auto& u : units_) {
+            // The entry unit, and the standard library units that are implicit dependencies of every
+            // program (string literals, exceptions).
+            if (u->name == entry_ || u->name.compare(0, 4, "std.") == 0) work.push_back(u.get());
+        }
+        while (!work.empty()) {
+            const Unit* u = work.back();
+            work.pop_back();
+            if (!reachable.insert(u->name).second) continue;
+            for (auto& use : u->uses) {
+                auto it = by_name.find(use->unit_name);
+                if (it != by_name.end()) work.push_back(it->second);
+            }
+        }
+
+        // The loader preloads the units named by *every* arm of a `#if` (their constants may be needed by
+        // a later condition), but SPEC 9.2 says an unselected arm does not join the dependency graph. The
+        // arms are selected now, so the leftovers are dropped instead of being semantically checked (#80).
+        units_.erase(std::remove_if(units_.begin(), units_.end(),
+                                    [&](const std::unique_ptr<Unit>& u) {
+                                        return !reachable.count(u->name);
+                                    }),
+                     units_.end());
+        for (auto it = infos_.begin(); it != infos_.end();) {
+            if (!reachable.count(it->first)) it = infos_.erase(it);
+            else ++it;
+        }
+    }
 
     void Sema::check_layouts() {
         // First pass: evaluate align(N) and check for a positive power of two
@@ -1421,6 +1442,7 @@ Sema::Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool sin
 
 Program Sema::run() {
     collect();
+    prune_unreachable_units();
     place_structs();
     for (auto& u : units_) resolve_unit_types(u.get());
     // A `const T` view is a copy of the type node (cv lives on the node), taken while T may still have

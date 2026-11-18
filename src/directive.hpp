@@ -45,6 +45,15 @@ bool builtin_const(const std::string& name, long long& value);
 struct UserConst {
     long long value = 0;
     bool is_bool = false;
+    // A `const float` / `const double` is a compile-time constant too (SPEC 3.7.2 lists floating-point
+    // literals), so the table keeps the exact value; `value` stays 0 for it.
+    bool is_float = false;
+    double fvalue = 0.0;
+    // Integer width of the declared type (`int` = 32, `long` = 64, ...) and its signedness. Constant
+    // folding follows the language's arithmetic: `const int MAX = 2147483647; MAX + 1` wraps to a
+    // negative 32-bit value, exactly as the same expression would at run time (#71, #76).
+    int bits = 64;
+    bool is_signed = true;
     // Non-empty when the constant is an enum value (`os`, `OS.Windows`): the evaluator keeps the
     // enum identity so `#if` compares enum values only with the same enum type.
     std::string enum_ns;

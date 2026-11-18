@@ -27,6 +27,45 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 201 — 2026-11-18
+
+**`#if` and the constant evaluator follow the language's own rules** (the build-196 audit batch).
+
+- **Enum members are compile-time constants in `#if`** (#72): `collect` registers every member under both
+  spellings (`Color.Red`, bare `Red`) with its enum identity, and a `public` enum exports them like a
+  `public const`.
+- **No arithmetic on enum values without `as`** (#73): the evaluator rejected mismatched enums but folded
+  same-enum `+`/`*`/… on the member indices, so `OS.Windows + OS.Linux` silently selected a platform arm.
+- **Floating-point constants are constants** (#74): `UserConst` carries a float value, so
+  `const double VALUE = 1.5; #if VALUE > 1.0` works; a `float`/`double` `const` is registered at all.
+- **float32 literals round before comparing** (#79): `16777217.0f == 16777216.0` is true in `#if`, as it is
+  at run time.
+- **Constant folding keeps the integer width** (#70, #71, #76): every value carries its width and
+  signedness (a literal is the narrowest of 32/64 bits that holds it, a `const` takes its declared type),
+  arithmetic folds at the wider operand's width through unsigned arithmetic (defined wrap) and narrows
+  back. `const int MAX = 2147483647; #if MAX + 1 == MIN` takes the wrap arm, and `int[MAX + 1] a;` is
+  rejected as a negative length. This also removes the remaining host UB in the evaluator.
+- **One evaluator**: `Sema::eval_const_int` (array lengths, `step`, `align(N)`, switch ranges) now delegates
+  to the `#if` evaluator, so the two paths can no longer disagree — which is how #76 and #82 diverged.
+- **`3.9 as int` folds** (#77).
+- **A `sizeof` that resolves a struct early sees the current constants** (#82): the array bounds inside the
+  struct are evaluated while `collect` walks the unit, so `directive_const_table()` returns the collect-time
+  table there. The same change fixes a `sizeof(class)` crash and the class-ordering regression (#75, build
+  200).
+- **A public `const` alias of an imported constant folds** (#81): a `const` initializer now sees the same
+  merged scope a `#if` at that position sees.
+- **A `use` in an unselected `#if` arm does not join the program** (#80): the loader still preloads every
+  arm's candidates (a later condition may need their constants), but `collect` finishes arm selection and
+  `prune_unreachable_units` drops whatever the entry can no longer reach, so a broken unit in a dead arm is
+  not checked.
+- **`parse_triple` accepts `macosx<version>`** (#83) and the link-output check decides the expected object
+  format from the parsed OS (#84), so `x86_64-w64-mingw32` is PE/COFF rather than "expected ELF".
+- Tests: `if_int_wrap`, `if_long_wrap`, `if_float32_literal` (run), `if_enum_arith`,
+  `array_len_int_overflow` (must-fail), `if_enum_member`, `if_float_const`, `array_len_float_cast`,
+  `sizeof_struct_const_bound` (check).
+
+Full suite: 767/767 (286 run, 433 must-fail, 34 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 200 — 2026-11-18
 
 **Two compiler crashes in constant folding.**

@@ -399,7 +399,12 @@ static TargetInfo parse_triple(const std::string& triple) {
         if (!info.os.empty()) continue;
         if (p.find("windows") != std::string::npos || p.find("mingw") != std::string::npos) info.os = "windows";
         else if (p == "linux" || p == "android") info.os = "linux";
-        else if (p == "macos" || p == "ios" || p.rfind("darwin", 0) == 0) info.os = "macos";
+        else if (p == "macos" || p.rfind("macosx", 0) == 0 || p == "ios" ||
+                 p.rfind("darwin", 0) == 0) {
+            // `x86_64-apple-macosx14.0.0` is the spelling LLVM and clang use for a macOS target; the
+            // version follows the OS name (#83).
+            info.os = "macos";
+        }
     }
     // The environment is the last component, but only when it is an environment: in
     // `x86_64-unknown-linux` the last component is the OS.
@@ -459,8 +464,11 @@ static void check_output_format(const fs::path& out, const std::string& target) 
     const bool macho = got >= 4 && ((magic[0] == 0xFE && magic[1] == 0xED && magic[2] == 0xFA && (magic[3] == 0xCE or magic[3] == 0xCF)) or
                                     (magic[0] == 0xCF && magic[1] == 0xFA && magic[2] == 0xED && magic[3] == 0xFE) or
                                     (magic[0] == 0xCA && magic[1] == 0xFE && magic[2] == 0xBA && magic[3] == 0xBE));
-    const bool want_pe = target.find("windows") != std::string::npos;
-    const bool want_elf = !want_pe && target.find("darwin") == std::string::npos;
+    // Use the same triple parser the rest of the driver uses: `x86_64-w64-mingw32` is Windows even
+    // though the string never says "windows", and `x86_64-apple-macosx14.0.0` is Mach-O (#84, #83).
+    const std::string want_os = parse_triple(target).os;
+    const bool want_pe = want_os == "windows";
+    const bool want_elf = want_os == "linux" || want_os.empty();
     const bool ok = want_pe ? pe : (want_elf ? elf : macho);
     if (!ok) {
         throw MuError("the link driver produced the wrong object format for target `" + target +

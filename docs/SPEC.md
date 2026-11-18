@@ -661,6 +661,13 @@ endpoints, and `#if` conditions (9.2).
   an error: `B` is not declared yet).
 - Built-in `sizeof(T)` / `alignof(T)`: the result is `isize`; assigning it to `int` and similar types
   requires an explicit `as` (`const int W = sizeof(int) as int;`).
+- **Integer width is part of the fold.** A value carries the width of its type: an integer literal is the
+  narrowest of `int` (32) and `long` (64) that holds it, a named constant takes its declared type, and a
+  binary operation runs at the wider operand's width (unsigned if either side is unsigned). An addition
+  that overflows wraps at that width (8.2), so `const int MAX = 2147483647; MAX + 1` is negative and cannot
+  be an array length.
+- Enum members are compile-time constants under both spellings (`Color.Red` and the bare `Red`); they
+  compare with values of the same enum only, and arithmetic on them needs an explicit `as int`.
 - Errors: division by zero / modulo by zero, signed division/remainder overflow (`MIN / -1`), a reference to
   a constant that is not yet evaluated (self-reference or a failed initializer), and nesting depth above 512.
 - In constant expressions `and` / `or` **evaluate both sides** (at runtime they short-circuit); therefore

@@ -81,6 +81,7 @@ namespace muc_detail {
 
     const UserConstTable* Sema::directive_const_table() {
         if (!cur_) return nullptr;
+        if (collect_consts_) return collect_consts_;  // still collecting: text order, see the member
         if (const_table_unit_ != cur_) {
             const_table_unit_ = cur_;
             const_table_ = directive_scope(cur_, unit_all_consts(cur_->name)).table;

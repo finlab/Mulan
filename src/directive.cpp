@@ -11,6 +11,7 @@
 // message that says what to write instead.
 #include "directive.hpp"
 
+#include <algorithm>
 #include <climits>
 #include <string>
 #include <vector>
@@ -40,7 +41,22 @@ struct V {
     // The enum a value came from (`OS`, `Arch`, `Abi`, `Endian`), empty for plain numbers and bools.
     // `#if` follows the same rule as ordinary code: enum values compare only with the same enum.
     std::string enum_ns;
+    // Integer width of the value: an `int` operand wraps at 32 bits, a `long` at 64. Constant folding
+    // must follow the language's arithmetic, or `#if MAX + 1 == MIN` with `const int`s answers as if the
+    // sum were 64-bit (#71, #70, #76).
+    int bits = 32;
+    bool is_signed = true;
 };
+
+// Two's-complement wrap to `bits`, the layout the language fixes for integer arithmetic (SPEC 8.2).
+long long wrap_to(long long v, int bits, bool is_signed) {
+    if (bits >= 64) return v;
+    if (bits <= 0) bits = 32;
+    const unsigned long long mask = (1ull << bits) - 1;
+    unsigned long long u = static_cast<unsigned long long>(v) & mask;
+    if (is_signed && (u >> (bits - 1)) & 1ull) u |= ~mask;
+    return static_cast<long long>(u);
+}
 
 V vint(long long x) {
     V v;
@@ -168,6 +184,15 @@ bool eval_binary(const Binary& b, V& out, std::string& why) {
         out = vbool(res);
         return true;
     }
+    // Equality and ordering above accept two values of the same enum; everything below is arithmetic
+    // or bit manipulation, which ordinary code rejects on an enum without an explicit `as` (SPEC 3.7.2),
+    // and `#if` follows the same rules (#73). Without this, `OS.Windows + OS.Linux` silently read the
+    // member indices as integers and selected a platform arm that the type system would not allow.
+    if (!l.enum_ns.empty() || !r.enum_ns.empty()) {
+        why = "`" + op + "` needs integers in a `#if` condition; an enum value must be converted "
+              "explicitly (write `X as int`)";
+        return false;
+    }
     // Integer arithmetic (floats are accepted for the four basic operators only).
     const bool arith = op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
     if (arith && (l.k == VK::Float || r.k == VK::Float)) {
@@ -197,16 +222,33 @@ bool eval_binary(const Binary& b, V& out, std::string& why) {
             why = "signed overflow in a `#if` condition (the most negative value divided by -1)";
             return false;
         }
-        if (op == "+") out = vint(l.i + r.i);
-        else if (op == "-") out = vint(l.i - r.i);
-        else if (op == "*") out = vint(l.i * r.i);
-        else if (op == "/") out = vint(l.i / r.i);
-        else if (op == "%") out = vint(l.i % r.i);
-        else if (op == "&") out = vint(l.i & r.i);
-        else if (op == "|") out = vint(l.i | r.i);
-        else if (op == "^") out = vint(l.i ^ r.i);
-        else if (op == "<<") out = vint(l.i << r.i);
-        else out = vint(l.i >> r.i);
+        // The common integer type of the operands: the wider one, unsigned if either is unsigned. The
+        // operation runs in `long long` through unsigned arithmetic (well-defined wrap) and is then
+        // narrowed to that type, which is what the runtime would produce (#70, #71).
+        const int bits = std::max(l.bits, r.bits);
+        const bool sgn = l.is_signed && r.is_signed;
+        long long res = 0;
+        if (op == "+") res = static_cast<long long>(static_cast<unsigned long long>(l.i) +
+                                                    static_cast<unsigned long long>(r.i));
+        else if (op == "-") res = static_cast<long long>(static_cast<unsigned long long>(l.i) -
+                                                         static_cast<unsigned long long>(r.i));
+        else if (op == "*") res = static_cast<long long>(static_cast<unsigned long long>(l.i) *
+                                                         static_cast<unsigned long long>(r.i));
+        else if (op == "/") res = l.i / r.i;
+        else if (op == "%") res = l.i % r.i;
+        else if (op == "&") res = l.i & r.i;
+        else if (op == "|") res = l.i | r.i;
+        else if (op == "^") res = l.i ^ r.i;
+        else if (op == "<<") {
+            if (r.i < 0 || r.i >= bits) {
+                why = "shift count out of range in a `#if` condition";
+                return false;
+            }
+            res = static_cast<long long>(static_cast<unsigned long long>(l.i) << r.i);
+        } else res = l.i >> r.i;
+        out = vint(wrap_to(res, bits, sgn));
+        out.bits = bits;
+        out.is_signed = sgn;
         return true;
     }
     why = "`" + op + "` is not allowed in a `#if` condition";
@@ -224,6 +266,10 @@ bool g_comptime_visible = true;
 bool eval(const Expr& e, V& out, std::string& why) {
     if (const auto* p = dynamic_cast<const IntLit*>(&e)) {
         out = vint(p->value);
+        // A literal takes the narrowest of the two fixed widths that holds it: `1` is an `int`, a value
+        // past the 32-bit range is a `long` (SPEC 3.2 fixes `int`/`long` at 32/64 bits and gives no
+        // suffix). Without this, `-9223372036854775807 - 1` would be narrowed to 32 bits (#70).
+        out.bits = (p->value >= -2147483647LL - 1 && p->value <= 2147483647LL) ? 32 : 64;
         return true;
     }
     if (const auto* p = dynamic_cast<const CharLit*>(&e)) {
@@ -235,7 +281,9 @@ bool eval(const Expr& e, V& out, std::string& why) {
         return true;
     }
     if (const auto* p = dynamic_cast<const FloatLit*>(&e)) {
-        out = vflt(p->value);
+        // 16777217.0f is a float32 literal: round it before the comparison, exactly as the runtime
+        // does, or #if 16777217.0f == 16777216.0 disagrees with the same test in ordinary code (#79).
+        out = vflt(p->is_float32 ? static_cast<double>(static_cast<float>(p->value)) : p->value);
         return true;
     }
     if (const auto* p = dynamic_cast<const Name*>(&e)) {
@@ -249,8 +297,12 @@ bool eval(const Expr& e, V& out, std::string& why) {
         if (g_user_consts) {
             auto it = g_user_consts->find(p->ident);
             if (it != g_user_consts->end()) {
-                out = it->second.is_bool ? vbool(it->second.value != 0) : vint(it->second.value);
+                out = it->second.is_float  ? vflt(it->second.fvalue)
+                      : it->second.is_bool ? vbool(it->second.value != 0)
+                                           : vint(it->second.value);
                 out.enum_ns = it->second.enum_ns;
+                out.bits = it->second.is_bool ? 1 : it->second.bits;
+                out.is_signed = it->second.is_signed;
                 return true;
             }
         }
@@ -264,8 +316,12 @@ bool eval(const Expr& e, V& out, std::string& why) {
         if (!full.empty() && g_user_consts) {
             auto it = g_user_consts->find(full);
             if (it != g_user_consts->end()) {
-                out = it->second.is_bool ? vbool(it->second.value != 0) : vint(it->second.value);
+                out = it->second.is_float  ? vflt(it->second.fvalue)
+                      : it->second.is_bool ? vbool(it->second.value != 0)
+                                           : vint(it->second.value);
                 out.enum_ns = it->second.enum_ns;
+                out.bits = it->second.is_bool ? 1 : it->second.bits;
+                out.is_signed = it->second.is_signed;
                 return true;
             }
         }
@@ -295,8 +351,8 @@ bool eval(const Expr& e, V& out, std::string& why) {
         }
         if (v.k == VK::Int) {
             if (p->op == "+") { out = v; return true; }
-            if (p->op == "-") { out = vint(-v.i); return true; }
-            if (p->op == "~") { out = vint(~v.i); return true; }
+            if (p->op == "-") { out = vint(wrap_to(static_cast<long long>(0ull - static_cast<unsigned long long>(v.i)), v.bits, v.is_signed)); out.bits = v.bits; out.is_signed = v.is_signed; return true; }
+            if (p->op == "~") { out = vint(wrap_to(~v.i, v.bits, v.is_signed)); out.bits = v.bits; out.is_signed = v.is_signed; return true; }
         }
         if (v.k == VK::Float && (p->op == "+" || p->op == "-")) {
             out = vflt(p->op == "-" ? -v.f : v.f);
@@ -313,7 +369,15 @@ bool eval(const Expr& e, V& out, std::string& why) {
             why = "a `#if` condition only supports `as` to an integer type";
             return false;
         }
-        out = vint(v.k == VK::Float ? static_cast<long long>(v.f) : v.i);
+        const std::string& n = p->spec->name;
+        const int bits = n == "byte" || n == "char" || n == "bool"  ? 8
+                         : n == "short" || n == "ushort"            ? 16
+                         : n == "long" || n == "ulong" || n == "usize" || n == "isize" ? 64
+                                                                    : 32;
+        const bool sgn = n != "uint" && n != "ulong" && n != "usize" && n != "byte" && n != "bool";
+        out = vint(wrap_to(v.k == VK::Float ? static_cast<long long>(v.f) : v.i, bits, sgn));
+        out.bits = bits;
+        out.is_signed = sgn;
         return true;
     }
     if (dynamic_cast<const SizeofExpr*>(&e)) {
@@ -441,6 +505,9 @@ bool eval_user_const(const Expr& e, const UserConstTable& table, UserConst& out,
     if (!ok) return false;
     out.is_bool = v.k == VK::Bool;
     out.value = v.k == VK::Bool ? (v.i != 0 ? 1 : 0) : v.i;
+    out.is_float = v.k == VK::Float;
+    out.fvalue = v.k == VK::Float ? v.f : 0.0;
+    out.enum_ns = v.enum_ns;
     return true;
 }
 
@@ -450,21 +517,22 @@ void add_builtin_constants(UserConstTable& table) {    static const char* ints[]
     static const char* enums[] = {"OS", "Arch", "Abi", "Endian"};
     for (const char* n : ints) {
         long long v = 0;
-        if (builtin_const(n, v)) table[n] = UserConst{v, false, {}};
+        if (builtin_const(n, v)) table[n] = UserConst{v, false, false, 0.0, 64, true, {}};
     }
     for (const char* n : bools) {
         long long v = 0;
-        if (builtin_const(n, v)) table[n] = UserConst{v, true, {}};
+        if (builtin_const(n, v)) table[n] = UserConst{v, true, false, 0.0, 1, true, {}};
     }
     for (size_t i = 0; i < 4; ++i) {
         long long v = 0;
-        if (builtin_const(targets[i], v)) table[targets[i]] = UserConst{v, false, enums[i]};
+        if (builtin_const(targets[i], v)) table[targets[i]] = UserConst{v, false, false, 0.0, 32, true, enums[i]};
     }
     for (const char* n : enums) {
         std::vector<std::string> members;
         if (!builtin_enum_members(n, members)) continue;
         for (size_t i = 0; i < members.size(); ++i) {
-            table[std::string(n) + "." + members[i]] = UserConst{static_cast<long long>(i), false, n};
+            table[std::string(n) + "." + members[i]] =
+                UserConst{static_cast<long long>(i), false, false, 0.0, 32, true, n};
         }
     }
 }

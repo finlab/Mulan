@@ -149,6 +149,10 @@ private:
     // Cache for `directive_const_table()` (one table per unit being checked).
     Unit* const_table_unit_ = nullptr;
     UserConstTable const_table_;
+    // While `collect` walks a unit's declarations, the constants declared so far are the visible ones
+    // (text order). A `sizeof(struct)` in a const initializer resolves that struct's fields right there,
+    // and an array bound inside it (`struct S { int[N] v; }`) needs this table (#82).
+    const UserConstTable* collect_consts_ = nullptr;
     // Every `const T` view created by `resolve_type`, grouped by its canonical type (`cv_views_[T]`).
     // `refresh_cv_views` copies the final shape of T into each view. Both sides are weak/shared on
     // purpose: a view is often a temporary (a discarded conversion probe), and the map keeps the
@@ -380,12 +384,16 @@ private:
     // The final layout of packed / align(N) is computed by type_align/type_size in types.cpp;
     // here we only evaluate N, check N against the natural alignment, and enforce the packed field type restrictions.
 
-    bool eval_const_int(Expr* e, long long& out);
+    // `bits` / `sgn` report the width of the folded value (32 for an `int` operand, 64 for a `long`).
+    bool eval_const_int(Expr* e, long long& out, int* bits = nullptr, bool* sgn = nullptr);
 
     static bool is_pow2(long long n);
 
     void check_layouts();
     void check_instance_layouts();
+    // Drops the units that are no longer reachable from the entry through `use` after `collect` spliced
+    // the selected `#if` arms: a `use` in an unselected arm must not pull its unit into the program.
+    void prune_unreachable_units();
 
     // Type-level compile-time constants: resolve the type and check that "only scalars / enums are allowed"
     void resolve_const_members(std::vector<std::unique_ptr<ConstMember>>& list,
