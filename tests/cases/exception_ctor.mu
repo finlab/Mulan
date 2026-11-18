@@ -5,7 +5,7 @@ extern int printf(const char* fmt, ...);
 int live = 0;
 
 class Boom : Exception {
-    Boom(string m) { super(m); }
+    Boom(string m) : Exception(m) { }
 }
 
 class C {

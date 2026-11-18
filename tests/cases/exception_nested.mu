@@ -3,11 +3,11 @@ unit exception_nested;
 extern int puts(const char* s);
 
 class BaseErr : Exception {
-    BaseErr(string msg) { super(msg); }
+    BaseErr(string msg) : Exception(msg) { }
 }
 
 class OtherErr : Exception {
-    OtherErr(string msg) { super(msg); }
+    OtherErr(string msg) : Exception(msg) { }
 }
 
 int main() {

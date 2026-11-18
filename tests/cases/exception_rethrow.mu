@@ -4,7 +4,7 @@ extern int printf(const char* fmt, ...);
 
 class BaseErr : Exception {
     int code;
-    BaseErr(string msg, int c) { super(msg); code = c; }
+    BaseErr(string msg, int c) : Exception(msg) { code = c; }
 }
 
 int main() {

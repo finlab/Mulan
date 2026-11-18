@@ -1,1 +1,1 @@
-constructor must call `super(...)` as its first statement
+has no parameterless constructor; initialize it as `: A(...)`

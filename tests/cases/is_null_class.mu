@@ -4,7 +4,7 @@ use std.cstdio;
 // `is` is a safe runtime test (SPEC 10.1.2): a null receiver matches nothing and must not be
 // dereferenced for the descriptor (the C-shaped lowering used to GEP null + 8 and crash).
 class Animal { public int legs; Animal(int n) { legs = n; } }
-class Cat : Animal { Cat() { super(4); } }
+class Cat : Animal { Cat() : Animal(4) { } }
 
 int main() {
     Animal a = null;

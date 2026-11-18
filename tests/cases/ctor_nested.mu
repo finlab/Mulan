@@ -25,8 +25,7 @@ class Base {
 
 class Derived : Base {
     public S ds;
-    Derived() {
-        super();
+    Derived() : Base() {
         printf("derived %d %d\n", bs.x, ds.x);
     }
 }

@@ -3,11 +3,11 @@ unit finally_throw_catch;
 extern int printf(const char* fmt, ...);
 
 class A : Exception {
-    A() { super("a"); }
+    A() : Exception("a") { }
 }
 
 class B : Exception {
-    B() { super("b"); }
+    B() : Exception("b") { }
 }
 
 int main() {

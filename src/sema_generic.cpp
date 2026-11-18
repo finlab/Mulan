@@ -548,8 +548,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             int saved_loop = loop_depth_;
             bool saved_in_ctor = in_ctor_;
             bool saved_in_dtor = in_dtor_;
-            bool saved_super = super_ok_;
-            Expr* saved_direct = direct_init_expr_;
+                Expr* saved_direct = direct_init_expr_;
             Unit* saved_unit = cur_;
 
             cur_ = tmpl_unit_ptr;
@@ -565,8 +564,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             loop_depth_ = saved_loop;
             in_ctor_ = saved_in_ctor;
             in_dtor_ = saved_in_dtor;
-            super_ok_ = saved_super;
-            direct_init_expr_ = saved_direct;
+                direct_init_expr_ = saved_direct;
             cur_ = saved_unit;
         }
 
@@ -731,7 +729,6 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         int saved_loop = loop_depth_;
         bool saved_in_ctor = in_ctor_;
         bool saved_in_dtor = in_dtor_;
-        bool saved_super = super_ok_;
         Expr* saved_direct = direct_init_expr_;
         Unit* saved_unit = cur_;
 
@@ -753,7 +750,6 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         loop_depth_ = saved_loop;
         in_ctor_ = saved_in_ctor;
         in_dtor_ = saved_in_dtor;
-        super_ok_ = saved_super;
         direct_init_expr_ = saved_direct;
         cur_ = saved_unit;
     }
@@ -882,7 +878,6 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     int saved_loop = loop_depth_;
     bool saved_in_ctor = in_ctor_;
     bool saved_in_dtor = in_dtor_;
-    bool saved_super = super_ok_;
     Expr* saved_direct = direct_init_expr_;
     Unit* saved_cur = cur_;
 
@@ -902,7 +897,6 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
         loop_depth_ = saved_loop;
         in_ctor_ = saved_in_ctor;
         in_dtor_ = saved_in_dtor;
-        super_ok_ = saved_super;
         direct_init_expr_ = saved_direct;
         cur_ = saved_cur;
     };

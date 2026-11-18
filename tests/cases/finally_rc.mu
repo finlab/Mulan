@@ -10,7 +10,7 @@ class Guard {
 }
 
 class E : Exception {
-    E() { super("e"); }
+    E() : Exception("e") { }
 }
 
 int main() {

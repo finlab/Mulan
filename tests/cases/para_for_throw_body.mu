@@ -3,7 +3,7 @@ unit para_for_throw_body;
 extern int printf(const char* fmt, ...);
 
 class Err : Exception {
-    Err() { super("item"); }
+    Err() : Exception("item") { }
 }
 
 int main() {

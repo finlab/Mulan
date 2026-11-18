@@ -954,23 +954,11 @@ namespace muc_detail {
     }
 
     TypePtr Sema::check_super_call(Call* c) {
-        if (!in_ctor_ || !super_ok_) {
-            err("`super(...)` must be the first statement of a constructor", c);
-        }
-        if (!cur_class_ || !cur_class_->base) err("the current class has no base class", c);
-        if (!c->named.empty()) err("constructor calls do not support named arguments", c);
-        const auto& ctors = cur_class_->base->ctors;
-        if (ctors.empty()) {
-            if (!c->args.empty()) err("base class has no matching constructor", c);
-        } else {
-            const auto* chosen = choose_ctor(ctors, raw_args(c->args), "base class", c);
-            for (size_t i = 0; i < c->args.size(); ++i) {
-                check_assign(c->args[i].get(), (*chosen)[i], "super argument");
-            }
-            c->ctor_pty = chosen;
-        }
-        c->callee_kind = "super";
-        return t_void();
+        // A base-class constructor call is a prologue item, not a statement (SPEC 3.12): the base runs
+        // before the members, which a body statement cannot express.
+        err("a base-class constructor call is not a statement: write it in the constructor's initializer "
+            "list — `Derived(args) : Base(args) { ... }` (SPEC 3.12)",
+            c);
     }
 
     [[noreturn]] void Sema::err_slice_elem_align(const TypePtr& elem, const Node* node) const {

@@ -31,8 +31,7 @@ class Box {
 }
 
 class Doubled : Box {
-    Doubled(isize n) {
-        super(n);
+    Doubled(isize n) : Box(n) {
     }
 
     // a virtual member operator: calls through a `Box` handle must reach this one

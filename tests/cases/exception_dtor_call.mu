@@ -5,7 +5,7 @@ extern int printf(const char* fmt, ...);
 int live = 0;
 
 class Err : Exception {
-    Err() { super("e"); }
+    Err() : Exception("e") { }
 }
 
 class Guard {

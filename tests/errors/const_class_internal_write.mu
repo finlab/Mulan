@@ -9,7 +9,7 @@ class Base {
 }
 
 const class Leaf : Base {
-    Leaf() { super(10); }
+    Leaf() : Base(10) { }
     void bump() { v = v + 5; }
 }
 

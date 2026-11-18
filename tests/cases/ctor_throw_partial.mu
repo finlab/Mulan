@@ -3,7 +3,7 @@ unit ctor_throw_partial;
 extern int printf(const char* fmt, ...);
 
 class Boom : Exception {
-    Boom(string m) { super(m); }
+    Boom(string m) : Exception(m) { }
 }
 
 int class_dtor = 0;
@@ -38,8 +38,7 @@ class Base {
 
 class Derived : Base {
     string extra;
-    Derived() {
-        super();
+    Derived() : Base() {
         extra = "derived";
         throw new Boom("derived");
     }
@@ -56,7 +55,7 @@ class BaseBoom {
 }
 
 class Derived2 : BaseBoom {
-    Derived2() { super(); }
+    Derived2() : BaseBoom() { }
     ~Derived2() { derived_dtor += 1; }
 }
 

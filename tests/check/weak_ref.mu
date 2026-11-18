@@ -28,7 +28,7 @@ class Shape : IShape {
 
 class Circle : Shape {
     int r;
-    Circle(int r0) { super(r0); r = r0; }
+    Circle(int r0) : Shape(r0) { r = r0; }
     override int area() { return 3 * r * r; }
 }
 

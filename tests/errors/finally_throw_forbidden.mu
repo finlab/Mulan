@@ -1,7 +1,7 @@
 unit finally_throw_forbidden;
 
 class E : Exception {
-    E() { super("e"); }
+    E() : Exception("e") { }
 }
 
 int main() {

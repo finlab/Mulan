@@ -11,12 +11,12 @@ class Shape : IShape {
 }
 class Rect : Shape {
     int w, h;
-    Rect(int a, int b) { super(2); w = a; h = b; }
+    Rect(int a, int b) : Shape(2) { w = a; h = b; }
     ~Rect() { }
     override int area() { return w * h; }
 }
 class Square : Rect {
-    Square(int s) { super(s, s); }
+    Square(int s) : Rect(s, s) { }
     ~Square() { }
 }
 class Box {

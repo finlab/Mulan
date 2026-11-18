@@ -2,7 +2,7 @@ unit class_forward_base;
 extern int puts(const char* s);
 class Derived : Base {
     int d;
-    Derived() { super(); d = 2; }
+    Derived() : Base() { d = 2; }
     ~Derived() { }
     int total() { return base_v() + d; }
 }

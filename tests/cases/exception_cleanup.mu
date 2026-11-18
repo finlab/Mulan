@@ -11,7 +11,7 @@ class Guard {
 }
 
 class Err : Exception {
-    Err() { super("e"); }
+    Err() : Exception("e") { }
 }
 
 int boom() {

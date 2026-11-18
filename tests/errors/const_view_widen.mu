@@ -9,7 +9,7 @@ class Base {
 }
 
 const class Leaf : Base {
-    Leaf() { super(1); }
+    Leaf() : Base(1) { }
 }
 
 int main() {

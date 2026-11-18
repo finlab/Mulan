@@ -3,7 +3,7 @@ unit exception_partial_nested;
 extern int printf(const char* fmt, ...);
 
 class Boom : Exception {
-    Boom(string m) { super(m); }
+    Boom(string m) : Exception(m) { }
 }
 
 // #24: the field whose constructor threw never completed, so its user destructor body must not run,

@@ -3,7 +3,7 @@ unit finally_catch;
 extern int printf(const char* fmt, ...);
 
 class E : Exception {
-    E(string m) { super(m); }
+    E(string m) : Exception(m) { }
 }
 
 int main() {

@@ -10,7 +10,7 @@ class Base<T> {
 }
 
 class Derived : Base<int> {
-    Derived() { super(0); }
+    Derived() : Base(0) { }
     override int f() { return 2; }
 }
 

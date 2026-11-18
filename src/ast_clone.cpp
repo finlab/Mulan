@@ -491,7 +491,13 @@ std::unique_ptr<CtorDecl> clone_ctor(const CtorDecl& c) {
     auto r = mk<CtorDecl>(c);
     r->params = clone_params(c.params);
     for (const auto& item : c.init_list) {
-        r->init_list.emplace_back(item.first, item.second ? clone_expr(*item.second) : nullptr);
+        CtorInit copy;
+        copy.kind = item.kind;
+        copy.name = item.name;
+        copy.line = item.line;
+        copy.col = item.col;
+        for (const auto& a : item.args) copy.args.push_back(a ? clone_expr(*a) : nullptr);
+        r->init_list.push_back(std::move(copy));
     }
     r->body = c.body ? clone_block(*c.body) : nullptr;
     r->is_public = c.is_public;

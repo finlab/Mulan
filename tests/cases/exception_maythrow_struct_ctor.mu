@@ -3,7 +3,7 @@ unit exception_maythrow_struct_ctor;
 extern int printf(const char* fmt, ...);
 
 class E : Exception {
-    E(string m) { super(m); }
+    E(string m) : Exception(m) { }
 }
 
 struct S {

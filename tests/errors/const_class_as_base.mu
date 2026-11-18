@@ -8,7 +8,7 @@ const class Base {
 }
 
 class Derived : Base {
-    Derived() { super(1); }
+    Derived() : Base(1) { }
 }
 
 int main() { return 0; }

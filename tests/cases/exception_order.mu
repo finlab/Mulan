@@ -4,11 +4,11 @@ extern int puts(const char* s);
 
 class BaseErr : Exception {
     int code;
-    BaseErr(string msg, int c) { super(msg); code = c; }
+    BaseErr(string msg, int c) : Exception(msg) { code = c; }
 }
 
 class SubErr : BaseErr {
-    SubErr(string msg, int c) { super(msg, c); }
+    SubErr(string msg, int c) : BaseErr(msg, c) { }
 }
 
 int main() {

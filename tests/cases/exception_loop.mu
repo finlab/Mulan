@@ -3,7 +3,7 @@ unit exception_loop;
 extern int printf(const char* fmt, ...);
 
 class Err : Exception {
-    Err() { super("loop"); }
+    Err() : Exception("loop") { }
 }
 
 int main() {

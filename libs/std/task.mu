@@ -29,8 +29,7 @@ public:
     TaskLimitError() {
     }
 
-    TaskLimitError(string msg) {
-        super(msg);
+    TaskLimitError(string msg) : Exception(msg) {
     }
 }
 

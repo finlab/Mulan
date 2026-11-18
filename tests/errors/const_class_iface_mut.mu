@@ -11,7 +11,7 @@ class Base : IMut {
 }
 
 const class Leaf : Base {
-    Leaf() { super(100); }
+    Leaf() : Base(100) { }
 }
 
 int main() {

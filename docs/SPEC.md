@@ -655,7 +655,7 @@ C++ model, with the deliberate omissions listed at the end of this section.
   - *Leaf.* A `const class` cannot be a base class: neither `class E : D` nor `const class D : const Base` is
     legal (reuse through composition — `const class D { Base b; }` — or through interfaces).
   - *Mutable base allowed, writable only while constructing.* `const class D : Base` is legal when `Base` is
-    mutable. The base constructor initialises that subobject (`super(x)` / `: Base(x)`), and the constructors
+    mutable. The base constructor initialises that subobject (`: Base(x)`), and the constructors
     and the destructor of `D` may also write it and call its non-`const` methods. **Constructing and destroying
     are the only writable phases**: once a constructor returns, nothing writes the object — not from outside,
     and not from the class's own method bodies either.
@@ -854,10 +854,7 @@ class Widget {
 
 class Button : Widget {
     string label;
-    Button(Rect b, string s) {
-        super(b);
-        label = s;
-    }
+    Button(Rect b, string s) : Widget(b) { label = s; }
     override void paint(Canvas c) { ... }
 }
 ```
@@ -867,10 +864,10 @@ class Button : Widget {
 - Methods are **static-dispatch by default** (build 160); a base class method that subclasses may replace must be declared `virtual`, and the replacement is written `override` with a signature that matches exactly. Overriding a non-virtual method is a compile error (methods are never silently shadowed).
 - Same name with a different signature → overload (see 3.11), not an override.
 - A class with unimplemented methods (declared only, without a body) is an **abstract class** and cannot be `new`ed; no `abstract` keyword is introduced.
-- An abstract class may have constructors, for derived classes to call via `super(...)`.
+- An abstract class may have constructors, for derived classes to call with `: Base(...)` in their initializer list (3.12).
 - A base class handle may point to a derived object (implicit upcast); converting a base class to a derived class requires an explicit `as`, which yields null on failure.
 - Virtual calls during construction are dispatched C++-style (see 3.12).
-- `super.m(...)` **only resolves along the class inheritance chain**; interface default methods cannot be called with `super` (error).
+- `super.m(...)` **only resolves along the class inheritance chain**; interface default methods cannot be called with `super` (error). `super` is only that qualified call form: a base-class **constructor** call is an initializer-list item (3.12).
 - No multiple inheritance and no `final`; a derived class may itself be inherited from.
 
 ### 3.10 Interfaces `interface`
@@ -1047,10 +1044,7 @@ class Widget {
 
 class Button : Widget {
     string label;
-    Button(Rect b, string s) {
-        super(b);          // must be the first statement
-        label = s;
-    }
+    Button(Rect b, string s) : Widget(b), label(s) { }
 }
 ```
 
@@ -1060,13 +1054,25 @@ class Button : Widget {
   constructor as the implicit conversion path (see 3.6). It must be `public`, and writing it in a class body or
   union is a compile error. The marker is contextual: `implicit` is a modifier only in front of a constructor name.
 - On allocation: the object's memory is fully zeroed, `rc = 1`, and the vtable points to the topmost base class.
-- **Member initializer list** (decided 2026-11-17): `C(int a) : x(a), y(a * 2) { ... }` initializes fields
-  before the body runs. It is the way to initialize `const` fields (3.7); every constructor must initialize
-  every `const` field exactly once, either in the list or through a default member initializer
-  (`const int x = 5;`). A missing initialization is a compile error. The same form is available to `struct`
-  constructors (3.4).
-- `super(args)` must be the first statement; if omitted, the base class's zero-argument constructor is called (an error if it does not exist).
-- Construction order: layer by layer `super` → derived field assignments (in the constructor body); on entering each constructor layer, the vtable is updated to that layer.
+- **The construction prologue** (decided 2026-11-17, unified 2026-11-18): the list after the parameter list,
+  `Ctor(params) : item, item, ...`, is the only place construction steps are written. An item is one of
+  - `Base(args)` — the **base constructor** call (the base class's name, first item of the base list);
+  - `CtorName(args)` — a **delegating constructor** call: another constructor of this same type, which
+    constructs the whole object; the delegating constructor then runs only its own body. It cannot also
+    name the base or a field, may not delegate to itself, and the delegating chain must not form a cycle;
+  - `field(value)` — a **field initializer**, the way to initialize a `const` field (3.7). The same form is
+    available to `struct` constructors (3.4).
+- **Execution order is fixed** (C++ model), regardless of the order the items are written in:
+  **delegate → base → members (their own default constructors) → field initializers in *declaration* order →
+  body**. An omitted base item calls the base class's zero-argument constructor (an error if it does not
+  exist); an omitted field initializer falls back to the field's default member initializer
+  (`const int x = 5;`). Every `const` field must end up initialized exactly once; a missing initialization is
+  a compile error.
+- `super(...)` is **not** a constructor call form (it never was a statement): a base-class constructor call
+  is the `Base(args)` item above. `super.m(...)` remains the qualified form that calls a base-class method
+  (3.9), and is unrelated to construction.
+- Construction order across layers: each constructor layer runs its prologue and then its body; on entering
+  each constructor layer, the vtable is updated to that layer.
 - Virtual calls during construction are C++-style: they dispatch only to the current construction layer and above, and never enter a derived implementation that has not been constructed yet.
 - A class that declares no constructor keeps the zero-initialization of `new T`; once a constructor is declared, `new T` is legal only if a zero-argument constructor exists.
 - An abstract class may have constructors, but cannot be `new`ed.
@@ -1101,7 +1107,7 @@ class File {
 ```c
 class MyError : Exception {
     int code;
-    MyError(string msg, int c) { super(msg); code = c; }
+    MyError(string msg, int c) : Exception(msg) { code = c; }
 }
 
 void f() {
@@ -1204,7 +1210,7 @@ Box<int> b = new Box<int>(7);    // generic class construction
 - **Recursive instantiation** (needing itself again during instance expansion with no cached instance) is an error: `recursive generic instantiation`. An expansion whose next instance never repeats a key (a strictly larger type argument, e.g. `Deep<Box<T>>`) is caught by a nesting limit (256 levels) and reported with the same diagnostic instead of exhausting the stack.
 - An instantiated class follows the vtable/`class_desc`/RC path of an ordinary class; an instantiated struct follows the ordinary struct layout.
 - Generic inheritance `class D<T> : Base<T>` supports a single base class: the base class is instantiated first, and the fields are flattened with "base class first";
-  `super(...)`, method inheritance, and vtable slot reuse are the same as with ordinary inheritance.
+  the base-class initializer (3.12), method inheritance, and vtable slot reuse are the same as with ordinary inheritance.
 
 #### 3.15.5 Constraint semantics: type set + member set
 
@@ -2877,7 +2883,7 @@ switch v {
 | 77 | Virtual methods | **Changed (build 160): static by default.** `virtual` opts a base class method into dynamic dispatch; a replacement is written `override` and requires the base declaration to be virtual (overriding a non-virtual method is an error, not silent shadowing). Rationale: methods were virtual by default, so a plain value-free class paid 3 dependent loads + an indirect call per call site, and LLVM could not devirtualize inside loops; the closed-world analysis alone (build 159) already recovers most of it, but an explicit `virtual` also lets a class member operator stay static and makes the cost visible at the declaration. Constructors are never virtual; destructors always dispatch through the class descriptor. |
 | 78 | Abstract classes | Decided: having unimplemented methods makes a class implicitly abstract and it cannot be `new`ed |
 | 79 | Interface default methods | Decided: allowed; on conflict the class must explicitly override (a default on a derived interface refines the base default); a `struct` implementing an interface materializes the default as an ordinary method (`this` = the struct), see 3.10 |
-| 80 | Constructors | Decided: overloading is allowed; `super(args)` comes first; C++-style dispatch; fields are cleared to zero first |
+| 80 | Constructors | Decided: overloading is allowed; the base constructor is called from the initializer list (`: Base(args)`, 3.12, unified 2026-11-18 — the old `super(args)` first-statement form is gone); C++-style dispatch; fields are cleared to zero first |
 | 81 | Overload resolution | Decided: exact > implicit widening; base-class overloads are merged; ambiguity is an error (see 3.11) |
 | 82 | Operator overloading | Decided: free functions only; arithmetic/unary `-`/comparison/bitwise; a class's `==` is fixed as identity comparison |
 | 83 | Object layout | Decided: `[rc][class_desc*]`; the desc contains the vtable and itable directories (see 8.3) |
@@ -2931,6 +2937,7 @@ switch v {
 | 130 | `move` is `&&` | **Decided 2026-11-17**: `move T` is a non-const rvalue reference; `const` and `move` cannot qualify the same parameter; `move` on a const object is an error (no silent copy); used in move construction and transfer positions (3.4, 3.8, 4.4) |
 | 131 | `std.comptime` unit / `builtin` | **Decided 2026-11-17, unit renamed to `std.comptime` 2026-11-18**: an ordinary unit shipped with the toolchain; `builtin` declares compiler-provided constants/functions with no initializer and no body; any unit may declare one, but only names in the compiler's built-in table are accepted and a name may be declared once; explicit `use std.comptime` (no implicit visibility); replaces `std.target` (9.3) |
 | 132 | `const class` inheritance and views | **Decided 2026-11-18**: a `const class` is a **leaf type whose content is fixed**, reached only through read-only views. It can never be a base class (`class E : D` and `const class D : const Base` are both errors), but it **may** derive from a mutable class base (`const class D : Base`); that subobject is written by the base constructor and by `D`'s own constructors/destructor — **construction is the only writable phase** (after a constructor returns, neither outside code nor the class's methods write). Every expression of the type is a read-only view (a class handle is already a shared reference), and converting it to any mutable view (base handle, interface handle, `ref`) needs `as` (writing through it is UB). Methods are implicitly `const`; a non-`const` method exists **only as an override slot** for a non-`const` virtual of the base — read-only body, not part of the public surface (`private` by default), not callable by name from outside, only from `D`'s constructors/destructor. Consequence accepted: an inherited non-`const` virtual then has **no caller** (external code holds only read-only views, method bodies cannot mutate, and a base constructor's own virtual call does not reach a derived override) — the override still keeps the vtable complete and turns a would-be write into a no-op, which is what makes inheriting a base with mutating virtuals usable at all. Rejected: banning class bases outright (loses implementation reuse for no extra safety), `const class D : const Base` (an extra constness-agreement rule for a case composition covers), and letting internal method bodies keep a mutable `this` (that makes the type only *outward* read-only — a second, weaker promise than `const struct`). Related: 3.7 |
+| 133 | Construction prologue: base call, delegation, field initializers | **Decided 2026-11-18**: one place for every construction step — the initializer list after the parameter list. An item is `Base(args)` (base constructor), `CtorName(args)` (delegating constructor) or `field(value)`; execution order is fixed as **delegate → base → members → field initializers in declaration order → body**, independent of the order the items are written in. `super(...)` as a constructor call is **removed** (it was a body statement that had to be hoisted to the prologue anyway, which forced a "must be the first statement" rule and made "base constructor with arguments + own `const` field" unwritable); `super.m(...)` stays as the qualified base-method call. Delegation cannot also name the base or a field, cannot target itself, and chains must not cycle (3.12) |
 
 ---
 

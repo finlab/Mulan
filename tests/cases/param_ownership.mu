@@ -33,7 +33,7 @@ class Base {
 }
 
 class Derived : Base {
-    Derived(C x) { super(x); }
+    Derived(C x) : Base(x) { }
 }
 
 class Holder {

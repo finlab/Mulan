@@ -5,7 +5,7 @@ unit para_catch_inside;
 extern int printf(const char* fmt, ...);
 
 class Err : Exception {
-    Err() { super("inner"); }
+    Err() : Exception("inner") { }
 }
 
 int main() {

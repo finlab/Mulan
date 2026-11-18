@@ -9,6 +9,6 @@ public class Rect : lib_iface.IShape {
 }
 
 public class Square : Rect {
-    public Square(int s) { super(s, s); }
+    public Square(int s) : Rect(s, s) { }
     ~Square() { }
 }

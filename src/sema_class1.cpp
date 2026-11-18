@@ -176,6 +176,22 @@ namespace muc_detail {
         return false;
     }
 
+    // Delegating constructors form a chain; a cycle would recurse until the stack dies (SPEC 3.12).
+    void Sema::check_ctor_delegate_cycles(const std::vector<std::unique_ptr<CtorDecl>>& ctors) {
+        const size_t n = ctors.size();
+        for (size_t i = 0; i < n; ++i) {
+            size_t cur = i;
+            for (size_t hops = 0; hops <= n; ++hops) {
+                const int next = ctors[cur]->delegate_index;
+                if (next < 0) break;
+                if (static_cast<size_t>(next) == i) {
+                    err("delegating constructors form a cycle", ctors[i].get());
+                }
+                cur = static_cast<size_t>(next);
+            }
+        }
+    }
+
     void Sema::fix_const_class_slots(ClassDecl* c) {
         if (!c || !c->is_const_decl || !c->ty || !c->ty->base) return;
         for (auto& m : c->methods) {
@@ -217,56 +233,12 @@ namespace muc_detail {
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
         apply_field_defaults(c->field_default, c->ty->fields, ctor);
-        check_ctor_init_list(c->ty, ctor);
-
-        bool needs_super = false;
-        if (c->ty->base) {
-            if (c->ty->base->ctors.empty()) {
-                needs_super = false;
-            } else {
-                needs_super = true;
-                for (auto& cs : c->ty->base->ctors) {
-                    if (cs.empty()) { needs_super = false; break; }
-                }
-            }
-        }
-
-        Block* body = ctor->body.get();
-        // A statement-list `#if` in the body must be expanded before the leading `super(...)` is looked
-        // for: the selected arm decides whether the first statement is the super call (P3.3c).
-        expand_directive_stmts(body);
-        bool first_super = false;
-        if (body && !body->stmts.empty()) {
-            auto es = dynamic_cast<ExprStmt*>(body->stmts[0].get());
-            auto call = es ? dynamic_cast<Call*>(es->expr.get()) : nullptr;
-            auto nm = call ? dynamic_cast<Name*>(call->callee.get()) : nullptr;
-            first_super = nm && nm->ident == "super";
-        }
-        if (needs_super && !first_super) {
-            err("constructor must call `super(...)` as its first statement", ctor);
-        }
-        ctor->has_explicit_super = first_super;
-        if (first_super && !ctor->init_list.empty()) {
-            err("an initializer list cannot be combined with an explicit `super(...)` yet: the base "
-                "constructor already runs the member step",
-                ctor);
-        }
-
-        push();
-        size_t start = 0;
-        if (body) {
-            if (first_super) {
-                super_ok_ = true;
-                check_stmt(body->stmts[0].get());
-                super_ok_ = false;
-                start = 1;
-            }
-            for (size_t i = start; i < body->stmts.size(); ++i) {
-                check_stmt(body->stmts[i].get());
-            }
-        }
-        pop();
-        super_ok_ = false;
+        // A statement-list `#if` must be expanded before the body is checked (P3.3c); the prologue check
+        // looks at the body too, to point at a `super(...)` statement that replaced a base initializer.
+        expand_directive_stmts(ctor->body.get());
+        check_ctor_prologue(c->ty, ctor);
+        check_block(ctor->body.get());
+        in_ctor_ = false;
         end_member();
     }
 
@@ -301,8 +273,9 @@ namespace muc_detail {
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
         apply_field_defaults(sd->field_default, sd->ty->fields, ctor);
-        check_ctor_init_list(sd->ty, ctor);
+        check_ctor_prologue(sd->ty, ctor);
         check_block(ctor->body.get());
+        in_ctor_ = false;
         end_member();
     }
 
@@ -316,52 +289,154 @@ namespace muc_detail {
             if (it == defaults.end() || !it->second) continue;
             bool listed = false;
             for (const auto& item : ctor->init_list) {
-                if (item.first == f.name) {
+                if (item.name == f.name) {
                     listed = true;
                     break;
                 }
             }
             if (listed) continue;
-            ctor->init_list.emplace_back(f.name, clone_expr(*it->second));
+            CtorInit init;
+            init.kind = CtorInit::Kind::Field;
+            init.name = f.name;
+            init.line = ctor->line;
+            init.col = ctor->col;
+            init.args.push_back(clone_expr(*it->second));
+            ctor->init_list.push_back(std::move(init));
         }
     }
 
-    // `C(...) : x(v), y(w) { }`: validate the member initializer list (decided 2026-11-17). The entries
-    // are lowered by codegen before the body; a base-class field cannot be named here (the base
-    // constructor owns it), and every `const` field must be initialized here.
-    void Sema::check_ctor_init_list(const TypePtr& ty, CtorDecl* ctor) {
-        size_t baseCount = 0;
-        if (ty->base && ty->base->kind == TypeKind::Class) baseCount = ty->base->fields.size();
+    // An instantiated generic type is named `Box<int>`; a prologue item spells the source name (`Box`).
+    static std::string plain_type_name(const std::string& n) {
+        const size_t lt = n.find('<');
+        return lt == std::string::npos ? n : n.substr(0, lt);
+    }
+
+    // `super(...)` used to be the base-constructor spelling. Find it in the body so the diagnosis can
+    // point at the statement instead of at a "missing base call" (SPEC 3.12).
+    static Call* stray_super_call(Block* body) {
+        if (!body) return nullptr;
+        for (auto& st : body->stmts) {
+            auto es = dynamic_cast<ExprStmt*>(st.get());
+            auto call = es ? dynamic_cast<Call*>(es->expr.get()) : nullptr;
+            auto nm = call ? dynamic_cast<Name*>(call->callee.get()) : nullptr;
+            if (nm && nm->ident == "super") return call;
+        }
+        return nullptr;
+    }
+
+    // `Ctor(...) : Base(a), field(v) { }` — validate the construction prologue (SPEC 3.12). The entries
+    // are classified by name (base class / own class / field), the constructors are resolved, and the
+    // execution order the codegen follows is fixed here: delegate → base → members → field initializers
+    // (declaration order) → body.
+    void Sema::check_ctor_prologue(const TypePtr& ty, CtorDecl* ctor) {
+        const bool has_class_base = ty->base && ty->base->kind == TypeKind::Class;
+        size_t baseCount = has_class_base ? ty->base->fields.size() : 0;
+
+        // 1. classify
+        CtorInit* base_item = nullptr;
+        CtorInit* delegate_item = nullptr;
+        for (auto& item : ctor->init_list) {
+            if (has_class_base && plain_type_name(ty->base->name) == plain_type_name(item.name)) {
+                if (base_item) err("the base constructor is initialized twice", &item);
+                item.kind = CtorInit::Kind::Base;
+                base_item = &item;
+            } else if (plain_type_name(ty->name) == plain_type_name(item.name)) {
+                if (delegate_item) err("only one delegating constructor call is allowed", &item);
+                item.kind = CtorInit::Kind::Delegate;
+                delegate_item = &item;
+            } else {
+                item.kind = CtorInit::Kind::Field;
+            }
+        }
+
+        // 2. delegating constructor: `Derived(args) : Derived(other args) { ... }`
+        if (delegate_item) {
+            if (base_item) {
+                err("a delegating constructor cannot also initialize the base class", delegate_item);
+            }
+            for (auto& item : ctor->init_list) {
+                if (item.kind == CtorInit::Kind::Field) {
+                    err("a delegating constructor cannot initialize fields: the delegated constructor "
+                        "already runs the member step",
+                        &item);
+                }
+            }
+            if (!ty->ctors.empty()) {
+                std::vector<Expr*> raw;
+                for (auto& a : delegate_item->args) raw.push_back(a.get());
+                const auto* sig = choose_ctor(ty->ctors, raw, "delegating constructor", delegate_item);
+                for (size_t i = 0; i < delegate_item->args.size(); ++i) {
+                    check_assign(delegate_item->args[i].get(), (*sig)[i], "delegating constructor argument");
+                }
+                if (same_param_sig(*sig, ctor->pty)) {
+                    err("a delegating constructor cannot delegate to itself", delegate_item);
+                }
+                ctor->is_delegating = true;
+                ctor->delegate_pty = *sig;
+                ctor->delegate_index = static_cast<int>(sig - &ty->ctors[0]);
+            } else {
+                err("type `" + ty->str() + "` has no constructor to delegate to", delegate_item);
+            }
+            return;  // no field coverage check: the delegated constructor owns the whole object
+        }
+
+        // 3. base-class call
+        if (has_class_base) {
+            const auto& base_ctors = ty->base->ctors;
+            if (base_item) {
+                if (!base_ctors.empty()) {
+                    std::vector<Expr*> raw;
+                    for (auto& a : base_item->args) raw.push_back(a.get());
+                    const auto* sig = choose_ctor(base_ctors, raw, "base class", base_item);
+                    for (size_t i = 0; i < base_item->args.size(); ++i) {
+                        check_assign(base_item->args[i].get(), (*sig)[i], "base constructor argument");
+                    }
+                    ctor->base_pty = *sig;
+                } else if (!base_item->args.empty()) {
+                    err("base class `" + ty->base->name + "` has no constructor taking arguments", base_item);
+                }
+                ctor->has_base_call = true;
+            } else {
+                bool base_default = false;
+                for (auto& cs : base_ctors) {
+                    if (cs.empty()) { base_default = true; break; }
+                }
+                if (!base_ctors.empty() && !base_default) {
+                    if (Call* stray = stray_super_call(ctor->body.get())) {
+                        err("a base-class constructor call is not a statement: write it in the "
+                            "constructor's initializer list — `" + ty->name + "(args) : " + ty->base->name +
+                                "(args) { ... }` (SPEC 3.12)",
+                            stray);
+                    }
+                    err("base class `" + ty->base->name +
+                            "` has no parameterless constructor; initialize it as `: " + ty->base->name +
+                            "(...)`",
+                        ctor);
+                }
+            }
+        }
+
+        // 4. field initializers
         std::unordered_set<std::string> inited;
         for (auto& item : ctor->init_list) {
-            const int idx = ty->field_index(item.first);
+            if (item.kind != CtorInit::Kind::Field) continue;
+            if (item.args.size() != 1) {
+                err("field initializer `" + item.name + "` takes exactly one value", &item);
+            }
+            const int idx = ty->field_index(item.name);
             if (idx < 0) {
-                // `: Base(x)` / `: Cfg(7)` look like field entries but name the base class / the class
-                // itself. Both are constructor forms the language does not have yet; say so instead of
-                // "unknown field".
-                if (ty->base && ty->base->name == item.first) {
-                    err("a base-class initializer (`: " + item.first +
-                            "(...)`) is not supported yet: call `super(...)` at the start of the "
-                            "constructor body (it cannot be combined with an initializer list yet)",
-                        item.second.get());
-                }
-                if (ty->name == item.first) {
-                    err("delegating constructors (`: " + item.first +
-                            "(...)`) are not supported yet: initialize the fields directly",
-                        item.second.get());
-                }
-                err("constructor initializer names an unknown field `" + item.first + "`", item.second.get());
+                err("constructor initializer names an unknown field `" + item.name + "`", &item);
             }
             if (static_cast<size_t>(idx) < baseCount) {
-                err("cannot initialize the base class field `" + item.first +
+                err("cannot initialize the base class field `" + item.name +
                         "` here: the base constructor initializes it",
-                    item.second.get());
+                    &item);
             }
-            if (!inited.insert(item.first).second) {
-                err("field `" + item.first + "` is initialized twice", item.second.get());
+            if (!inited.insert(item.name).second) {
+                err("field `" + item.name + "` is initialized twice", &item);
             }
-            check_assign(item.second.get(), ty->fields[static_cast<size_t>(idx)].type,
-                         "constructor initializer for `" + item.first + "`");
+            check_assign(item.args[0].get(), ty->fields[static_cast<size_t>(idx)].type,
+                         "constructor initializer for `" + item.name + "`");
         }
         // A const field has no other way to be initialized (it cannot be written in the body).
         // A `builtin` constant (the `comptime` unit, 9.3) is compiler-provided and is exempt.
@@ -660,6 +735,7 @@ namespace muc_detail {
             }
             check_struct_ctor(sd, ctor.get());
         }
+        check_ctor_delegate_cycles(sd->ctors);
         check_struct_dtor(sd);
     }
 
@@ -784,6 +860,7 @@ namespace muc_detail {
             }
             check_ctor(c, ctor.get());
         }
+        check_ctor_delegate_cycles(c->ctors);
         // An implicit default constructor of a derived class requires a parameterless constructor in the base class
         if (c->ctors.empty() && c->ty->base && !c->ty->base->ctors.empty()) {
             bool base_default = false;

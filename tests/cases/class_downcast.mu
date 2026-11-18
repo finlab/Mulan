@@ -1,10 +1,10 @@
 unit class_downcast;
 extern int puts(const char* s);
 class A { int a; A(){a=1;} ~A(){} int base(){return a;} }
-class B : A { int b; B(){super(); b=2;} ~B(){} int child(){return b;} }
-class D : A { int d; D(){super(); d=3;} ~D(){} }
+class B : A { int b; B() : A() {b=2;} ~B(){} int child(){return b;} }
+class D : A { int d; D() : A() {d=3;} ~D(){} }
 interface I { int f(); }
-class E : A, I { E(){super();} override int f(){return 9;} }
+class E : A, I { E() : A() {} override int f(){return 9;} }
 int main() {
     A ab = new B();
     B b1 = ab as B;

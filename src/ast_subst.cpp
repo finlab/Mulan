@@ -245,7 +245,9 @@ void subst_ctors(std::vector<std::unique_ptr<CtorDecl>>& ctors, const TypeBindin
     for (auto& c : ctors) {
         subst_params(c->params, b);
         for (auto& item : c->init_list) {
-            if (item.second) subst_expr(*item.second, b);
+            for (auto& a : item.args) {
+                if (a) subst_expr(*a, b);
+            }
         }
         if (c->body) subst_block(*c->body, b);
     }

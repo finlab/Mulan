@@ -507,42 +507,9 @@ using ArgPack = Emitter::ArgPack;
                 if (mayThrow.mayThrowMethod(sig, sig->owner)) emitCheckPending();
                 return r;
             }
-            // super(...): call the base class constructor, then restore the derived class's desc
-            TypePtr base = curClassTy ? curClassTy->base : nullptr;
-            if (!base || base->kind != TypeKind::Class)
-                fail("LLVM backend: super(...) has no base class", c->line, c->col);
-            if (!base->ctors.empty()) {
-                const std::vector<TypePtr>* pty =
-                    c->ctor_pty ? c->ctor_pty : nullptr;
-                std::vector<TypePtr> empty;
-                std::vector<LType*> ptys{ptrTy()};
-                for (auto& t : (pty ? *pty : empty)) ptys.push_back(lt(t));
-                FunctionCallee callee = mod->getOrInsertFunction(
-                    ctor_cname(base->unit, base->name, pty ? *pty : empty),
-                    FunctionType::get(LType::getVoidTy(ctx), ptys, false));
-                std::vector<Expr*> rawArgs;
-                for (auto& a : c->args) rawArgs.push_back(a.get());
-                ArgPack pack = prepareArgs(rawArgs, pty ? *pty : empty);
-                std::vector<Value*> vals{b.CreateLoad(ptrTy(), thisSlot)};
-                for (auto* v : pack.vals) vals.push_back(v);
-                b.CreateCall(callee, vals);
-                releaseTemps(pack);
-                if (mayThrow.mayThrowCname(ctor_cname(base->unit, base->name, pty ? *pty : empty))) {
-                    // The desc still names the base: the allocating caller's partial destroy picks
-                    // the base's partial destructor, and this class's desc is restored below only
-                    // when the base constructor returned normally.
-                    emitCheckPending();
-                }
-            }
-            if (curClassTy) {
-                Value* p = b.CreateLoad(ptrTy(), thisSlot);
-                Value* dp = b.CreateGEP(i8(), p, ConstantInt::get(i64(), 8));
-                b.CreateStore(descOf(curClassTy), dp);
-            }
-            // Members are constructed after the base subobject is complete (and after the desc names this
-            // class again), but before the rest of the body.
-            emitMemberInits(curClassTy ? b.CreateLoad(ptrTy(), thisSlot) : nullptr, curClassTy);
-            return nullptr;
+            // `super(...)` is no longer a statement: the base constructor is a prologue item and is
+            // emitted by emitCtor before the members (SPEC 3.12), so sema has already rejected it.
+            fail("LLVM backend: a base-class constructor call reached codegen as a statement", c->line, c->col);
         }
         if (c->callee_kind == "fnptr" || c->callee_kind == "delegate") {
             const TypePtr& ft = c->fn_ty;

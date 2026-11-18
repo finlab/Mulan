@@ -12,7 +12,7 @@ class Animal {
 }
 
 class Cat : Animal {
-    Cat() { super(4); }
+    Cat() : Animal(4) { }
     public int purr() { return 7; }
 }
 

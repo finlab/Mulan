@@ -5,7 +5,7 @@ extern int printf(const char* fmt, ...);
 int hits = 0;
 
 class E : Exception {
-    E() { super("e"); }
+    E() : Exception("e") { }
 }
 
 void risky() {

@@ -3,7 +3,7 @@ unit exception_generic;
 extern int printf(const char* fmt, ...);
 
 class Err : Exception {
-    Err() { super("g"); }
+    Err() : Exception("g") { }
 }
 
 T recover<T>(T value) {

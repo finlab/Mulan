@@ -30,7 +30,7 @@ class K { public S s; }
 // step for the derived class - the constructor must not run it a second time (a second construction would
 // leak the first member).
 class KB { public S bs; KB() { } }
-class KD : KB { public S ds; KD() { super(); } }
+class KD : KB { public S ds; KD() : KB() { } }
 
 int main() {
     {

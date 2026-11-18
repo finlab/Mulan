@@ -6,7 +6,7 @@ unit slice_ctor_throw;
 extern int printf(const char* fmt, ...);
 
 class Boom : Exception {
-    Boom() { super("boom"); }
+    Boom() : Exception("boom") { }
 }
 
 int live = 0;

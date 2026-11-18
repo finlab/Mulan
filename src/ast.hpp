@@ -724,19 +724,34 @@ struct MethodDecl : Node {
     std::string cname;  // the method symbol name
 };
 
+// One entry of a constructor's construction prologue (SPEC 3.12): `Ctor(a, b) : Base(a), field(b) { }`.
+// Three kinds share the slot: a base-class constructor call, a delegating call to another constructor of
+// the same type, and a field initializer. The entries run in a fixed order (delegate → base → members →
+// field initializers in declaration order → body), never in source order.
+struct CtorInit : Node {
+    enum class Kind { Field, Base, Delegate };
+    Kind kind = Kind::Field;     // sema: resolved from `name`
+    std::string name;            // field name / base class name / own class name
+    std::vector<ExprPtr> args;   // Field: exactly one expression; Base/Delegate: the call arguments
+};
+
 struct CtorDecl : Node {
     bool is_implicit = false;  // `implicit T(...)`: usable as an implicit conversion (struct only)
     std::vector<std::unique_ptr<Param>> params;
-    // `C(...) : x(v), y(w) { }` — the member initializer list (decided 2026-11-17). A `const` field
-    // must appear here; the entries are lowered to field assignments before the body runs.
-    std::vector<std::pair<std::string, ExprPtr>> init_list;
+    // `C(...) : Base(a), x(v) { }` — the construction prologue (SPEC 3.12). A `const` field must appear
+    // here; a base-class call and a delegating call share the same slot.
+    std::vector<CtorInit> init_list;
     std::unique_ptr<Block> body;
     bool is_public = false;  // visible only inside the unit by default
     // sema
     std::vector<TypePtr> pty;
     std::vector<std::unique_ptr<LocalVar>> param_locals;
     std::string cname;  // the constructor symbol name
-    bool has_explicit_super = false;
+    bool has_base_call = false;         // a `Base(...)` item was resolved (omitted → implicit zero-arg)
+    std::vector<TypePtr> base_pty;      // sema: the chosen base constructor signature
+    bool is_delegating = false;         // `Derived(...) : Derived(args)` — construct through another ctor
+    std::vector<TypePtr> delegate_pty;  // sema: the chosen delegate signature
+    int delegate_index = -1;            // sema: its position in `ty->ctors` (cycle detection)
     bool is_move = false;  // `T(move T other)`: the move constructor
     bool is_copy = false;  // `T(ref T other)`: the copy constructor
 };

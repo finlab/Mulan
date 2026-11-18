@@ -168,7 +168,6 @@ private:
     // `f() const`: writes through `this` are rejected (decided 2026-11-17)
     bool cur_method_const_ = false;
     bool in_finally_ = false;
-    bool super_ok_ = false;
     std::vector<std::unique_ptr<LocalVar>> this_local_;
     std::vector<Scope> scopes_;
     std::vector<std::string> errors_;  // collected errors (multiple-error reporting)
@@ -527,7 +526,8 @@ private:
 
     void check_ctor(ClassDecl* c, CtorDecl* ctor);
     // Validate `C(...) : x(v), y(w) { }` (decided 2026-11-17)
-    void check_ctor_init_list(const TypePtr& ty, CtorDecl* ctor);
+    void check_ctor_prologue(const TypePtr& ty, CtorDecl* ctor);
+    void check_ctor_delegate_cycles(const std::vector<std::unique_ptr<CtorDecl>>& ctors);
     // `const T x = expr;`: fields with a default member initializer join the constructor initializer
     // list when the constructor does not name them (SPEC 3.7). The expression is cloned per
     // constructor: it is checked in that constructor's scope and emitted into its prologue.

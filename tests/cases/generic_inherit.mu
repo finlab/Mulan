@@ -14,8 +14,7 @@ class Base<T> {
 class Derived<T> : Base<T> {
     T extra;
 
-    Derived(T a, T b) {
-        super(a);
+    Derived(T a, T b) : Base(a) {
         extra = b;
     }
 

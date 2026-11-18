@@ -1,1 +1,1 @@
-`super(...)` must be the first statement of a constructor
+a base-class constructor call is not a statement

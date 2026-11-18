@@ -8,7 +8,7 @@ class Base {
 }
 
 const class Leaf : const Base {
-    Leaf() { super(1); }
+    Leaf() : const(1) { }
 }
 
 int main() { return 0; }

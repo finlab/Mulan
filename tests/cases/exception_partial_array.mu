@@ -3,7 +3,7 @@ unit exception_partial_array;
 extern int printf(const char* fmt, ...);
 
 class Boom : Exception {
-    Boom(string m) { super(m); }
+    Boom(string m) : Exception(m) { }
 }
 
 // #26: a fixed array whose constructor throws part way builds a prefix. The elements before it are

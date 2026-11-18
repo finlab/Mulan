@@ -27,6 +27,42 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 211 — 2026-11-18
+
+**One construction prologue: base call, delegation and field initializers live in the initializer list**
+(SPEC 3.12, decision table row 133).
+
+`super(args)` was a body statement that had to be the first statement, yet it had to run *before* the
+members — the compiler hoisted it into the prologue, which is why it could not be combined with an
+initializer list. That left "base constructor with arguments + own `const` field" unwritable, and the
+delegating-constructor form (`: Cfg(7)`) unimplemented.
+
+- The list after the parameter list is now the **only** place a construction step is written, and an item
+  is one of: `Base(args)` (base constructor call), `CtorName(args)` (delegating constructor) or
+  `field(value)` (field initializer, the way to initialize a `const` field).
+- **Execution order is fixed** regardless of how the list is spelled: delegate → base → members (their own
+  default constructors) → field initializers in **declaration** order → body. An omitted base item calls
+  the base's zero-argument constructor (an error if it does not exist); an omitted field falls back to the
+  default member initializer.
+- A delegating constructor hands the whole construction to the target and then runs only its own body: it
+  cannot also name the base or a field, cannot delegate to itself, and the chain must not cycle.
+- `super(...)` as a constructor call is **gone**; `super.m(...)` stays as the qualified base-method call.
+  The diagnostic for a stray `super(...)` statement shows the rewritten form
+  (`Derived(args) : Base(args) { ... }`).
+- Implementation: `CtorInit {kind, name, args}` in `CtorDecl::init_list` (the parser accepts a generic
+  `name(args)` list, sema classifies it — generic bases compare by their source name), the classification
+  runs after every shape is final and before any body is checked, class and struct constructors emit the
+  prologue in the same order, and the may-throw analysis adds the base/delegate dependency because those
+  calls no longer sit in the body.
+- Tests: run `ctor_prologue` (base + `const` field with the list spelled field-first, delegation, and a
+  member pair that proves declaration order); must-fail `ctor_two_base_items`, `ctor_delegate_and_field`,
+  `ctor_delegate_cycle`, `ctor_unknown_initializer`, `super_late` (now "not a statement"),
+  `super_missing` (now "no parameterless constructor; initialize it as `: A(...)`"); `ctor_base_init_list`
+  and `ctor_delegating` were must-fails for forms that now work and are removed. All 66 `super(...)`
+  occurrences in the tree were migrated, including `libs/std/task.mu`'s `TaskLimitError`.
+
+Full suite: Windows 802/802, Linux (WSL) 800/800.
+
 #### build 210 — 2026-11-18
 
 **`const class` is a leaf type whose content is fixed after construction** (SPEC 3.7,

@@ -4,7 +4,7 @@ int live = 0;
 class C { int v; C(int x){v=x;live+=1;} ~C(){live-=1;} int get(){return v;} }
 class Holder { C c; Holder(C x){ c = x; } ~Holder(){} C get(){return c;} }
 class Animal { int s; Animal(int x){s=x;} ~Animal(){} int sound(){return s;} }
-class Dog : Animal { Dog(){super(7);} ~Dog(){} }
+class Dog : Animal { Dog() : Animal(7) {} ~Dog(){} }
 int main() {
     Holder h = new Holder(new C(4));
     if h.get().get() != 4 { puts("nested new fail"); return 1; }

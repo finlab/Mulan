@@ -296,13 +296,21 @@ struct Analysis {
 
     void analyzeItem(Item& it) {
         if (it.body) visitBlock(it.body, it);
-        if (it.ctor && it.ownerClass) addMemberStepDeps(it, it.ownerClass);
-        // An omitted `super(...)` becomes an implicit base default-constructor call.
-        if (it.ctor && it.ownerClass && !it.ctor->has_explicit_super) {
-            TypePtr base = it.ownerClass->base;
-            if (base && base->kind == TypeKind::Class) {
-                std::string key = default_ctor_key(base);
-                if (!key.empty()) addDep(it, key);
+        if (it.ctor && it.ownerClass) {
+            // A delegating constructor calls another constructor of the same type, and a constructor whose
+            // type has a class base calls it — both from the prologue, not from the body (SPEC 3.12), so the
+            // dependency has to be added here.
+            if (it.ctor->is_delegating) {
+                addDep(it, ctor_cname(it.ownerClass->unit, it.ownerClass->name, it.ctor->delegate_pty));
+            } else {
+                addMemberStepDeps(it, it.ownerClass);
+                TypePtr base = it.ownerClass->base;
+                if (base && base->kind == TypeKind::Class) {
+                    std::string key = it.ctor->has_base_call
+                                          ? ctor_cname(base->unit, base->name, it.ctor->base_pty)
+                                          : default_ctor_key(base);
+                    if (!key.empty()) addDep(it, key);
+                }
             }
         }
     }

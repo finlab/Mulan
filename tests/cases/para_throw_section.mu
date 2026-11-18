@@ -5,7 +5,7 @@ unit para_throw_section;
 extern int printf(const char* fmt, ...);
 
 class Err : Exception {
-    Err() { super("section"); }
+    Err() : Exception("section") { }
 }
 
 int main() {

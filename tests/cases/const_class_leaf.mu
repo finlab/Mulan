@@ -16,7 +16,7 @@ class Base : IShow {
 }
 
 const class Leaf : Base {
-    Leaf(int x) { super(x); bump(10); }
+    Leaf(int x) : Base(x) { bump(10); }
     // The base's mutating slot: the body is read-only, so an `as` escape cannot write through it.
     override void poke() { }
 }

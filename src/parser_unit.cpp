@@ -852,15 +852,25 @@ std::unique_ptr<CtorDecl> Parser::parse_ctor(const Token& name_tok) {
     c->line = name_tok.line;
     c->col = name_tok.col;
     c->params = parse_params(nullptr, /*allow_ref=*/true, /*allow_move=*/true);
-    // `: x(v), y(w)` — member initializer list (decided 2026-11-17)
+    // `: Base(x), field(v), ...` — the construction prologue (SPEC 3.12)
     if (at_op(":")) {
         advance();
         for (;;) {
-            const Token fname = expect_ident("field name");
+            const Token nm = expect_ident("initializer name");
+            CtorInit item;
+            item.name = nm.text;
+            item.line = nm.line;
+            item.col = nm.col;
             expect_op("(");
-            ExprPtr init = parse_expr();
+            if (!at_op(")")) {
+                for (;;) {
+                    item.args.push_back(parse_expr());
+                    if (!at_op(",")) break;
+                    advance();
+                }
+            }
             expect_op(")");
-            c->init_list.emplace_back(fname.text, std::move(init));
+            c->init_list.push_back(std::move(item));
             if (!at_op(",")) break;
             advance();
         }

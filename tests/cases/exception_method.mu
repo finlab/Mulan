@@ -3,7 +3,7 @@ unit exception_method;
 extern int printf(const char* fmt, ...);
 
 class Boom : Exception {
-    Boom() { super("m"); }
+    Boom() : Exception("m") { }
 }
 
 interface I {

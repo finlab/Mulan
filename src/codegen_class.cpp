@@ -347,18 +347,22 @@ namespace muc_detail {
         finishBody(fn, c->name + "." + m->name);
     }
 
-    // Store the member initializer list (`C(...) : x(v) { }`) before the body runs. The destination
-    // fields are zeroed at allocation (class) or default-constructed by the member step (struct), so the
-    // store follows the same ownership rules as a field assignment: a borrowed source is retained, an
-    // owned one is transferred (a raw store left class-handle fields unretained).
+    // Store the field initializers (`Ctor(...) : x(v) { }`) before the body runs, in **declaration**
+    // order (SPEC 3.12), not in the order the list spells them. The destination fields are zeroed at
+    // allocation (class) or default-constructed by the member step (struct), so the store follows the
+    // same ownership rules as a field assignment: a borrowed source is retained, an owned one is
+    // transferred (a raw store left class-handle fields unretained).
     void Emitter::emitCtorInitList(Value* self, const TypePtr& ty, CtorDecl* ctor) {
         if (!self || !ty || !ctor || ctor->init_list.empty()) return;
-        for (auto& item : ctor->init_list) {
-            const int idx = ty->field_index(item.first);
-            if (idx < 0) continue;  // sema already reported
-            const Field& f = ty->fields[static_cast<size_t>(idx)];
-            Value* dst = fieldAddr(self, ty, idx);
-            initFromExpr(dst, f.type, item.second.get(), ty->is_packed);
+        for (size_t i = 0; i < ty->fields.size(); ++i) {
+            const Field& f = ty->fields[i];
+            for (auto& item : ctor->init_list) {
+                if (item.kind != CtorInit::Kind::Field || item.name != f.name) continue;
+                if (item.args.empty()) break;
+                Value* dst = fieldAddr(self, ty, static_cast<int>(i));
+                initFromExpr(dst, f.type, item.args[0].get(), ty->is_packed);
+                break;
+            }
         }
     }
 
@@ -377,44 +381,88 @@ namespace muc_detail {
         curThis = fn->getArg(0);
         thisSlot = entryAlloca(ptrTy(), "this");
         b.CreateStore(curThis, thisSlot);
-        // set this class's desc on entry; it is restored after the super(...) call
+        bindParams(fn, 1, ctor->param_locals);
+        ownParams(ctor->param_locals);
+
+        // SPEC 3.12 order: delegate → base → members → field initializers (declaration order) → body.
+        //
+        // A delegating constructor hands the whole construction to another constructor of this type and
+        // then runs its own body: no base call, no member step, no field initializers (the target does all
+        // of that, including the class descriptor).
+        if (ctor->is_delegating) {
+            std::vector<Expr*> rawArgs;
+            for (auto& item : ctor->init_list) {
+                if (item.kind != CtorInit::Kind::Delegate) continue;
+                for (auto& a : item.args) rawArgs.push_back(a.get());
+                break;
+            }
+            std::vector<LType*> delegatePtys{ptrTy()};
+            for (auto& t : ctor->delegate_pty) delegatePtys.push_back(lt(t));
+            FunctionCallee callee = mod->getOrInsertFunction(
+                ctor_cname(c->ty->unit, c->name, ctor->delegate_pty),
+                FunctionType::get(LType::getVoidTy(ctx), delegatePtys, false));
+            ArgPack pack = prepareArgs(rawArgs, ctor->delegate_pty);
+            std::vector<Value*> vals{curThis};
+            for (auto* v : pack.vals) vals.push_back(v);
+            b.CreateCall(callee, vals);
+            releaseTemps(pack);
+            if (mayThrow.mayThrowCname(ctor_cname(c->ty->unit, c->name, ctor->delegate_pty))) {
+                // The target owns the partial-destroy bookkeeping; nothing here is half-built.
+                emitCheckPending();
+            }
+            block(ctor->body.get());
+            popRefScope();
+            finishBody(fn, c->name + " constructor");
+            return;
+        }
+
+        // this class's desc on entry; it is restored after the base constructor call
         Value* dp = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
         b.CreateStore(descOf(c->ty), dp);
-        bindParams(fn, 1, ctor->param_locals);
 
-        // super(...) omitted and the base class has a parameterless constructor: call it implicitly following C++ semantics
-        if (!ctor->has_explicit_super && c->ty->base && c->ty->base->kind == TypeKind::Class) {
-            bool baseDefault = false;
-            for (auto& cs : c->ty->base->ctors) {
-                if (cs.empty()) { baseDefault = true; break; }
-            }
-            if (baseDefault) {
-                FunctionCallee baseCtor = mod->getOrInsertFunction(
-                    ctor_cname(c->ty->base->unit, c->ty->base->name, {}),
-                    FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
-                b.CreateCall(baseCtor, {curThis});
-                if (mayThrow.mayThrowCname(ctor_cname(c->ty->base->unit, c->ty->base->name, {}))) {
-                    // Nothing is cleaned up here: the desc is still the base's, so the allocating
-                    // caller's partial destroy dispatches to the base's partial destructor
-                    // (emitDestroyPartialFn). Our own desc is restored only on success.
-                    emitCheckPending();
+        // `: Base(args)`, or the implicit zero-argument base call (C++ semantics)
+        TypePtr base = c->ty->base;
+        if (base && base->kind == TypeKind::Class) {
+            std::vector<Expr*> rawArgs;
+            const std::vector<TypePtr>* chosen = nullptr;
+            if (ctor->has_base_call) {
+                for (auto& item : ctor->init_list) {
+                    if (item.kind != CtorInit::Kind::Base) continue;
+                    for (auto& a : item.args) rawArgs.push_back(a.get());
+                    break;
                 }
-                Value* dp2 = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
-                b.CreateStore(descOf(c->ty), dp2);
+                chosen = &ctor->base_pty;
+            } else {
+                static const std::vector<TypePtr> kDefault;
+                chosen = &kDefault;
             }
+            std::vector<LType*> basePtys{ptrTy()};
+            for (auto& t : *chosen) basePtys.push_back(lt(t));
+            FunctionCallee baseCtor = mod->getOrInsertFunction(
+                ctor_cname(base->unit, base->name, *chosen),
+                FunctionType::get(LType::getVoidTy(ctx), basePtys, false));
+            ArgPack pack = prepareArgs(rawArgs, *chosen);
+            std::vector<Value*> vals{curThis};
+            for (auto* v : pack.vals) vals.push_back(v);
+            b.CreateCall(baseCtor, vals);
+            releaseTemps(pack);
+            if (mayThrow.mayThrowCname(ctor_cname(base->unit, base->name, *chosen))) {
+                // Nothing is cleaned up here: the desc is still the base's, so the allocating caller's
+                // partial destroy dispatches to the base's partial destructor (emitDestroyPartialFn).
+                // Our own desc is restored only on success.
+                emitCheckPending();
+            }
+            Value* dp2 = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
+            b.CreateStore(descOf(c->ty), dp2);
         }
-        ownParams(ctor->param_locals);
-        // Members come between base and body. With an explicit `super(...)` the base constructor call is a
-        // statement in the body, and that statement runs the member step itself (codegen_expr2).
-        //
+
         // The whole constructor is one construction sequence: a throw anywhere in the member step or the
-        // body releases the fields this class finished and the one being built (emitMemberInits advances
-        // the same entry, so the explicit-`super` path is covered too).
+        // body releases the fields this class finished and the one being built.
         size_t baseCount = 0;
-        if (c->ty->base && c->ty->base->kind == TypeKind::Class) baseCount = c->ty->base->fields.size();
+        if (base && base->kind == TypeKind::Class) baseCount = base->fields.size();
         const size_t progressMark = ctorProgress.size();
         pushCtorProgress(b.CreateLoad(ptrTy(), thisSlot), c->ty, baseCount, false);
-        if (!ctor->has_explicit_super) emitMemberInits(b.CreateLoad(ptrTy(), thisSlot), c->ty);
+        emitMemberInits(b.CreateLoad(ptrTy(), thisSlot), c->ty);
         emitCtorInitList(b.CreateLoad(ptrTy(), thisSlot), c->ty, ctor);
         block(ctor->body.get());
         ctorProgress.resize(progressMark);
@@ -847,6 +895,32 @@ namespace muc_detail {
         b.CreateStore(fn->getArg(0), thisSlot);
         bindParams(fn, 1, ctor->param_locals);
         ownParams(ctor->param_locals);
+        // A delegating constructor runs the target's member step and then only its own body (SPEC 3.12).
+        if (ctor->is_delegating) {
+            std::vector<Expr*> rawArgs;
+            for (auto& item : ctor->init_list) {
+                if (item.kind != CtorInit::Kind::Delegate) continue;
+                for (auto& a : item.args) rawArgs.push_back(a.get());
+                break;
+            }
+            std::vector<LType*> delegatePtys{ptrTy()};
+            for (auto& t : ctor->delegate_pty) delegatePtys.push_back(lt(t));
+            FunctionCallee callee = mod->getOrInsertFunction(
+                ctor_cname(sd->ty->unit, sd->name, ctor->delegate_pty),
+                FunctionType::get(LType::getVoidTy(ctx), delegatePtys, false));
+            ArgPack pack = prepareArgs(rawArgs, ctor->delegate_pty);
+            std::vector<Value*> vals{b.CreateLoad(ptrTy(), thisSlot)};
+            for (auto* v : pack.vals) vals.push_back(v);
+            b.CreateCall(callee, vals);
+            releaseTemps(pack);
+            if (mayThrow.mayThrowCname(ctor_cname(sd->ty->unit, sd->name, ctor->delegate_pty))) {
+                emitCheckPending();
+            }
+            block(ctor->body.get());
+            popRefScope();
+            finishBody(fn, sd->name + " constructor");
+            return;
+        }
         // A member with its own default constructor is constructed before the body (C++ order); the body
         // then assigns whatever it wants on top.
         //
