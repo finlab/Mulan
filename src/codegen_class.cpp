@@ -433,7 +433,9 @@ namespace muc_detail {
                     for (auto& a : item.args) rawArgs.push_back(a.get());
                     break;
                 }
-                chosen = &ctor->base_pty;
+                // `: Base()` names a constructor that does not exist when the base declares none at all:
+                // there is nothing to call (the allocation is already zeroed).
+                if (!base->ctors.empty()) chosen = &ctor->base_pty;
             } else {
                 for (auto& cs : base->ctors) {
                     if (cs.empty()) { chosen = &kDefault; break; }

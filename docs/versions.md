@@ -27,6 +27,37 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 213 — 2026-11-18
+
+**Fix: a `const class` object could still be written through its inherited fields** (SPEC 3.7).
+
+The write check asked two questions of a member write — is the object's *type* `const`, and is the *field*
+`const` — but a `const class`'s type carries `decl_const` rather than `const`, and its inherited fields
+belong to a mutable base. So `d.v = 1` (or `+=`, or `d.inner[0] = 1`, or a field of a struct that holds
+the handle) wrote straight through the object, while the same write to one of its own fields was refused.
+
+- `check_writable` now rejects a member write whenever the receiver is a **read-only view**
+  (`read_only_view`): a `const` handle, any expression of a `const class`, or an interface whose members
+  are all `const`. The field-level check stays for the value-type cases.
+- A mutable `ref` parameter was the second way to obtain write access: it was guarded by `root_is_const`,
+  which only looks at the variable *binding*, so `bump(d.v)` and `bump(const_array[0])` were accepted.
+  `ref` binding now uses `ref_target_is_readonly` (the binding form of the same rule).
+- `read_only_view` no longer exempts operator members unconditionally: an operator declared with a
+  mutable receiver (`operator[](ref Self, isize)`) makes the interface a mutating one, so a `const class`
+  instance does not convert to it implicitly.
+- Fixed at the same time: an explicit `: Base()` where the base declares **no** constructor emitted a call
+  to a symbol that does not exist (the implicit form was fixed in build 212); it is a no-op now.
+
+Documented boundary: a pointer / dynamic-array **field** keeps writable elements — its header is part of
+the fixed content, the block it points at is a separate object (like a `T* const` field). Declare the
+field `const T[]` to freeze the elements too.
+
+New cases: must-fail `const_class_base_field_write`, `const_class_base_field_compound`,
+`const_class_array_element`, `const_class_struct_hold`, `const_class_ref_field`,
+`const_class_mutating_operator_iface`, `const_struct_ref_field`; run `ctor_explicit_empty_base`.
+
+Full suite: Windows 824/824, Linux (WSL) 821/821.
+
 #### build 212 — 2026-11-18
 
 **Fix: two regressions found while reviewing the build-210/211 work** — a delegating constructor rejected

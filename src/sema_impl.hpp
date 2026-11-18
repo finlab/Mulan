@@ -610,6 +610,8 @@ private:
 
     // Walk Index/Member down to the innermost binding and determine whether it is const
     bool root_is_const(Expr* e);
+    // A mutable `ref` binding hands out write access, so it needs a writable object (SPEC 3.7).
+    bool ref_target_is_readonly(Expr* a);
     bool root_is_this(Expr* e);
 
     void check_writable(Expr* t);

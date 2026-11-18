@@ -801,7 +801,12 @@ bool read_only_view(const TypePtr& t) {
     if (t->is_const || t->decl_const) return true;
     if (t->kind != TypeKind::Interface) return false;
     for (const auto& m : t->methods) {
-        if (!m.is_const && !m.is_operator) return false;
+        if (m.is_operator) {
+            // An operator signature is static: only a mutable receiver can write through the view.
+            if (m.recv_ref && !m.recv_cref) return false;
+            continue;
+        }
+        if (!m.is_const) return false;
     }
     for (const auto& b : t->interfaces) {
         if (!read_only_view(b)) return false;

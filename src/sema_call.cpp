@@ -500,7 +500,7 @@ namespace muc_detail {
                 }
                 const bool is_cref = i < target->pty_cref.size() && target->pty_cref[i];
                 if (!is_cref) {
-                    if (root_is_const(a)) {
+                    if (ref_target_is_readonly(a)) {
                         err("cannot bind a readonly (`const`) variable to a mutable `ref` parameter", a);
                     }
                     if (auto* bc = dynamic_cast<Call*>(a); bc && bc->by_ref && bc->ref_const) {

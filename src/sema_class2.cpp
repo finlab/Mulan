@@ -202,8 +202,48 @@ namespace muc_detail {
         return false;
     }
 
-    bool Sema::root_is_this(Expr* e) {
-        if (!e) return false;
+    // True when binding this expression to a mutable `ref` parameter would hand out write access to a
+    // read-only object: a `const` binding, a `const` field, or any expression of a `const class` / a
+    // `const` handle (SPEC 3.7). `check_writable` is the assignment form of the same rule; a `ref`
+    // binding is the second way to obtain a writable view, so it needs the same predicate.
+    bool Sema::ref_target_is_readonly(Expr* a) {
+        if (!a) return false;
+        if (root_is_const(a)) return true;
+        if (auto n = dynamic_cast<Name*>(a)) {
+            if (n->ty && n->ty->is_const) return true;  // `int* const p`: the pointee is writable, the binding is not
+            if (n->kind == "field" && n->implicit_this && cur_class_ && n->field_index >= 0 &&
+                static_cast<size_t>(n->field_index) < cur_class_->fields.size()) {
+                const Field& f = cur_class_->fields[static_cast<size_t>(n->field_index)];
+                if (f.type && f.type->is_const) return true;
+            }
+            return false;
+        }
+        if (auto m = dynamic_cast<Member*>(a)) {
+            TypePtr ot = m->obj ? m->obj->ty : nullptr;
+            if (ot && read_only_view(ot)) return true;
+            if (ot && m->field_index >= 0 && static_cast<size_t>(m->field_index) < ot->fields.size()) {
+                const Field& f = ot->fields[static_cast<size_t>(m->field_index)];
+                if (f.type && f.type->is_const) return true;
+            }
+            return ref_target_is_readonly(m->obj.get());
+        }
+        if (auto ix = dynamic_cast<Index*>(a)) {
+            TypePtr bt = ix->base ? ix->base->ty : nullptr;
+            if (bt && bt->elem && bt->elem->is_const &&
+                (bt->kind == TypeKind::Slice || bt->kind == TypeKind::Ptr ||
+                 bt->kind == TypeKind::Array)) {
+                return true;
+            }
+            return ref_target_is_readonly(ix->base.get());
+        }
+        if (auto u = dynamic_cast<Unary*>(a); u && u->op == "*") {
+            TypePtr ot = u->operand->ty;
+            return ot && ot->kind == TypeKind::Ptr && ot->elem && ot->elem->is_const;
+        }
+        return false;
+    }
+
+    bool Sema::root_is_this(Expr* e) {        if (!e) return false;
         if (auto n = dynamic_cast<Name*>(e)) return n->ident == "this" || n->implicit_this;
         if (auto m = dynamic_cast<Member*>(e)) return root_is_this(m->obj.get());
         if (auto ix = dynamic_cast<Index*>(e)) return root_is_this(ix->base.get());
@@ -250,6 +290,12 @@ namespace muc_detail {
             }
             if (root_is_const(t)) err("cannot modify a member of a `const` binding", t);
             TypePtr ot = m->obj ? m->obj->ty : nullptr;
+            // Any expression of a `const class`, or a `const` handle, is a read-only view: the object's
+            // content is fixed after construction, and that covers the fields it inherited as well
+            // (SPEC 3.7). The field's own `const` is checked below, but an inherited field is mutable.
+            if (ot && read_only_view(ot)) {
+                err("cannot modify a member of a read-only (`const`) value (`" + ot->str() + "`)", t);
+            }
             // `arr[0].x = ...` where `arr` is a `const P[N]`: the element is a const object even though the
             // binding is not (SPEC 3.7: a `const T[N]` array has read-only elements).
             if (ot && ot->is_const) {

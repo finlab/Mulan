@@ -666,7 +666,14 @@ C++ model, with the deliberate omissions listed at the end of this section.
   - *No implicit widening.* Converting that view to a **mutable** view — a base handle `Base` or an
     interface handle `I` — is an error, exactly like `const T → T` (3.6): write `as`. Writing through the
     view obtained by `as` is UB (4.3), the same rule as any other const removal. (An interface whose every
-    member is `const` is itself a read-only contract, so such a view still converts implicitly.)
+    member is `const` is itself a read-only contract, so such a view still converts implicitly; an operator
+    member with a mutable receiver does not count as `const`.)
+  - *Writes are refused everywhere.* A field write (`d.v = 1`, inherited fields included), a compound
+    assignment, an element write through the object (`d.inner[0] = 1`), and binding any of them to a
+    mutable `ref` parameter are all errors: a read-only view grants no write access through any of them.
+    A pointer or dynamic-array **field** is an exception of the usual kind — the header is part of the
+    fixed content, the block it points at is a separate object (`d.bytes[0] = 1` writes that block, exactly
+    as a `T* const` field would). Declare the field `const T[]` to make those elements read-only too.
   - *Methods.* Methods are implicitly `const`, so the read-only view can call them. A method may be declared
     non-`const` **only to override a non-`const` virtual of the base**: it occupies the vtable slot, its body is
     read-only like every other method body, it is not part of the class's public surface (`private` by default,
