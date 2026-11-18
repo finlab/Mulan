@@ -365,6 +365,14 @@ namespace muc_detail {
                 check_assign(e, ty, what);
                 return;
             }
+            // Field-wise construction of a type without a constructor (`Token(5)`, `Token(v = 5)`):
+            // a construction is not a copy, so a `nocopy` type may still be built this way (SPEC 3.4).
+            if (auto call = dynamic_cast<Call*>(e);
+                call && ty->kind == TypeKind::Struct && ty->ctors.empty() &&
+                call->callee_kind == "ctor" && same_type(call->ty, ty)) {
+                check_expr(e, ty);
+                return;
+            }
             if (ty->kind == TypeKind::Array && is_char(ty->elem) &&
                 dynamic_cast<StringLit*>(e)) {
                 // A string literal initializes a fixed-size char/byte array (copied + NUL padded, 3.4).

@@ -27,6 +27,31 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 223 — 2026-11-19
+
+**Four issue fixes: copy/move constructors, `nocopy` construction, `delegate.code/env`, and `ref T`
+satisfying a declared `T` in a class's nominal `override`.**
+
+- **A user copy/move constructor may write a reference-counted field in its body.** `Holder(move Holder
+  other) { r = other.r; }` crashed: the destination was not zeroed, so the assignment released garbage,
+  and `ownParams` retained a `ref`/`move` parameter *through its slot* — it read the parameter's own
+  address as if it were the referent, incrementing the reference count of a handle that was really a
+  pointer. Both are fixed: `emitCopyInto`/`emitMoveInto` zero the destination first (SPEC 3.4), and an
+  indirect (`ref`/`move`) parameter is a borrow that is neither retained nor released.
+- **`Token a = Token(5);` works for a `nocopy` struct without a constructor.** The non-copyable check
+  ran before the call was resolved, so a field-wise construction was reported as a copy; `check_assign`
+  now resolves a same-type construction and lets it through (construction is not copying, 3.4/3.13).
+- **`d.code` / `d.env` exist** (SPEC 3.16.1a): the two words of a delegate value as `void*`, which is
+  the escape hatch both the SPEC and the `extern` diagnostics point at. `env` is null for a captureless
+  delegate.
+- **A `ref T` implementation satisfies a declared `T`** in a class's nominal `override` of an interface
+  member, the rule StdLibSPEC 6.2 already states for the structural path: `override ref int
+  operator[](...)` now satisfies `IIndex`/`IIndexMut`, and the itable thunk loads through the borrow.
+- `MUC_NO_OPT=1` keeps the O2 pipeline at -O0 — `--emit-ir` prints the module after it, so debugging
+  the emitted code needs a way to see it before the inliner rewrites it.
+- New run cases `move_ctor_rc_field`, `nocopy_ctorless_expr`, `delegate_code_env`,
+  `class_iface_borrow_index`. Full suite: **849/849 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 222 — 2026-11-19
 
 **Two issue fixes: contextual alternatives in target-typed arguments, and RC fields written by the

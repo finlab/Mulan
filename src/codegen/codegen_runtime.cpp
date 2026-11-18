@@ -757,6 +757,9 @@ namespace muc_detail {
             FunctionCallee ctor = mod->getOrInsertFunction(
                 move_ctor_cname(ty->unit, ty->name),
                 FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), ptrTy()}, false));
+            // The destination is zeroed first (SPEC 3.4): the constructor body may assign a reference
+            // field, and that assignment releases the previous value before storing the new one.
+            if (ty->needs_cleanup()) zeroMem(dst, ty);
             b.CreateCall(ctor, {dst, from});
             emitCheckPending();  // if the move constructor throws, the source still owns its value
             // The constructor defines the source's final state, and the source is a live object: its
@@ -774,6 +777,9 @@ namespace muc_detail {
         FunctionCallee ctor = mod->getOrInsertFunction(
             copy_ctor_cname(ty->unit, ty->name),
             FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), ptrTy()}, false));
+        // Same as the move constructor: zero the destination so a field assignment inside the body
+        // releases null rather than uninitialized memory (SPEC 3.4).
+        if (ty->needs_cleanup()) zeroMem(dst, ty);
         b.CreateCall(ctor, {dst, src});
         emitCheckPending();
     }

@@ -484,7 +484,8 @@ namespace muc_detail {
         if (std::getenv("MUC_VERIFY_MEM")) verifyStackWrites();
 
         // standard -O2 pipeline: lets Str's short methods/operators and the RC helper functions be inlined.
-        
+        // `MUC_NO_OPT=1` drops it to -O0: `--emit-ir` prints the module after this point, so a debugging
+        // session needs a way to see what was emitted before the inliner rewrote it.
         {
             LoopAnalysisManager LAM;
             FunctionAnalysisManager FAM;
@@ -497,7 +498,8 @@ namespace muc_detail {
             PB.registerLoopAnalyses(LAM);
             PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
             ModulePassManager MPM =
-                PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+                PB.buildPerModuleDefaultPipeline(std::getenv("MUC_NO_OPT") ? llvm::OptimizationLevel::O0
+                                                                          : llvm::OptimizationLevel::O2);
             MPM.run(*mod, MAM);
         }
     }

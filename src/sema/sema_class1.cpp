@@ -666,13 +666,19 @@ namespace muc_detail {
                 std::vector<const MethodSig*> matches;
                 collect_sigs(c->ty->base ? c->ty->base : c->ty, sig, matches);
                 for (auto& i : c->ty->interfaces) collect_sigs(i, sig, matches, 0, nullptr, c->ty);
+                // A `ref T` implementation satisfies a declared `T`: a borrow is usable as a value
+                // (StdLibSPEC §6.2, the same rule the structural path applies). The itable thunk loads
+                // through the borrow.
+                auto ret_ok = [](const TypePtr& want, const TypePtr& got) {
+                    return same_type(want, got) || same_type(want, referent_of(got));
+                };
                 for (auto* ms : matches) {
-                    if (!same_type(ms->ret, m->rty)) {
+                    if (!ret_ok(ms->ret, m->rty)) {
                         err("override return type does not match the declaration in `" + ms->owner->str() + "`",
                             m.get());
                     }
                 }
-                if (!same_type(base_sig->ret, m->rty)) {
+                if (!ret_ok(base_sig->ret, m->rty)) {
                     err("override has a mismatched return type", m.get());
                 }
             } else if (m->is_override) {

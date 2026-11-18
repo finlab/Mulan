@@ -106,8 +106,17 @@ namespace muc_detail {
             method_cname(impl.owner->unit, impl.owner->name, impl.name, impl.params, impl.is_const),
             FunctionType::get(lt(impl.ret), ip, false));
         Value* r = hb.CreateCall(target, args);
-        if (fn->getReturnType()->isVoidTy()) hb.CreateRetVoid();
-        else hb.CreateRet(r);
+        if (fn->getReturnType()->isVoidTy()) {
+            hb.CreateRetVoid();
+        } else {
+            // A `ref T` implementation satisfies a declared `T` (a borrow is usable as a value): the
+            // slot returns the value, so the thunk loads through the borrow.
+            if (impl.ret && slot.ret && is_borrow_type(impl.ret) &&
+                !same_type(impl.ret, slot.ret) && same_type(referent_of(impl.ret), slot.ret)) {
+                r = hb.CreateLoad(lt(slot.ret), r);
+            }
+            hb.CreateRet(r);
+        }
         thunkCache[key] = fn;
         return fn;
     }
@@ -328,6 +337,11 @@ namespace muc_detail {
         pushRefScope();
         for (auto& pl : pls) {
             if (!pl || !needsCleanup(pl->rty)) continue;
+            // A `ref` / `move` parameter is a borrow: its slot holds the referent's address, not the
+            // value, and the caller keeps ownership. Retaining through the slot would read the address
+            // itself as the value (it corrupted the reference count of a `move T other` constructor
+            // parameter), and the matching release never runs for an indirect parameter anyway.
+            if (pl->by_ref) continue;
             auto it = slots.find(pl.get());
             if (it == slots.end()) continue;
             if (isRefKind(pl->rty)) {

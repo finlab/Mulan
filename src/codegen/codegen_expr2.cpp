@@ -770,6 +770,11 @@ using ArgPack = Emitter::ArgPack;
                                                 FunctionType::get(lt((*f)->rty), ptys, (*f)->is_varargs))
                     .getCallee();
             }
+            if (m->kind == "delegate_code" || m->kind == "delegate_env") {
+                // The two words of the `{code, env}` aggregate; `code` is word 0, `env` word 1.
+                Value* d = eval(m->obj.get());
+                return b.CreateExtractValue(d, {m->kind == "delegate_code" ? 0u : 1u});
+            }
             if (m->kind == "field" && m->obj->ty && m->obj->ty->kind == TypeKind::Class) {
                 Value* p = eval(m->obj.get());
                 Value* addr = fieldAddr(p, m->obj->ty, m->field_index);

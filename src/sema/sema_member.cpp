@@ -373,6 +373,16 @@ namespace muc_detail {
             e->field_index = ot->field_index(e->name);
             return ft;
         }
+        // `delegate.code` / `delegate.env`: the two words of a delegate value, as `void*` (SPEC 3.16.1a).
+        // This is the C interoperability escape hatch — the diagnostic for a delegate in an `extern`
+        // signature points here, so the members have to exist.
+        if (ot && ot->kind == TypeKind::Delegate) {
+            if (e->name == "code" || e->name == "env") {
+                e->kind = e->name == "code" ? "delegate_code" : "delegate_env";
+                return Type::make_ptr(Type::make_void());
+            }
+            err("type " + ot->str() + " has no member `" + e->name + "` (a delegate exposes `code` and `env`)", e);
+        }
         err("type " + (ot ? ot->str() : "void") + " has no member `" + e->name + "`", e);
     }
 
