@@ -51,7 +51,7 @@ prologue at all.
 - Tests: run `ctor_default_synthesized` (struct declaration, explicit construction, class, `const class`,
   generic instance); must-fail `struct_default_aggregate`, `ctor_default_base_args`.
 
-Full suite: Windows 830/830, Linux (WSL) 827/827.
+Full suite: Windows 831/831, Linux (WSL) 829/829.
 
 #### build 214 — 2026-11-18
 
@@ -3587,5 +3587,6 @@ Removed the C99 backend, making LLVM the only backend; cleaned up `--emit-c`/`-D
 Baseline: C++20 compiler (lexer/parser/sema), C99 backend, LLVM backend (LLVM C++ API → COFF), 58 regression cases, reference/object model design discussion
 
 **Tests**: C backend 58/58; LLVM backend 58/58; cold build with zero warnings
+
 
 
