@@ -843,7 +843,7 @@ private:
     // Call through a function value: `fp(args)`
     TypePtr check_fnptr_args(Call* c, const TypePtr& ft);
 
-    TypePtr check_unary(Unary* e);
+    TypePtr check_unary(Unary* e, const TypePtr& expected = nullptr);
 
     // Conditional expression `cond ? a : b` (SPEC §5.2):
     // the condition must be bool; the two arms resolve as "same type → implicit widening → null adaptation", and an explicit `as` is required otherwise.
@@ -899,6 +899,11 @@ private:
 
     // Arity / return-type validation for an operator declared inside a struct body (3.11).
     void check_member_operator_sig(MethodDecl* m, const TypePtr& owner);
+
+    // Every function named `name` visible from the current unit (current unit first; a local function
+    // shadows imports), including `std.string`'s public functions. Empty when the name is not a
+    // function at all — `check_call` and the contextual-alternative rule both need that distinction.
+    std::vector<FuncDecl*> collect_funcs_named(const std::string& name);
 
     static std::vector<Expr*> raw_args(const std::vector<ExprPtr>& v);
 

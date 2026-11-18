@@ -27,6 +27,45 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 222 — 2026-11-19
+
+**Two issue fixes: contextual alternatives in target-typed arguments, and RC fields written by the
+constructor initializer list; three diagnostics now name the directive-position rule.**
+
+- **Bare sum alternative in an argument** (`take(Some(3))`) works again, together with `==` / `!=` with
+  a payload alternative on either side (`o == Some(3)`, `Some(3) == o`). `choose_overload` /
+  `choose_method` / `choose_ctor` typed every argument on its own before ranking, so a bare alternative
+  was looked up as a function ("undefined function `Some`"); a **lone** candidate now types its
+  arguments with its own parameter types (SPEC 10.1.1 "target type is already known"). The function
+  lookup used by `check_call` moved into `Sema::collect_funcs_named`, which the comparison rule also
+  uses: a name that is a visible function never reorders the two operand checks.
+- **A delegate field written through the initializer list** (`Ctor(...) : g(x) { }`) left the
+  environment unretained: the later release underflowed the count and the program crashed on exit.
+  `initFromExpr` covered class/interface, array, struct/sum and slice but not `Delegate`, so the store
+  fell through to a plain `store`; it now retains a borrowed source and transfers an owned one.
+  `emitTernaryArm` had its own copy of the ownership dispatch (and likewise missed `Delegate` and
+  `Sum`) — it calls `initFromExpr` instead, so the rule has one implementation.
+- **Directive positions** (`#if` between enum members / sum alternatives) reported whatever the
+  surrounding parser expected next (`expected enum member name but got #`, `expected ; but got (`,
+  and for a generic sum "generic type aliases are not supported"). All three now use
+  `Parser::no_directive_here`, which names the allowed positions (SPEC 9.2) and points at gating the
+  whole declaration; `#if is not allowed here` uses the same text.
+- **`move <temporary>`** (`move Buf(2)`) called it a partial move; a temporary is already an rvalue,
+  and only `move o.field` / `move a[i]` are partial moves — the two cases have separate messages.
+- **`INT32_MIN` is writable again** (`int a = -2147483648;`, `const int MIN = -2147483648;`): the
+  magnitude 2147483648 is typed `long` on its own, so the negation was `long`. A negated integer literal
+  whose magnitude is exactly `2^(bits-1)` of the target type now takes that type (the C/C++/Java rule),
+  and the compile-time evaluator keeps `lit` across unary minus so the constant adapts as well. The
+  64-bit boundary (`-9223372036854775808`, `18446744073709551615`) is still unreachable — the lexer
+  stops at `2^63-1`, which needs the literal-range decision tracked separately (issue #121).
+- New run cases `sum_alt_positions` (declaration, assignment, argument, `return`, ternary and both
+  comparison operands), `ctor_init_rc_field` (borrowed delegate, environment outliving its source,
+  owned lambda, class-handle field), `int_min_literal`, `contract_witness_ref_ret` (`ref` /
+  `ref const` interface returns in a generic, by-value and `ref` struct parameters) and
+  `cast_fail_float_local` (the `double as int` failure hook next to a `float` local); must-fail
+  `if_enum_body`, `if_sum_alt`, `if_generic_sum_alt` and `move_temporary` lock the new diagnostics.
+  Full suite: **845/845 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 221 — 2026-11-19
 
 **`cstd` selects the platform inside the unit instead of by directory.**

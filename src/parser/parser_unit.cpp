@@ -237,8 +237,10 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             // `type X = A | B(T) | C;` declares a **sum type** (SPEC 10.1); everything else stays a
             // transparent alias.
             bool is_sum = false;
+            bool saw_directive = false;
             {
                 const std::size_t save = pos_;
+                if (peek().is_op("#")) saw_directive = true;
                 if (peek().kind == TokKind::Ident) {
                     advance();
                     if (at_op("(")) {  // skip the payload list
@@ -254,8 +256,12 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                         }
                     }
                     is_sum = at_op("|");
+                    if (peek().is_op("#")) saw_directive = true;
                 }
                 pos_ = save;
+            }
+            if (!is_sum && saw_directive) {
+                throw no_directive_here("between the alternatives of a sum type");
             }
             if (is_sum) {
                 auto sd = std::make_unique<SumDecl>();
@@ -263,6 +269,9 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 sd->line = name_tok.line;
                 sd->col = name_tok.col;
                 for (;;) {
+                    if (at_directive()) {
+                        throw no_directive_here("between the alternatives of a sum type");
+                    }
                     SumAlt alt;
                     const Token at = expect_ident("alternative name");
                     alt.name = at.text;
@@ -718,6 +727,7 @@ std::unique_ptr<Decl> Parser::parse_enum() {
     decl->col = tk.col;
 
     while (!at_op("}")) {
+        if (at_directive()) throw no_directive_here("between enum members");
         std::string member = expect_ident("enum member name").text;
         std::optional<long long> val;
         if (at_op("=")) {

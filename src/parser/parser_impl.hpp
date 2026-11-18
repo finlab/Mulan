@@ -207,8 +207,11 @@ private:
             }
             return false;
         }
-    }    void directive_header();
+    }
+    void directive_header();
     void directive_arm_end();
+    // The error for a directive at a position outside the directive list positions (SPEC 9.2).
+    ParserError no_directive_here(const std::string& where) const;
 
     struct DirectiveGroup {
         bool saw_else = false;

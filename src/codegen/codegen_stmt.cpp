@@ -225,6 +225,12 @@ using ArgPack = Emitter::ArgPack;
             if (!convOwns(e, ty)) emitRetainValue(addr, ty, unaligned);
             return;
         }
+        if (ty->kind == TypeKind::Delegate) {
+            // `{code, env}`: a borrowed source retains the environment, an owned one transfers it
+            storeValue(v, addr, ty, unaligned);
+            if (!valueOwned(e)) emitRetainValue(addr, ty, unaligned);
+            return;
+        }
         storeValue(v, addr, ty, unaligned);
     }
 

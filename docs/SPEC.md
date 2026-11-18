@@ -2547,10 +2547,12 @@ use std.comptime;                              // required before using os/arch/
 - **`use` inside an arm** is allowed, and only the units of selected arms join the dependency graph.
 - `muc dump-config` prints every builtin value; that output plus the platform spec is the reproduction
   key of a build.
-- **Deliberately not supported** (decided 2026-11-16): `#if` **inside** an enum variant list or a
-  single parameter list. A conditional variant would silently shift the implicit values of every later
-  variant, and a conditional parameter would need the comma list split; the granularity is too fine to
-  pay for. Wrap the whole declaration instead — a declaration list is a supported position.
+- **Deliberately not supported** (decided 2026-11-16): `#if` **inside** an enum variant list, between
+  the alternatives of a sum type (`type V = A | B;`), or inside a single parameter list. A conditional
+  variant would silently shift the implicit values of every later variant; a sum alternative would
+  split a single `type` declaration; a conditional parameter would need the comma list split. The
+  granularity is too fine to pay for. Wrap the whole declaration instead — a declaration list is a
+  supported position. The diagnostic names the rule and points here.
 
 ### 9.3 The `std.comptime` unit and `builtin` declarations (decided 2026-11-17)
 
@@ -2732,9 +2734,13 @@ Value d = Value.None;        // a unit alternative is a plain value
   the sum owns one reference. Payload types with a **user destructor** are rejected (they cannot be
   copied by value, same rule as array elements).
 - **Construction**: `Type.Alt(values...)` for a payload alternative, `Type.Alt` (no parentheses) for a
-  unit alternative, and — when the target type is already known — the **bare alternative name**:
-  `Option<int> o = Some(3);`, `o = None;`, `if o == None { ... }`. A user function with the same name
-  wins, so existing code is unaffected (0.0.119).
+  unit alternative, and — when the target type is already known — the **bare alternative name**. The
+  target is known in every target-typed position: a declaration or assignment (`Option<int> o = Some(3);`,
+  `o = None;`), a call argument (`take(Some(3))`, whose target is the parameter type), a `return`, both
+  arms of a ternary, and either operand of `==` / `!=` with a sum value (`if o == None`,
+  `if o == Some(3)`, `if Some(3) == o`). A user function with the same name wins at a call site that has
+  no such target, so existing code is unaffected (0.0.119; argument and comparison positions restored
+  2026-11-19).
 - **Testing and extracting without a full `switch`**: `is` takes a pattern —
   `if o is Some { ... }` (tag only) or `if o is Some(v) { ... }` (binds the payload; the name is a
   local of that branch only; binding is allowed only when the `is` is the **whole** condition, so

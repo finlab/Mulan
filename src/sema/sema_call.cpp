@@ -121,28 +121,7 @@ namespace muc_detail {
                     nm->kind = "type";
                 }
             } else {
-            std::vector<FuncDecl*> cands;
-            auto add_funcs = [&](UnitInfo& o, bool require_pub) {
-                auto f = o.funcs.find(nm->ident);
-                if (f == o.funcs.end()) return;
-                for (auto* fd : f->second) {
-                    if (!require_pub || fd->is_public) cands.push_back(fd);
-                }
-            };
-            UnitInfo& ui = info();
-            add_funcs(ui, false);
-            // A local function with the same name fully shadows imports (consistent with local types/variables)
-            if (cands.empty()) {
-                for (auto& use : cur_->uses) {
-                    if (use->unit_name == "std.string") continue;  // added below uniformly as an implicit import
-                    if (!unit_visible(use->unit_name)) continue;
-                    auto it = infos_.find(use->unit_name);
-                    if (it != infos_.end()) add_funcs(it->second, true);
-                }
-                if (UnitInfo* stdn = std_info(); stdn && cur_->name != "std.string") {
-                    add_funcs(*stdn, true);
-                }
-            }
+            std::vector<FuncDecl*> cands = collect_funcs_named(nm->ident);
 
             if (!cands.empty()) {
                 FuncDecl* chosen = choose_overload(cands, raw_args(c->args),

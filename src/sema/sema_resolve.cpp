@@ -79,6 +79,33 @@ namespace muc_detail {
         return out;
     }
 
+    // Every function named `name` that is visible from the current unit: the current unit's own
+    // functions, then the public ones of `use`d units (a local function fully shadows imports), plus
+    // `std.string`'s public functions as the implicit import.
+    std::vector<FuncDecl*> Sema::collect_funcs_named(const std::string& name) {
+        std::vector<FuncDecl*> cands;
+        auto add_funcs = [&](UnitInfo& o, bool require_pub) {
+            auto f = o.funcs.find(name);
+            if (f == o.funcs.end()) return;
+            for (auto* fd : f->second) {
+                if (!require_pub || fd->is_public) cands.push_back(fd);
+            }
+        };
+        add_funcs(info(), false);
+        if (cands.empty()) {
+            for (auto& use : cur_->uses) {
+                if (use->unit_name == "std.string") continue;  // added below uniformly as an implicit import
+                if (!unit_visible(use->unit_name)) continue;
+                auto it = infos_.find(use->unit_name);
+                if (it != infos_.end()) add_funcs(it->second, true);
+            }
+            if (UnitInfo* stdn = std_info(); stdn && cur_->name != "std.string") {
+                add_funcs(*stdn, true);
+            }
+        }
+        return cands;
+    }
+
     std::vector<Expr*> Sema::raw_args(const std::vector<ExprPtr>& v) {
         std::vector<Expr*> out;
         out.reserve(v.size());
@@ -90,7 +117,13 @@ namespace muc_detail {
                               const std::vector<Expr*>& args, const std::string& what,
                               Node* at, bool check_ref) {
         std::vector<TypePtr> atys;
-        for (auto* a : args) atys.push_back(check_expr(a));
+        // One candidate: each parameter type is the target of its argument, so an argument that needs
+        // its target to have a type of its own (a bare sum alternative, `Some(3)`) is checked there
+        // instead of on its own (SPEC 10.1.1 `target type is already known`).
+        const FuncDecl* only = cands.size() == 1 ? cands[0] : nullptr;
+        for (size_t i = 0; i < args.size(); ++i) {
+            atys.push_back(check_expr(args[i], only && i < only->pty.size() ? only->pty[i] : TypePtr()));
+        }
 
         std::vector<FuncDecl*> ok;
         std::vector<std::vector<int>> ranks;
@@ -308,7 +341,13 @@ namespace muc_detail {
                                    const std::vector<Expr*>& args,
                                    const std::string& what, Node* at) {
         std::vector<TypePtr> atys;
-        for (auto* a : args) atys.push_back(check_expr(a));
+        // Same target-typing rule as `choose_overload`: a lone candidate's parameter types type their
+        // arguments.
+        const MethodSig* only = cands.size() == 1 ? cands[0] : nullptr;
+        for (size_t i = 0; i < args.size(); ++i) {
+            atys.push_back(
+                check_expr(args[i], only && i < only->params.size() ? only->params[i] : TypePtr()));
+        }
 
         std::vector<const MethodSig*> ok;
         std::vector<std::vector<int>> ranks;
@@ -348,7 +387,12 @@ namespace muc_detail {
                                             const std::vector<Expr*>& args,
                                             const std::string& what, Node* at) {
         std::vector<TypePtr> atys;
-        for (auto* a : args) atys.push_back(check_expr(a));
+        // Same target-typing rule as `choose_overload`: a lone candidate's parameter types type their
+        // arguments.
+        const std::vector<TypePtr>* only = ctors.size() == 1 ? &ctors[0] : nullptr;
+        for (size_t i = 0; i < args.size(); ++i) {
+            atys.push_back(check_expr(args[i], only && i < only->size() ? (*only)[i] : TypePtr()));
+        }
 
         std::vector<const std::vector<TypePtr>*> ok;
         std::vector<std::vector<int>> ranks;

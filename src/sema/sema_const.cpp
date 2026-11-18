@@ -776,8 +776,14 @@ namespace muc_detail {
             out.flit = false;
             if (u->op == "+") return true;
             if (u->op == "-") {
-                if (v.is_float) out.f = -v.f;
-                else out.i = normalize_int(-v.i, v.ty);
+                if (v.is_float) {
+                    out.f = -v.f;
+                } else {
+                    out.i = normalize_int(-v.i, v.ty);
+                    // A negated literal is still a literal: `const int MIN = -2147483648;` spells its
+                    // magnitude through 2147483648, which only the target type can place (SPEC 3.4).
+                    out.lit = v.lit;
+                }
                 return true;
             }
             if (u->op == "~") {

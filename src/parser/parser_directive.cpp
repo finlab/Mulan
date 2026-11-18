@@ -17,6 +17,16 @@
 
 namespace muc_detail {
 
+// `#if` at a position that is not a directive position: name the positions that are (SPEC 9.2)
+// instead of reporting whatever the surrounding parser expected next.
+ParserError Parser::no_directive_here(const std::string& where) const {
+    return err_at("`#if` is not allowed " + where +
+                      ": directives may only appear at the unit top level, in struct/class/interface "
+                      "bodies and in function bodies/blocks (SPEC 9.2); gate the whole declaration "
+                      "instead",
+                  peek());
+}
+
 void Parser::directive_header() {
     const Token hash = advance();  // '#'
     if (!hash.bol) {
@@ -94,7 +104,7 @@ void Parser::directive_header() {
             g.node->line = nm.line;
             g.node->col = nm.col;
         } else {
-            throw err_at("`#if` is not allowed here", hash);
+            throw no_directive_here("here");
         }
         g.arm_cond = parse_expr();
         expect_op("{");

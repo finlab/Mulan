@@ -668,30 +668,14 @@ static bool is_numeric(const TypePtr& t) {
         return loadAt(lt(ty), res);
     }
 
-    // Write the branch value into the result slot: a borrowed source is retained field by field, an owned source transfers ownership directly (consistent with initInto)
+    // Write the branch value into the result slot with the same ownership rules as a statement-level
+    // write (`initFromExpr`): a borrowed source is retained, an owned source transfers ownership.
     void Emitter::emitTernaryArm(Value* addr, Expr* src, const TypePtr& ty) {
         if (!addr) {  // void branch: only evaluate
             eval(src);
             return;
         }
-        Value* v = coerce(src, ty);
-        if (isRefKind(ty)) {
-            if (!ownsReference(src)) emitRetainRef(v, ty);
-            storeValue(v, addr, ty);
-            return;
-        }
-        if ((ty->kind == TypeKind::Array || ty->kind == TypeKind::Struct) &&
-            needsCleanup(ty)) {
-            storeValue(v, addr, ty);
-            if (!valueOwned(src)) emitRetainValue(addr, ty);
-            return;
-        }
-        if (ty->kind == TypeKind::Slice) {
-            storeValue(v, addr, ty);
-            if (!convOwns(src, ty)) emitRetainValue(addr, ty);
-            return;
-        }
-        storeValue(v, addr, ty);
+        initFromExpr(addr, ty, src, false);
     }
 
 

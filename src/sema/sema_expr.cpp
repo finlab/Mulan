@@ -142,7 +142,7 @@ namespace muc_detail {
             err("type " + bt->str() + " cannot be subscripted", e);
         }
 
-        if (auto u = dynamic_cast<Unary*>(e)) return check_unary(u);
+        if (auto u = dynamic_cast<Unary*>(e)) return check_unary(u, expected);
 
         if (auto nt = dynamic_cast<NotExpr*>(e)) {
             TypePtr t = check_expr(nt->operand.get());
@@ -255,7 +255,19 @@ namespace muc_detail {
 
 
 
-    TypePtr Sema::check_unary(Unary* e) {
+    TypePtr Sema::check_unary(Unary* e, const TypePtr& expected) {
+        // The decimal spelling of a signed minimum goes through its magnitude, which is one past the
+        // positive range: `-2147483648` is 2147483648 negated, and that magnitude is not an `int` on
+        // its own. A negated integer literal whose magnitude is exactly 2^(bits-1) of the target type
+        // therefore is that value (C, C++ and Java all make this exception).
+        if (e->op == "-" && is_prim(expected) && expected->is_integer() && expected->is_signed() &&
+            expected->bits() < 64) {
+            if (auto il = dynamic_cast<IntLit*>(e->operand.get());
+                il && il->value == (1LL << (expected->bits() - 1))) {
+                il->ty = expected;
+                return expected;
+            }
+        }
         if (e->op == "&") {
             if (auto nm = dynamic_cast<Name*>(e->operand.get());
                 nm && nm->ident == "this" && lookup_local("this") != nullptr) {
@@ -428,9 +440,35 @@ namespace muc_detail {
             return t_bool();
         }
 
-        TypePtr lt = check_expr(e->left.get());
+        // A bare alternative has no type of its own, so on either side of `==` / `!=` the other
+        // operand supplies the target type (SPEC 10.1.1 contextual construction): `v == None`,
+        // `v == One(7)`. The side that is not a bare alternative is checked first when the left
+        // operand needs the target.
+        auto bare_alt_call = [&](Expr* x) -> Call* {
+            auto* call = dynamic_cast<Call*>(x);
+            if (!call || !call->callee_kind.empty() || !call->type_args.empty()) return nullptr;
+            auto* nm = dynamic_cast<Name*>(call->callee.get());
+            if (!nm || lookup_local(nm->ident) != nullptr) return nullptr;
+            // Only a name that is not a visible function is a candidate bare alternative here: the
+            // ordering of the two checks below must not be decided in favour of a real call.
+            return collect_funcs_named(nm->ident).empty() ? call : nullptr;
+        };
+        const bool cmp = op == "==" || op == "!=";
+        TypePtr lt;
+        if (cmp && bare_alt_call(e->left.get()) && !bare_alt_call(e->right.get())) {
+            TypePtr prt = check_expr(e->right.get());
+            if (prt && prt->kind == TypeKind::Sum) {
+                check_assign(e->left.get(), prt, "comparison operand");
+                lt = check_expr(e->left.get(), prt);
+            } else {
+                lt = check_expr(e->left.get());
+            }
+        } else {
+            lt = check_expr(e->left.get());
+        }
         // `v == None`: a bare alternative name on the right of a comparison with a sum value is
         // resolved from the left side's type (contextual construction, SPEC 10.1.1).
+        bool right_typed = false;
         if (lt && lt->kind == TypeKind::Sum) {
             if (auto nm = dynamic_cast<Name*>(e->right.get());
                 nm && nm->kind.empty() && lookup_local(nm->ident) == nullptr) {
@@ -443,9 +481,14 @@ namespace muc_detail {
                         break;
                     }
                 }
+            } else if (cmp && bare_alt_call(e->right.get())) {
+                check_assign(e->right.get(), lt, "comparison operand");
+                right_typed = true;
             }
         }
-        TypePtr rt = check_expr(e->right.get());
+        // An operand constructed above keeps the type it was built from: re-checking it without the
+        // target would look the bare name up as a function and report "undefined function".
+        TypePtr rt = check_expr(e->right.get(), right_typed ? lt : TypePtr());
         adapt_lit(e->left.get(), lt, rt);
         adapt_lit(e->right.get(), rt, lt);
         lt = e->left->ty;
@@ -730,7 +773,14 @@ namespace muc_detail {
         if (mv->moved) return mv->ty;
         auto* nm = dynamic_cast<Name*>(mv->operand.get());
         if (!nm) {
-            err("`move` needs a variable name: partial moves (`move o.field`, `move a[i]`) are not supported",
+            // Partial moves (`move o.field`, `move a[i]`) are not supported; a temporary is already an
+            // rvalue, so `move` on it is redundant rather than partial — name the actual case.
+            if (dynamic_cast<Member*>(mv->operand.get()) || dynamic_cast<Index*>(mv->operand.get())) {
+                err("`move` needs a variable name: partial moves (`move o.field`, `move a[i]`) are not supported",
+                    mv);
+            }
+            err("`move` needs a variable name: this operand is already a temporary value, so pass it "
+                "directly (`f(Buf(2))`)",
                 mv);
         }
         LocalVar* lv = lookup_local(nm->ident);
