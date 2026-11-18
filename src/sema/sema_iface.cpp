@@ -430,4 +430,35 @@ namespace muc_detail {
         }
     }
 
+    void Sema::init_interface_operator(MethodDecl* m, MethodSig& sig, const std::string& iface_name) {
+        // The receiver is the first operand: an interface member has no `this`, so `Self` is the only
+        // way to say the operator applies to the implementor. Only that operand may borrow (the rest
+        // are ordinary operands, e.g. the byte of a stream).
+        if (m->params.empty() || !m->params[0]->spec || !m->params[0]->spec->is_self) {
+            err("interface `" + iface_name +
+                    "`: an operator must spell its receiver as the first `Self` operand "
+                    "(write `T operator" + m->name.substr(8) + "(Self c, ...)`)",
+                m);
+        }
+        for (size_t i = 1; i < m->params.size(); ++i) {
+            if (m->params[i]->by_ref) {
+                err("interface `" + iface_name +
+                        "`: only the receiver (the first operand) may be a `ref` parameter",
+                    m->params[i].get());
+            }
+        }
+        // The witness type has no storage, so a borrow return can only mean "the element the
+        // subscription exposes"; every other operator must return a value.
+        if (m->ret_ref && m->name != "operator[]") {
+            err("interface `" + iface_name +
+                    "`: only `operator[]` may return a borrow; another operator's receiver is a value, "
+                    "not storage",
+                m);
+        }
+        if (!m->params.empty()) {
+            sig.recv_ref = m->params[0]->by_ref;
+            sig.recv_cref = sig.recv_ref && m->params[0]->is_const;
+        }
+    }
+
 }  // namespace muc_detail

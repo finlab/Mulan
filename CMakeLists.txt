@@ -68,7 +68,10 @@ add_executable(muc
   src/parser/parser_expr.cpp
   src/parser/parser_directive.cpp
   src/sema/sema.cpp
+  src/sema/sema_run.cpp
   src/sema/sema_decl.cpp
+  src/sema/sema_resolve_types.cpp
+  src/sema/sema_layout.cpp
   src/sema/sema_directive.cpp
   src/sema/sema_types.cpp
   src/sema/sema_generic.cpp
@@ -78,7 +81,10 @@ add_executable(muc
   src/sema/sema_class2.cpp
   src/sema/sema_const.cpp
   src/sema/sema_expr.cpp
+  src/sema/sema_member.cpp
+  src/sema/sema_lambda.cpp
   src/sema/sema_call.cpp
+  src/sema/sema_resolve.cpp
   src/codegen/codegen_llvm.cpp
   src/codegen/codegen_abi.cpp
   src/codegen/codegen_support.cpp

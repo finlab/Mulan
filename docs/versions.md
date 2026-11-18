@@ -27,6 +27,25 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 220 — 2026-11-19
+
+**Three more TUs split by concern** (no behaviour change).
+
+- `sema_decl.cpp` (1526) → `sema_run.cpp` (constructor + `run`, the pass order), `sema_resolve_types.cpp`
+  (type shells, per-declaration resolvers, `resolve_unit_types`, synthesized constructors),
+  `sema_layout.cpp` (sizes/alignment, `packed`/`align`, instantiated layouts, cv views) and a 525-line
+  `sema_decl.cpp` (units, visibility, public signatures, diagnostics); `init_interface_operator` moved to
+  `sema_iface.cpp`, where the rest of the interface code lives.
+- `sema_call.cpp` (1303) → `sema_resolve.cpp` (ranking + the method/operator lookup walks) and a
+  954-line `sema_call.cpp` (the call forms themselves).
+- `sema_expr.cpp` (1578) → `sema_member.cpp` (names, member access), `sema_lambda.cpp` (lambdas and
+  function values) and an 817-line `sema_expr.cpp` (dispatch, operators, casts, move/swap).
+
+Pure moves: the `Sema::` definition set is unchanged per file group (36 → 36 for `sema_decl`,
+29 → 29 for `sema_call`, 15 → 15 for `sema_expr`), IR for `examples/example.mu`,
+`cases/contract_default_this`, `cases/class_iface_index` and `cases/generic_bounds` is identical
+(the `mulan.build` module flag aside), and the full suite passes 836/836.
+
 #### build 219 — 2026-11-19
 
 **Source tree grouped by concept** (no behaviour change).
