@@ -335,9 +335,13 @@ namespace muc_detail {
                         }
                         err("type `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
-                    filter_methods_for_receiver(ms, (ot && ot->is_const) || root_is_const(obj));
+                    filter_methods_for_receiver(ms, (ot && (ot->is_const || ot->decl_const)) || root_is_const(obj));
                     if (ms.empty())
-                        err("cannot call a non-const method `" + m->name + "` on a `const` object", c);
+                        err(ot && ot->decl_const
+                                ? "a non-`const` method `" + m->name +
+                                      "` of a `const class` can only be called from its constructors or destructor"
+                                : "cannot call a non-const method `" + m->name + "` on a `const` object",
+                            c);
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
                     if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
                         err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
@@ -361,7 +365,7 @@ namespace muc_detail {
                         }
                         err("struct `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
-                    filter_methods_for_receiver(ms, (ot && ot->is_const) || root_is_const(obj));
+                    filter_methods_for_receiver(ms, (ot && (ot->is_const || ot->decl_const)) || root_is_const(obj));
                     if (ms.empty())
                         err("cannot call a non-const method `" + m->name + "` on a `const` object", c);
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);

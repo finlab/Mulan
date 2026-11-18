@@ -564,6 +564,9 @@ private:
     void apply_struct_iface_defaults(StructDecl* sd);
 
     void check_class(ClassDecl* c);
+    // `const class`: an override of a mutating virtual of the base takes the slot's (non-const) signature;
+    // runs after every shape is final and before any body is checked (SPEC 3.7).
+    void fix_const_class_slots(ClassDecl* c);
 
     void check_interface(InterfaceDecl* itf);
 

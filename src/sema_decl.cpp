@@ -523,6 +523,7 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                     e->ty = Type::make_enum(u->name, e->name);
                 } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
                     c->ty = Type::make_class(u->name, c->name);
+                    c->ty->decl_const = c->is_const_decl;
                 } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
                     i->ty = Type::make_interface(u->name, i->name);
                 } else if (auto sm = dynamic_cast<SumDecl*>(d.get())) {
@@ -1097,6 +1098,7 @@ bool is_scalar_const_type(const TypeSpec* spec) {
             auto c = dynamic_cast<ClassDecl*>(d.get());
             if (!c) continue;
             if (!c->ty) c->ty = Type::make_class(u->name, c->name);
+            c->ty->decl_const = c->is_const_decl;
 
             bool has_base = false;
             TypeSpec where;
@@ -1113,7 +1115,13 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                 }
                 if (bt->kind == TypeKind::Class) {
                     if (i != 0 || has_base) err("a class may have at most one base class, and it must come first", c);
-                    has_base = true;
+                    if (bt->decl_const) {
+                        err("a `const class` cannot be used as a base class (`" + bt->str() +
+                                "` is a `const class`): `const` types are leaves, use composition "
+                                "(`const class D { Base b; }`) or an interface instead",
+                            c);
+                    }
+                    if (bt->is_const) err("a base class cannot be `const`", c);                    has_base = true;
                     c->ty->base = bt;
                 } else if (bt->kind == TypeKind::Interface) {
                     for (auto& prev : c->ty->interfaces) {
@@ -1160,6 +1168,9 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                 // declaration allows that. Everything else needs `virtual` (build 160: static by default).
                 sig.is_virtual = m->is_virtual || m->is_override || !m->body;
                 sig.is_public = m->is_public;
+                // A non-`const` method of a `const class` is an override slot for a mutating virtual of the
+                // base: it is not part of the public surface (SPEC 3.7).
+                if (c->is_const_decl && !m->is_const) sig.is_public = false;
                 sig.owner = c->ty;
                 sig.is_operator = m->is_operator;
                 if (m->is_operator) check_member_operator_sig(m.get(), c->ty);
@@ -1460,6 +1471,16 @@ Program Sema::run() {
         for (auto& d : u->decls) {
             if (auto sd = dynamic_cast<StructDecl*>(d.get())) {
                 recover([&] { apply_struct_iface_defaults(sd); });
+            }
+        }
+    }
+    // A `const class` marks its methods `const`; an override of a **mutating** virtual of the base has to
+    // carry the slot's signature instead. Resolve that before any body is checked, so calls anywhere see
+    // the final signatures (SPEC 3.7).
+    for (auto& u : units_) {
+        for (auto& d : u->decls) {
+            if (auto cd = dynamic_cast<ClassDecl*>(d.get()); cd && cd->is_const_decl) {
+                recover([&] { fix_const_class_slots(cd); });
             }
         }
     }

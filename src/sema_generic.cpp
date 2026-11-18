@@ -710,6 +710,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         sd->ty = ty;
     } else {
         cd->ty = ty;
+        ty->decl_const = cd->is_const_decl;
     }
     generic_insts_[key] = ty;
     if (is_struct) {
@@ -738,6 +739,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         if (is_struct) {
             check_struct(sd);
         } else {
+            fix_const_class_slots(cd);
             check_class(cd);
         }
 

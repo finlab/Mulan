@@ -178,6 +178,15 @@ namespace muc_detail {
                     (dst ? dst->str() : "void") + " (no implicit conversion between enums and integers; write `as`)",
                 e);
         }
+        // A read-only view handed to a mutable one is the one conversion worth naming: the fix is not a
+        // different type but an explicit, unsafe `as` (SPEC 3.6/3.7).
+        if (src && dst && (src->kind == TypeKind::Class || src->kind == TypeKind::Interface) &&
+            (dst->kind == TypeKind::Class || dst->kind == TypeKind::Interface) && read_only_view(src) &&
+            !read_only_view(dst)) {
+            err(what + ": `" + (src->str()) + "` is a read-only view and does not convert to the mutable `" +
+                    dst->str() + "`; write `as " + dst->str() + "` to force it (writing through it is UB)",
+                e);
+        }
         err(what + ": cannot assign " + (src ? src->str() : "void") + " to " +
                 (dst ? dst->str() : "void"),
             e);
@@ -194,7 +203,18 @@ namespace muc_detail {
                     "` is an array: arrays are not assignable (C99); copy the elements or use `memcpy`",
                 e);
         }
-        // C model: const may only be relaxed, never tightened (same_type ignores const, so this must be caught first)
+        // C model: const may only be relaxed, never tightened (same_type ignores const, so this must be
+        // caught first). A read-only view never widens to a mutable one implicitly: `const T*` / `const T[]`,
+        // and for handles a `const` view or any expression of a `const class` (`const Base base`, `IMut i = d`)
+        // — the escape is `as` (SPEC 3.6, 3.7).
+        if (src && dst) {
+            const bool handle_src = src->kind == TypeKind::Class || src->kind == TypeKind::Interface;
+            const bool handle_dst = dst->kind == TypeKind::Class || dst->kind == TypeKind::Interface;
+            if (handle_src && handle_dst) {
+                const bool src_ro = read_only_view(src);
+                if (src_ro && !read_only_view(dst)) return false;
+            }
+        }
         if (src && dst && src->kind == dst->kind &&
             (src->kind == TypeKind::Ptr || src->kind == TypeKind::Slice) &&
             src->elem && dst->elem && src->elem->is_const && !dst->elem->is_const) {

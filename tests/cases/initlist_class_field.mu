@@ -20,7 +20,7 @@ const struct ConstHolder {
     ConstHolder(Cell2 x) : c(x) { }
 }
 
-int readIt(Cell2 c) { return c.v; }
+int readIt(const Cell2 c) { return c.v; }
 
 int main() {
     Holder h = Holder(new Cell2(1));
@@ -33,3 +33,4 @@ int main() {
     puts("initlist class field ok");
     return 0;
 }
+

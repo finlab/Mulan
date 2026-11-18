@@ -2,9 +2,9 @@
 // that form yet (use `super(...)`, which cannot be combined with an initializer list yet).
 unit ctor_base_init_list;
 
-const class Base {
+class Base {
     public int v;
-    Base(int x) : v(x) { }
+    Base(int x) { v = x; }
 }
 
 const class Derived : Base {

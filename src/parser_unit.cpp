@@ -24,13 +24,17 @@ namespace {
 
 // `const struct` / `const class`: every field and method declared in the body is implicitly const,
 // including the members of a conditional arm (the arm is selected later, by the semantic pass).
-void mark_body_const(MemberGroup& m) {
+// `keep_explicit_nonconst` lets a `const class` keep an explicitly non-const method: it exists as an
+// override slot for a mutating virtual of the base (SPEC 3.7), so the declaration must survive here.
+void mark_body_const(MemberGroup& m, bool keep_explicit_nonconst = false) {
     for (auto& f : m.fields) {
         if (f.second) f.second->is_const = true;
     }
-    for (auto& mm : m.methods) mm->is_const = true;
+    for (auto& mm : m.methods) {
+        if (!keep_explicit_nonconst || !mm->const_written) mm->is_const = true;
+    }
     for (auto& g : m.groups) {
-        for (auto& arm : g.dir->arms) mark_body_const(arm.members);
+        for (auto& arm : g.dir->arms) mark_body_const(arm.members, keep_explicit_nonconst);
     }
 }
 
@@ -354,7 +358,10 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             d->is_public = is_pub;
             d->is_export = is_export;
             if (is_const_decl) {
-                if (auto* cd = dynamic_cast<ClassDecl*>(d.get())) mark_body_const(cd->body);
+                if (auto* cd = dynamic_cast<ClassDecl*>(d.get())) {
+                    cd->is_const_decl = true;
+                    mark_body_const(cd->body, /*keep_explicit_nonconst=*/true);
+                }
             }
             push_decl(std::move(d));
             continue;
@@ -826,6 +833,7 @@ std::unique_ptr<MethodDecl> Parser::parse_method(TypeSpecPtr ret, bool ret_ref, 
     if (at_kw("const")) {
         advance();
         m->is_const = true;
+        m->const_written = true;
     }
     if (at_kw("override")) {
         advance();
@@ -1171,6 +1179,7 @@ std::unique_ptr<MethodDecl> Parser::parse_member_operator(TypeSpecPtr ret, bool 
     if (at_kw("const")) {
         advance();
         m->is_const = true;
+        m->const_written = true;
     }
     if (at_op(";")) {
         advance();

@@ -27,6 +27,47 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 210 — 2026-11-18
+
+**`const class` is a leaf type whose content is fixed after construction** (SPEC 3.7,
+`agents/const-design.md` 3.3.1).
+
+A `const class` only marked its own fields `const`, so any shared handle could still write the object:
+an upcast to the base class — or to an interface implemented by a mutable base — wrote straight through
+(`Base b = d; b.poke();` left `d.v` at 101), the base's non-`const` virtual could be called directly, and
+a `const` handle widened back to a mutable one with no check at all (`const Base cb = b; Base b2 = cb;`
+compiled and wrote). A class is a shared handle, so "content fixed" has to hold through every view.
+
+- Rules:
+  - a `const class` can never be a base class (`class E : D` and `const class D : const Base` are the same
+    rule); reuse goes through composition or an interface;
+  - it **may** derive from a mutable class base (`const class D : Base`); the base subobject is written by
+    the base constructor and by `D`'s own constructors/destructor — **construction is the only writable
+    phase**, and after it neither outside code nor the class's methods write;
+  - every expression of the type is a read-only view (a class handle is already a shared reference, so
+    there is no second reference form); widening to a **mutable** view — a base handle or an interface
+    handle with a non-`const` member — is an error like `const T → T`, and `as` is the escape (writing
+    through it is UB). An interface whose every member is `const` is itself a read-only contract, so
+    `Sized s = item;` still converts implicitly;
+  - a method may also be declared non-`const` **as an override slot** for a mutating virtual of the base:
+    the body stays read-only (a stricter implementation of a mutating contract is sound), it is not part
+    of the public surface, and only `D`'s own constructors/destructor may call it. With no caller left
+    outside those windows, the override makes the inherited mutating implementation inert — which is what
+    keeps a base with mutating virtuals usable under `const class`.
+- Implementation: `Type::decl_const` (set from the declaration, carried into generic instances),
+  `read_only_view` unifying the handle conversion rules (`const T → T`, `D → Base`, `D → I`),
+  declaration-level constness in the receiver filter, the base-list check, and `fix_const_class_slots`
+  (an override slot's signature is resolved after every shape is final and before any body is checked, so
+  a call in another unit already sees the final signature).
+- Tests: run `const_class_leaf` (the constructor writes the base, an all-`const` interface view converts,
+  `as` + a virtual call hits the inert override); must-fail `const_class_as_base`,
+  `const_class_internal_write`, `const_class_iface_mut`, `const_view_widen`, `base_const_qualifier`.
+  `ctor_base_init_list` now uses a mutable base (its const-base premise is gone by design), and
+  `initlist_class_field` passes a `const` handle to a `const` parameter — a read-only view no longer
+  widens silently.
+
+Full suite: Windows 799/799, Linux (WSL) 797/797.
+
 #### build 209 — 2026-11-18
 
 **An exception escaping a `std.thread` body aborts** (decision on #11).
