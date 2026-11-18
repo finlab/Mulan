@@ -27,6 +27,32 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 215 — 2026-11-18
+
+**Default member initializers apply at every construction site** (decision: synthesize a zero-argument
+constructor, SPEC 3.7).
+
+A type that declared default member initializers but no constructor of its own silently dropped them: a
+local `struct P { const int x = 7; } P p;` read `undef` (the optimizer folded `main` down to
+`printf(undef)` — a crash at run time), `P p = {}` gave `x = 0`, and `const class C { const int n = 5; }`
+left `new C()` with `n == 0`. `apply_field_defaults` only ran on a declared constructor, so there was no
+prologue at all.
+
+- Such a type now gets a **synthesized zero-argument constructor** (`CtorDecl::is_synthesized`,
+  `Type::implicit_ctor`), added before the constructor table is built, for classes, structs and generic
+  instances alike. `S s;`, `S()`, `new C()` all go through it and apply the initializers in declaration
+  order (after the base call, like any other constructor).
+- Aggregate initialization is not available for such a type: the diagnostic names the reason
+  (``struct `P` has default member initializers, so it is constructed: write `P(...)` …``) instead of the
+  misleading "has a constructor".
+- A class with defaults, no constructor of its own, and a base that needs arguments reports
+  ``type `B` declares no constructor, but its base class `A` has no parameterless one: declare a
+  constructor — `B(...) : A(...) { ... }` ``, not the generic base-initializer hint.
+- Tests: run `ctor_default_synthesized` (struct declaration, explicit construction, class, `const class`,
+  generic instance); must-fail `struct_default_aggregate`, `ctor_default_base_args`.
+
+Full suite: Windows 830/830, Linux (WSL) 827/827.
+
 #### build 214 — 2026-11-18
 
 **Fix: the writable phase of a `const class` also covers writes through `this`** (follow-up to build 213).

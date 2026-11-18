@@ -626,9 +626,13 @@ C++ model, with the deliberate omissions listed at the end of this section.
   constructor (member initializer list `C(...) : x(v) { }`, or a default member initializer
   `const int x = 5;`), cannot be written afterwards, and participates in layout like any field. For a type
   without constructors, aggregate initialization (`S s = {x = 1, y = 2}`, `S s = {}`) counts as
-  initialization. A type with a `const` field is still copy-constructible; assignment is **allowed** and
-  runs as copy-and-swap, i.e. the destination is rebuilt as a whole rather than written field by field
-  (decided 2026-11-17; C++ deletes the assignment instead).
+  initialization. **A type that declares default member initializers but no constructor of its own gets a
+  synthesized zero-argument constructor** (decided 2026-11-18): every construction site — a declaration
+  `S s;`, `S()`, `new C()` — then applies those initializers instead of leaving the fields zeroed.
+  Aggregate initialization is **not** available for such a type (it would have to ignore or partially
+  apply the initializers); construct it instead. A type with a `const` field is still copy-constructible;
+  assignment is **allowed** and runs as copy-and-swap, i.e. the destination is rebuilt as a whole rather
+  than written field by field (decided 2026-11-17; C++ deletes the assignment instead).
 - **Reassignment.** A top-level `const` variable cannot be reassigned (`const int x = 0; x = 1;` is an error).
   A `const struct` / `const class` variable has no top-level const (the immutability is a property of the
   type, not of the variable), so it may be reassigned as a whole — see the `const struct` item below.
@@ -1074,7 +1078,9 @@ class Button : Widget {
   body**. An omitted base item calls the base class's zero-argument constructor (an error if it does not
   exist); an omitted field initializer falls back to the field's default member initializer
   (`const int x = 5;`). Every `const` field must end up initialized exactly once; a missing initialization is
-  a compile error.
+  a compile error. A type that declares default member initializers but **no constructor of its own** gets a
+  synthesized zero-argument constructor, so `S s;`, `S()` and `new C()` all apply them (aggregate
+  initialization does not apply to such a type, 3.7).
 - `super(...)` is **not** a constructor call form (it never was a statement): a base-class constructor call
   is the `Base(args)` item above. `super.m(...)` remains the qualified form that calls a base-class method
   (3.9), and is unrelated to construction.

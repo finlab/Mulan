@@ -473,8 +473,7 @@ std::unique_ptr<MethodDecl> clone_method(const MethodDecl& m) {
     r->ret_ref = m.ret_ref;
     r->is_const = m.is_const;
     r->const_written = m.const_written;
-    r->is_operator = m.is_operator;
-    r->params = clone_params(m.params);
+    r->is_operator = m.is_operator;    r->params = clone_params(m.params);
     r->body = m.body ? clone_block(*m.body) : nullptr;
     r->is_override = m.is_override;
     // `mk` starts from a default-constructed node, so every semantic flag has to be copied by hand:
@@ -504,6 +503,7 @@ std::unique_ptr<CtorDecl> clone_ctor(const CtorDecl& c) {
     r->is_implicit = c.is_implicit;
     r->is_move = c.is_move;
     r->is_copy = c.is_copy;
+    r->is_synthesized = c.is_synthesized;
     return r;
 }
 

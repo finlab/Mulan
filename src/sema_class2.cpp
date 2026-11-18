@@ -70,6 +70,14 @@ namespace muc_detail {
         }
 
         if (ty->kind == TypeKind::Struct && !ty->ctors.empty()) {
+            // A type with default member initializers gets a synthesized constructor (SPEC 3.7), so the
+            // user never wrote one: say where it comes from instead of "has a constructor".
+            if (ty->implicit_ctor) {
+                err("struct `" + ty->str() +
+                        "` has default member initializers, so it is constructed: write `" + ty->name +
+                        "(...)` instead of an aggregate initializer",
+                    init);
+            }
             err("struct `" + ty->str() + "` has a constructor and cannot use aggregate initialization", init);
         }
 

@@ -975,6 +975,29 @@ bool is_scalar_const_type(const TypeSpec* spec) {
         cv_views_.clear();
     }
 
+    // A type that has default member initializers but declares no constructor of its own gets a
+    // synthesized zero-argument constructor: every construction site then runs the prologue that applies
+    // them, instead of silently leaving the fields zeroed (SPEC 3.7).
+    void Sema::synthesize_default_ctor(StructDecl* sd) {
+        auto ctor = std::make_unique<CtorDecl>();
+        ctor->line = sd->line;
+        ctor->col = sd->col;
+        ctor->is_public = true;
+        ctor->is_synthesized = true;
+        sd->ty->implicit_ctor = true;
+        sd->ctors.push_back(std::move(ctor));
+    }
+
+    void Sema::synthesize_default_ctor(ClassDecl* c) {
+        auto ctor = std::make_unique<CtorDecl>();
+        ctor->line = c->line;
+        ctor->col = c->col;
+        ctor->is_public = true;
+        ctor->is_synthesized = true;
+        c->ty->implicit_ctor = true;
+        c->ctors.push_back(std::move(ctor));
+    }
+
     void Sema::resolve_unit_types(Unit* u) {        cur_ = u;
 
         // Structs: the placeholder type is ready, fields are filled in here (fields may reference other structs/enums)
@@ -1015,6 +1038,10 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                 sd->ty->methods.push_back(std::move(sig));
                 m->cname = method_cname(u->name, sd->name, m->name, m->pty, m->is_const);
             }
+            // A type with default member initializers but no constructor of its own gets a synthesized
+            // zero-argument constructor, so every construction site applies those initializers instead of
+            // silently leaving the fields zeroed (SPEC 3.7, build 215).
+            if (sd->ctors.empty() && !sd->field_default.empty()) synthesize_default_ctor(sd);
             sd->ty->ctors.clear();
             for (auto& ctor : sd->ctors) {
                 ctor->pty.clear();
@@ -1178,6 +1205,8 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                 m->cname = method_cname(u->name, c->name, m->name, m->pty, m->is_const);
                 if (!m->body) c->ty->is_abstract = true;
             }
+            // Same synthesized zero-argument constructor as for structs (SPEC 3.7, build 215).
+            if (c->ctors.empty() && !c->field_default.empty()) synthesize_default_ctor(c);
             for (auto& ctor : c->ctors) {
                 ctor->pty.clear();
                 for (auto& p : ctor->params) {
@@ -1548,3 +1577,4 @@ Program Sema::run() {
     }
 
 }  // namespace muc_detail
+

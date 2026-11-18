@@ -67,6 +67,10 @@ struct Type {
     // type is a read-only view: a mutable view (base handle, interface handle, `ref`) needs `as`, and
     // only constructors/destructors may write. See agents/const-design.md 3.3.1.
     bool decl_const = false;
+    // The zero-argument constructor was synthesized because the type declares default member initializers
+    // but no constructor of its own (SPEC 3.7): construction applies them, aggregate initialization does not
+    // apply to the type any more.
+    bool implicit_ctor = false;
     std::vector<Field> fields;  // used by Struct/Class (a placeholder is created first and filled in later; Class stores flattened fields)
     std::vector<MethodSig> methods;  // used by Class/Interface
     std::vector<std::vector<TypePtr>> ctors;  // class constructor parameter lists (overloads)

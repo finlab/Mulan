@@ -672,6 +672,21 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     ty->ctors.clear();
     ty->has_copy_ctor = false;
     ty->has_move_ctor = false;
+    // The same synthesized zero-argument constructor the non-generic path adds (SPEC 3.7): a template with
+    // default member initializers and no constructor of its own must apply them per instance.
+    if (ctors.empty() && !(is_struct ? sd->field_default : cd->field_default).empty()) {
+        auto synthesized = std::make_unique<CtorDecl>();
+        synthesized->line = is_struct ? sd->line : cd->line;
+        synthesized->col = is_struct ? sd->col : cd->col;
+        synthesized->is_public = true;
+        synthesized->is_synthesized = true;
+        ty->implicit_ctor = true;
+        if (is_struct) {
+            sd->ctors.push_back(std::move(synthesized));
+        } else {
+            cd->ctors.push_back(std::move(synthesized));
+        }
+    }
     for (auto& ctor : ctors) {
         ctor->pty.clear();
         for (auto& p : ctor->params) {

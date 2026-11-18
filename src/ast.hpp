@@ -748,6 +748,9 @@ struct CtorDecl : Node {
     std::vector<std::unique_ptr<LocalVar>> param_locals;
     std::string cname;  // the constructor symbol name
     bool has_base_call = false;         // a `Base(...)` item was resolved (omitted → implicit zero-arg)
+    // Synthesized because the type declares default member initializers but no constructor of its own
+    // (SPEC 3.7): the prologue applies those initializers.
+    bool is_synthesized = false;
     std::vector<TypePtr> base_pty;      // sema: the chosen base constructor signature
     bool is_delegating = false;         // `Derived(...) : Derived(args)` — construct through another ctor
     std::vector<TypePtr> delegate_pty;  // sema: the chosen delegate signature

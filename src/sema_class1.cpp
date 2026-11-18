@@ -409,6 +409,12 @@ namespace muc_detail {
                     if (cs.empty()) { base_default = true; break; }
                 }
                 if (!base_ctors.empty() && !base_default) {
+                    if (ctor->is_synthesized) {
+                        err("type `" + ty->name + "` declares no constructor, but its base class `" +
+                                ty->base->name + "` has no parameterless one: declare a constructor — `" +
+                                ty->name + "(...) : " + ty->base->name + "(...) { ... }`",
+                            ctor);
+                    }
                     if (Call* stray = stray_super_call(ctor->body.get())) {
                         err("a base-class constructor call is not a statement: write it in the "
                             "constructor's initializer list — `" + ty->name + "(args) : " + ty->base->name +

@@ -528,6 +528,9 @@ private:
     // Validate `C(...) : Base(a), x(v) { }` — the construction prologue (SPEC 3.12)
     void check_ctor_prologue(const TypePtr& ty, CtorDecl* ctor,
                              const std::unordered_map<std::string, ExprPtr>& defaults);
+    // A type with default member initializers and no constructor of its own gets a zero-argument one.
+    void synthesize_default_ctor(StructDecl* sd);
+    void synthesize_default_ctor(ClassDecl* c);
     void check_ctor_delegate_cycles(const std::vector<std::unique_ptr<CtorDecl>>& ctors);
     // `const T x = expr;`: fields with a default member initializer join the constructor initializer
     // list when the constructor does not name them (SPEC 3.7). The expression is cloned per
