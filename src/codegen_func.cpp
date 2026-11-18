@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // This file contains function code generation and the module wrap-up (run) (Emitter member function definitions).
+//
+// owns:      function emission, globals, debug info, the export surface, internalization and the optimization pipeline (the Emitter entry point run)
+// not:       any per-expression or per-statement decision
+// pass:      emission, drives the whole backend
+// concept:   codegen-driver, codegen-functions
 
 #include "codegen_impl.hpp"
 

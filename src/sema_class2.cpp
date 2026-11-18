@@ -2,6 +2,13 @@
 // Copyright 2026 Zhang Guolong
 
 // This file holds class / interface checking (part 2) (definitions of Sema members).
+//
+// owns:      body checks for statements — aggregate initialization, assignment, return/if/switch/for, the
+//            for-in shape recognition (resolve_index_shape/resolve_cursor_shape), and the writability and
+//            borrow-root helpers
+// not:       declaration checks, expression typing, call resolution
+// pass:      body checking (the other half of the statement pass lives in sema_class1.cpp)
+// concept:   statements, aggregates, for-in-shape
 #include "sema_impl.hpp"
 
 #include "ast_clone.hpp"

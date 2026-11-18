@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // This file holds type resolution, scopes and unit checks (definitions of Sema members).
+//
+// owns:      type resolution, scopes, unit-level checks and function signature checks; also the check_unit pass that drives body checking
+// not:       expression/statement checks, call resolution, codegen
+// pass:      pass 12 (check_unit per unit), and type resolution is used everywhere
+// concept:   type-resolution, scopes, unit-checks, pass-order
 #include "sema_impl.hpp"
 
 namespace muc_detail {

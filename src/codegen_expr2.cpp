@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // This file contains expression code generation (calls, new, downcasts, eval and sizeof type resolution) (Emitter member function definitions).
+//
+// owns:      call and method-call lowering, new, downcasts, the eval dispatch and sizeof type resolution
+// not:       statement emission (codegen_stmt.cpp), dispatch tables
+// pass:      emission
+// concept:   codegen-expressions, codegen-calls
 
 #include "codegen_impl.hpp"
 

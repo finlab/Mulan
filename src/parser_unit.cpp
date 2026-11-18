@@ -2,6 +2,12 @@
 // Copyright 2026 Zhang Guolong
 
 // Parsing — units and declarations
+//
+// owns:      the unit header, use, and every type-level declaration (struct/class/interface/union/enum/sum),
+//            method/operator/ctor/dtor signatures, modifiers
+// not:       statements, expressions and type syntax (parser_expr.cpp), any semantic decision
+// pass:      parsing; unit order is the order the loader hands over
+// concept:   parser-units, parser-decls
 #include "parser_impl.hpp"
 
 #include <memory>

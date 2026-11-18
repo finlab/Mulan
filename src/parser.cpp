@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // Parsing — public interface (parse_source / parse_file) and Parser construction
+//
+// owns:      the parser's public interface: parse_source / parse_file and Parser construction
+// not:       any grammar (parser_unit/stmt/expr/directive)
+// pass:      parsing
+// concept:   parser-api
 #include "parser.hpp"
 
 #include <fstream>

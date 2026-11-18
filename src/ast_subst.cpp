@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // AST type parameter substitution implementation.
+//
+// owns:      substituting type parameters through a cloned declaration (specs, expressions, statements, declarations)
+// not:       cloning (ast_clone.cpp) or checking
+// pass:      called from instantiate_generic, lazily
+// concept:   ast-subst, generics
 #include "ast_subst.hpp"
 
 #include <utility>

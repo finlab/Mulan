@@ -2,6 +2,12 @@
 // Copyright 2026 Zhang Guolong
 
 // This file holds expression type checking (definitions of Sema members).
+//
+// owns:      expression typing (check_expr and the per-node checks), name/member/binary/unary/ternary, casts
+//            (can_cast), lambda checking, writability, move/swap and the global-init order check
+// not:       call and overload resolution (sema_call), statement checking, constant folding (sema_const)
+// pass:      body checking, after declarations are placed
+// concept:   expressions, casts, lambdas, writability
 #include "sema_impl.hpp"
 
 #include "ast_clone.hpp"

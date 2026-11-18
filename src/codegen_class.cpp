@@ -2,6 +2,12 @@
 // Copyright 2026 Zhang Guolong
 
 // This file contains the interface table, the virtual table and class/struct/interface code generation (Emitter member function definitions).
+//
+// owns:      the interface slot table and its thunks, the vtable, class-descriptor emission, ctor/dtor and
+//            struct/interface method bodies, field addresses and member initialization
+// not:       expression or statement dispatch, the RC runtime
+// pass:      emission
+// concept:   codegen-dispatch, codegen-class-desc
 
 #include "codegen_impl.hpp"
 

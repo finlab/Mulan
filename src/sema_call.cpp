@@ -2,6 +2,13 @@
 // Copyright 2026 Zhang Guolong
 
 // This file holds call checking and miscellany (definitions of Sema members).
+//
+// owns:      call resolution — overload choice (choose_overload/choose_method/rank_arg), the method lookup
+//            walks, operator lookup (find_member_operator), new/ctor arguments, entry-point checks, the
+//            parameter decay and the ref/lvalue rules
+// not:       expression typing, statement checking, layout, codegen
+// pass:      body checking, before codegen ever sees a callee
+// concept:   calls, overloads, operators, new
 #include "sema_impl.hpp"
 
 #include "ast_clone.hpp"

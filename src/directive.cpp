@@ -9,6 +9,11 @@
 // file only evaluates an expression against a table of visible constants. Anything that would need a
 // type (a call other than the `comptime` builtins, a variable, a `sizeof` form) is rejected with a
 // message that says what to write instead.
+//
+// owns:      build configuration and the #if condition language (constants, comparisons, boolean operators) shared by the parser and the #if pass
+// not:       parsing (parser_directive.cpp) or applying the arms (sema_directive.cpp)
+// pass:      shared by parsing and the #if pass
+// concept:   directives, build-config
 #include "directive.hpp"
 
 #include <algorithm>

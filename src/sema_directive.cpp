@@ -6,6 +6,11 @@
 // The parser keeps every arm of a `#if` chain as data (DirectiveDecl / DirectiveStmt / MemberGroup),
 // so the conditions are evaluated here: after the units are parsed and the compile-time constants are
 // known. `collect` splices declaration and member arms, `check_block` splices statement arms.
+//
+// owns:      std.comptime validation and the #if pass that picks one arm of a directive chain
+// not:       parsing the arms (parser_directive.cpp) or evaluating conditions (directive.cpp)
+// pass:      after declarations are placed, before bodies
+// concept:   directives, comptime
 #include "sema_impl.hpp"
 
 #include "directive.hpp"

@@ -2,6 +2,12 @@
 // Copyright 2026 Zhang Guolong
 
 // muc command-line entry point
+//
+// owns:      the CLI (argument parsing, --target/--os/--cc, --emit-ir, --exports), the build driver, the
+//            link through the system C compiler and --run
+// not:       any compiler phase — it only sequences them
+// pass:      driver
+// concept:   cli, driver
 #if defined(_WIN32)
 #  ifndef NOMINMAX
 #    define NOMINMAX

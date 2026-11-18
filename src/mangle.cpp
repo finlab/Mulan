@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
+//
+// owns:      symbol name mangling (units, types, generics, and the unit init/fini hooks)
+// not:       semantic decisions; it only encodes names
+// pass:      used by every emitting pass
+// concept:   mangling
 
 #include "mangle.hpp"
 

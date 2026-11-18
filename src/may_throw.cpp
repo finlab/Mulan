@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // Conservative module-local may-throw analysis (see may_throw.hpp).
+//
+// owns:      the conservative module-local may-throw analysis that lets call sites skip the pending-slot check
+// not:       exception codegen itself (codegen_eh.cpp)
+// pass:      between body checking and emission
+// concept:   may-throw
 #include "may_throw.hpp"
 
 #include <unordered_map>

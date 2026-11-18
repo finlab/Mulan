@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // Semantic analysis public interface (analyze / type_str); implementations are split by feature across sema_*.cpp.
+//
+// owns:      the sema public interface (analyze / type_str); the passes themselves live in sema_*.cpp
+// not:       any checking pass
+// pass:      entry wrapper
+// concept:   sema-api
 #include "sema.hpp"
 
 #include "sema_impl.hpp"

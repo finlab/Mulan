@@ -8,6 +8,11 @@
 // the selected arm into the enclosing list. The parser splices nothing and evaluates nothing, so a
 // condition may use any constant the semantic pass can see (a `sizeof` constant, a `use`d unit).
 // Dead arms are still parsed, so their syntax is checked and nothing else happens.
+//
+// owns:      parsing `#if` / `#elif` / `#else` / `#error`, keeping every arm as data (DirectiveDecl / DirectiveStmt / MemberGroup)
+// not:       evaluating the conditions (directive.cpp) or choosing an arm (sema_directive.cpp)
+// pass:      parsing
+// concept:   directives, parser-directives
 #include "parser_impl.hpp"
 
 namespace muc_detail {

@@ -21,6 +21,11 @@
 // `{float, float}`, where C packs both into XMM0), so such a function is refused at codegen instead
 // of being lowered wrongly. A packed SysV aggregate whose field straddles an eightbyte is class
 // MEMORY and is also not distinguished. Recorded in agents/design-backlog.md.
+//
+// owns:      the C ABI aggregate classification (MS x64 vs SysV): which aggregates travel in registers, which are passed by reference
+// not:       LLVM attribute application or signature building (codegen_abi.cpp)
+// pass:      queried by codegen while building a signature
+// concept:   c-abi
 #include "abi.hpp"
 
 namespace muc_detail {

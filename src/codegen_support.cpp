@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // This file contains the basic utilities, layout, functions/globals, reference counting runtime, allocation and constants (Emitter member function definitions).
+//
+// owns:      type mapping, the struct/class layout mirror, the symbol cache, constants and the libFn runtime bindings
+// not:       expression/statement emission, dispatch tables
+// pass:      emission
+// concept:   codegen-layout, codegen-support
 
 #include "codegen_impl.hpp"
 

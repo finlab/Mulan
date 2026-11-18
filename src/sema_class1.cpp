@@ -2,6 +2,14 @@
 // Copyright 2026 Zhang Guolong
 
 // This file holds class / interface checking (part 1) (definitions of Sema members).
+//
+// owns:      declaration checks for class/struct/interface (members, methods, ctors, dtors, const members),
+//            hierarchy cycles, the abstract-member set, interface satisfaction and default materialization
+//            (apply_*_iface_defaults, impl_sig, materialize_iface_default), plus block/statement bodies
+// not:       expression typing, call/overload resolution, layout, codegen; for/switch/return checks live in
+//            sema_class2.cpp — the statement pass is split across the two files (see agents/code-map.md)
+// pass:      declaration checks run before any body; interface defaults are materialized before bodies
+// concept:   class-decl, struct-decl, interface-satisfaction, iface-defaults, statements
 #include "sema_impl.hpp"
 
 #include "ast_clone.hpp"

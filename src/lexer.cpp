@@ -6,6 +6,11 @@
 // Matches the Python version's behavior: keyword table, numeric literals (decimal / 0x / 0b / float + f suffix),
 // character and string literals (with escapes), `//` line comments, and nestable `/* */` block comments.
 // Source is processed as a UTF-8 byte stream (lines / columns counted in bytes); multibyte characters in comments and strings pass through unchanged.
+//
+// owns:      lexing: keyword table, literals, escapes, comments
+// not:       any syntax or semantic decision
+// pass:      loading/parsing
+// concept:   lexer
 #include "lexer.hpp"
 
 #include <cstdio>

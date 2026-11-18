@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // AST deep copy implementation (used for generic instantiation).
+//
+// owns:      the deep copy of a declaration that keeps the syntax and drops every semantic result, used by generic instantiation
+// not:       type-parameter substitution (ast_subst.cpp) or any checking
+// pass:      called from instantiate_generic, lazily
+// concept:   ast-clone, generics
 #include "ast_clone.hpp"
 
 #include <string>

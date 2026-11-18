@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // Parsing — statements and function declarations
+//
+// owns:      statements and function/method declarations (bodies, control flow, local declarations)
+// not:       type-level declarations (parser_unit.cpp), expressions and type syntax (parser_expr.cpp)
+// pass:      parsing
+// concept:   parser-statements
 #include "parser_impl.hpp"
 
 #include <memory>

@@ -2,6 +2,12 @@
 // Copyright 2026 Zhang Guolong
 
 // This file contains dynamic arrays, the weak registry and local reference cleanup (Emitter member function definitions).
+//
+// owns:      the RC runtime (retain/release), dynamic arrays and slices, the weak registry, local and
+//            statement-temporary cleanup, the copy/move helpers
+// not:       dispatch tables, the layout mirror, expression or statement dispatch
+// pass:      emission
+// concept:   codegen-rc, codegen-runtime
 
 #include "codegen_impl.hpp"
 

@@ -6,6 +6,11 @@
 // The actual code generation lives in the Emitter class declared in codegen_impl.hpp,
 // whose member functions are split by functionality across the seven translation units:
 // codegen_support / codegen_runtime / codegen_expr / codegen_expr2 / codegen_stmt / codegen_class / codegen_func.
+//
+// owns:      the backend's public interface: textual IR (--emit-ir) and the COFF object file
+// not:       code generation itself (the Emitter class)
+// pass:      called once by the driver after sema
+// concept:   codegen-api
 #include "codegen_llvm.hpp"
 
 #include "codegen_impl.hpp"

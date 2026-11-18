@@ -5,6 +5,11 @@
 //
 // Design: TypePtr points to immutable value objects; a Struct's fields are created as a placeholder first and filled in later
 // (mirroring the two-stage construction of StructType in the Python version), so no const is used here.
+//
+// owns:      the Type model, TypeKind, and the layout queries type_size / type_align
+// not:       any pass; it is the shared vocabulary the passes use
+// pass:      used by every pass
+// concept:   types, layout
 #include "types.hpp"
 
 #include <algorithm>

@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // This file holds assignment compatibility and compile-time constant evaluation (definitions of Sema members).
+//
+// owns:      assignment compatibility and the compile-time constant evaluator (eval_const*), including the conversions used by #if, array sizes and align
+// not:       expression typing or call resolution
+// pass:      queried from every pass that needs a constant
+// concept:   constants, assignability
 #include "sema_impl.hpp"
 
 #include <sstream>

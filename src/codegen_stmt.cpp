@@ -2,6 +2,12 @@
 // Copyright 2026 Zhang Guolong
 
 // This file contains statement code generation (load/store, initialization, block/statement dispatch, for/switch) (Emitter member function definitions).
+//
+// owns:      statement emission (block/if/while/for/switch/para/try), the load-store helpers and the
+//            statement-level temporary and ref scopes
+// not:       expression evaluation, call lowering, class metadata
+// pass:      emission, after every type and body check
+// concept:   codegen-statements
 
 #include "codegen_impl.hpp"
 

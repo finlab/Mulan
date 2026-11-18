@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // This file contains expression code generation (conversion, addresses, binary/ternary, argument preparation) (Emitter member function definitions).
+//
+// owns:      expression codegen: conversions, address taking, binary/ternary evaluation and argument preparation
+// not:       call/new lowering (codegen_expr2.cpp), statements, class metadata
+// pass:      emission
+// concept:   codegen-expressions
 
 #include "codegen_impl.hpp"
 

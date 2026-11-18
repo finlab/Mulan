@@ -2,6 +2,11 @@
 // Copyright 2026 Zhang Guolong
 
 // Parsing — types and expressions
+//
+// owns:      type syntax (parse_type) and the expression parser (precedence climbing, postfix, lambdas)
+// not:       declarations, statements, any semantic rule
+// pass:      parsing
+// concept:   parser-expr, parser-types
 #include "ast_clone.hpp"  // clone_spec: a shared type syntax must not share its array-length expression
 #include "parser_impl.hpp"
 

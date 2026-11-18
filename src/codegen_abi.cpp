@@ -10,6 +10,11 @@
 // both halves into RAX). The two sides then disagree about where the bits are — silent memory
 // corruption, not a compile error — so the declaration and every call site must be built from
 // `cAbiSig`.
+//
+// owns:      the one signature builder for extern/export functions, plus the byval/sret/align attributes that make LLVM lower an aggregate the way C does
+// not:       the aggregate classification itself (abi.cpp)
+// pass:      emission, at every extern/export declaration and call site
+// concept:   c-abi, codegen-abi
 #include "codegen_impl.hpp"
 
 namespace muc_detail {

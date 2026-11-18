@@ -2,6 +2,13 @@
 // Copyright 2026 Zhang Guolong
 
 // This file holds fields/utilities/visibility/collection/signature checks/layout modifiers (definitions of Sema members).
+//
+// owns:      the Sema entry point (run), unit collection, visibility, layout modifiers and the layout checks,
+//            declaration/field resolution (place_structs, resolve_unit_types), public-signature checks,
+//            implicit conversion (implicit_ok) and the diagnostics helpers (err/warn/recover)
+// not:       expression or statement checking, call resolution, any LLVM emission
+// pass:      the entry pass — it sequences every later pass, so a new pass is wired in here
+// concept:   sema-entry, units, visibility, layout, implicit-conversion, pass-order
 #include "sema_impl.hpp"
 
 #include <algorithm>
@@ -1148,7 +1155,8 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                                 "(`const class D { Base b; }`) or an interface instead",
                             c);
                     }
-                    if (bt->is_const) err("a base class cannot be `const`", c);                    has_base = true;
+                    if (bt->is_const) err("a base class cannot be `const`", c);
+                    has_base = true;
                     c->ty->base = bt;
                 } else if (bt->kind == TypeKind::Interface) {
                     for (auto& prev : c->ty->interfaces) {

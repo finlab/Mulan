@@ -3,6 +3,12 @@
 
 // Generic monomorphization instantiation (U34, M2).
 //
+// owns:      monomorphization — instantiate_generic, template cloning/substitution, the instance cache,
+//            constraint satisfaction (satisfies_one) and the witness type used for definition-time checks
+// not:       parsing, layout, declaration checks that do not involve a type parameter
+// pass:      lazily, from resolve_type the first time an instantiated type is used
+// concept:   generics, constraints, witnesses
+//
 // Instantiation = clone the template AST + substitute type parameters + canonicalize the name + run the regular type resolution.
 // The product is an ordinary struct: `same_type` / `mangle` / layout / codegen all need no knowledge of generics.
 #include <string>

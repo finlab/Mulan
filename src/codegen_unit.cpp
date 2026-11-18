@@ -12,6 +12,11 @@
 //   * the entry wrapper calls the init of every unit in loader order (post-order, dependencies
 //     first); the guards make repeated calls free, which is what lets a future library entry reuse
 //     the same hooks.
+//
+// owns:      unit-level initialization and cleanup (SPEC 9.1): the self-registering sequence, reverse cleanup and the C main wrapper
+// not:       any language-level semantics; it only wires the units together
+// pass:      emission, after every function exists
+// concept:   codegen-unit-lifecycle
 #include "codegen_impl.hpp"
 
 namespace muc_detail {

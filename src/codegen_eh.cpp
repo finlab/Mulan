@@ -7,6 +7,11 @@
 // value with `muc_eh_pending.flag` set.  Every mu_lan call site checks the flag,
 // runs the local cleanups, and either branches to the innermost `try` dispatch
 // or returns to its caller.  Uncaught exceptions abort at `main`.
+//
+// owns:      exception codegen: the thread-local pending slot, call-site checks, and the throw/try/catch/finally bodies
+// not:       statement dispatch (codegen_stmt.cpp) or the may-throw analysis (may_throw.cpp)
+// pass:      emission
+// concept:   codegen-eh
 #include "codegen_impl.hpp"
 
 namespace muc_detail {

@@ -10,6 +10,11 @@
 //   4. libs / libs/std under the current directory and its ancestors
 //
 // Standard library units use dot-separated layers: `unit std.string;` maps to `libs/std/string.mu`.
+//
+// owns:      unit loading and the search path (unit name to file, -I, MUC_LIBS, libs/)
+// not:       parsing or `use` resolution semantics
+// pass:      loading, before the parser runs
+// concept:   loader
 #include "loader.hpp"
 
 #include <cstdlib>
