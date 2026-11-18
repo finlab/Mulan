@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 204 — 2026-11-18
+
+**`muc --run` runs the program directly on POSIX** (#67).
+
+`std::system` routes the child through `/bin/sh`, which converts a signal death into its own exit code
+`128 + signal`; the test runner therefore saw 139 where it expects "abnormal termination" and the
+`stack_limit` case (a fiber stack overflow) failed on Linux only. POSIX now `fork`/`execl`s the program
+(no shell: no quoting hazard either) and re-raises the child's signal in `muc`, so `subprocess` reports
+`-signal` exactly as it does for a Windows crash. `--run` of a program that ignores signals still reports
+the exit code; the link step keeps `system()`, where a shell command is actually needed.
+
+Verified on both platforms: Windows 776/776, Linux (WSL, Ubuntu, LLVM 21.1.8) 774/774 with
+`cstd_windows`, `abi_agg` and `abi_float` skipped. The Linux run also confirms #68/#69 are gone
+(`sizeof`-derived global constants feed `#if`, `const char*` arguments and array subscripts).
+
 #### build 203 — 2026-11-18
 
 **Target selection and value semantics follow the audit findings (#92–#98, #103).**

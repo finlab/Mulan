@@ -16,6 +16,12 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <csignal>
+#ifdef __unix__
+#  include <sys/wait.h>
+#  include <unistd.h>
+#endif
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -129,15 +135,49 @@ static std::string quote(const std::string& s) {
 #endif
 }
 
+static int shell_status(int rc);
+static std::string quote(const std::string& s);
+
+// Runs a program (not a shell command). POSIX runs it directly: `system()` would route it through
+// `/bin/sh`, which turns a signal death into the shell's own exit code 128+signal and hides the signal
+// from this process (the test runner distinguishes "abnormal termination" from a real exit code, #67).
+static int run_program(const std::string& exe) {
+#ifdef _WIN32
+    return shell_status(std::system(quote(exe).c_str()));
+#else
+    const pid_t pid = fork();
+    if (pid == 0) {
+        execl(exe.c_str(), exe.c_str(), static_cast<char*>(nullptr));
+        _exit(127);  // exec failed: report it as "command not found", like a shell
+    }
+    if (pid < 0) throw MuError("cannot run `" + exe + "` (fork failed)");
+    int st = 0;
+    while (waitpid(pid, &st, 0) < 0) {
+        if (errno != EINTR) throw MuError("cannot wait for `" + exe + "`");
+    }
+    return shell_status(st);
+#endif
+}
+
 // `std::system` returns the process exit code on Windows, but a wait status on POSIX (exit code in
 // bits 8-15, or the signal number). Normalize so `--run` forwards a real exit code either way.
+//
+// A child killed by a signal is re-raised instead of being flattened to `128 + signal`: the caller then
+// observes the same termination it would on Windows (a negative code from `subprocess`), so a test that
+// documents "abnormal termination" behaves the same on both platforms (#67), and a shell still reports
+// `128 + signal` for `muc`.
 static int shell_status(int rc) {
 #ifdef _WIN32
     return rc;
 #else
     if (rc == -1) return rc;
     if (WIFEXITED(rc)) return WEXITSTATUS(rc);
-    if (WIFSIGNALED(rc)) return 128 + WTERMSIG(rc);
+    if (WIFSIGNALED(rc)) {
+        const int sig = WTERMSIG(rc);
+        std::signal(sig, SIG_DFL);
+        std::raise(sig);
+        return 128 + sig;  // only reached when the signal is blocked
+    }
     return rc;
 #endif
 }
@@ -902,7 +942,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     std::cout << "ok: " << out.string() << "\n";
     if (ba.run) {
         std::cout.flush();
-        return shell_status(std::system(quote(native_path(out.string())).c_str()));
+        return run_program(native_path(out.string()));
     }
     return 0;
 }
