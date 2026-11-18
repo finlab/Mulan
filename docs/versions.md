@@ -43,7 +43,7 @@ subobject is mutable. The first attempt exempted anything reachable through `thi
   `const_class_dtor_this_write` (the destructor); must-fail `const_class_ctor_other_write` (a constructor
   writing a `const class` field of another object).
 
-Full suite: Windows 827/827, Linux (WSL) 824/824.
+Full suite: Windows 827/827, Linux (WSL) 825/825.
 
 #### build 213 — 2026-11-18
 
@@ -3561,4 +3561,5 @@ Removed the C99 backend, making LLVM the only backend; cleaned up `--emit-c`/`-D
 Baseline: C++20 compiler (lexer/parser/sema), C99 backend, LLVM backend (LLVM C++ API → COFF), 58 regression cases, reference/object model design discussion
 
 **Tests**: C backend 58/58; LLVM backend 58/58; cold build with zero warnings
+
 
