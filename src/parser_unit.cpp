@@ -857,6 +857,11 @@ std::unique_ptr<CtorDecl> Parser::parse_ctor(const Token& name_tok) {
         advance();
         for (;;) {
             const Token nm = expect_ident("initializer name");
+            if (at_op("<")) {
+                throw err_at("an initializer names the type without its arguments: write `" + nm.text +
+                                 "(...)` — a generic base is spelled without `<...>` here (SPEC 3.12)",
+                             peek());
+            }
             CtorInit item;
             item.name = nm.text;
             item.line = nm.line;

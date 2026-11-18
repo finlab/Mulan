@@ -232,11 +232,10 @@ namespace muc_detail {
         begin_member(c->ty, t_void(), c->name + " constructor", ctor->line, ctor->col);
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
-        apply_field_defaults(c->field_default, c->ty->fields, ctor);
         // A statement-list `#if` must be expanded before the body is checked (P3.3c); the prologue check
         // looks at the body too, to point at a `super(...)` statement that replaced a base initializer.
         expand_directive_stmts(ctor->body.get());
-        check_ctor_prologue(c->ty, ctor);
+        check_ctor_prologue(c->ty, ctor, c->field_default);
         check_block(ctor->body.get());
         in_ctor_ = false;
         end_member();
@@ -272,8 +271,7 @@ namespace muc_detail {
         begin_member(sd->ty, t_void(), sd->name + " constructor", ctor->line, ctor->col);
         in_ctor_ = true;
         declare_params(ctor->param_locals, ctor->params, ctor->pty);
-        apply_field_defaults(sd->field_default, sd->ty->fields, ctor);
-        check_ctor_prologue(sd->ty, ctor);
+        check_ctor_prologue(sd->ty, ctor, sd->field_default);
         check_block(ctor->body.get());
         in_ctor_ = false;
         end_member();
@@ -328,30 +326,34 @@ namespace muc_detail {
     // are classified by name (base class / own class / field), the constructors are resolved, and the
     // execution order the codegen follows is fixed here: delegate → base → members → field initializers
     // (declaration order) → body.
-    void Sema::check_ctor_prologue(const TypePtr& ty, CtorDecl* ctor) {
+    void Sema::check_ctor_prologue(const TypePtr& ty, CtorDecl* ctor,
+                                   const std::unordered_map<std::string, ExprPtr>& defaults) {
         const bool has_class_base = ty->base && ty->base->kind == TypeKind::Class;
         size_t baseCount = has_class_base ? ty->base->fields.size() : 0;
 
-        // 1. classify
-        CtorInit* base_item = nullptr;
-        CtorInit* delegate_item = nullptr;
-        for (auto& item : ctor->init_list) {
+        // 1. classify. Indices, not pointers: the field defaults are appended below, which may
+        // reallocate the vector (a default member initializer is a prologue item like any other).
+        int base_at = -1;
+        int delegate_at = -1;
+        for (size_t i = 0; i < ctor->init_list.size(); ++i) {
+            CtorInit& item = ctor->init_list[i];
             if (has_class_base && plain_type_name(ty->base->name) == plain_type_name(item.name)) {
-                if (base_item) err("the base constructor is initialized twice", &item);
+                if (base_at >= 0) err("the base constructor is initialized twice", &item);
                 item.kind = CtorInit::Kind::Base;
-                base_item = &item;
+                base_at = static_cast<int>(i);
             } else if (plain_type_name(ty->name) == plain_type_name(item.name)) {
-                if (delegate_item) err("only one delegating constructor call is allowed", &item);
+                if (delegate_at >= 0) err("only one delegating constructor call is allowed", &item);
                 item.kind = CtorInit::Kind::Delegate;
-                delegate_item = &item;
+                delegate_at = static_cast<int>(i);
             } else {
                 item.kind = CtorInit::Kind::Field;
             }
         }
 
         // 2. delegating constructor: `Derived(args) : Derived(other args) { ... }`
-        if (delegate_item) {
-            if (base_item) {
+        if (delegate_at >= 0) {
+            CtorInit* delegate_item = &ctor->init_list[static_cast<size_t>(delegate_at)];
+            if (base_at >= 0) {
                 err("a delegating constructor cannot also initialize the base class", delegate_item);
             }
             for (auto& item : ctor->init_list) {
@@ -380,10 +382,15 @@ namespace muc_detail {
             return;  // no field coverage check: the delegated constructor owns the whole object
         }
 
+        // A non-delegating constructor takes the field defaults the list does not name
+        // (`const int x = 5;`); a delegating one owns no field step at all, so it takes none (SPEC 3.12).
+        apply_field_defaults(defaults, ty->fields, ctor);
+
         // 3. base-class call
         if (has_class_base) {
             const auto& base_ctors = ty->base->ctors;
-            if (base_item) {
+            if (base_at >= 0) {
+                CtorInit* base_item = &ctor->init_list[static_cast<size_t>(base_at)];
                 if (!base_ctors.empty()) {
                     std::vector<Expr*> raw;
                     for (auto& a : base_item->args) raw.push_back(a.get());

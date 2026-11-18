@@ -420,11 +420,13 @@ namespace muc_detail {
         Value* dp = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
         b.CreateStore(descOf(c->ty), dp);
 
-        // `: Base(args)`, or the implicit zero-argument base call (C++ semantics)
+        // `: Base(args)`, or the implicit zero-argument base call (C++ semantics). A base that declares
+        // no constructor at all has nothing to call: its state is the zero-filled allocation.
         TypePtr base = c->ty->base;
         if (base && base->kind == TypeKind::Class) {
             std::vector<Expr*> rawArgs;
             const std::vector<TypePtr>* chosen = nullptr;
+            static const std::vector<TypePtr> kDefault;
             if (ctor->has_base_call) {
                 for (auto& item : ctor->init_list) {
                     if (item.kind != CtorInit::Kind::Base) continue;
@@ -433,27 +435,30 @@ namespace muc_detail {
                 }
                 chosen = &ctor->base_pty;
             } else {
-                static const std::vector<TypePtr> kDefault;
-                chosen = &kDefault;
+                for (auto& cs : base->ctors) {
+                    if (cs.empty()) { chosen = &kDefault; break; }
+                }
             }
-            std::vector<LType*> basePtys{ptrTy()};
-            for (auto& t : *chosen) basePtys.push_back(lt(t));
-            FunctionCallee baseCtor = mod->getOrInsertFunction(
-                ctor_cname(base->unit, base->name, *chosen),
-                FunctionType::get(LType::getVoidTy(ctx), basePtys, false));
-            ArgPack pack = prepareArgs(rawArgs, *chosen);
-            std::vector<Value*> vals{curThis};
-            for (auto* v : pack.vals) vals.push_back(v);
-            b.CreateCall(baseCtor, vals);
-            releaseTemps(pack);
-            if (mayThrow.mayThrowCname(ctor_cname(base->unit, base->name, *chosen))) {
-                // Nothing is cleaned up here: the desc is still the base's, so the allocating caller's
-                // partial destroy dispatches to the base's partial destructor (emitDestroyPartialFn).
-                // Our own desc is restored only on success.
-                emitCheckPending();
+            if (chosen) {
+                std::vector<LType*> basePtys{ptrTy()};
+                for (auto& t : *chosen) basePtys.push_back(lt(t));
+                FunctionCallee baseCtor = mod->getOrInsertFunction(
+                    ctor_cname(base->unit, base->name, *chosen),
+                    FunctionType::get(LType::getVoidTy(ctx), basePtys, false));
+                ArgPack pack = prepareArgs(rawArgs, *chosen);
+                std::vector<Value*> vals{curThis};
+                for (auto* v : pack.vals) vals.push_back(v);
+                b.CreateCall(baseCtor, vals);
+                releaseTemps(pack);
+                if (mayThrow.mayThrowCname(ctor_cname(base->unit, base->name, *chosen))) {
+                    // Nothing is cleaned up here: the desc is still the base's, so the allocating
+                    // caller's partial destroy dispatches to the base's partial destructor
+                    // (emitDestroyPartialFn). Our own desc is restored only on success.
+                    emitCheckPending();
+                }
+                Value* dp2 = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
+                b.CreateStore(descOf(c->ty), dp2);
             }
-            Value* dp2 = b.CreateGEP(i8(), curThis, ConstantInt::get(i64(), 8));
-            b.CreateStore(descOf(c->ty), dp2);
         }
 
         // The whole constructor is one construction sequence: a throw anywhere in the member step or the

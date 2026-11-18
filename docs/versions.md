@@ -27,6 +27,44 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 212 — 2026-11-18
+
+**Fix: two regressions found while reviewing the build-210/211 work** — a delegating constructor rejected
+the type's default member initializers, and a base class that declares no constructor at all produced a
+call to a symbol that does not exist.
+
+1. `apply_field_defaults` ran before the prologue items were classified, so it injected every default member
+   initializer as a field item — and the delegating path then reported "a delegating constructor cannot
+   initialize fields" for a type as ordinary as:
+
+   ```c
+   class Cfg {
+       public const int id = 3;
+       Cfg(int i) : id(i) { }
+       Cfg() : Cfg(5) { }        // used to fail: the injected `id(3)` looked like a field initializer
+   }
+   ```
+
+   `check_ctor_prologue` now classifies the written items first and only then appends the defaults, and for
+   a non-delegating constructor only; the item table is indexed rather than pointer-aliased, because
+   appending defaults may reallocate it.
+2. The implicit base call was emitted unconditionally for a class base. The old code required a declared
+   zero-argument constructor first; without that guard `class A { int v; } class B : A { B() { } }` failed
+   at link time with `undefined reference to mu$unit$A`. The guard is back (an explicit `: Base(...)` always
+   emits the call, as before).
+- New regression cases: run `ctor_delegate_default` (class and `const class`), `ctor_prologue_order`
+  (declaration order vs written order, with side effects, and a three-link delegation chain),
+  `ctor_field_release` (field released exactly once when a plain *and* a delegating constructor body
+  throws), `ctor_struct_defaults` (struct delegation + default member initializers + `implicit` ctor with
+  a list), `ctor_implicit_base` (an undeclared constructor still calls the base's zero-argument one),
+  `ctor_base_noctor` (a base with no constructor at all), `const_class_elements` (slice element, generic
+  container field, handle replacement through a mutable container) and `const_class_dtor` (the destructor
+  is part of the writable phase); must-fail `const_class_mutable_param`, `const_class_generic_field`,
+  `const_class_struct_field`, `const_class_global` (every route to a `const class` object stays a
+  read-only view) and `ctor_generic_base_spelling` (`: Base<T>(x)` is rejected with the spelling hint).
+
+Full suite: Windows 816/816, Linux (WSL) 814/814.
+
 #### build 211 — 2026-11-18
 
 **One construction prologue: base call, delegation and field initializers live in the initializer list**

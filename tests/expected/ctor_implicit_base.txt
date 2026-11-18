@@ -1,0 +1,1 @@
+implicit base ctor ok
