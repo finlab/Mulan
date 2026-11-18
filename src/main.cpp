@@ -112,7 +112,22 @@ static void enableUtf8Console() {
 static void enableUtf8Console() {}
 #endif
 
-static std::string quote(const std::string& s) { return "\"" + s + "\""; }
+// One shell word, quoted so that the shell cannot interpret anything inside it. POSIX needs single
+// quotes (`"…"` still expands `$VAR`, backticks and `\`), and a literal `'` is written as `'\''`;
+// cmd.exe keeps double quotes, which is what the Windows path needs (#97).
+static std::string quote(const std::string& s) {
+#ifdef _WIN32
+    return "\"" + s + "\"";
+#else
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    out += "'";
+    return out;
+#endif
+}
 
 // `std::system` returns the process exit code on Windows, but a wait status on POSIX (exit code in
 // bits 8-15, or the signal number). Normalize so `--run` forwards a real exit code either way.
@@ -347,6 +362,14 @@ struct TargetInfo {
     std::string abi;   // gnu / musl / msvc / ucrt ("" = unknown)
 };
 
+// The pointer width a target architecture implies (0 = unknown). The layout model in types.cpp is
+// 64-bit, so a 32-bit target is rejected up front instead of failing in the LLVM backend (#93, #94).
+static int arch_ptr_bits(const std::string& arch) {
+    if (arch == "x86_64" || arch == "aarch64") return 64;
+    if (arch == "x86" || arch == "arm") return 32;
+    return 0;
+}
+
 // The CPU architecture of a triple, in the platform spec spelling. LLVM spells the same CPU
 // differently per vendor (`amd64`, `arm64`), so the spellings are folded here.
 static std::string normalize_arch(const std::string& arch) {
@@ -362,6 +385,9 @@ static std::string normalize_arch(const std::string& arch) {
 static std::string normalize_abi(const std::string& abi) {
     if (abi == "gnu" || abi == "gnuabi64" || abi == "gnueabi" || abi == "gnueabihf") return "gnu";
     if (abi == "musl") return "musl";
+    // Android is a distinct C runtime (Bionic), not glibc: an Android target must not be linked with a
+    // host glibc driver and reported as a successful build (#95).
+    if (abi == "android") return "android";
     if (abi == "msvc") return "msvc";
     if (abi == "ucrt") return "ucrt";
     return "";
@@ -398,7 +424,11 @@ static TargetInfo parse_triple(const std::string& triple) {
         const std::string& p = parts[i];
         if (!info.os.empty()) continue;
         if (p.find("windows") != std::string::npos || p.find("mingw") != std::string::npos) info.os = "windows";
-        else if (p == "linux" || p == "android") info.os = "linux";
+        else if (p == "linux") info.os = "linux";
+        else if (p == "android") {
+            info.os = "linux";
+            info.abi = "android";  // Bionic: a different runtime from glibc (#95)
+        }
         else if (p == "macos" || p.rfind("macosx", 0) == 0 || p == "ios" ||
                  p.rfind("darwin", 0) == 0) {
             // `x86_64-apple-macosx14.0.0` is the spelling LLVM and clang use for a macOS target; the
@@ -413,6 +443,26 @@ static TargetInfo parse_triple(const std::string& triple) {
         info.abi = normalize_abi(last);
     }
     return info;
+}
+
+static std::string suggest_target(const std::string& os, const std::string& arch, const std::string& abi);
+
+// An explicit `--target` must name an OS this compiler can emit for: an unknown one used to be treated
+// as the host, which linked a host binary and called it a success (#98).
+static void check_explicit_target(const std::string& triple) {
+    const TargetInfo t = parse_triple(triple);
+    if (t.os.empty()) {
+        throw MuError("target `" + triple + "` names an OS this compiler does not know; use one of "
+                      "`windows`, `linux`, `macos` (for example `" +
+                      suggest_target(host_platform_os(), t.arch.empty() ? host_platform_arch() : t.arch, "") +
+                      "`)");
+    }
+    const int bits = arch_ptr_bits(t.arch);
+    if (bits != 0 && bits != 64) {
+        throw MuError("target `" + triple + "` uses " + std::to_string(bits) +
+                      "-bit pointers, but this compiler's layout model is 64-bit; only 64-bit targets "
+                      "(`x86_64`, `aarch64`) are supported");
+    }
 }
 
 // The target the object file is generated for when no `--target` is given.
@@ -526,7 +576,7 @@ static std::string elf_interpreter(const fs::path& path) {
 static void check_linked_abi(const fs::path& out, const std::string& target) {
     if (target.empty()) return;
     const std::string want = normalize_abi(parse_triple(target).abi);
-    if (want != "gnu" && want != "musl") return;
+    if (want != "gnu" && want != "musl" && want != "android") return;
     fs::path path = out;
     if (!fs::exists(path)) {
         const fs::path alt = fs::path(out.string() + ".exe");
@@ -536,6 +586,13 @@ static void check_linked_abi(const fs::path& out, const std::string& target) {
     std::string got;
     if (interp.find("musl") != std::string::npos) got = "musl";
     else if (interp.find("ld-linux") != std::string::npos) got = "gnu";
+    // Android binaries name `/system/bin/linker*` (or are static); a glibc interpreter means the
+    // driver linked for the host, which is not the requested Android target (#95).
+    if (want == "android") {
+        if (interp.find("linker") != std::string::npos || interp.empty()) return;
+        throw MuError("the link driver produced a `" + got + "` binary, but the target `" + target +
+                      "` asks for Android (Bionic); pass an Android `--cc <driver>`");
+    }
     if (got.empty() || got == want) return;
     throw MuError("the link driver produced a binary for the " + got + " runtime, but the target `" + target +
                   "` asks for " + want + "; pass a matching `--cc <driver>`");
@@ -665,9 +722,8 @@ static void init_build_config(const std::string& platform_spec, const TargetInfo
     cfg.os = spec.os;
     cfg.arch = spec.arch.empty() ? target.arch : spec.arch;
     cfg.abi = spec.abi.empty() ? target.abi : spec.abi;
-    if (cfg.arch == "aarch64" || cfg.arch == "x86_64") cfg.ptr_bits = 64;
-    else if (cfg.arch == "x86") cfg.ptr_bits = 32;
-    else cfg.ptr_bits = static_cast<int>(sizeof(void*)) * 8;
+    cfg.ptr_bits = arch_ptr_bits(cfg.arch);
+    if (cfg.ptr_bits == 0) cfg.ptr_bits = static_cast<int>(sizeof(void*)) * 8;
     cfg.big_endian = false;  // every target this compiler emits for is little-endian
     cfg.debug = debug;
     cfg.bounds = bounds;
@@ -700,6 +756,7 @@ static int cmd_dump_config(const std::vector<std::string>& args) {
     if (!os.empty() && !platform.empty()) {
         throw MuError("`--os` and `--platform` select the same thing; use one of them");
     }
+    if (!target_triple.empty()) check_explicit_target(target_triple);
     const TargetInfo work = target_triple.empty() ? host_target() : parse_triple(target_triple);
     init_build_config(platform.empty() ? os : platform, work, debug, bounds, single_thread);
     std::cout << describe_build_config();
@@ -762,7 +819,10 @@ static int cmd_build(const std::vector<std::string>& args) {
     // The platform selects the unit set while the object file is generated for the codegen target
     // (`--target`, else the host): a platform for another machine describes a program that is not
     // the object file, so it is rejected here. Cross-compilation is a separate (later) feature.
-    if (!ba.target.empty()) check_target_abi_os(ba.target);
+    if (!ba.target.empty()) {
+        check_explicit_target(ba.target);
+        check_target_abi_os(ba.target);
+    }
     const TargetInfo target = ba.target.empty() ? host_target() : parse_triple(ba.target);
     if (!target_spec.empty()) {
         const PlatformSpec spec = parse_platform_spec(target_spec);

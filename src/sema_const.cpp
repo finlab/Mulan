@@ -81,13 +81,17 @@ namespace muc_detail {
 
     // Copyability is recursive: a struct that contains an uncopyable struct is uncopyable itself,
     // so a host type cannot silently regain the ability to copy an owned value
-    // (agents/value-semantics.md §2).
+    // (agents/value-semantics.md §2). A fixed-size array owns its elements, so an array of such a
+    // struct is not copyable either — a payload of `R[1]` must be rejected like `R` (#92).
     bool Sema::noncopyable_struct(const TypePtr& t) {
-        return t && t->kind == TypeKind::Struct && !t->copyable();
+        if (!t) return false;
+        if (t->kind == TypeKind::Array) return noncopyable_struct(t->elem);
+        return t->kind == TypeKind::Struct && !t->copyable();
     }
 
     std::string Sema::noncopyable_reason(const TypePtr& t) const {
         if (!t) return "it is not copyable";
+        if (t->kind == TypeKind::Array) return "its element type " + noncopyable_reason(t->elem);
         if (t->kind == TypeKind::Struct) {
             if (t->nocopy) return "it is declared `nocopy`";
             if (t->has_dtor) return "it declares a destructor, so it owns a resource";

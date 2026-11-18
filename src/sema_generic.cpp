@@ -960,8 +960,15 @@ bool is_arith_op(const std::string& n) {
 
 // Find a method on `t` (including the base class chain and interface default methods) with the same name and signature as `sig`;
 // positions in `sig` that come from `Self` are replaced with `self_ty`.
-bool type_has_method(const TypePtr& t, const MethodSig& sig, const TypePtr& self_ty, int depth = 0) {
-    if (!t || depth > 64) return false;
+bool type_has_method(const TypePtr& t, const MethodSig& sig, const TypePtr& self_ty, int depth = 0,
+                     std::unordered_set<const Type*>* seen = nullptr) {
+    // The bound is the enforced hierarchy limit, not a separate 64: a valid 65-level base chain used to
+    // be truncated here (a required method was reported missing) and a 65-level interface chain lost its
+    // inherited requirements (#103).
+    if (!t || depth > kMaxInheritanceDepth + kMaxInterfaceDepth) return false;
+    std::unordered_set<const Type*> local;
+    std::unordered_set<const Type*>& visited = seen ? *seen : local;
+    if (!visited.insert(t.get()).second) return false;  // a diamond: each type once
     // A built-in managed sequence has no declared methods: `length()` is a compiler-lowered accessor
     // (SPEC 6.4.3). Without this the most common container of all would not satisfy `IIndexable`.
     if (t->kind == TypeKind::Slice && !sig.is_operator && sig.name == "length" && sig.params.empty() &&
@@ -984,9 +991,12 @@ bool type_has_method(const TypePtr& t, const MethodSig& sig, const TypePtr& self
         const TypePtr& want_ret = sig.ret_self ? self_ty : sig.ret;
         if (same_type(m.ret, want_ret)) return true;
     }
-    if (t->kind == TypeKind::Class && t->base && type_has_method(t->base, sig, self_ty, depth + 1)) return true;
+    if (t->kind == TypeKind::Class && t->base &&
+        type_has_method(t->base, sig, self_ty, depth + 1, &visited)) {
+        return true;
+    }
     for (const auto& i : t->interfaces) {
-        if (type_has_method(i, sig, self_ty, depth + 1)) return true;
+        if (type_has_method(i, sig, self_ty, depth + 1, &visited)) return true;
     }
     return false;
 }
@@ -1009,8 +1019,10 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
 
     // Interface: collect members (including the interface inheritance chain)
     std::vector<const MethodSig*> sigs;
+    std::unordered_set<const Type*> visited;
     std::function<void(const TypePtr&, int)> collect = [&](const TypePtr& itf, int depth) {
-        if (!itf || depth > 64) return;
+        if (!itf || depth > kMaxInterfaceDepth) return;
+        if (!visited.insert(itf.get()).second) return;  // a diamond: each interface once
         for (const auto& m : itf->methods) sigs.push_back(&m);
         for (const auto& p : itf->interfaces) collect(p, depth + 1);
     };

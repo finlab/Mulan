@@ -27,6 +27,33 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 203 — 2026-11-18
+
+**Target selection and value semantics follow the audit findings (#92–#98, #103).**
+
+- **Unsupported targets are rejected before compiling** (#93, #94): the layout model is 64-bit, so a
+  32-bit target (`i686-*`, `armv7-*`) now fails with "uses 32-bit pointers … only 64-bit targets are
+  supported" instead of producing an LLVM layout mismatch. `ptr_bits` is derived from the target
+  architecture, not from the host.
+- **An explicit `--target` must name a known OS** (#98): `--target x86_64-unknown-unknown` used to be
+  treated as the host and silently linked a host binary; it now reports which OS names are accepted.
+- **Android is a distinct runtime** (#95): the triple records `abi = android` (Bionic), so an Android
+  target on a Linux host is a cross target (needs `--cc`), and a produced glibc binary is rejected
+  instead of being reported as a successful Android build.
+- **iOS is Mach-O** (#96): the object-format check already decides from the parsed OS (build 201), so
+  `arm64-apple-ios` expects Mach-O rather than ELF.
+- **POSIX shell quoting** (#97): `quote()` single-quotes with `'\''` escaping, so a path such as
+  `build/out$USER` is created literally instead of being expanded by `/bin/sh`.
+- **Sum payloads wrapped in a fixed-size array** (#92): `noncopyable_struct` unwraps arrays, so
+  `R[1]` is rejected like `R` when `R` has a destructor.
+- **Interface constraints use the hierarchy limits** (#103): `satisfies_one`'s interface walk and its
+  `type_has_method` helper stopped at depth 64 while 256 is allowed, so a 65-level chain dropped its
+  inherited requirement (accepting an invalid type) and a method 65 classes up was reported missing.
+  Both walks use `kMaxInterfaceDepth` / `kMaxInheritanceDepth` with a visited set now.
+- Tests: `sum_array_payload`, `iface_constraint_deep` (must-fail), `iface_constraint_deep_base` (check).
+
+Full suite: 776/776 (286 run, 438 must-fail, 38 check, 1 warning, 10 ir, 3 c abi).
+
 #### build 202 — 2026-11-18
 
 **The capacity limits accept their documented boundary** (audit batch #99–#107, #91).

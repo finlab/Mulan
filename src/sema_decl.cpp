@@ -563,8 +563,8 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                         sd);
                 }
                 if (noncopyable_struct(ft)) {
-                    err("payload of alternative `" + alt.name + "` is struct `" + ft->str() +
-                            "`, which has a destructor and cannot be stored by value in a sum (use a "
+                    err("payload of alternative `" + alt.name + "` is `" + ft->str() +
+                            "`, which needs a destructor and cannot be stored by value in a sum (use a "
                             "pointer or a class)",
                         sd);
                 }
