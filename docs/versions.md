@@ -27,6 +27,28 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 205 — 2026-11-18
+
+**A `const` method cannot lend a mutable view** (decision on #66).
+
+`ref int at() const` compiled and `h.at() = 42` wrote the field: the deep-readonly rule held at the call
+site (a const method *was* called) but the borrow returned from it handed mutability back out. The rule is
+now: a `const` method may return `ref const T` only; a mutable borrow has to come from a non-`const`
+method (or a free function). The read-only spelling already existed and works, so nothing had to be added
+to the language.
+
+- The check sits in `Sema::resolve_method_ret`, which every method path shares (class, struct, interface,
+  and the generic-interface instantiation, which used to call `make_borrow_ret` directly).
+- Body: `ref const T at() const { return s.v; }` — the way to lend a view; writing through it is rejected
+  at the call site. `ref int at()` (non-const) still lends a mutable view.
+- Provenance is not tracked, so a `ref` parameter's borrow cannot be passed through a const method either
+  (the caller may have aliased the receiver); a free function is the way to select among borrows.
+- SPEC 3.7 states the rule next to the deep-readonly paragraphs.
+- Tests: `const_method_mutable_ref` (must-fail), `const_method_readonly_ref` and `method_mutable_ref`
+  (check).
+
+Full suite: Windows 779/779, Linux (WSL) 777/777.
+
 #### build 204 — 2026-11-18
 
 **`muc --run` runs the program directly on POSIX** (#67).

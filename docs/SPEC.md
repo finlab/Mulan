@@ -756,6 +756,12 @@ class Cat {
   - The result is **not storable** (`ref T r = f();` is an error); but it can be written through in place: `f() = v;`, `f() += 1;`, `f().field = v;`,
     and it can also serve as the argument of a `ref` parameter, or be bound in a `for ref`.
   - A `ref const T` position cannot be returned as a mutable `ref`; the result of `ref const T f()` can only be read.
+- **A `const` method cannot return a mutable `ref T`** (decided 2026-11-18): its receiver is borrowed
+  read-only, so anything it hands out must be read-only as well — otherwise a `const` handle could write a
+  field through `ref int at() const` and the deep-readonly rule would hold only at the call site. The
+  read-only spelling `ref const T at() const` is the way to lend a view; a mutable borrow comes from a
+  non-`const` method or a free function. (This also covers passing a `ref` parameter's borrow through: the
+  compiler does not track provenance, and the caller may have aliased the receiver.)
 - **Parameters are owning local variables** (since 0.0.47): on entry to a function a reference is retained for the parameter value, and on exit (including `return`/`break`/
   `continue`) it is released. Therefore the body may freely rebind a parameter (`c = null;`, `c = other;`) without affecting the caller.
   The caller still passes arguments by value and releases its own temporaries, so the net reference count is unchanged; later, borrow/escape analysis may optimize away the

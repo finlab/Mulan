@@ -603,6 +603,18 @@ namespace muc_detail {
     }
 
     void Sema::resolve_method_ret(MethodDecl* m, Unit* u) {
+        // A `const` method borrows its receiver read-only, so everything it can hand out must be
+        // read-only too; a mutable `ref T` return would be a hole in the deep-readonly rule
+        // (`ref int at() const` let a const handle write a field, issue #66). The read-only spelling
+        // `ref const T` already exists and is what the method should return.
+        const bool ret_const = m->ret_ref && m->ret && m->ret->is_const;
+        if (m->is_const && m->ret_ref && !ret_const) {
+            err("method `" + m->name +
+                    "` is `const`, so it cannot return a mutable borrow; return `ref const " +
+                    (m->ret && m->ret->kind == TypeSpec::K::Named ? m->ret->name : std::string("T")) +
+                    "` (the caller of a const method cannot write through it)",
+                m);
+        }
         m->rty = make_borrow_ret(m->ret.get(), m->ret_ref, m, u, "method `" + m->name + "`");
         if (noncopyable_struct(referent_of(m->rty)) && !referent_of(m->rty)->movable()) {
             err("struct `" + referent_of(m->rty)->str() +
