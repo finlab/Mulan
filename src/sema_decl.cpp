@@ -1500,6 +1500,8 @@ Program Sema::run() {
         for (auto& d : u->decls) {
             if (auto sd = dynamic_cast<StructDecl*>(d.get())) {
                 recover([&] { apply_struct_iface_defaults(sd); });
+            } else if (auto cl = dynamic_cast<ClassDecl*>(d.get())) {
+                recover([&] { apply_class_iface_defaults(cl); });
             }
         }
     }

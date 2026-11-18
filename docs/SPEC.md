@@ -910,7 +910,12 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
   receiver needs a free `operator` whose first parameter is `ref` (or a struct member operator, whose
   `this` is borrowed); a `ref const Self` receiver is satisfied by a free `ref const` (or by-value) first
   parameter, or by a `const` member operator (whose `this` is `const Self`, 3.11).
-- A default method may only call interface methods and cannot access fields; when two interfaces provide
+- A default method may only call interface methods and cannot access fields; **it may also use `this`**,
+  whose type is `Self`: a contract operator applies to it (`this[0]`, `this + x`), `return this` returns
+  the implementor, and `this` may be passed to a `Self` parameter. Because the receiver is then the
+  implementor, such a default **has no itable slot**: it is materialized per implementor as an ordinary
+  static-dispatch method (for a `class` as well as a `struct`), and calling it through an interface value
+  is a compile error (3.15.6); a default that never mentions `this` keeps the dynamic form. When two interfaces provide
   default implementations with the same signature, the class must explicitly override them, otherwise it
   is a compile error. A **derived interface's default does not silently replace the base interface's**
   (decided 2026-11-18, the conservative reading): `interface D : B` that re-declares a default of `B` makes
@@ -1312,8 +1317,16 @@ type `Money` does not satisfy `IAdd` for type parameter `T`: no `operator+` acce
 #### 3.15.6 `Self`
 
 - `Self` is **valid only inside an `interface` body** and denotes the "implementor type".
-- As a constraint (`T: I`), `Self` is replaced by the type argument; as a dynamic interface type, methods containing `Self` do not enter the vtable
-  (object safety), so such interfaces cannot be used as value types.
+- The same substitution applies everywhere the member is compared with an implementation: as a
+  constraint (`T: I`) `Self` becomes the type argument, and a declaring implementor (`class C : I`,
+  `struct S : I`) spells its **own** type in that slot — `bool same(Self o)` is implemented as
+  `bool same(C o)`. Spelling the interface instead (`bool same(I o)`) does not satisfy the member.
+- As a dynamic interface type, a method containing `Self` **does not enter the itable** (object safety):
+  its parameter/return types differ per implementor, so it has no slot in the global signature-keyed
+  table. The same holds for an interface default whose **body reads `this`** (the receiver is used as
+  `Self`): it is materialized per implementor instead. Calling such a member through an interface value
+  is a compile error that points at the concrete type; the other members of the same interface remain
+  dispatchable, so the interface itself stays usable as a value type for them.
 - `Self` may only be used bare (`Self x`); nesting is not supported yet (`Self[]`).
 - `auto` is not used as a substitute: `auto` is a deduction placeholder and `Self` is a dependent type; the semantics of the two are orthogonal.
 

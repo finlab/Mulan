@@ -29,6 +29,7 @@ namespace muc_detail {
         declare_local(self.get());
         this_local_.clear();
         this_local_.push_back(std::move(self));
+        member_used_this_ = false;
     }
 
     void Sema::end_member() {
@@ -107,36 +108,78 @@ namespace muc_detail {
         return seen->insert(t.get()).second;
     }
 
+    static bool mentions_self(const MethodSig& sig) {
+        if (sig.ret_self) return true;
+        for (bool s : sig.params_self)
+            if (s) return true;
+        return false;
+    }
+
+    // `name(T1, T2)` with the implementor already substituted: the diagnostic has to name the exact
+    // signature the implementor is missing (SPEC 3.10), not just the method name.
+    static std::string sig_text(const MethodSig& sig) {
+        std::string out = sig.name + "(";
+        for (size_t i = 0; i < sig.params.size(); ++i) {
+            if (i) out += ", ";
+            out += sig.params[i] ? sig.params[i]->str() : std::string("?");
+        }
+        out += ")";
+        return out;
+    }
+
+    // `Self` in an interface member signature denotes the implementor (SPEC 3.15.6), but the declared
+    // signature keeps the interface type in that slot. Comparing a declaration against an implementation
+    // must therefore substitute the implementor first: the constraint check already substitutes
+    // (sema_generic.cpp), and without the same substitution here the `:` check and the constraint check
+    // disagree, so no type can satisfy both.
+    static MethodSig impl_sig(const MethodSig& sig, const TypePtr& impl) {
+        MethodSig out = sig;
+        // Operator members keep their own rule (the receiver is dropped from the member form, and the
+        // remaining operands are matched as declared — SPEC 3.11/3.15.5), so they are left untouched.
+        if (out.is_operator) return out;
+        if (out.ret_self) {
+            out.ret = impl;
+            out.ret_self = false;
+        }
+        for (size_t i = 0; i < out.params_self.size() && i < out.params.size(); ++i) {
+            if (out.params_self[i]) {
+                out.params[i] = impl;
+                out.params_self[i] = false;
+            }
+        }
+        return out;
+    }
+
     const MethodSig* Sema::find_sig(const TypePtr& t, const MethodSig& sig, int depth,
-                                    std::unordered_set<const Type*>* seen) {
+                                    std::unordered_set<const Type*>* seen, const TypePtr& impl) {
         if (!t || depth > 256) return nullptr;
         std::unordered_set<const Type*> local;
         std::unordered_set<const Type*>& visited = seen ? *seen : local;
         if (!first_visit(&visited, t)) return nullptr;
         for (auto& m : t->methods) {
-            if (same_sig(m, sig)) return &m;
+            if (impl ? same_sig(impl_sig(m, impl), sig) : same_sig(m, sig)) return &m;
         }
         if (t->kind == TypeKind::Class && t->base) {
-            if (auto r = find_sig(t->base, sig, depth + 1, &visited)) return r;
+            if (auto r = find_sig(t->base, sig, depth + 1, &visited, impl)) return r;
         }
         for (auto& i : t->interfaces) {
-            if (auto r = find_sig(i, sig, depth + 1, &visited)) return r;
+            if (auto r = find_sig(i, sig, depth + 1, &visited, impl)) return r;
         }
         return nullptr;
     }
 
     void Sema::collect_sigs(const TypePtr& t, const MethodSig& sig,
                              std::vector<const MethodSig*>& out, int depth,
-                             std::unordered_set<const Type*>* seen) {
+                             std::unordered_set<const Type*>* seen, const TypePtr& impl) {
         if (!t || depth > 256) return;
         std::unordered_set<const Type*> local;
         std::unordered_set<const Type*>& visited = seen ? *seen : local;
         if (!first_visit(&visited, t)) return;
         for (auto& m : t->methods) {
-            if (same_sig(m, sig)) out.push_back(&m);
+            if (impl ? same_sig(impl_sig(m, impl), sig) : same_sig(m, sig)) out.push_back(&m);
         }
-        if (t->kind == TypeKind::Class && t->base) collect_sigs(t->base, sig, out, depth + 1, &visited);
-        for (auto& i : t->interfaces) collect_sigs(i, sig, out, depth + 1, &visited);
+        if (t->kind == TypeKind::Class && t->base) collect_sigs(t->base, sig, out, depth + 1, &visited, impl);
+        for (auto& i : t->interfaces) collect_sigs(i, sig, out, depth + 1, &visited, impl);
     }
 
     const MethodSig* Sema::find_method(const TypePtr& t, const std::string& name, size_t argc,
@@ -555,29 +598,75 @@ namespace muc_detail {
 
     // Monomorphization, not inheritance: S gains no layout, no vtable slot and no `super`; the result is
     // an ordinary method that the normal passes check and emit.
-    void Sema::materialize_iface_default(StructDecl* sd, const TypePtr& itf, const MethodSig& sig) {
+    // Monomorphization, not inheritance: S gains no layout, no vtable slot and no `super`; the result is
+    // an ordinary method that the normal passes check and emit.
+    void Sema::materialize_iface_default(const TypePtr& ty, std::vector<std::unique_ptr<MethodDecl>>& decls,
+                                         const std::string& type_name, const TypePtr& itf,
+                                         const MethodSig& sig) {
         MethodDecl* def = find_iface_default_decl(itf, sig);
         if (!def) return;
+        // `Self` slots become the implementor: the clone is an ordinary method of `ty`.
+        const MethodSig inst = impl_sig(sig, ty);
         auto gen = clone_method(*def);
         gen->is_override = true;
         gen->is_public = true;
         gen->from_iface_default = true;
         gen->iface_unit = itf->unit;
+        // It is an ordinary method of the implementor now; the static-only marker stays on the interface.
+        gen->body_self = false;
         // The signature is the interface's, already resolved in the interface's unit: a default written
         // in another unit may name types that S's unit does not see, so it must not be re-resolved here.
-        gen->rty = sig.ret;
-        gen->ret_ref = is_borrow_type(sig.ret);
-        gen->pty = sig.params;
-        gen->cname = method_cname(sd->ty->unit, sd->name, gen->name, gen->pty, gen->is_const);
+        gen->rty = inst.ret;
+        gen->ret_ref = is_borrow_type(inst.ret);
+        gen->pty = inst.params;
+        gen->cname = method_cname(ty->unit, type_name, gen->name, gen->pty, gen->is_const);
         MethodSig ms;
         ms.name = gen->name;
-        ms.ret = sig.ret;
-        ms.params = sig.params;
+        ms.ret = inst.ret;
+        ms.params = inst.params;
         ms.is_override = true;
         ms.is_public = true;
-        ms.owner = sd->ty;
-        sd->ty->methods.push_back(std::move(ms));
-        sd->methods.push_back(std::move(gen));
+        ms.owner = ty;
+        ty->methods.push_back(std::move(ms));
+        decls.push_back(std::move(gen));
+    }
+
+    void Sema::materialize_iface_default(StructDecl* sd, const TypePtr& itf, const MethodSig& sig) {
+        materialize_iface_default(sd->ty, sd->methods, sd->name, itf, sig);
+    }
+
+    // A class normally reaches an interface default through the itable. A default whose body reads
+    // `this` cannot: the receiver would have to be the implementor, which the dynamic form does not know.
+    // Such a default is materialized into the class as an ordinary static-dispatch method, exactly as
+    // `struct S : I` does (and it takes no itable slot — see buildIfaceSlots).
+    void Sema::apply_class_iface_defaults(ClassDecl* c) {
+        std::vector<TypePtr> chains;
+        std::unordered_set<const Type*> seen;
+        std::function<void(const TypePtr&, int)> collect = [&](const TypePtr& itf, int depth) {
+            if (!itf || depth > kMaxInterfaceDepth) return;
+            if (!seen.insert(itf.get()).second) return;
+            chains.push_back(itf);
+            for (const auto& p : itf->interfaces) collect(p, depth + 1);
+        };
+        for (const auto& i : c->ty->interfaces) collect(i, 0);
+
+        std::vector<MethodSig> done;
+        for (const auto& chain : chains) {
+            for (const auto& req : chain->methods) {
+                if (req.is_operator || !req.body_self) continue;
+                bool dup = false;
+                for (const auto& d : done) dup = dup || same_sig(d, req);
+                if (dup) continue;
+                if (class_has_concrete(c->ty, req)) {  // the class already declares it
+                    done.push_back(req);
+                    continue;
+                }
+                TypePtr owner;
+                if (!find_iface_default_decl(chain, req, &owner)) continue;
+                materialize_iface_default(c->ty, c->methods, c->name, owner, req);
+                done.push_back(req);
+            }
+        }
     }
 
     // U33 S1 / U34 M4: `struct S : I1, I2` — only interfaces may be listed. Every interface method is
@@ -615,13 +704,18 @@ namespace muc_detail {
         for (size_t r = 0; r < reqs.size(); ++r) {
             const MethodSig* req = reqs[r].first;
             if (req->is_operator) continue;  // operators are resolved at compile time and need no member
+            // `Self` denotes this struct (SPEC 3.15.6); the declared signature stores the interface type
+            // in that slot, so compare against the substituted form.
+            const MethodSig want = impl_sig(*req, sd->ty);
             bool seen_sig = false;
-            for (size_t k = 0; k < r && !seen_sig; ++k) seen_sig = same_sig(*reqs[k].first, *req);
+            for (size_t k = 0; k < r && !seen_sig; ++k) {
+                seen_sig = same_sig(impl_sig(*reqs[k].first, sd->ty), want);
+            }
             if (seen_sig) continue;
             const std::string itf_name = reqs[r].second->name;
             const MethodSig* impl = nullptr;
             for (const auto& m : sd->ty->methods) {
-                if (same_sig(m, *req)) {
+                if (same_sig(m, want)) {
                     impl = &m;
                     break;
                 }
@@ -630,7 +724,7 @@ namespace muc_detail {
                 // `same_sig` deliberately ignores the return type (overloading never uses it), so the
                 // "satisfies" check must compare it explicitly; otherwise `int f()` would be satisfied
                 // by `long f()`.
-                if (!same_type(impl->ret, req->ret)) {
+                if (!same_type(impl->ret, want.ret)) {
                     err("override return type does not match the declaration in `" + itf_name + "`", sd);
                 }
                 // `override` is optional here: for a value type the `:` list already declares the
@@ -641,10 +735,8 @@ namespace muc_detail {
             // `Self` denotes the implementor type; a value type cannot spell itself in that position
             // (no interface value exists for a struct), so such a signature still needs an explicit
             // implementation — and a default returning `this` would not typecheck anyway.
-            bool has_self = req->ret_self;
-            for (bool s : req->params_self) has_self = has_self || s;
-            if (has_self) {
-                err("struct `" + sd->name + "` must implement `" + req->name + "` of interface `" +
+            if (mentions_self(*req)) {
+                err("struct `" + sd->name + "` must implement `" + sig_text(want) + "` of interface `" +
                         itf_name + "`",
                     sd);
                 continue;
@@ -671,13 +763,13 @@ namespace muc_detail {
                 if (!dominated) providers.push_back(owner);
             }
             if (providers.empty()) {
-                err("struct `" + sd->name + "` must implement `" + req->name + "` of interface `" +
+                err("struct `" + sd->name + "` must implement `" + sig_text(want) + "` of interface `" +
                         itf_name + "`",
                     sd);
                 continue;
             }
             if (providers.size() > 1) {
-                err("struct `" + sd->name + "` must implement `" + req->name + "`: interfaces `" +
+                err("struct `" + sd->name + "` must implement `" + sig_text(want) + "`: interfaces `" +
                         providers[0]->name + "` and `" + providers[1]->name +
                         "` provide different default implementations",
                     sd);
@@ -773,6 +865,25 @@ namespace muc_detail {
         // A top-level `const` on a parameter is not part of the signature (SPEC 3.7).
         std::vector<MethodDecl*> seen;
         for (auto& m : c->methods) {
+            if (m->from_iface_default) {
+                // Materialized from an interface default (a default whose body reads `this`): the body
+                // text belongs to the interface's unit, so its type names resolve there while the
+                // class's own members stay reachable — the same relaxation `check_struct` applies.
+                struct CtxGuard {
+                    Sema* sema;
+                    Unit* unit;
+                    std::string visible;
+                    ~CtxGuard() {
+                        sema->cur_ = unit;
+                        sema->extra_visible_unit_ = visible;
+                    }
+                } guard{this, cur_, extra_visible_unit_};
+                auto info = infos_.find(m->iface_unit);
+                if (info != infos_.end()) cur_ = info->second.unit;
+                extra_visible_unit_ = c->ty->unit;
+                check_method(c, m.get());
+                continue;
+            }
             MethodSig sig;
             sig.name = m->name;
             sig.is_const = m->is_const;
@@ -802,7 +913,7 @@ namespace muc_detail {
             }
             if (!base_sig) {
                 for (auto& i : c->ty->interfaces) {
-                    if (auto s = find_sig(i, sig)) {
+                    if (auto s = find_sig(i, sig, 0, nullptr, c->ty)) {
                         base_sig = s;
                         break;
                     }
@@ -824,7 +935,7 @@ namespace muc_detail {
                 }
                 std::vector<const MethodSig*> matches;
                 collect_sigs(c->ty->base ? c->ty->base : c->ty, sig, matches);
-                for (auto& i : c->ty->interfaces) collect_sigs(i, sig, matches);
+                for (auto& i : c->ty->interfaces) collect_sigs(i, sig, matches, 0, nullptr, c->ty);
                 for (auto* ms : matches) {
                     if (!same_type(ms->ret, m->rty)) {
                         err("override return type does not match the declaration in `" + ms->owner->str() + "`",
@@ -858,6 +969,13 @@ namespace muc_detail {
                                 "read-only contract",
                             m.get());
                     }
+                } else if (loose && mentions_self(*loose)) {
+                    // The one case that reads as "the signatures look identical but cannot match": the
+                    // contract's slot is `Self`, and the implementor has to spell its own type there.
+                    err("`" + sig.name + "` must spell the implementor's own type: the contract declares `" +
+                            sig_text(impl_sig(*loose, c->ty)) +
+                            "` (`Self` denotes the implementor, SPEC 3.15.6)",
+                        m.get());
                 } else {
                     err("`override` does not match any base class or interface method", m.get());
                 }
@@ -922,7 +1040,8 @@ namespace muc_detail {
                     itf);
             }
         }
-        for (auto& m : itf->methods) {
+        for (size_t mi = 0; mi < itf->methods.size(); ++mi) {
+            auto& m = itf->methods[mi];
             if (!m->body) continue;  // abstract declaration other than a default method
             begin_member(itf->ty, m->rty, itf->name + "." + m->name, m->line, m->col);
             declare_params(m->param_locals, m->params, m->pty);
@@ -930,16 +1049,25 @@ namespace muc_detail {
             if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
                 err("interface method `" + m->name + "` may reach the end of its body without returning a value", m.get());
             }
+            // Reading `this` makes the default static-only: the receiver is the implementor, and a body
+            // dispatched through the itable only has `{object, descriptor}`.
+            if (member_used_this_ && mi < itf->ty->methods.size()) {
+                m->body_self = true;
+                itf->ty->methods[mi].body_self = true;
+            }
+            member_used_this_ = false;
             end_member();
         }
     }
 
     bool Sema::class_has_concrete(const TypePtr& cls, const MethodSig& req) {
+        // `Self` in the requirement denotes this class (SPEC 3.15.6).
+        const MethodSig want = impl_sig(req, cls);
         TypePtr cur = cls;
         int guard = 0;
         while (cur && cur->kind == TypeKind::Class && guard++ < 1024) {
             for (auto& m : cur->methods) {
-                if (same_sig(m, req) && !m.is_abstract) return true;
+                if (same_sig(m, want) && !m.is_abstract) return true;
             }
             cur = cur->base;
         }
@@ -947,16 +1075,21 @@ namespace muc_detail {
     }
 
     bool Sema::iface_has_default(const TypePtr& t, const MethodSig& req, int depth,
-                                 std::unordered_set<const Type*>* seen) {
+                                 std::unordered_set<const Type*>* seen, const TypePtr& impl) {
         if (!t || depth > 256) return false;
         std::unordered_set<const Type*> local;
         std::unordered_set<const Type*>& visited = seen ? *seen : local;
         if (!first_visit(&visited, t)) return false;
+        const MethodSig need = impl ? impl_sig(req, impl) : req;
         for (auto& m : t->methods) {
-            if (same_sig(m, req) && !m.is_abstract) return true;
+            // A default that mentions `Self` has no itable slot and is not materialized yet, so it does
+            // not make the implementor concrete: the type must implement it explicitly (backlog U34).
+            if (impl && mentions_self(m)) continue;
+            const MethodSig want = impl ? impl_sig(m, impl) : m;
+            if (same_sig(want, need) && !m.is_abstract) return true;
         }
         for (auto& i : t->interfaces) {
-            if (iface_has_default(i, req, depth + 1, &visited)) return true;
+            if (iface_has_default(i, req, depth + 1, &visited, impl)) return true;
         }
         return false;
     }
@@ -1039,7 +1172,7 @@ namespace muc_detail {
                 bool abs = false;
                 c->ty->missing_members.clear();
                 for (auto& req : reqs) {
-                    if (!class_has_concrete(c->ty, req) && !iface_has_default(c->ty, req)) {
+                    if (!class_has_concrete(c->ty, req) && !iface_has_default(c->ty, req, 0, nullptr, c->ty)) {
                         abs = true;
                         c->ty->missing_members.push_back(req.owner->str() + "::" + req.name);
                     }

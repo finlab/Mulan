@@ -46,6 +46,8 @@ struct MethodSig {
     bool is_operator = false;
     bool ret_self = false;
     std::vector<bool> params_self;
+    // An interface default whose body reads `this` (static-only: materialized per implementor, no slot).
+    bool body_self = false;
     // Operator members only: the receiver (the first operand) may be declared `ref Self` (mutate in
     // place) or `ref const Self` (read-only) by a constraint. An implementation takes the receiver
     // either by value or as a borrow; `recv_cref` is true only for the read-only form.

@@ -25,6 +25,14 @@ namespace muc_detail {
                     // Operators are static-only contract members: no itable slot (a `ref` receiver
                     // could not travel through a vtable, and dispatch is not the point).
                     if (m.is_operator) continue;
+                    // A member that mentions `Self` is object-safe only in a static sense: its parameter
+                    // or return type is the implementor's own type, which differs per implementor, so it
+                    // cannot live in the global signature-keyed slot table (SPEC 3.15.6). The same holds
+                    // for a default whose body reads `this` (the receiver is used as `Self`).
+                    if (m.ret_self || m.body_self) continue;
+                    bool self_param = false;
+                    for (bool s : m.params_self) self_param = self_param || s;
+                    if (self_param) continue;
                     std::string k = sigKey(m);
                     if (islotIndex.count(k)) continue;
                     islotIndex[k] = static_cast<int>(islotSigs.size());
@@ -1008,6 +1016,9 @@ namespace muc_detail {
     void Emitter::emitInterfaceMethod(InterfaceDecl* itf, MethodDecl* m) {
         resetDebugScope();
         if (!m->body) return;
+        // A default that reads `this` uses the receiver as the implementor, which the dynamic form does
+        // not have: it is emitted only as the materialized per-implementor method (MethodDecl::body_self).
+        if (m->body_self) return;
         std::vector<LType*> ptys{ifaceTy};
         for (auto& t : m->pty) ptys.push_back(lt(t));
         Function* fn = cast<Function>(

@@ -169,6 +169,12 @@ private:
     bool cur_method_const_ = false;
     bool in_finally_ = false;
     std::vector<std::unique_ptr<LocalVar>> this_local_;
+    // Set while a method body is checked: the receiver `this` was read as a value (see
+    // MethodDecl::body_self). Reset by begin_member, read by check_interface.
+    bool member_used_this_ = false;
+    // Receiver-dropped views of interface operator contracts, resolved inside an interface default body
+    // (`this[0]`). Owned here so the pointer handed back to the expression stays valid (the AST keeps it).
+    std::vector<std::unique_ptr<MethodSig>> op_sig_cache_;
     std::vector<Scope> scopes_;
     std::vector<std::string> errors_;  // collected errors (multiple-error reporting)
     static constexpr size_t kMaxErrors = 20;
@@ -508,12 +514,17 @@ private:
 
     static bool same_sig(const MethodSig& a, const MethodSig& b);
 
+    // `impl` (when given) is the implementor whose `Self` slots replace the interface's placeholder before
+    // comparing: `Self` denotes the implementor (SPEC 3.15.6), and the declared signature stores the
+    // interface type in that slot.
     static const MethodSig* find_sig(const TypePtr& t, const MethodSig& sig, int depth = 0,
-                                     std::unordered_set<const Type*>* seen = nullptr);
+                                     std::unordered_set<const Type*>* seen = nullptr,
+                                     const TypePtr& impl = nullptr);
 
     static void collect_sigs(const TypePtr& t, const MethodSig& sig,
                              std::vector<const MethodSig*>& out, int depth = 0,
-                             std::unordered_set<const Type*>* seen = nullptr);
+                             std::unordered_set<const Type*>* seen = nullptr,
+                             const TypePtr& impl = nullptr);
 
     static const MethodSig* find_method(const TypePtr& t, const std::string& name, size_t argc,
                                         int depth = 0,
@@ -562,10 +573,15 @@ private:
     // Materialize that default as an ordinary method of `sd`: the body is cloned and re-checked with
     // `this` = S, so its calls resolve statically. Layout, vtable and `super` are unaffected.
     void materialize_iface_default(StructDecl* sd, const TypePtr& itf, const MethodSig& sig);
+    // Same, for any implementor: `ty`/`decls`/`type_name` describe the type that gains the method.
+    void materialize_iface_default(const TypePtr& ty, std::vector<std::unique_ptr<MethodDecl>>& decls,
+                                   const std::string& type_name, const TypePtr& itf,
+                                   const MethodSig& sig);
 
     // U33/U34: check `struct S : I...` and materialize the missed defaults. Own pass, before any body
     // is checked, so that call sites elsewhere already see the materialized signatures.
     void apply_struct_iface_defaults(StructDecl* sd);
+    void apply_class_iface_defaults(ClassDecl* c);
 
     void check_class(ClassDecl* c);
     // `const class`: an override of a mutating virtual of the base takes the slot's (non-const) signature;
@@ -582,7 +598,8 @@ private:
     static bool class_has_concrete(const TypePtr& cls, const MethodSig& req);
 
     static bool iface_has_default(const TypePtr& t, const MethodSig& req, int depth = 0,
-                                  std::unordered_set<const Type*>* seen = nullptr);
+                                  std::unordered_set<const Type*>* seen = nullptr,
+                                  const TypePtr& impl = nullptr);
 
     static void collect_abstract_reqs(const TypePtr& t, std::vector<MethodSig>& out,
                                       int depth = 0, std::unordered_set<const Type*>* seen = nullptr);

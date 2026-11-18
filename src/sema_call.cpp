@@ -343,6 +343,22 @@ namespace muc_detail {
                                 : "cannot call a non-const method `" + m->name + "` on a `const` object",
                             c);
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
+                    // `Self` in an interface member denotes the implementor (SPEC 3.15.6); a call through
+                    // an interface value has no implementor type, so such a member has no itable slot and
+                    // cannot be dispatched dynamically. Inside an interface's own default body the call is
+                    // re-resolved when the default is materialized, so it is allowed there.
+                    const bool in_iface_body = cur_class_ && cur_class_->kind == TypeKind::Interface;
+                    bool sig_self = sig->ret_self;
+                    for (bool b : sig->params_self) sig_self = sig_self || b;
+                    if (!in_iface_body && sig->owner && sig->owner->kind == TypeKind::Interface &&
+                        (sig_self || sig->body_self)) {
+                        err("interface method `" + m->name + "` " +
+                                (sig_self ? "declares `Self` in its signature"
+                                          : "has a default body that reads `this`") +
+                                ", so it cannot be called through an interface value: call it on a "
+                                "concrete type, or implement it explicitly there",
+                            c);
+                    }
                     if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
                         err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
                     }
@@ -826,6 +842,41 @@ namespace muc_detail {
 
     const MethodSig* Sema::find_member_operator(const TypePtr& recv, const std::string& name,
                                                 const std::vector<Expr*>& args, Node* at) {
+        // Inside a default body of interface I, `this` has type I, but a contract operator declared as
+        // `T operator[](Self c, isize i)` still applies to it: the receiver is `Self`, and the body is
+        // materialized per implementor, where the concrete operator is resolved. Without this branch
+        // `this[0]` / `this + x` would be unusable in a default that is exactly where they belong.
+        if (recv && recv->kind == TypeKind::Interface && cur_class_ && same_type(cur_class_, recv)) {
+            // The member form drops the receiver, exactly as for a class/struct member operator, so the
+            // overload choice runs on a copy without the first parameter. The copies are owned by the
+            // Sema so the selected signature outlives this call (the expression keeps the pointer).
+            std::vector<const MethodSig*> ok;
+            for (const auto& m : recv->methods) {
+                if (!m.is_operator || m.name != name) continue;
+                if (m.params_self.empty() || !m.params_self[0]) continue;  // the receiver must be `Self`
+                auto s = std::make_unique<MethodSig>(m);
+                s->params.erase(s->params.begin());
+                if (!s->params_self.empty()) s->params_self.erase(s->params_self.begin());
+                if (s->params.size() != args.size()) continue;
+                bool good = true;
+                for (size_t i = 0; i < args.size(); ++i) {
+                    TypePtr at2 = args[i]->ty ? args[i]->ty : check_expr(args[i]);
+                    if (rank_arg(args[i], at2, s->params[i]) < 0) {
+                        good = false;
+                        break;
+                    }
+                }
+                if (!good) continue;
+                ok.push_back(s.get());
+                op_sig_cache_.push_back(std::move(s));
+                // A contract operator applied to an interface-typed receiver needs the implementor type:
+                // the default that contains it can only be materialized, never dispatched through the
+                // itable (see MethodDecl::body_self).
+                member_used_this_ = true;
+            }
+            if (ok.empty()) return nullptr;
+            return choose_method(ok, args, "`" + name + "` of `" + recv->str() + "`", at);
+        }
         // Member operators live on structs (borrowed `this`, static dispatch) and on classes (the
         // receiver is the handle, also static unless the operator is declared `virtual`). `==`/`!=` on a
         // class stay identity comparison and cannot be declared as members — the parser rejects them.

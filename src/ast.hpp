@@ -717,6 +717,10 @@ struct MethodDecl : Node {
     // `iface_unit`, so it is re-checked with that unit as the resolution context
     bool from_iface_default = false;
     std::string iface_unit;
+    // An interface default whose body reads `this`: the receiver is then used as `Self` (an operator on
+    // the receiver, `return this`, passing it to a `Self` parameter), which needs the concrete implementor.
+    // Such a default is static-only: it is materialized per implementor and takes no itable slot.
+    bool body_self = false;
     // sema
     TypePtr rty;
     std::vector<TypePtr> pty;

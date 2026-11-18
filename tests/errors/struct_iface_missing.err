@@ -1,1 +1,1 @@
-must implement `speak` of interface `Animal`
+must implement `speak()` of interface `Animal`

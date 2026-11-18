@@ -27,6 +27,57 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 217 — 2026-11-18
+
+**`this` in an interface default body is the implementor** (SPEC 3.10 / 3.15.6).
+
+`this` existed in a default body but had the *interface* type, so the receiver could only be used where an
+interface value was acceptable: `this[0]` (a contract subscript whose receiver is `Self`) was impossible,
+which made `first()` / `last()` / `fill()` style container defaults unwritable. Inside an interface body the
+receiver now resolves a contract operator declared with a `Self` receiver (`this[0]`, `this + x`), and
+`this` may be returned or passed where `Self` is expected.
+
+Because the receiver is then the implementor, such a default cannot be dispatched through the itable: it is
+marked `body_self`, takes no slot, and is **materialized per implementor** — `apply_class_iface_defaults`
+adds the class case to the existing struct one (ordinary static-dispatch method, checked in the interface's
+unit with the class's members visible). Calling it through an interface value is a compile error naming the
+concrete type; a default that never reads `this` keeps the dynamic form. Defaults that merely *call* other
+interface methods (`this.greet()`) are unaffected.
+
+Tests: `cases/contract_default_this` (struct + class + generic constraint),
+`errors/contract_default_this_value`. Full suite: 836/836 on Windows.
+
+#### build 216 — 2026-11-18
+
+**`Self` in a plain interface method means the implementor in the nominal check too** (SPEC 3.15.6).
+
+`Self` was a half-dependent type: the declared signature stored the *interface* type in that slot, while
+the constraint check substituted the implementor. The two answers could never agree, so a type could not
+both declare the contract and satisfy a constraint on it:
+
+- `class Box : IPair { override bool same(Box o) }` was rejected as "`override` does not match any base
+  class or interface method", and the interface-typed spelling it forced then failed `f<Box>` with
+  "missing method `same`";
+- `struct S : IPair { bool same(S o) }` was rejected with "must implement `same` of interface `IPair`",
+  while the same struct *without* `: IPair` satisfied the constraint structurally.
+
+The nominal checks now substitute the implementor before comparing (`impl_sig` in `sema_class1.cpp`,
+threaded through `find_sig` / `collect_sigs` / `class_has_concrete` / `iface_has_default`), so the `:`
+list, the direct call and the generic constraint agree. Materialized defaults substitute as well.
+
+A member that mentions `Self` is **not object-safe**: its parameter/return type differs per implementor,
+so it takes no itable slot (`buildIfaceSlots`) and calling it through an interface value is a compile
+error instead of a null slot at run time. Other members of the same interface stay dispatchable. A
+default that mentions `Self` is still never materialized (it must be implemented explicitly), and the
+"must implement" diagnostics now name the substituted signature.
+
+Tests: `cases/contract_self_nominal`, `errors/contract_self_iface_value`,
+`errors/contract_self_placeholder`, `errors/contract_self_placeholder_class`; the "must implement"
+diagnostics in `apply_struct_iface_defaults` now name the substituted signature, so
+`struct_iface_missing` / `struct_iface_default_conflict` expectations moved to `speak()` / `hi()`.
+Full suite: 834/834 on Windows.
+
+
 #### build 215 — 2026-11-18
 
 **Default member initializers apply at every construction site** (decision: synthesize a zero-argument
