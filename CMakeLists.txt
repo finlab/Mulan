@@ -56,42 +56,53 @@ message(STATUS "muc: LLVM ${LLVM_PACKAGE_VERSION} (${LLVM_INSTALL_PREFIX})")
 add_executable(muc
   src/main.cpp
   src/loader.cpp
-  src/lexer.cpp
-  src/parser.cpp
-  src/parser_unit.cpp
-  src/parser_stmt.cpp
-  src/parser_expr.cpp
-src/parser_directive.cpp
-src/directive.cpp
-  src/ast_clone.cpp
-  src/ast_subst.cpp
-  src/types.cpp
-  src/mangle.cpp
-  src/abi.cpp
-  src/sema.cpp
-  src/sema_decl.cpp
-src/sema_directive.cpp
-  src/sema_types.cpp
-  src/sema_generic.cpp
-  src/sema_class1.cpp
-  src/sema_iface.cpp
-  src/sema_stmt.cpp
-  src/sema_class2.cpp
-  src/sema_const.cpp
-  src/sema_expr.cpp
-  src/sema_call.cpp
-  src/codegen_llvm.cpp
-  src/codegen_abi.cpp
-  src/codegen_support.cpp
-  src/codegen_runtime.cpp
-  src/codegen_eh.cpp
-  src/may_throw.cpp
-  src/codegen_expr.cpp
-  src/codegen_expr2.cpp
-  src/codegen_stmt.cpp
-  src/codegen_class.cpp
-  src/codegen_func.cpp
-  src/codegen_unit.cpp
+  src/directive.cpp
+  src/ast/ast_clone.cpp
+  src/ast/ast_subst.cpp
+  src/types/types.cpp
+  src/types/mangle.cpp
+  src/parser/lexer.cpp
+  src/parser/parser.cpp
+  src/parser/parser_unit.cpp
+  src/parser/parser_stmt.cpp
+  src/parser/parser_expr.cpp
+  src/parser/parser_directive.cpp
+  src/sema/sema.cpp
+  src/sema/sema_decl.cpp
+  src/sema/sema_directive.cpp
+  src/sema/sema_types.cpp
+  src/sema/sema_generic.cpp
+  src/sema/sema_class1.cpp
+  src/sema/sema_iface.cpp
+  src/sema/sema_stmt.cpp
+  src/sema/sema_class2.cpp
+  src/sema/sema_const.cpp
+  src/sema/sema_expr.cpp
+  src/sema/sema_call.cpp
+  src/codegen/codegen_llvm.cpp
+  src/codegen/codegen_abi.cpp
+  src/codegen/codegen_support.cpp
+  src/codegen/codegen_runtime.cpp
+  src/codegen/codegen_eh.cpp
+  src/codegen/may_throw.cpp
+  src/codegen/codegen_expr.cpp
+  src/codegen/codegen_expr2.cpp
+  src/codegen/codegen_stmt.cpp
+  src/codegen/codegen_class.cpp
+  src/codegen/codegen_func.cpp
+  src/codegen/codegen_unit.cpp
+  src/codegen/abi.cpp
+)
+
+# Headers are included flat (`#include "sema_impl.hpp"`), so every source directory is on the include
+# path. Moving a file between directories therefore needs no include edits.
+target_include_directories(muc PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ast
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/types
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/parser
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/sema
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/codegen
 )
 
 separate_arguments(LLVM_DEFS_LIST NATIVE_COMMAND "${LLVM_DEFINITIONS}")

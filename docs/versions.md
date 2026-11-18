@@ -27,6 +27,31 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 219 — 2026-11-19
+
+**Source tree grouped by concept** (no behaviour change).
+
+55 files were flat in `src/`; they now sit in five directories, with only the driver and the two
+shared helpers left at the top:
+
+```
+src/
+  ast/       ast.hpp, ast_clone.*, ast_subst.*            syntax tree, deep copy, substitution
+  types/     types.hpp, types.cpp, mangle.*               the type model and symbol names
+  parser/    lexer.*, parser*, parser_impl.hpp, lexer.hpp  token -> AST
+  sema/      sema.*, sema_impl.hpp, sema_*.cpp             names, types, constraints, the pass order
+  codegen/   codegen_*.*, may_throw.*, abi.*               AST -> IR, dispatch tables, C ABI
+  main.cpp, loader.*, directive.*, common.hpp              driver and the two shared units
+```
+
+Includes stay **flat** (`#include "sema_impl.hpp"`) and every source directory is on the include path
+(`target_include_directories` in `CMakeLists.txt`), so moving a file between directories needs no
+include edits and no file was touched beyond `git mv`.
+
+Verified: IR for `examples/example.mu`, `cases/contract_default_this`, `cases/generic_bounds` and
+`cases/class_iface_index` is byte-identical before and after the move, and the full suite passes
+(836/836). `agents/code-map.md` gained the tree (§1) and directory-prefixed tables (§4).
+
 #### build 218 — 2026-11-18
 
 **Split `sema_class1.cpp` by concern** (no behaviour change).
