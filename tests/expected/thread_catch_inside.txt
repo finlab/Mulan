@@ -1,0 +1,2 @@
+caught inside
+thread_catch_inside

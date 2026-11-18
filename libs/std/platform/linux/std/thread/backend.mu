@@ -15,6 +15,8 @@
 
 public unit std.thread.backend;
 
+use std.exception;
+
 // ---------------------------------------------------------------- libc
 
 extern void abort();
@@ -54,7 +56,14 @@ struct ThreadCtx {
 
 void* thread_entry(void* p) {
     ThreadCtx* c = p as ThreadCtx*;
-    (*c).body((*c).arg);
+    // An exception that escapes the body has no way out of a thread: the pending slot is
+    // thread-local, so it would vanish with the thread. Abort instead, like a `para` task body
+    // (SPEC 3.17.7).
+    try {
+        (*c).body((*c).arg);
+    } catch (e: Exception) {
+        abort();
+    }
     free(c);
     return null;
 }

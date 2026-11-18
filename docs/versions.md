@@ -27,6 +27,26 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 209 — 2026-11-18
+
+**An exception escaping a `std.thread` body aborts** (decision on #11).
+
+The pending-exception slot is thread-local, so a `throw` that left a `thread_start` body died with the
+thread: no abort, no catch, no diagnostic, and `main` carried on as if nothing had happened — while the
+same throw in a `para` task body already aborted (SPEC 3.17.7). The rule now covers both carriers.
+
+- Each platform backend wraps the body in `try { body(arg); } catch (e: Exception) { abort(); }` — the
+  boundary rule expressed in the language itself, in the trampoline that already existed. A body that
+  returns normally is unaffected; an exception caught *inside* the body stays there.
+- The language-level `thread` statement/section is still unimplemented; SPEC 3.17.7 now says so
+  explicitly and points at `std.thread` (StdLibSPEC §6.5), which the old status line left ambiguous.
+  StdLibSPEC §6.5 documents the exception boundary: there is no way to hand an exception to the joiner,
+  so catching it inside the body (or reporting it another way) is the caller's protocol.
+- Tests: `thread_throw_abort` (`@exit 3`, both printed lines flushed before the throw),
+  `thread_join_ok`, `thread_catch_inside`.
+
+Full suite: Windows 793/793, Linux (WSL) 791/791.
+
 #### build 208 — 2026-11-18
 
 **`const class` implements read-only interfaces; the diagnostics say why an `override` misses**

@@ -1651,13 +1651,19 @@ para thread for i in 0..n { heavy(i); }
 #### 3.17.7 Implementation status
 
 `para` (0.0.92) and `para for` over every source form (0.0.93–0.0.97) run on the **M:N task runtime**
-(0.0.98); `thread` is not implemented. What the language guarantees, and what it does not:
+(0.0.98). The language-level `thread` **statement/section** is not implemented; the `std.thread` *library*
+(real OS threads, `thread_start` / `thread_join`) **is** implemented and specified in
+[StdLibSPEC §6.5](StdLibSPEC.md). What the language guarantees, and what it does not:
 
 - A task has its own fixed-size stack (3.17.6): deep recursion and large locals need a `thread`
   section or a runtime-configured larger stack.
 - A started task always runs to completion (no cancellation yet); an exception that escapes a task
   body **aborts the process** (the B2 thread-boundary rule), while exceptions caught inside the task
   behave normally.
+- **The same rule covers `std.thread` bodies** (decided 2026-11-18): the pending-exception slot is
+  thread-local, so an exception that escaped a `thread_start` body would vanish with the thread and the
+  joiner would never learn about it. The library aborts instead (`thread_start` is not a `try`), which
+  makes "a thread body that throws" terminate the process exactly like a `para` task body.
 - `this` and implicit field access inside a section are **compile errors** in v1 (pass the object as
   an explicit argument). Writing, taking the address of, or passing by `ref` an enclosing local are
   compile errors (3.17.2).

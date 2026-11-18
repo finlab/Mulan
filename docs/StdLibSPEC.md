@@ -207,7 +207,12 @@ declaration checking the same shape, `class` equality staying identity — is SP
 ### 6.5 `std.thread`
 
 Low-level OS threads, mutexes and condition variables; the C-shaped layer the task runtime is built
-on. It does not know about `para`. Signatures (bodies omitted):
+on. It does not know about `para`.
+
+**Exception boundary.** `thread_start`'s body is a thread boundary: an exception that escapes it
+**aborts the process** (the same rule a `para` task body follows, SPEC 3.17.7). There is no way to hand
+an exception to the joiner — the pending slot is thread-local — so catching it inside the body (or
+reporting it some other way) is the caller's protocol. Signatures (bodies omitted):
 
 ```mu
 public const uint WAIT_INFINITE = 0xFFFFFFFF;
