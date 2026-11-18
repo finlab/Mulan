@@ -1,0 +1,2 @@
+shift kind=0 width=32
+cast kind=1 width=32

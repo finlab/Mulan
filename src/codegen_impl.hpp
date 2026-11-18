@@ -441,6 +441,12 @@ struct Emitter {
     // Emits a call to std.exception.bounds_fail on the cold path.
     Value* emitSliceIndexChecked(Value* h, const std::vector<Value*>& idxs, const TypePtr& bt);
     void emitBoundsFail(Value* index, Value* length, Value* axis);
+    // Numeric-edge checks, emitted only when `--bounds` is on: a shift count outside [0, width) and a
+    // float->int `as` whose value does not fit. Both throw `std.exception.NumericEdgeError`.
+    void emitShiftCountCheck(Value* count, unsigned width);
+    void emitFloatToIntCheck(Value* value, const TypePtr& to);
+    // Calls `callee` (which always throws) and unwinds through the current handler.
+    void emitColdThrow(FunctionCallee callee, const std::vector<Value*>& args, const char* tag);
 
     // total element count (rank 1 uses len, rank >= 2 uses the product of the dimensions)
     Value* sliceTotalCount(Value* h, int rank);

@@ -5,6 +5,8 @@
 
 #include "codegen_impl.hpp"
 
+#include <cmath>
+
 #include "llvm/IR/Intrinsics.h"
 
 namespace muc_detail {
@@ -37,21 +39,65 @@ namespace muc_detail {
         return total;
     }
 
-    // Cold path of the bounds check: call std.exception.bounds_fail(index, length, axis), which throws.
-    void Emitter::emitBoundsFail(Value* index, Value* length, Value* axis) {
-        FunctionCallee callee = mod->getOrInsertFunction(
-            mangle_unit("std.exception", "bounds__fail") + "$isize$isize$isize",
-            FunctionType::get(LType::getVoidTy(ctx), {i64(), i64(), i64()}, false));
-        b.CreateCall(callee, {index, length, axis});
-        // `bounds_fail` always throws: unwind through the current handler on the cold path.
+    // Calls a runtime function that always throws, then unwinds through the current handler: the cold
+    // path shared by every check that reports through `std.exception`.
+    void Emitter::emitColdThrow(FunctionCallee callee, const std::vector<Value*>& args, const char* tag) {
+        b.CreateCall(callee, args);
         ensureEHSlot();
-        BasicBlock* unwind = BasicBlock::Create(ctx, "bf.unwind", curFn);
-        BasicBlock* dead = BasicBlock::Create(ctx, "bf.dead", curFn);
+        const std::string pre(tag);
+        BasicBlock* unwind = BasicBlock::Create(ctx, (pre + ".unwind").c_str(), curFn);
+        BasicBlock* dead = BasicBlock::Create(ctx, (pre + ".dead").c_str(), curFn);
         b.CreateCondBr(b.CreateICmpNE(loadPendingFlag(), ConstantInt::get(i32(), 0)), unwind, dead);
         b.SetInsertPoint(unwind);
         emitUnwindCurrent();
         b.SetInsertPoint(dead);
         b.CreateUnreachable();
+    }
+
+    // Cold path of the bounds check: call std.exception.bounds_fail(index, length, axis), which throws.
+    void Emitter::emitBoundsFail(Value* index, Value* length, Value* axis) {
+        FunctionCallee callee = mod->getOrInsertFunction(
+            mangle_unit("std.exception", "bounds__fail") + "$isize$isize$isize",
+            FunctionType::get(LType::getVoidTy(ctx), {i64(), i64(), i64()}, false));
+        emitColdThrow(callee, {index, length, axis}, "bf");
+    }
+
+    // A shift count must be in [0, width): LLVM's `shl`/`ashr` with any other count is poison, so the
+    // checked build reports it instead of letting the optimizer produce a different answer per run
+    // (SPEC 8.2 documents the unchecked operation as UB).
+    void Emitter::emitShiftCountCheck(Value* count, unsigned width) {
+        BasicBlock* ok = BasicBlock::Create(ctx, "sh.ok", curFn);
+        BasicBlock* bad = BasicBlock::Create(ctx, "sh.bad", curFn);
+        // Unsigned compare: a negative count is a huge unsigned value.
+        b.CreateCondBr(b.CreateICmpUGE(count, ConstantInt::get(count->getType(), width)), bad, ok);
+        b.SetInsertPoint(bad);
+        FunctionCallee callee = mod->getOrInsertFunction(
+            mangle_unit("std.exception", "shift__fail") + "$long$int",
+            FunctionType::get(LType::getVoidTy(ctx), {i64(), i32()}, false));
+        emitColdThrow(callee,
+                      {b.CreateSExtOrTrunc(count, i64()), ConstantInt::get(i32(), width)}, "sh");
+        b.SetInsertPoint(ok);
+    }
+
+    // A float->int `as` must be in the target type's range before `fptosi`/`fptoui` (which are poison
+    // outside it). NaN fails every comparison, so the range test alone rejects it as well.
+    void Emitter::emitFloatToIntCheck(Value* value, const TypePtr& to) {
+        const unsigned bits = static_cast<unsigned>(sizeOf(to) * 8);
+        const bool sgn = to->is_signed();
+        const double lo = sgn ? -std::ldexp(1.0, static_cast<int>(bits) - 1) : 0.0;
+        const double hi = sgn ? std::ldexp(1.0, static_cast<int>(bits) - 1)
+                              : std::ldexp(1.0, static_cast<int>(bits));
+        BasicBlock* ok = BasicBlock::Create(ctx, "cv.ok", curFn);
+        BasicBlock* bad = BasicBlock::Create(ctx, "cv.bad", curFn);
+        Value* ge = b.CreateFCmpOGE(value, ConstantFP::get(value->getType(), lo));
+        Value* lt = b.CreateFCmpOLT(value, ConstantFP::get(value->getType(), hi));
+        b.CreateCondBr(b.CreateAnd(ge, lt), ok, bad);
+        b.SetInsertPoint(bad);
+        FunctionCallee callee = mod->getOrInsertFunction(
+            mangle_unit("std.exception", "cast__fail") + "$double$int",
+            FunctionType::get(LType::getVoidTy(ctx), {b.getDoubleTy(), i32()}, false));
+        emitColdThrow(callee, {value, ConstantInt::get(i32(), bits)}, "cv");
+        b.SetInsertPoint(ok);
     }
 
     // Per-axis bounds checks for `s[i]` / `s[i,j]`; returns the linear index.

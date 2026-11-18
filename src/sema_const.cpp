@@ -4,6 +4,10 @@
 // This file holds assignment compatibility and compile-time constant evaluation (definitions of Sema members).
 #include "sema_impl.hpp"
 
+#include <sstream>
+
+#include <cmath>
+
 namespace muc_detail {
 
     bool Sema::contains_reference_type(const TypePtr& t) {
@@ -324,7 +328,17 @@ namespace muc_detail {
             r.f = d;
             return r;
         }
-        long long i = v.is_float ? static_cast<long long>(v.f) : v.i;
+        long long i = v.i;
+        if (v.is_float) {
+            // Saturate before narrowing: `static_cast<long long>` of an out-of-range double is undefined
+            // on the host (the checked paths reject such a value first; this keeps the helper safe even
+            // if a caller reaches it). `normalize_int` then applies the target width.
+            const double f = v.f;
+            if (f != f) i = 0;
+            else if (f >= 9223372036854775807.0) i = 9223372036854775807LL;
+            else if (f <= -9223372036854775808.0) i = (-9223372036854775807LL - 1);
+            else i = static_cast<long long>(f);
+        }
         r.i = normalize_int(i, dst);
         return r;
     }
@@ -765,6 +779,24 @@ namespace muc_detail {
                 err("cannot use `as` to convert " + (v.ty ? v.ty->str() : "void") + " to " +
                         dt->str(),
                     e);
+            }
+            // Constant evaluation agrees with the checked run time (SPEC 8.2): a float->int conversion
+            // whose value is NaN or outside the target's range has no value the program could
+            // reproduce, so it is an error here rather than a poisoned constant.
+            if (v.is_float && dt->kind == TypeKind::Prim && dt->is_integer()) {
+                const int bits = dt->bits();
+                const double lo = dt->is_signed() ? -std::ldexp(1.0, bits - 1) : 0.0;
+                const double hi = dt->is_signed() ? std::ldexp(1.0, bits - 1)
+                                                  : std::ldexp(1.0, bits);
+                if (!(v.f >= lo && v.f < hi)) {  // NaN fails both comparisons
+                    std::ostringstream os;
+                    if (v.f != v.f) os << "nan";
+                    else os << v.f;  // default formatting: 1e+30, not a 30-digit fixed-point number
+                    err("the value " + os.str() + " does not fit `" + dt->str() +
+                            "`; a compile-time `as` conversion must be in range (a run-time one is "
+                            "checked by `--bounds`)",
+                        e);
+                }
             }
             out = cast_const(v, dt);
             return true;

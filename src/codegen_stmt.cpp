@@ -433,8 +433,13 @@ using ArgPack = Emitter::ArgPack;
             else if (op == "&") res = b.CreateAnd(old, rv);
             else if (op == "|") res = b.CreateOr(old, rv);
             else if (op == "^") res = b.CreateXor(old, rv);
-            else if (op == "<<") res = b.CreateShl(old, rv);
-            else if (op == ">>") res = sg ? b.CreateAShr(old, rv) : b.CreateLShr(old, rv);
+            else if (op == "<<" || op == ">>") {
+                if (boundsCheck && rv->getType()->isIntegerTy()) {
+                    emitShiftCountCheck(rv, static_cast<unsigned>(sizeOf(rt) * 8));
+                }
+                res = op == "<<" ? b.CreateShl(old, rv)
+                                 : (sg ? b.CreateAShr(old, rv) : b.CreateLShr(old, rv));
+            }
             storeAt(res, addr, una);
             return;
         }

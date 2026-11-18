@@ -27,6 +27,36 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 206 — 2026-11-18
+
+**The numeric edges are checked in the default build and UB in release** (decision on #8).
+
+`1.0e30 as int`, `1 << -1` and `1 << 64` were LLVM poison: the same program printed a different number
+on every run. The decision (accidental use is the overwhelming majority, so do not pay for it in release):
+
+| | constant | `--bounds` (default) | `--bounds=off` |
+|---|---|---|---|
+| shift count outside [0, width) | compile error (already) | throws `NumericEdgeError` | UB, no code inserted |
+| float→int `as` out of range / NaN | compile error | throws `NumericEdgeError` | UB, no code inserted |
+
+- `std.exception` gains `NumericEdgeError { kind, value, width }` (kind 0 = shift count, 1 = conversion)
+  and its two cold paths `shift_fail` / `cast_fail`, thrown through the existing EH lowering and caught
+  by an ordinary `catch (e: NumericEdgeError)`.
+- The checks are emitted only with `--bounds` (the default): one compare and a branch per site, the
+  throw on a cold path — the same shape as the existing subscript check. `--bounds=off` emits nothing.
+- **Constant folding rejects the same values** instead of computing them on the host: `const int C =
+  1.0e30 as int;` is now `the value 1e+30 does not fit `int`` (it used to compile, with the value coming
+  from a host-level undefined `static_cast`), and `cast_const` saturates internally so no path can reach
+  the host's UB.
+- **`as` now follows the target's signedness**: `200.0 as byte` is 200. It used `fptosi` for unsigned
+  targets as well, which is poison above the signed range.
+- SPEC 8.2 lists both edges as UB (the "pending: UB or defined" note is gone) and names the check; the
+  `as` and `<<` paragraphs say the same on the operator's own page.
+- Tests: `numeric_edge_check` (catchable, both kinds), `numeric_edge_in_range` (unsigned conversion),
+  `numeric_edge_unchecked` (`@ --bounds=off`), `const_cast_out_of_range` (must-fail).
+
+Full suite: Windows 783/783, Linux (WSL) 781/781.
+
 #### build 205 — 2026-11-18
 
 **A `const` method cannot lend a mutable view** (decision on #66).

@@ -54,9 +54,14 @@ static bool is_numeric(const TypePtr& t) {
                 return sizeOf(from) < sizeOf(to) ? b.CreateFPExt(v, tt) : b.CreateFPTrunc(v, tt);
             }
             if (from->kind == TypeKind::Prim && from->is_float()) {
-                // float -> integer truncates toward zero as a *signed* conversion: a float carries no
-                // sign bit, so this must not be read off `is_signed()` (which reports true for floats).
-                return b.CreateFPToSI(v, tt);
+                // float -> integer truncates toward zero. The conversion follows the *target*'s
+                // signedness (a float carries no sign bit, so `is_signed()` on it would say true):
+                // `200.0 as byte` must stay 200 rather than becoming a poison i8.
+                if (boundsCheck && to->kind == TypeKind::Prim && to->is_integer()) {
+                    emitFloatToIntCheck(v, to);
+                }
+                const bool target_signed = !(to->kind == TypeKind::Prim) || to->is_signed();
+                return target_signed ? b.CreateFPToSI(v, tt) : b.CreateFPToUI(v, tt);
             }
             return to->kind == TypeKind::Prim && to->is_float()
                        ? (from->is_signed() ? b.CreateSIToFP(v, tt) : b.CreateUIToFP(v, tt))
@@ -608,6 +613,9 @@ static bool is_numeric(const TypePtr& t) {
         if (op == "<<" || op == ">>") {
             l = convertTo(l, lt_, e->ty);
             r = convertTo(r, rt_, e->ty);
+            if (boundsCheck && r->getType()->isIntegerTy()) {
+                emitShiftCountCheck(r, static_cast<unsigned>(sizeOf(e->ty) * 8));
+            }
             if (op == "<<") return b.CreateShl(l, r);
             // The shift is performed at the declared width (`byte >> 1` is an i8 shift), so the
             // signedness of the result type — not of a promoted operand — selects the instruction.

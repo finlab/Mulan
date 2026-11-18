@@ -1794,8 +1794,11 @@ type PP = P;          // alias of an alias
   (`int -8 >> 1` = `-4`, `uint 0x80000000 >> 4` = `0x08000000`). This matches C and differs from the 0.0.1–0.0.128 semantics, where `>>` was always arithmetic
   (`uint 0x80000000 >> 4` came out as `0xF8000000`) — changed in 0.0.129 with issue #17.
   Compile-time constant evaluation and runtime code generation must stay consistent; both places changed together.
-  `<<` is a bitwise left shift (overflow wraps in two's complement); a shift count ≥ the bit width is still undefined behavior (8.2).
+  `<<` is a bitwise left shift (overflow wraps in two's complement); a shift count that is negative or >= the bit width is undefined behavior (8.2), checked by `--bounds`.
 - `%` is also legal for floating point (LLVM `frem`, synonymous with C `fmod`: the sign of the result follows the dividend); integer `%` is truncated remainder (the sign follows the dividend).
+- **A float-to-integer `as` truncates toward zero and follows the target's signedness** (so
+  `200.0 as byte` is 200). A value outside the target's range (or NaN) is UB at run time — reported by
+  the `--bounds` check, rejected at compile time when the value is a constant.
 - **No exponentiation operator is provided** (settled): `^` is reserved for bitwise xor, avoiding a clash with C users' intuition (`a ^ b` silently becoming exponentiation would produce silent bugs).
   - Exponentiation is provided through functions: floating point uses libc `pow` (`extern double pow(double, double);`); integer powers are implemented by user/library functions (such as `powi`).
   - `**` is explicitly excluded: `a * *b` (multiplying by a dereferenced value) would become `a ** b` under longest-match, a silent semantic error that cannot be fixed by whitespace rules.
@@ -2212,12 +2215,18 @@ an internal record (`agents/stdlib/c-bindings.md`) §3.
 - Data races between tasks or between threads (concurrency exists, 3.17, but races are neither prevented
   nor diagnosed; the rule against writing enclosing locals in a `para` region is a narrow syntactic
   guard, not a race checker).
-- Division by zero; **signed division/remainder overflow** (`MIN / -1`, `MIN % -1`); a shift count ≥ the bit width
-  (pending: UB or defined).
+- Division by zero; **signed division/remainder overflow** (`MIN / -1`, `MIN % -1`).
+- **A shift count that is negative or >= the bit width of the left operand** (decided 2026-11-18): UB
+  here (the hardware's masking of the count is not a language guarantee); reported at run time by the
+  `--bounds` check, and rejected at compile time when the count is a constant.
+- **A float to integer `as` whose value is NaN or outside the target type's range** (decided
+  2026-11-18): UB here; reported by the `--bounds` check and rejected when the value is a constant. Both
+  checks throw `std.exception.NumericEdgeError { kind, value, width }` (`kind` 0 = shift count,
+  1 = conversion); `--bounds=off` removes them.
 - Signed integer overflow of `+` `-` `*`: **settled: defined as two's-complement wraparound** (avoids UB and simplifies
   optimization; the backend does not emit `nsw`/`nuw`). **Division is the one exception**: the CPU traps on `MIN / -1`,
   so it is UB exactly like division by zero; write `-x` (which wraps) when that value must be produced.
-- Managed-sequence out of bounds: checked by default and throws `BoundsError`; `--bounds=off` removes the check (then it is UB). Static arrays and `T*` are unchecked.
+- Managed-sequence out of bounds: checked by default and throws `BoundsError`; out-of-range shift counts and float-to-integer `as` conversions are checked the same way and throw `NumericEdgeError`; `--bounds=off` removes these checks (each is then UB, as listed above). Static arrays and `T*` are unchecked.
 - A pointer obtained by decaying an array **prvalue** (a function result, or the result of `?:`) is only
   valid until the end of the enclosing statement: the temporary it points into is gone afterwards.
 - Accessing a class reference that is `null`; continuing to use a handle after it has been set to null (equivalent to a null reference).

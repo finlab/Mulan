@@ -37,3 +37,30 @@ public:
 public void bounds_fail(isize index, isize length, isize axis) {
     throw new BoundsError(index, length, axis);
 }
+
+
+// Thrown by the numeric-edge checks the compiler emits when `--bounds` is on (`--bounds=off` drops the
+// checks and the operation becomes undefined behavior, SPEC 8.2):
+//   kind 0 — a shift whose count is negative or >= the bit width of the left operand;
+//   kind 1 — a float->int `as` whose value is NaN or outside the target type's range.
+public class NumericEdgeError : Exception {
+public:
+    int kind;
+    double value;
+    long width;
+
+    NumericEdgeError(int k, double v, long w) {
+        kind = k;
+        value = v;
+        width = w;
+    }
+}
+
+// Cold paths of those checks (the compiler calls them; they always throw).
+public void shift_fail(long count, int width) {
+    throw new NumericEdgeError(0, count as double, width as long);
+}
+
+public void cast_fail(double value, int width) {
+    throw new NumericEdgeError(1, value, width as long);
+}
