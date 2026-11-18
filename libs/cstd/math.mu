@@ -1,9 +1,13 @@
-// cstd.math — <math.h> for Linux (glibc).
+// cstd.math — <math.h>.
 //
 // Raw binding (layer L1): C99 `double` and `float` functions. The classification macros
 // (`isnan` / `isinf` / `isfinite` / `signbit` / `fpclassify`) are macros in C, not symbols; `isnan` is
 // provided as a Mu function, the others are left to `std.math` (which will use bit inspection).
-// `long double` is the x87 80-bit extended type here, so the `l` variants are not bound.
+//
+// The `l` variants are not bound: `long double` is not a Mulan type, and what it means differs between
+// the platforms (plain `double` on Windows, the 80-bit x87 format on x86-64 glibc).
+//
+// The signatures below are identical on every supported platform, so this unit has no `#if` arms.
 
 public unit cstd.math;
 

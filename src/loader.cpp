@@ -365,7 +365,7 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
 
     // Accepted file names per unit: the flat dotted name (`std.thread.backend.mu`) and the slashed
     // path (`std/thread/backend.mu`). Inside a platform shadow directory the segments already present
-    // in the directory path may be dropped (`libs/cstd/platform/windows/stdio.mu` = `cstd.stdio`);
+    // in the directory path may be dropped (`libs/std/platform/windows/ctypes.mu` = `std.ctypes`);
     // the full name is still accepted, and having both is an error.
     struct Cand {
         std::string dir;

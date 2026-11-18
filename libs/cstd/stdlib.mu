@@ -1,30 +1,48 @@
-// cstd.stdlib — <stdlib.h> for Linux (glibc, LP64).
+// cstd.stdlib — <stdlib.h>.
 //
-// Raw binding (layer L1): C semantics, no checks, no exceptions, no ownership. `malloc`/`free` are
-// here for interoperability; Mulan code allocates with `alloc`/`new`.
+// Raw binding (layer L1): C semantics, no checks, no exceptions, no ownership. `malloc`/`free` are here
+// for interoperability; Mulan code allocates with `alloc`/`new` (`realloc`/`free` are language builtins,
+// SPEC 8.1, and are not redeclared). `strtold` is not bound either: Mulan has no `long double`.
 //
 // Not bound: `quick_exit` / `at_quick_exit` (C11, above the C99 binding floor).
 //
-// The MSVC-only `_putenv` does not exist in glibc; the POSIX setters `setenv` / `unsetenv` are
-// bound instead. Aligned allocation is C11 `aligned_alloc` here, not `_aligned_malloc`.
+// Aligned allocation and the environment setters have no common spelling: Windows has
+// `_aligned_malloc` / `_aligned_free` and `_putenv`, glibc has C11 `aligned_alloc` (alignment first,
+// the opposite argument order) and POSIX `setenv` / `unsetenv`.
 
 public unit cstd.stdlib;
 
+use std.comptime;   // `#if` reads the build constants; the `use` must precede the first `#if`
 use std.ctypes;
+
+#if os != OS.Windows and os != OS.Linux {
+    #error "cstd.stdlib: no implementation for this platform (Windows and Linux only yet)"
+}
 
 // ---------------------------------------------------------------- constants
 public const int EXIT_SUCCESS = 0;
 public const int EXIT_FAILURE = 1;
-public const int RAND_MAX = 2147483647;
+
+#if os == OS.Windows {
+    public const int RAND_MAX = 32767;
+}
+#elif os == OS.Linux {
+    public const int RAND_MAX = 2147483647;
+}
 
 // ---------------------------------------------------------------- memory
-// `realloc`/`free` are language builtins (SPEC 8.1) and are not redeclared here. `strtold` is not
-// bound either: Mulan has no `long double` (SPEC 3.1).
 extern void* malloc(c_size size);
 extern void* calloc(c_size count, c_size size);
 
-// C11 aligned allocation (glibc 2.16+). `alignment` comes first, the opposite of `_aligned_malloc`.
-extern void* aligned_alloc(c_size alignment, c_size size);
+#if os == OS.Windows {
+    // Windows 64-bit aligned allocation (there is no C11 aligned_alloc on the Windows CRT).
+    extern void* _aligned_malloc(c_size size, c_size alignment);
+    extern void _aligned_free(void* block);
+}
+#elif os == OS.Linux {
+    // C11 aligned allocation (glibc 2.16+).
+    extern void* aligned_alloc(c_size alignment, c_size size);
+}
 
 // ---------------------------------------------------------------- process
 extern void abort();
@@ -33,8 +51,13 @@ extern void _Exit(int status);
 extern int atexit(() => void callback);
 extern int system(const char* command);
 extern char* getenv(const char* name);
-extern int setenv(const char* name, const char* value, int overwrite);
-extern int unsetenv(const char* name);
+#if os == OS.Windows {
+    extern int _putenv(const char* assignment);
+}
+#elif os == OS.Linux {
+    extern int setenv(const char* name, const char* value, int overwrite);
+    extern int unsetenv(const char* name);
+}
 
 // ---------------------------------------------------------------- conversions
 extern double strtod(const char* text, char** end);

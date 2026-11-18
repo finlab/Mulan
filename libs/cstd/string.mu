@@ -1,18 +1,24 @@
-// cstd.string — <string.h> for Linux (glibc, LP64).
+// cstd.string — <string.h>.
 //
 // Raw binding (layer L1): C semantics. `str*` functions return the destination or a pointer into the
 // source; lengths are the caller's responsibility.
 //
-// The MSVC extensions of the Windows binding (`_strdup`, `_stricmp`, `_strnicmp`, `strtok_s`,
-// `strerror_s`, `_expand`, `_msize`) do not exist in glibc and are therefore not bound; the POSIX
-// spellings (`strdup`, `strndup`, `strtok_r`, `strcasecmp`, `strncasecmp`) are bound instead.
+// The ISO C surface is identical on both platforms; only the extensions below differ. Windows binds the
+// MSVC spellings (`_strdup`, `_stricmp`, `_strnicmp`, `strtok_s`, `strerror_s`, `_expand`, `_msize`)
+// plus `strdup`; glibc has the POSIX ones (`strdup`, `strndup`, `strtok_r`, `strcasecmp`,
+// `strncasecmp`).
 //
-// `strtok` keeps its cursor in one global on glibc, so concurrent tokenization corrupts it; use
-// `strtok_r` with a caller-owned context when more than one thread tokenizes.
+// `strtok` keeps its cursor in one global on both platforms, so concurrent tokenization corrupts it; use
+// the reentrant variant with a caller-owned context when more than one thread tokenizes.
 
 public unit cstd.string;
 
+use std.comptime;   // `#if` reads the build constants; the `use` must precede the first `#if`
 use std.ctypes;
+
+#if os != OS.Windows and os != OS.Linux {
+    #error "cstd.string: no implementation for this platform (Windows and Linux only yet)"
+}
 
 // ---------------------------------------------------------------- block operations
 extern void* memcpy(void* destination, const void* source, c_size count);
@@ -47,9 +53,23 @@ extern char* strtok(char* s, const char* delimiters);
 // ---------------------------------------------------------------- errors
 extern char* strerror(int error_number);
 
-// ---------------------------------------------------------------- POSIX extensions
-extern char* strdup(const char* s);
-extern char* strndup(const char* s, c_size n);
-extern char* strtok_r(char* s, const char* delimiters, char** context);
-extern int strcasecmp(const char* left, const char* right);
-extern int strncasecmp(const char* left, const char* right, c_size count);
+// ---------------------------------------------------------------- extensions
+#if os == OS.Windows {
+    extern char* _strdup(const char* s);
+    extern char* strdup(const char* s);
+    extern int _stricmp(const char* left, const char* right);
+    extern int _strnicmp(const char* left, const char* right, c_size count);
+    extern char* strtok_s(char* s, const char* delimiters, char** context);
+    extern int strerror_s(char* buffer, c_size size, int error_number);
+
+    // Heap introspection for a block obtained from malloc/calloc.
+    extern void* _expand(void* block, c_size size);
+    extern c_size _msize(void* block);
+}
+#elif os == OS.Linux {
+    extern char* strdup(const char* s);
+    extern char* strndup(const char* s, c_size n);
+    extern char* strtok_r(char* s, const char* delimiters, char** context);
+    extern int strcasecmp(const char* left, const char* right);
+    extern int strncasecmp(const char* left, const char* right, c_size count);
+}

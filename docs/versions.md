@@ -27,6 +27,26 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 221 — 2026-11-19
+
+**`cstd` selects the platform inside the unit instead of by directory.**
+
+- Every `cstd.*` unit is now **one file** (`libs/cstd/stdio.mu`, …): the declarations both targets share
+  are written once, and only what differs sits in an `#if` arm (`os`/`abi` from `std.comptime`). The units
+  open with an `#error` guard for an unsupported target, and `use std.comptime;` precedes the first `#if`
+  (a declaration-list condition only sees the constants visible at that source position).
+- `libs/cstd/platform/{windows,linux}/` is deleted: the two copies were 78 % byte-identical (`stdio`: 68 of
+  87 lines), and the per-unit fork also meant the unselected platform file was never even parsed.
+- `cstd.streams` now exists on both targets, so `cstd.stdio`'s `stdin()` / `stdout()` / `stderr()` are one
+  piece of code: `__acrt_iob_func` on Windows, the `stdin`/`stdout`/`stderr` data symbols on glibc.
+  `tests/cases/cstd_windows.mu` follows the move with `use cstd.streams;`.
+- Behaviour-neutral cleanups inside the merge: `long`-typed 64-bit limits are written `c_longlong` /
+  `c_ulonglong` (Mulan's `long` is 64-bit on every target, so the old Windows spelling was equivalent);
+  `cstd.floats` no longer says `cstd.float` in its header.
+- The loader's shadow directories are **unchanged and still used** by `std.ctypes` and
+  `std.thread.backend`; `SPEC` 2.1 and `StdLibSPEC` §1/§2/§5/§7 now describe both forms and when to use
+  which. Full suite: **836/836 on Windows, 834/834 on Linux**.
+
 #### build 220 — 2026-11-19
 
 **Three more TUs split by concern** (no behaviour change).

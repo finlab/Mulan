@@ -24,7 +24,7 @@ A unit belongs to exactly one layer. The unit-name prefix makes the layer visibl
 |---|---|---|---|
 | **L0 ABI types** | `std.ctypes` | C-side widths, per platform | implemented |
 | **L1 raw C bindings** | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | a **separate library** (`libs/cstd/`): C semantics — sentinel returns, `errno`, caller-owned buffers, no checks, no exceptions, no ownership | implemented for Windows/UCRT and Linux/glibc |
-| **L1 platform C** | per-platform files of the same `cstd.*` units (`platform/<os>/`) | the same C library where the targets disagree; a unit only needs the level where it really differs | Windows and Linux implemented; macOS planned |
+| **L1 platform C** | `#if` arms inside the same `cstd.*` unit files | the same C library where the targets disagree; the shared declarations are written once and only the differing ones sit in an arm | Windows and Linux implemented; other targets fail with `#error` |
 | **L2 native API** | `std.string`, `std.fmt`, `std.io`, `std.collections`, `std.fs`, `std.parse`, `std.random`, `std.unicode`, `std.time` | Mulan semantics: exceptions, bounds checks, explicit state, value types where possible | `string` implemented, the rest planned |
 | **L3 runtime contracts** | `std.exception`, `std.interfaces`, `std.task`, `std.thread` | The minimum the compiler and the runtime need; implicitly loaded | implemented |
 
@@ -47,7 +47,14 @@ The full naming rules for library authors are an internal guide (`agents/stdlib/
 that matter for the layer model:
 
 - Unit names are lowercase, dot-separated; the path mirrors the name (`std.string` →
-  `libs/std/string.mu`), platform implementations live under `libs/std/platform/<os>/...`.
+  `libs/std/string.mu`).
+- **Platform differences are written in the unit, not in the file tree.** A unit that differs between
+  targets keeps one file: the shared declarations are written once and only the differing ones sit in an
+  `#if` arm (`cstd.stdio`, `cstd.time`). Every unit with such an arm opens with a guard
+  (`#if os != OS.Windows and os != OS.Linux { #error "…" }`) and a `use std.comptime;` *before* its first
+  `#if` — a declaration-list condition only sees the constants visible at that source position.
+  `libs/std/platform/<os>/` (the loader-level shadow directory) is the older form, still used by
+  `std.ctypes` and `std.thread.backend`.
 - The `cstd` library holds the raw C bindings (`cstd.stdio`, `cstd.string`, …); `std` itself never
   contains a C-header binding.
 - A **library** type is PascalCase (`String`, `Thread`), a **built-in** type is lowercase
@@ -61,7 +68,7 @@ that matter for the layer model:
 | Unit | Layer | Implicit | Public surface | Details |
 |---|---|---|---|---|
 | `std.ctypes` | L0 | no | `c_char` … `c_voidp` | §5, §7 |
-| `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | L1 | no | the ISO headers, one unit per header, in the separate `cstd` library; one implementation per platform under `libs/cstd/platform/<os>/` (`windows` = MSVC CRT, `linux` = glibc) | §5, §7 |
+| `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv`, `cstd.streams` | L1 | no | the ISO headers, one unit per header, in the separate `cstd` library; platform differences live in `#if` arms inside the unit (`windows` = MSVC CRT, `linux` = glibc) | §5, §7 |
 | `std.string` | L2 | **yes** | `String`: `String()` (empty; the zero value), `String(const char*)` (implicit, copies), `length`, `is_empty`, `operator[]`, `==`, `sub`, `concat`, `find`, `trim`, `starts_with`, `ends_with`, `cstr`, `strlen` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
 | `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `bounds_fail` | §6.1 |
 | `std.interfaces` | L3 | **yes** | `IIterator<T>`, `IIterable<T>`, `IIndex<T>`, `IEqual`, `IOrder`, `IAdd` … | §6.2 |
@@ -104,10 +111,10 @@ Planned (no code yet, listed so that naming and layering are decided before impl
 ## 5. C interoperability policy
 
 The ISO C surface is imported **relatively completely** into the separate `cstd` library: one unit per
-header, one implementation per platform under `libs/cstd/platform/<os>/`. A unit keeps the same name on
-every platform; the platform file contains that platform's full surface, so a symbol whose name or
-layout differs is declared truthfully instead of being unified. Every `extern` declaration uses
-`std.ctypes` names, and the raw layer keeps C semantics.
+header, one file per unit. A unit keeps the same name and the same file on every platform: the shared
+declarations are written once, and a symbol whose name, value or layout differs is declared truthfully in
+that platform's `#if` arm instead of being unified. Every `extern` declaration uses `std.ctypes` names,
+and the raw layer keeps C semantics.
 
 Constructs that are not importable at all stay out: macros (`assert`, `errno`, `limits`, ...) are
 re-expressed as constants or functions; `stdarg` (no `va_list`), `setjmp` (conflicts with exceptions and
@@ -243,9 +250,15 @@ init/destroy call. The OS layer is `std.thread.backend`, resolved through the pl
 
 ## 7. Platform units
 
-- A platform implementation is a normal unit under `libs/std/platform/<os>/...`
-  (`std.thread.backend`, `std.ctypes`); the loader picks the directory from `--os` / the host.
-  The public unit never mentions the platform (SPEC 2.1).
+- **Inside a unit**, a platform difference is an `#if` arm (SPEC 9.2): the unit keeps one file, the
+  shared declarations stay outside the directive, and the arm holds only what differs. Every such unit
+  opens with a guard that rejects an unsupported target with `#error` rather than silently compiling
+  the wrong arm. Only the selected arm is name-resolved, type-checked and emitted; the other arms are
+  parsed, so a dead arm cannot rot into a syntax error. The `cstd` library is written this way.
+- **Across units**, the older form is the loader's shadow directory: a normal unit under
+  `libs/std/platform/<os>/...` (`std.thread.backend`, `std.ctypes`), resolved from `--os` / the host.
+  The public unit never mentions the platform (SPEC 2.1). Both mechanisms select per target; a unit
+  tree should use one of them consistently.
 - Platform **extensions** are separate units, not conditional declarations: `std.posix` (read,
   write, open, dirent, getline, `*_r` variants) and `std.win32` (handles, `CreateFile`,
   `WaitForSingleObject`). Both are invisible unless the target matches.

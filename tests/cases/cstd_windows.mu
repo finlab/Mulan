@@ -6,6 +6,7 @@ unit cstd_windows;
 
 use cstd.errno;
 use cstd.stdio;
+use cstd.streams;
 use cstd.stdlib;
 use cstd.string;
 use std.ctypes;

@@ -1,7 +1,9 @@
-// cstd.ctype — <ctype.h> for Windows (UCRT / MSVCRT, built with mingw-w64).
+// cstd.ctype — <ctype.h>.
 //
 // Raw binding (layer L1): the C functions, not the macro forms. Behaviour is locale-dependent and
 // undefined for arguments outside the unsigned-char range (and EOF).
+//
+// Windows, Linux and macOS declare exactly the same surface here, so this unit has no `#if` arms.
 
 public unit cstd.ctype;
 
