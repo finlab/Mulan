@@ -27,6 +27,35 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 207 — 2026-11-18
+
+**Values are movable by default; `nomove` is the opt-out; a user move constructor keeps the source alive**
+(decision on #26).
+
+Mulan had three rules pulling against each other: a destructor-bearing type was movable only if the user
+wrote `T(move T other)`, that constructor's source was then *skipped* by the destructor, and the compiler
+also zeroed it afterwards. The audit's concern — "a move constructor that forgets a field leaks it
+silently" — followed from skipping the destructor.
+
+- **Default: movable.** `Type::movable()` no longer requires a move constructor. The compiler moves a
+  value by copying the bits, emptying the source and **not destroying it** — correct for raw pointers,
+  reference-counted handles and nested destructor-bearing fields (the destination owns what it got, the
+  emptied source owns nothing).
+- **`nomove` modifier** (new): `nomove struct Node { ... }` keeps a value that must not move (its address
+  is part of it); `move` on it is a compile error. `nocopy` now forbids *copying* only — the two are
+  orthogonal (a handle is `nocopy` and still movable; `nocopy nomove` is immovable). `nomove` is a
+  keyword and a declaration modifier, like `nocopy`.
+- **A user move constructor takes over** (C++ model): the source is *not* zeroed by the compiler and its
+  destructor **runs** at scope exit, so the constructor must leave a valid, destructible shell. Forgetting
+  to empty a field is then a double free (loud) rather than a silent leak; forgetting to *transfer* one
+  leaves it owned by the source, which frees it.
+- Tests: `move_default_movable`, `move_nocopy` (run), `move_nomove_ok`, `struct_dtor_move_host` (check),
+  `move_not_movable` now uses `nomove`; `value_semantics_matrix` and `move_cleanup_conditional` count
+  resources vs objects explicitly (a moved-from shell is a live object, so a destructor must release only
+  what it still owns).
+
+Full suite: Windows 786/786, Linux (WSL) 784/784.
+
 #### build 206 — 2026-11-18
 
 **The numeric edges are checked in the default build and UB in release** (decision on #8).

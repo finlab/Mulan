@@ -14,7 +14,9 @@ int moves = 0;
 struct Buf {
     int* p;
     int tag;
-    Buf() { p = null; tag = 0; buf_live = buf_live + 1; }
+    // `buf_live` counts *resources* (a moved-from or default-constructed shell owns none), so the
+    // default constructor does not increment it and the destructor decrements only when it frees.
+    Buf() { p = null; tag = 0; }
     Buf(int n) {
         p = alloc(n) as int*;
         p[0] = n;
@@ -35,8 +37,11 @@ struct Buf {
         moves = moves + 1;
     }
     ~Buf() {
-        free(p);
-        buf_live = buf_live - 1;
+        // The destructor of a moved-from value runs too (SPEC 3.13), so it releases only what it owns.
+        if p != null {
+            free(p);
+            buf_live = buf_live - 1;
+        }
     }
 }
 
@@ -77,7 +82,8 @@ int main() {
     // 2. default-constructed array elements of a resource type, plus swap
     {
         Cards cs;
-        if buf_live != 2 { printf("cards live %d\n", buf_live); return 9; }
+        // The two elements are default-constructed: empty shells, so they own no resource.
+        if buf_live != 0 { printf("cards live %d\n", buf_live); return 9; }
         // A resource type cannot be constructed inside an expression (the temporary would need a
         // statement-end dtor), so the new value is built in a local and moved in.
         Buf t0 = Buf(11);

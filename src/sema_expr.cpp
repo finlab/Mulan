@@ -1500,8 +1500,10 @@ namespace muc_detail {
         TypePtr t = check_expr(nm);  // reports "was moved and cannot be used" when it already happened
         if (!t) return t;
         if (!t->movable()) {
-            err("cannot move `" + nm->ident + "`: `" + t->str() + "` is not movable (declare `" + t->str() +
-                    "(move " + t->str() + " other)` to make it movable)",
+            const bool declared = t->kind == TypeKind::Struct && t->nomove;
+            err("cannot move `" + nm->ident + "`: `" + t->str() + "` is " +
+                    (declared ? "declared `nomove` (its address is part of its value)"
+                              : "not movable (a field is `nomove`)"),
                 mv);
         }
         auto lvl = local_loop_level_.find(lv);

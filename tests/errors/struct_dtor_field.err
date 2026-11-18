@@ -1,1 +1,1 @@
-initialization: struct `struct_dtor_field.O` cannot be copied by value: it contains a value that owns a resource; declare `struct_dtor_field.O(const ref struct_dtor_field.O other)`, or borrow it as `const ref struct_dtor_field.O`
+cannot be copied by value: it contains a value that owns a resource

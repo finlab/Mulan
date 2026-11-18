@@ -390,9 +390,19 @@ struct Point {
     to be small and self-contained; needing to move a single field out of one is the signal that the object
     should be modelled as a `class` instead (heap entity, reference semantics, shareable). `const` objects
     and `ref` borrows cannot be moved.
-  - A type with a user destructor (or `nocopy`) is movable **only** when it declares `T(move T other)`;
-    every other movable type is transferred by the compiler (copy the bytes, zero the source), which is the
-    correct ownership transfer for a reference-counted handle and a plain copy for a scalar.
+  - **Every value type is movable by default** (decided 2026-11-18). A type without a user move
+    constructor is transferred by the compiler: copy the bytes, **empty the source, and do not destroy
+    the source** — which is the correct ownership transfer for a raw pointer, a reference-counted handle
+    and a nested destructor-bearing field alike (the destination owns what it received; the emptied
+    source owns nothing to release).
+  - `nocopy` forbids **copying** only; the value is still movable. `nomove` is the explicit opt-out
+    (see below). A user-declared `T(move T other)` takes over the transfer rules: it must leave the
+    source in a valid, destructible state, and **the source's destructor runs normally** (C++ model) —
+    a move constructor that forgets to empty a field therefore double-frees (loudly) instead of
+    leaking silently.
+  - `move` accepts a **plain variable name only**: partial moves (`move o.field`, `move a[i]`) are
+    rejected, so a moved-from slot is never left behind (a container that wants to hand an element out
+    provides its own operation).
   - The move constructor receives its source **by pointer** (like `ref`), so the body steals without the
     parameter retaining anything; the compiler zeroes the source afterwards and stops destroying it.
   - **A moved value is out of reach**: any later read, write, borrow, pass or return of that variable is a
@@ -423,8 +433,14 @@ struct Point {
   not store pointers into themselves (the swap is a byte swap) — such types belong to `nocopy`. A
   user-written `operator=` and the explicit construct form `S(a)` are not available yet.
 
+- **`nomove` modifier** (**implemented, 2026-11-18**): `nomove struct Node { int v; }` declares a value
+  type that must never be moved — its address is part of its meaning (a node in an intrusive list, a
+  handle registered elsewhere). Same declaration position as `nocopy`, `struct` only. Such a value can
+  still be constructed in place, passed by `ref`, and have its fields read and written; `move` on it is
+  a compile error.
 - **`nocopy` modifier** (**implemented, 0.0.136**): `nocopy struct Handle { int fd; }` declares a value type
-  that must never be copied by value. It is a declaration modifier (same position as `public`/`packed`), and
+  that must never be copied by value (it is still **movable**; combine with `nomove` when neither is
+  allowed). It is a declaration modifier (same position as `public`/`packed`), and
   only `struct` accepts it — `class` is a heap handle whose "copy" is a reference-count increment (nothing is
   duplicated, so it needs no opt-out), `union` is copied by bits, and `interface`/`enum`/`unit`/`extern`
   reject it outright.
@@ -435,7 +451,8 @@ struct Point {
   - Also refused at the C boundary, because C copies by value.
   - Motivation: a struct that owns a resource (file descriptor, socket, lock) must not be duplicated by an
     implicit copy, and a struct without a user destructor is otherwise copyable by definition.
-    `nocopy` + a move constructor is the move-only type (`agents/value-semantics.md` §8.6).
+    `nocopy` alone is the move-only type (values are movable by default, see 3.13); `nocopy nomove` is
+    the immovable one (`agents/value-semantics.md` §8.6).
 
 - **Layout modifiers `packed` / `align(N)`** (**implemented, 0.0.42**):
   - Both are **declaration modifiers** (the same position as `public`/`private`/`nocopy`), written before the `struct` declaration (equally applicable once `union` lands,

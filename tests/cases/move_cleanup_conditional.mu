@@ -13,7 +13,12 @@ struct R {
         id = n;
         alive += 1;
     }
-    R(move R other) { id = other.id; }
+    // `alive` counts objects: the moved-from value is still one (its destructor runs, SPEC 3.13), and
+    // the move constructs a second one.
+    R(move R other) {
+        id = other.id;
+        alive += 1;
+    }
     ~R() { alive -= 1; }
 }
 
@@ -40,7 +45,8 @@ int main() {
         R x = R(2);
         if true {
             R y = move x;
-            if alive != 1 {
+            // `x` is a live shell after the move (its destructor runs at the outer scope's end).
+            if alive != 2 {
                 printf("move dropped the value: alive=%d\n", alive);
                 return 3;
             }
@@ -49,8 +55,8 @@ int main() {
                 return 4;
             }
         }
-        if alive != 0 {
-            printf("inner scope leaked: alive=%d\n", alive);
+        if alive != 1 {
+            printf("inner scope cleanup: alive=%d\n", alive);
             return 5;
         }
     }

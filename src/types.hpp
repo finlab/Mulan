@@ -75,6 +75,7 @@ struct Type {
     bool is_packed = false;     // Struct: packed (the fields are tightly packed, with no internal or tail padding, and the default align is 1)
     bool is_union = false;      // Struct: union (all members at offset 0, size = max(member))
     bool nocopy = false;        // Struct: `nocopy` - the value must never be copied (agents/value-semantics.md §8.6)
+    bool nomove = false;        // Struct: `nomove` - the value must never be moved, its address is part of it
     bool has_move_ctor = false; // Struct: the user declared `T(move T other)`; the type is movable
     bool has_copy_ctor = false; // Struct: the user declared `T(ref T other)`; the type is copyable
     // A generic instance whose body is still being built: `Node<T>` registers the handle before its

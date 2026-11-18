@@ -1,1 +1,1 @@
-struct `struct_dtor_return.S` cannot be returned by value: it declares a destructor, so it owns a resource; declare `struct_dtor_return.S(const ref struct_dtor_return.S other)` or `struct_dtor_return.S(move struct_dtor_return.S other)`
+cannot be copied by value: it declares a destructor

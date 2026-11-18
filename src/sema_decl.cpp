@@ -626,6 +626,7 @@ bool is_scalar_const_type(const TypeSpec* spec) {
         sd->ty->is_packed = sd->is_packed;
         sd->ty->is_union = sd->is_union;
         sd->ty->nocopy = sd->nocopy;
+        sd->ty->nomove = sd->nomove;
         const std::string kw = sd->is_union ? "union" : "struct";
         std::vector<Field> fields;
         std::unordered_set<std::string> fnames;

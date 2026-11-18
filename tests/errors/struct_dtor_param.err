@@ -1,1 +1,1 @@
-struct `struct_dtor_param.S` cannot be passed by value: it declares a destructor, so it owns a resource; declare `struct_dtor_param.S(const ref struct_dtor_param.S other)`
+cannot be copied by value: it declares a destructor

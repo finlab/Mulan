@@ -432,12 +432,17 @@ bool Type::movable() const {
         case TypeKind::Delegate:
         case TypeKind::Slice: return true;
         case TypeKind::Struct:
+            // Every value is movable by default: the compiler moves it by copying the bits and emptying
+            // the source (which is then not destroyed), and that is correct for raw pointers, RC handles
+            // and nested destructor-bearing fields alike — the destination owns what it received and
+            // nothing is left for the source to release. `nocopy` forbids copying only; `nomove` is the
+            // explicit opt-out (the address is part of the value); a user move constructor takes over
+            // the transfer rules (and then the source is destroyed normally, C++ style).
             if (has_move_ctor) return true;
-            if (has_dtor || nocopy) return false;
+            if (nomove) return false;
             for (const auto& f : fields) {
                 if (f.weak) continue;
                 if (!f.type) continue;
-                if (f.type->needs_ctor_glue()) return false;
                 if (!f.type->movable()) return false;
             }
             return true;

@@ -490,6 +490,9 @@ struct StructDecl : Decl {
     bool is_packed = false;
     // `nocopy`: the type must not be copied by value (SPEC 3.13); only meaningful on a struct.
     bool nocopy = false;
+    // `nomove`: the type must not be moved either (its address is part of its value, like a node in an
+    // intrusive list or a handle registered elsewhere). Only meaningful on a struct.
+    bool nomove = false;
     bool is_union = false;  // a union declaration (layout: all members at offset 0)
     ExprPtr align_expr;  // the N of align(N) (the parser keeps the original expression and sema evaluates it)
     TypePtr ty;  // sema: the struct type (the fields are filled in after the placeholder is created)

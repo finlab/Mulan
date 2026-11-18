@@ -753,9 +753,12 @@ namespace muc_detail {
                 FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), ptrTy()}, false));
             b.CreateCall(ctor, {dst, from});
             emitCheckPending();  // if the move constructor throws, the source still owns its value
-        } else {
-            storeAt(b.CreateLoad(lt(ty), from), dst, false);
+            // The constructor defines the source's final state, and the source is a live object: its
+            // destructor runs at scope exit like any other. A move constructor that forgets to empty a
+            // field therefore double-frees (loudly) instead of leaking silently (SPEC 3.13).
+            return;
         }
+        storeAt(b.CreateLoad(lt(ty), from), dst, false);
         zeroMem(from, ty);
         noteMovedLocal(src);
     }

@@ -24,8 +24,12 @@ struct Buf {
         o.p = null;
     }
     ~Buf() {
-        free(p);
-        buffers = buffers - 1;
+        // A moved-from value is a live object whose destructor runs (SPEC 3.13), so it must release
+        // only what it still owns.
+        if p != null {
+            free(p);
+            buffers = buffers - 1;
+        }
     }
 }
 

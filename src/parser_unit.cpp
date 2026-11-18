@@ -71,6 +71,8 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         bool packed = false;
         bool nocopy = false;
         Token nocopy_tok = tk;
+        bool nomove = false;
+        Token nomove_tok = tk;
         bool is_const_decl = false;
         Token const_tok = tk;
         bool has_builtin_decl = false;
@@ -106,6 +108,15 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 if (nocopy) throw err_at("duplicate modifier `nocopy`", peek());
                 nocopy = true;
                 nocopy_tok = peek();
+                advance();
+                continue;
+            }
+            // `nomove` is the move-side counterpart of `nocopy`: the value must stay where it was
+            // constructed (its address is part of its meaning). A `struct`, like `nocopy`.
+            if (at_kw("nomove")) {
+                if (nomove) throw err_at("duplicate modifier `nomove`", peek());
+                nomove = true;
+                nomove_tok = peek();
                 advance();
                 continue;
             }
@@ -149,6 +160,9 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         // interface has no storage, a union is copied by bits, and the rest are not type declarations.
         if (nocopy && !(at_kw("struct") || at_kw("union"))) {
             throw err_at("`nocopy` can only modify a `struct` declaration", nocopy_tok);
+        }
+        if (nomove && !at_kw("struct")) {
+            throw err_at("`nomove` can only modify a `struct` declaration", nomove_tok);
         }
 
         if (has_builtin_decl) {
@@ -309,6 +323,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 sd->is_packed = packed;
                 sd->is_union = is_union;
                 sd->nocopy = nocopy;
+                sd->nomove = nomove;
                 sd->align_expr = std::move(align_expr);
                 if (is_const_decl) {
                     if (is_union) throw err_at("`const` cannot modify a `union` (members are always public fields)", const_tok);

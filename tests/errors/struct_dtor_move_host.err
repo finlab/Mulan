@@ -1,1 +1,0 @@
-cannot move `a`: `struct_dtor_move_host.O` is not movable (declare `struct_dtor_move_host.O(move struct_dtor_move_host.O other)` to make it movable)
