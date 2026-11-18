@@ -51,7 +51,14 @@ prologue at all.
 - Tests: run `ctor_default_synthesized` (struct declaration, explicit construction, class, `const class`,
   generic instance); must-fail `struct_default_aggregate`, `ctor_default_base_args`.
 
-Full suite: Windows 831/831, Linux (WSL) 829/829.
+Full suite: Windows 830/830, Linux (WSL) 828/828.
+
+> Removed `tests/ir/assign_same` in the same change: it asserted on the `assign.same` / `assign.diff`
+> basic-block labels, which the optimizer is free to fold and merge — it passed on LLVM 21 only because
+> `assign.same` matched the mangled unit name `mu$assign_same_ir` by accident, and failed on the CI's
+> LLVM 18 where the folded branch took the label with it. The behaviour it meant to lock (re-assigning the
+> same handle must not touch the count) is asserted by the run case `assign_same_rc`; `tests/README.md`'s
+> IR section now says to assert on symbols/linkage/ABI rather than on block labels.
 
 #### build 214 — 2026-11-18
 

@@ -76,6 +76,15 @@ definition except `main`, so unused functions, classes and library units disappe
 The regexes are matched against the whole IR with `re.MULTILINE`, so anchor with `^`/`$` when the
 position matters. Files starting with `lib_` are dependency units, not cases.
 
+Assert on what the *optimizer guarantees*, not on the shape of the lowering: symbol names, linkage,
+parameter attributes (`byval` / `sret`), vtable and descriptor contents, and the absence of dead code.
+Basic-block **labels** are not a stable target — `SimplifyCFG` merges an empty block away, the inliner
+appends suffixes, and a branch the optimizer can fold disappears with its label, so a label assertion
+passes or fails depending on the LLVM version (the `assign.same` / `assign.diff` self-assignment case was
+such a case and is now covered by the run case `assign_same_rc`, which asserts the counting behaviour
+itself). Matching a label name also tends to match the unit name inside mangled symbols by accident —
+escape the dot (`assign\.diff`) if a symbol name must be matched.
+
 ## Directory layout
 
 `run_tests.py` collects five kinds of cases from five directories; nothing is registered by hand, a
