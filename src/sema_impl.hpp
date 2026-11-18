@@ -120,6 +120,63 @@ constexpr size_t kMaxFields = 4096;
 // Case labels of one switch: C++ [implimits] §1.19 sets 16384.
 constexpr size_t kMaxSwitchLabels = 16384;
 
+// ---------------------------------------------------------------- shared signature helpers
+//
+// `Self` denotes the implementor (SPEC 3.15.6) but a declared signature keeps the interface type in
+// that slot, so every comparison against an implementation substitutes first. These live here because
+// the declaration checks (sema_class1.cpp) and the interface materialization (sema_iface.cpp) both use
+// them, and a second copy would drift.
+
+    // The interface and base-class graphs are DAGs, so a plain recursion visits shared ancestors once per
+    // path — exponentially many times in a diamond, which a generated program can exploit (`interface
+    // A{i} : A{i-1}, B{i-1}` doubles the paths per level). Every walk below takes a visited set.
+inline bool first_visit(std::unordered_set<const Type*>* seen, const TypePtr& t) {
+        if (!seen) return true;
+        return seen->insert(t.get()).second;
+    }
+
+inline bool mentions_self(const MethodSig& sig) {
+        if (sig.ret_self) return true;
+        for (bool s : sig.params_self)
+            if (s) return true;
+        return false;
+    }
+
+    // `name(T1, T2)` with the implementor already substituted: the diagnostic has to name the exact
+    // signature the implementor is missing (SPEC 3.10), not just the method name.
+inline std::string sig_text(const MethodSig& sig) {
+        std::string out = sig.name + "(";
+        for (size_t i = 0; i < sig.params.size(); ++i) {
+            if (i) out += ", ";
+            out += sig.params[i] ? sig.params[i]->str() : std::string("?");
+        }
+        out += ")";
+        return out;
+    }
+
+    // `Self` in an interface member signature denotes the implementor (SPEC 3.15.6), but the declared
+    // signature keeps the interface type in that slot. Comparing a declaration against an implementation
+    // must therefore substitute the implementor first: the constraint check already substitutes
+    // (sema_generic.cpp), and without the same substitution here the `:` check and the constraint check
+    // disagree, so no type can satisfy both.
+inline MethodSig impl_sig(const MethodSig& sig, const TypePtr& impl) {
+        MethodSig out = sig;
+        // Operator members keep their own rule (the receiver is dropped from the member form, and the
+        // remaining operands are matched as declared — SPEC 3.11/3.15.5), so they are left untouched.
+        if (out.is_operator) return out;
+        if (out.ret_self) {
+            out.ret = impl;
+            out.ret_self = false;
+        }
+        for (size_t i = 0; i < out.params_self.size() && i < out.params.size(); ++i) {
+            if (out.params_self[i]) {
+                out.params[i] = impl;
+                out.params_self[i] = false;
+            }
+        }
+        return out;
+    }
+
 class Sema {
 public:
     Sema(std::vector<std::unique_ptr<Unit>> units, std::string entry, bool single_thread = false,

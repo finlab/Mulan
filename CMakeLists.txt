@@ -74,6 +74,8 @@ src/sema_directive.cpp
   src/sema_types.cpp
   src/sema_generic.cpp
   src/sema_class1.cpp
+  src/sema_iface.cpp
+  src/sema_stmt.cpp
   src/sema_class2.cpp
   src/sema_const.cpp
   src/sema_expr.cpp

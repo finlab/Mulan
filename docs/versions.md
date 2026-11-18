@@ -27,6 +27,28 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 218 — 2026-11-18
+
+**Split `sema_class1.cpp` by concern** (no behaviour change).
+
+It had grown to 1519 lines holding four unrelated jobs: class/struct member checks, interface
+satisfaction and default materialization, the abstract-member set, and block/statement bodies. Two new
+TUs take the last three:
+
+- `sema_iface.cpp` — nominal satisfaction with `Self` substituted, materialization of interface defaults
+  (struct and class), the abstract-member set, the hierarchy cycle check;
+- `sema_stmt.cpp` — block/statement bodies, locals and their initializers, `para` sections.
+
+`sema_class1.cpp` keeps the class/struct declaration checks (710 lines). The four shared signature
+helpers (`first_visit`, `mentions_self`, `sig_text`, `impl_sig`) moved into `sema_impl.hpp` as inline
+functions: declaration checking and interface materialization both need them, and the comment next to
+them explains why `Self` must be substituted before any comparison.
+
+Pure move: every moved function is byte-identical text, in the same order. Verified by emitting IR for
+`examples/example.mu`, `cases/contract_default_this` and `cases/generic_bounds` before and after the
+split — identical files — and by the full suite (836/836). Each TU now carries the `owns / not / pass /
+concept` header, and `agents/code-map.md` §2 (pass order) and §3 (generated concept index) were updated.
+
 #### build 217 — 2026-11-18
 
 **`this` in an interface default body is the implementor** (SPEC 3.10 / 3.15.6).
