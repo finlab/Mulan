@@ -3,8 +3,15 @@ unit sum_ergonomics;
 
 use std.cstdio;
 
-type Option<T> = Some(T) | None;
-type Shape = Circle(int) | Rect(int, int) | Dot;
+variant Option<T> {
+    Some T;
+    None;
+}
+variant Shape {
+    Circle int;
+    Rect int, int;
+    Dot;
+}
 
 class Animal {
     public int legs;
@@ -33,9 +40,9 @@ int main() {
     if not (a is Some) { printf("is some\n"); return 3; }
     if b is Some { printf("b is some\n"); return 4; }
 
-    // exhaustive switch still works next to `is`
+    // an exhaustive match works next to `is`
     int r = 0;
-    switch a {
+    match a {
         Some(v): { r = v * 2; }
         None: { r = -1; }
     }

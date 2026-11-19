@@ -1,10 +1,15 @@
-// sum_switch — `match` on a sum type (SPEC 10.1.1): bindings, exhaustiveness, `else`, and reference
-// payloads (the bound local owns a reference for the duration of the arm).
+// sum_match — `match` on a variant (SPEC 10.1.2): bindings, exhaustiveness, `else`, guards and
+// reference payloads (the bound local owns a reference for the duration of the arm).
 unit sum_match;
 
 use std.cstdio;
 
-type Value = Int(int) | Pair(int, int) | Text(const char*) | None;
+variant Value {
+    Int int;
+    Pair int, int;
+    Text const char*;
+    None;
+}
 
 int live = 0;
 
@@ -17,16 +22,19 @@ class Box {
     ~Box() { live = live - 1; }
 }
 
-type Holder = Obj(Box) | Empty;
+variant Holder {
+    Obj Box;
+    Empty;
+}
 
 // a sum-typed parameter: dispatch is the only way to read the payload
 int describe(Value v) {
-    switch v {
-        Int(n): { return n * 2; }
-        Pair(a, b): { return a * 10 + b; }
-        Text(s): { return 100; }
-        None: { return -1; }
-    }
+    return match v {
+        Int(n): n * 2;
+        Pair(a, b): a * 10 + b;
+        Text(s): 100;
+        None: -1;
+    };
 }
 
 int main() {
@@ -38,7 +46,7 @@ int main() {
     // `else` covers the rest
     Value v = Value.Pair(1, 2);
     int seen = 0;
-    switch v {
+    match v {
         Int(n): { seen = 1; }
         else: { seen = 9; }
     }
@@ -47,7 +55,7 @@ int main() {
     // a reference payload: the binding keeps the object alive inside the arm and releases it after
     Holder h = Holder.Obj(new Box(7));
     int id = 0;
-    switch h {
+    match h {
         Obj(b): {
             id = b.id;
             if live != 1 { printf("binding live\n"); return 6; }
@@ -61,11 +69,11 @@ int main() {
     {
         Holder tmp = Holder.Obj(new Box(8));
         int t = 0;
-        switch tmp { Obj(b): { t = b.id; } Empty: { t = 0; } }
+        match tmp { Obj(b): { t = b.id; } Empty: { t = 0; } }
         if t != 8 { printf("temp\n"); return 9; }
     }
     if live != 1 { printf("temp released\n"); return 10; }
 
-    printf("sum switch ok\n");
+    printf("sum match ok\n");
     return 0;
 }

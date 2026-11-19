@@ -3,7 +3,10 @@
 unit generic_is;
 extern int printf(const char* fmt, ...);
 
-type Option<T> = Some(T) | None;
+variant Option<T> {
+    Some T;
+    None;
+}
 
 T get_or<T>(Option<T> o, T dflt) {
     if o is Some(v) {

@@ -398,7 +398,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         Unit* saved_cur = cur_;
         cur_ = tmpl_unit_ptr;
         if (sm->alts.size() < 2) {
-            err_ts("sum type `" + display + "` needs at least two alternatives", spec);
+            err_ts("variant `" + display + "` needs at least two alternatives", spec);
         }
         std::vector<std::string> names;
         std::vector<std::vector<TypePtr>> fields;
@@ -406,7 +406,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         std::unordered_set<std::string> seen;
         for (auto& alt : sm->alts) {
             if (!seen.insert(alt.name).second) {
-                err_ts("duplicate alternative `" + alt.name + "` in sum type `" + display + "`", spec);
+                err_ts("duplicate alternative `" + alt.name + "` in variant `" + display + "`", spec);
             }
             std::vector<TypePtr> fts;
             for (auto& fs : alt.fields) {

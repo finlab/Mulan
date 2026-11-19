@@ -126,6 +126,9 @@ std::unique_ptr<ForInStmt> clone_for_in(const ForInStmt& f) {
 
 }  // namespace
 
+std::vector<std::unique_ptr<MatchArm>> clone_match_arms(
+    const std::vector<std::unique_ptr<MatchArm>>& src);
+
 TypeSpecPtr clone_type_spec(const TypeSpec& s) {
     auto out = std::make_unique<TypeSpec>();
     out->kind = s.kind;
@@ -304,6 +307,13 @@ ExprPtr clone_expr(const Expr& e) {
         // the sema fields (is_sum / sum_ty / alt / test_ty / bind_types) are derived again
         return r;
     }
+    if (auto p = dynamic_cast<const MatchExpr*>(&e)) {
+        auto r = mk<MatchExpr>(e);
+        r->scrut = clone_expr(*p->scrut);
+        r->arms = clone_match_arms(p->arms);
+        // has_else / sty / match_ref are derived again by check_match
+        return r;
+    }
     unsupported_kind(node_kind(e), "expression");
 }
 
@@ -342,6 +352,25 @@ std::unique_ptr<Block> clone_block(const Block& b) {
         r->stmts.push_back(std::move(c));
     }
     return r;
+}
+
+std::vector<std::unique_ptr<MatchArm>> clone_match_arms(
+    const std::vector<std::unique_ptr<MatchArm>>& src) {
+    std::vector<std::unique_ptr<MatchArm>> out;
+    out.reserve(src.size());
+    for (const auto& a : src) {
+        auto r = std::make_unique<MatchArm>();
+        r->alt = a->alt;
+        r->is_else = a->is_else;
+        r->binds = a->binds;
+        r->guard = a->guard ? clone_expr(*a->guard) : nullptr;
+        r->value = a->value ? clone_expr(*a->value) : nullptr;
+        r->body = a->body ? clone_block(*a->body) : nullptr;
+        r->line = a->line;
+        r->col = a->col;
+        out.push_back(std::move(r));
+    }
+    return out;
 }
 
 StmtPtr clone_stmt(const Stmt& s) {
@@ -425,9 +454,6 @@ StmtPtr clone_stmt(const Stmt& s) {
             arm->is_else = a->is_else;
             arm->line = a->line;
             arm->col = a->col;
-            // the alternative of a sum-type arm and its payload bindings
-            arm->alt = a->alt;
-            arm->binds = a->binds;
             for (const auto& pat : a->pats) {
                 SwitchPat q;
                 q.lo = pat.lo ? clone_expr(*pat.lo) : nullptr;
@@ -439,6 +465,13 @@ StmtPtr clone_stmt(const Stmt& s) {
             arm->body = clone_block(*a->body);
             r->arms.push_back(std::move(arm));
         }
+        return r;
+    }
+    if (auto p = dynamic_cast<const MatchStmt*>(&s)) {
+        auto r = mk<MatchStmt>(s);
+        r->scrut = clone_expr(*p->scrut);
+        r->arms = clone_match_arms(p->arms);
+        // has_else / sty / match_ref are derived again by check_match_stmt
         return r;
     }
     if (dynamic_cast<const BreakStmt*>(&s)) return mk<BreakStmt>(s);

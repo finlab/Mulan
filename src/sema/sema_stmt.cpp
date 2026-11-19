@@ -100,6 +100,8 @@ namespace muc_detail {
             check_for_c(cs);
         } else if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
             check_switch(sw);
+        } else if (auto m = dynamic_cast<MatchStmt*>(s)) {
+            check_match_stmt(m);
         } else if (dynamic_cast<BreakStmt*>(s)) {
             if (in_finally_) err("`break` is not allowed inside `finally`", s);
             if (!para_stack_.empty() && loop_depth_ == para_stack_.back().loop_base)

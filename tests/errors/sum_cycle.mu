@@ -3,7 +3,13 @@
 // is computed, so `check_layouts` validates every sum and reports the cycle.
 unit sum_cycle;
 
-type A = Wrap(B) | None;
-type B = Wrap(A) | None;
+variant A {
+    Wrap B;
+    None;
+}
+variant B {
+    Wrap A;
+    None;
+}
 
 int main() { return 0; }

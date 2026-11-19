@@ -6,8 +6,15 @@ unit sum_alt_positions;
 
 use std.cstdio;
 
-type Option<T> = Some(T) | None;
-type Num = One(int) | Two(int) | None;
+variant Option<T> {
+    Some T;
+    None;
+}
+variant Num {
+    One int;
+    Two int;
+    None;
+}
 
 int take(Option<int> o) {
     if o is Some(v) { return v; }

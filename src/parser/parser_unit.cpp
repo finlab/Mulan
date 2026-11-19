@@ -233,14 +233,11 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             continue;
         }
 
-        // `type T += I;` (interface extension) is designed but not implemented (agents/TODO.md). Without
-        // this branch the parser reads `type T` as a declaration and reports "expected `;` but got `+=`",
-        // which hides the reason (issue #132).
+        // `type T += I;` was the planned interface-extension syntax; SPEC 3.18 replaced it with `extend`.
         if (peek().kind == TokKind::Ident && peek().text == "type" && peek(1).kind == TokKind::Ident &&
             peek(2).is_op("+=")) {
-            throw err_at("`type T += I` (interface extension) is planned but not implemented; "
-                         "list the interface after `:` on the type (`struct T : I`, `class T : I`) or "
-                         "implement its members directly",
+            throw err_at("`type` declares only a transparent alias; interface extension is written "
+                         "`extend T with I;` / `extend I with J;` (SPEC 3.18, not implemented yet)",
                          peek(2));
         }
         // contextual keyword `type`: `type Ident = <type>;` (transparent type alias) or
@@ -283,54 +280,16 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 pos_ = save;
             }
             if (!is_sum && saw_directive) {
-                throw no_directive_here("between the alternatives of a sum type");
+                throw no_directive_here("between the alternatives of a variant");
             }
             if (is_sum) {
-                auto sd = std::make_unique<SumDecl>();
-                sd->name = name_tok.text;
-                sd->line = name_tok.line;
-                sd->col = name_tok.col;
-                for (;;) {
-                    if (at_directive()) {
-                        throw no_directive_here("between the alternatives of a sum type");
-                    }
-                    SumAlt alt;
-                    const Token at = expect_ident("alternative name");
-                    alt.name = at.text;
-                    alt.line = at.line;
-                    alt.col = at.col;
-                    if (at_op("(")) {
-                        advance();
-                        if (!at_op(")")) {
-                            for (;;) {
-                                alt.fields.push_back(parse_type());
-                                if (at_op(",")) {
-                                    advance();
-                                    continue;
-                                }
-                                break;
-                            }
-                        }
-                        expect_op(")");
-                    }
-                    sd->alts.push_back(std::move(alt));
-                    if (at_op("|")) {
-                        advance();
-                        continue;
-                    }
-                    break;
-                }
-                semicolon();
-                sd->is_public = is_pub;
-                sd->is_export = is_export;
-                sd->type_params = std::move(type_params);
-                type_names_.insert(sd->name);
-                push_decl(std::move(sd));
-                continue;
+                throw err_at("`type` declares only a transparent alias; declare a tagged union with "
+                             "`variant " + name_tok.text + " { Alt T; None; }` (SPEC 10.1.1)",
+                             name_tok);
             }
             if (!type_params.empty()) {
-                throw err_at("generic type aliases are not supported; only sum types take type "
-                             "parameters (`type Option<T> = Some(T) | None;`)",
+                throw err_at("generic type aliases are not supported; a generic tagged union is "
+                             "declared with `variant Option<T> { Some T; None; }`",
                              name_tok);
             }
             auto d = std::make_unique<TypeAliasDecl>();
@@ -350,6 +309,18 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             // The name is a type from here on: `is_type_start` must recognize it so that `sizeof(Op)` and
             // `Op x;` parse as a type rather than as an expression.
             type_names_.insert(d->name);
+            push_decl(std::move(d));
+            continue;
+        }
+
+        if (at_kw("variant")) {
+            if (is_const_decl) throw err_at("`const` can only modify a `struct` or `class` declaration", const_tok);
+            if (has_layout) {
+                throw err_at("`variant` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
+            }
+            auto d = parse_variant();
+            d->is_public = is_pub;
+            d->is_export = is_export;
             push_decl(std::move(d));
             continue;
         }

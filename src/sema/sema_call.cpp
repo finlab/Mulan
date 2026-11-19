@@ -336,7 +336,7 @@ namespace muc_detail {
                             if (st->sum_names[k] == m->name) { idx = static_cast<int>(k); break; }
                         }
                         if (idx < 0) {
-                            err("sum type `" + st->str() + "` has no alternative `" + m->name + "`", c);
+                            err("variant `" + st->str() + "` has no alternative `" + m->name + "`", c);
                         }
                         const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
                         if (c->args.size() != fs.size()) {
@@ -731,7 +731,7 @@ namespace muc_detail {
             for (size_t k = 0; k < st->sum_names.size(); ++k) {
                 if (st->sum_names[k] == e->name) { idx = static_cast<int>(k); break; }
             }
-            if (idx < 0) err("sum type `" + st->str() + "` has no alternative `" + e->name + "`", e);
+            if (idx < 0) err("variant `" + st->str() + "` has no alternative `" + e->name + "`", e);
             const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
             if (!e->binds.empty() && e->binds.size() != fs.size()) {
                 err("alternative `" + e->name + "` carries " + std::to_string(fs.size()) +

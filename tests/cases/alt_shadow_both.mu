@@ -3,7 +3,10 @@ use std.cstdio;
 
 // A user function with the same name as a sum alternative keeps serving its own call sites, while a
 // sum-typed target still constructs the alternative (`Option<int> o = Some(3);`).
-type Option<T> = Some(T) | None;
+variant Option<T> {
+    Some T;
+    None;
+}
 
 int Some(int x) {
     return x * 2;

@@ -302,7 +302,7 @@ namespace muc_detail {
             }
             if (root_is_const(t)) err("`" + n->ident + "` is a `const` binding and cannot be assigned", t);
             if (auto lv = std::get_if<LocalVar*>(&n->sym); lv && *lv && (*lv)->ref_const) {
-                err("cannot assign through a `for const ref` binding", t);
+                err("cannot assign through a `const ref` binding", t);
             }
             // `int* const p`: the cv belongs to the pointer type, not to the binding, so the binding is
             // not `const` yet the object is read-only (`p` cannot be retargeted, `*p` can be written).
@@ -742,76 +742,13 @@ namespace muc_detail {
         }
         TypePtr st = check_expr(s->scrut.get());
         if (!st) err("switch is missing the value to match", s);
-        // A sum-type scrutinee dispatches on the tag and may bind payload fields (SPEC 10.1.2).
+        // SPEC 10.1.2 (decided 2026-11-20): a variant is dispatched with `match`, never with `switch`.
         if (st->kind == TypeKind::Sum) {
-            s->sty = st;
-            s->is_sum = true;
-            std::vector<int> seen(st->sum_names.size(), 0);
-            for (auto& arm : s->arms) {
-                if (arm->is_else) {
-                    s->has_else = true;
-                    push();
-                    check_block(arm->body.get());
-                    pop();
-                    continue;
-                }
-                if (arm->alt.empty()) {
-                    // A bare name label is an alternative (`Some:`); values make no sense on a sum.
-                    if (arm->pats.size() == 1 && !arm->pats[0].is_range) {
-                        if (auto nm = dynamic_cast<Name*>(arm->pats[0].lo.get())) arm->alt = nm->ident;
-                    }
-                    if (arm->alt.empty()) {
-                        err("a `switch` on a sum type needs alternative labels (`Some(v):` / `None:`)",
-                            arm.get());
-                    }
-                }
-                int idx = -1;
-                for (size_t k = 0; k < st->sum_names.size(); ++k) {
-                    if (st->sum_names[k] == arm->alt) { idx = static_cast<int>(k); break; }
-                }
-                if (idx < 0) {
-                    err("sum type `" + st->str() + "` has no alternative `" + arm->alt + "`", arm.get());
-                }
-                if (seen[static_cast<size_t>(idx)]++ != 0) {
-                    err("alternative `" + arm->alt + "` appears twice in this `switch`", arm.get());
-                }
-                const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
-                if (arm->binds.size() != fs.size()) {
-                    err("alternative `" + arm->alt + "` carries " + std::to_string(fs.size()) +
-                            " value(s), so the label must bind " + std::to_string(fs.size()) + " name(s)",
-                        arm.get());
-                }
-                arm->alt_index = idx;
-                push();
-                std::vector<LocalVar*> locals;
-                for (size_t k = 0; k < fs.size(); ++k) {
-                    auto lv = std::make_unique<LocalVar>();
-                    lv->name = arm->binds[k];
-                    lv->rty = fs[k];
-                    lv->line = arm->line;
-                    lv->col = arm->col;
-                    declare_local(lv.get());
-                    locals.push_back(lv.get());
-                    if (cur_func_) cur_func_->synthetic_locals.push_back(std::move(lv));
-                }
-                check_block(arm->body.get());
-                pop();
-                arm->bind_locals = std::move(locals);
-            }
-            if (!s->has_else) {
-                for (size_t k = 0; k < seen.size(); ++k) {
-                    if (!seen[k]) {
-                        err("`switch` does not cover alternative `" + st->sum_names[k] +
-                                "`; add that branch or an `else`",
-                            s);
-                    }
-                }
-            }
-            return;
+            err("a `variant` is dispatched with `match`, not `switch` (SPEC 10.1.2)", s->scrut.get());
         }
         const bool enum_sw = st->kind == TypeKind::Enum;
         if (!enum_sw && !(is_prim(st) && is_integer(st))) {
-            err("switch value must be an integer, enum or sum type (found " + st->str() + ")", s->scrut.get());
+            err("switch value must be an integer or enum (found " + st->str() + ")", s->scrut.get());
         }
         s->sty = st;
 
@@ -909,6 +846,155 @@ namespace muc_detail {
                 warn("`else` branch is unreachable: all members of enum `" + st->str() + "` are already covered", s);
             }
         }
+    }
+
+    // `match` (SPEC 10.1.2, decided 2026-11-20). Shared by MatchExpr and MatchStmt: the alternative
+    // set, bindings, guards and exhaustiveness are identical; only the arm body differs.
+    void Sema::check_match_common(Expr* scrut, std::vector<std::unique_ptr<MatchArm>>& arms,
+                                  bool& has_else, bool& match_ref, bool expression_form, Node* at,
+                                  TypePtr& value_ty) {
+        ScopeGuard guard(*this);
+        TypePtr st = check_expr(scrut);
+        if (!st) err("match is missing the value to dispatch on", at);
+        if (st->kind != TypeKind::Sum) {
+            err("match is only implemented for `variant` types (found " + st->str() +
+                    "); type and class patterns are a later phase (SPEC 10.1.3)",
+                scrut);
+        }
+        for (auto& arm : arms) {
+            for (auto& b : arm->binds) {
+                if (b.mode != 0) match_ref = true;
+            }
+        }
+        if (match_ref) {
+            if (dynamic_cast<MoveExpr*>(scrut)) {
+                err("`match move v` cannot use `ref` bindings; bind by value instead", scrut);
+            }
+            if (!is_lvalue(scrut)) {
+                err("a `ref` binding needs an addressable value: match a variable or a field", scrut);
+            }
+            if (scrut->ty && scrut->ty->is_const) {
+                for (auto& arm : arms) {
+                    for (auto& b : arm->binds) {
+                        if (b.mode == 1) {
+                            err("cannot take a mutable `ref` binding from a `const` value; write "
+                                "`const ref`",
+                                arm.get());
+                        }
+                    }
+                }
+            }
+        }
+        std::vector<int> seen(st->sum_names.size(), 0);
+        std::vector<int> unguarded_seen(st->sum_names.size(), 0);
+        TypePtr result;
+        bool result_void = false;
+        for (auto& arm : arms) {
+            if (arm->is_else) {
+                // the parser already rejects a second `else` / an `else` that is not last; has_else may
+                // also arrive pre-set from the parser, so it is not an error here
+                has_else = true;
+                push();
+                if (expression_form) {
+                    TypePtr t = check_expr(arm->value.get());
+                    if (!t) err("the `else` arm has no value", arm.get());
+                    if (result && !same_type_sig(result, t)) {
+                        err("match arms must have the same type (found `" + result->str() + "` and `" +
+                                t->str() + "`)",
+                            arm.get());
+                    }
+                    if (!result) result = t;
+                } else {
+                    check_block(arm->body.get());
+                }
+                pop();
+                continue;
+            }
+            if (arm->alt.empty()) err("a match arm needs an alternative name", arm.get());
+            int idx = -1;
+            for (size_t k = 0; k < st->sum_names.size(); ++k) {
+                if (st->sum_names[k] == arm->alt) {
+                    idx = static_cast<int>(k);
+                    break;
+                }
+            }
+            if (idx < 0) err("variant `" + st->str() + "` has no alternative `" + arm->alt + "`", arm.get());
+            // Repeated arms are how guards work: `Some(x) if p:` is followed by another `Some(x)`.
+            // An unguarded arm after an unguarded one for the same alternative can never run.
+            if (!arm->guard && unguarded_seen[static_cast<size_t>(idx)]) {
+                err("this arm is unreachable: alternative `" + arm->alt +
+                        "` is already covered by an earlier arm without a guard",
+                    arm.get());
+            }
+            seen[static_cast<size_t>(idx)] = 1;
+            if (!arm->guard) unguarded_seen[static_cast<size_t>(idx)] = 1;
+            const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
+            if (arm->binds.size() != fs.size()) {
+                err("alternative `" + arm->alt + "` carries " + std::to_string(fs.size()) +
+                        " value(s), so the pattern must bind " + std::to_string(fs.size()) + " name(s)",
+                    arm.get());
+            }
+            arm->alt_index = idx;
+            push();
+            std::vector<LocalVar*> locals;
+            for (size_t k = 0; k < fs.size(); ++k) {
+                auto lv = std::make_unique<LocalVar>();
+                lv->name = arm->binds[k].name;
+                lv->rty = fs[k];
+                lv->by_ref = arm->binds[k].mode != 0;
+                lv->ref_const = arm->binds[k].mode == 2;
+                lv->line = arm->binds[k].line;
+                lv->col = arm->binds[k].col;
+                declare_local(lv.get());
+                locals.push_back(lv.get());
+                if (cur_func_) cur_func_->synthetic_locals.push_back(std::move(lv));
+            }
+            if (arm->guard) check_cond(arm->guard.get(), "match guard");
+            if (expression_form) {
+                TypePtr t = check_expr(arm->value.get());
+                if (!t) err("match arm has no value", arm.get());
+                if (is_void(t)) result_void = true;
+                if (result && !same_type_sig(result, t)) {
+                    err("match arms must have the same type (found `" + result->str() + "` and `" +
+                            t->str() + "`)",
+                        arm.get());
+                }
+                if (!result) result = t;
+            } else {
+                check_block(arm->body.get());
+            }
+            pop();
+            arm->bind_locals = std::move(locals);
+        }
+        if (!has_else) {
+            for (size_t k = 0; k < seen.size(); ++k) {
+                if (!seen[k]) {
+                    err("`match` does not cover alternative `" + st->sum_names[k] +
+                            "`; add that arm or an `else`",
+                        at);
+                }
+            }
+        }
+        if (expression_form && !result) err("match has no arms", at);
+        if (expression_form && result_void && result && !is_void(result)) {
+            err("a `void` match arm cannot be mixed with a value arm", at);
+        }
+        value_ty = expression_form ? result : t_void();
+    }
+
+    TypePtr Sema::check_match(MatchExpr* m) {
+        TypePtr ty;
+        check_match_common(m->scrut.get(), m->arms, m->has_else, m->match_ref,
+                           /*expression_form=*/true, m, ty);
+        m->sty = m->scrut->ty;
+        return ty;
+    }
+
+    void Sema::check_match_stmt(MatchStmt* m) {
+        TypePtr ty;
+        check_match_common(m->scrut.get(), m->arms, m->has_else, m->match_ref,
+                           /*expression_form=*/false, m, ty);
+        m->sty = m->scrut->ty;
     }
 
 }  // namespace muc_detail

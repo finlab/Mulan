@@ -514,6 +514,9 @@ struct S507 { public S506 a; }
 struct S508 { public S507 a; }
 struct S509 { public S508 a; }
 
-type Maybe = Some(S509) | None;
+variant Maybe {
+    Some S509;
+    None;
+}
 
 int main() { return 0; }

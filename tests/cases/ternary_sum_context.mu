@@ -3,7 +3,10 @@ use std.cstdio;
 
 // A target-typed expression propagates its expected type to the arms: the bare alternative of a
 // sum resolves there (`Option<int> v = c ? Some(7) : None;`), SPEC 10.1.1.
-type Option<T> = Some(T) | None;
+variant Option<T> {
+    Some T;
+    None;
+}
 
 int main() {
     bool yes = true;

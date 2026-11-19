@@ -6,7 +6,10 @@ unit generic_infer_needs_target;
 
 use std.cstdio;
 
-type Maybe = Some(int) | None;
+variant Maybe {
+    Some int;
+    None;
+}
 
 T unwrap<T>(Maybe m) {
     return 0;

@@ -292,13 +292,13 @@ namespace muc_detail {
                         st = instantiate_generic(&spec, cur_);
                     }
                     if (!st || st->kind != TypeKind::Sum) {
-                        err("`" + base_name + "` is not a sum type", e);
+                        err("`" + base_name + "` is not a variant", e);
                     }
                     int idx = -1;
                     for (size_t k = 0; k < st->sum_names.size(); ++k) {
                         if (st->sum_names[k] == e->name) { idx = static_cast<int>(k); break; }
                     }
-                    if (idx < 0) err("sum type `" + st->str() + "` has no alternative `" + e->name + "`", e);
+                    if (idx < 0) err("variant `" + st->str() + "` has no alternative `" + e->name + "`", e);
                     if (!st->sum_fields[static_cast<size_t>(idx)].empty()) {
                         err("alternative `" + e->name + "` of `" + st->str() +
                                 "` carries a payload: construct it with `" + st->str() + "." + e->name +

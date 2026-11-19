@@ -4,7 +4,12 @@ unit sum_basic;
 
 use std.cstdio;
 
-type Value = Int(int) | Pair(int, int) | Text(const char*) | None;
+variant Value {
+    Int int;
+    Pair int, int;
+    Text const char*;
+    None;
+}
 
 int live = 0;
 
@@ -17,7 +22,10 @@ class Box {
     ~Box() { live = live - 1; }
 }
 
-type Holder = Num(int) | Obj(Box);
+variant Holder {
+    Num int;
+    Obj Box;
+}
 
 int main() {
     // layout: tag + the union payload (an 8-byte payload gives 16 bytes overall)

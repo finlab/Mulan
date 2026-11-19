@@ -143,6 +143,7 @@ namespace muc_detail {
         if (auto c = dynamic_cast<Call*>(e)) return !c->by_ref;
         if (dynamic_cast<NewExpr*>(e)) return true;
         if (dynamic_cast<Ternary*>(e)) return true;
+        if (dynamic_cast<MatchExpr*>(e)) return true;  // one owned value in the result slot
         return false;
     }
 
@@ -532,6 +533,8 @@ namespace muc_detail {
         // missing it would copy the result again and leak the original temporary.
         if (auto b = dynamic_cast<Binary*>(e); b && (b->op_func || b->op_method) && !b->by_ref) return true;
         if (dynamic_cast<Ternary*>(e)) return true;  // the result slot is already materialized with owned semantics
+        // A `match` expression stores one owned arm value in its result slot (same rule as `?:`).
+        if (dynamic_cast<MatchExpr*>(e)) return true;
         if (auto u = dynamic_cast<Unary*>(e); u && (u->op_func || u->op_method)) return true;
         // `c[i]` through a user `operator[]` that returns by value is a fresh value (a `ref T` return
         // is a borrow instead, `by_ref`).

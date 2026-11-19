@@ -7,9 +7,10 @@
 > **2026-11-17: `const` redesigned on the C++ model (3.7), `move` defined as `&&` (3.8/4.4), and the
 > `comptime` unit with `builtin` declarations added (9.3); `constexpr`/`consteval`/`constinit` stay out.**
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
-> dispatched with `match`; interface extension uses `extend`; a field's public methods are forwarded with
-> `promote` (10.1, 3.18, 3.19). The switch to the new surface syntax is decided but not implemented yet.**
-> Status: draft, current through build 257 (2026-11-20; the per-build change log is docs/versions.md,
+> dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
+> methods are forwarded with `promote` (10.1, 3.18, 3.19). `extend` and `promote` are decided but not
+> implemented yet.**
+> Status: draft, current through build 258 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -2957,7 +2958,7 @@ Value d = Value.None;        // a unit alternative is a plain value
 - C ABI: the layout is the classic `{ tag, union }` shape, but the type **never** crosses into C (see
   the `extern` rule above): it is a language built-in whose representation is not a public interface.
 
-#### 10.1.2 Dispatching a variant: `match` (decided 2026-11-20, not implemented yet)
+#### 10.1.2 Dispatching a variant: `match` (implemented in build 258)
 
 `match` is the **only** construct that dispatches a `variant`; `switch` keeps constant dispatch over
 integers and enums and rejects a variant scrutinee (6.6).
@@ -3188,9 +3189,9 @@ int x = match v {
 | 133 | Construction prologue: base call, delegation, field initializers | **Decided 2026-11-18**: one place for every construction step — the initializer list after the parameter list. An item is `Base(args)` (base constructor), `CtorName(args)` (delegating constructor) or `field(value)`; execution order is fixed as **delegate → base → members → field initializers in declaration order → body**, independent of the order the items are written in. `super(...)` as a constructor call is **removed** (it was a body statement that had to be hoisted to the prologue anyway, which forced a "must be the first statement" rule and made "base constructor with arguments + own `const` field" unwritable); `super.m(...)` stays as the qualified base-method call. Delegation cannot also name the base or a field, cannot target itself, and chains must not cycle (3.12) |
 | 134 | Null references: local initialization and the null check | **Decided 2026-11-19**: (a) a class/interface local must be initialized (4) — the type *is* the handle (3.8), so `Dog d;` must not read like a stack construction that builds nothing; (b) dereferencing a null handle (method call, field read, field write) throws `std.exception.NullReferenceError`, and `--null-check=off` drops the check, making the access UB (8.2); `null` itself stays a legal value. Rejected: leaving an uninitialized handle silently null (the declaration looked like construction and the failure moved to an unrelated line), and leaving the dereference purely UB with no diagnostic (a segfault instead of a catchable error) |
 | 135 | C-style `for (init; cond; step)` | **Decided 2026-11-19: implemented** (6.3.1), superseding the earlier "no C-style `for`" decision — an index loop is the common case and `while` + a manual step reads poorly. Semantics are C's: every clause is optional (`for (;;)`), `cond` must be `bool`, and **`continue` runs the step clause**. `init` is a declaration or one expression statement; since the language has no comma operator, `for (a = 1, b = 1; ...)` is rejected — declare both in `init` instead. `do-while` remains not part of the language |
-| 136 | Declaration split: `type` / `variant` / `extend` | **Decided 2026-11-20**: `type` = transparent alias only (4.5); tagged unions = `variant` (10.1.1); interface extension = `extend I with J;` (3.18). Old `type V = A \| B;` and `type T += I;` are rejected with migration diagnostics |
-| 137 | `match` (first version) | **Decided 2026-11-20, not implemented**: `match` dispatches a `variant`; expression and statement forms; one-level patterns `Alt(x, y)`, value/`ref`/`const ref`/`match move` bindings, guards, mandatory exhaustiveness with an optional last `else`. Type patterns, nested patterns, or-patterns and public-contract branches are later phases (10.1.3) |
-| 138 | `switch` domain | **Decided 2026-11-20**: integers and enums only; a `variant` scrutinee is a compile error pointing at `match`. Whether integer/enum dispatch eventually folds into `match` stays open and is re-evaluated after `match` ships |
+| 136 | Declaration split: `type` / `variant` / `extend` | **Decided 2026-11-20, implemented in build 258 for `type`/`variant`; `extend` pending**: `type` = transparent alias only (4.5); tagged unions = `variant` (10.1.1); interface extension = `extend I with J;` (3.18). Old `type V = A \| B;` and `type T += I;` are rejected with migration diagnostics |
+| 137 | `match` (first version) | **Decided 2026-11-20, implemented in build 258**: `match` dispatches a `variant`; expression and statement forms; one-level patterns `Alt(x, y)`, value/`ref`/`const ref`/`match move` bindings, guards, mandatory exhaustiveness with an optional last `else`. Type patterns, nested patterns, or-patterns and public-contract branches are later phases (10.1.3) |
+| 138 | `switch` domain | **Decided 2026-11-20, implemented in build 258**: integers and enums only; a `variant` scrutinee is a compile error pointing at `match`. Whether integer/enum dispatch eventually folds into `match` stays open and is re-evaluated after `match` ships |
 | 139 | Interface extension `extend I with J;` | **Decided 2026-11-20, not implemented**: `J : I`, default methods only; applies to implementors of `I` in units that can see the extension; conflicts are ambiguity errors; it is not a subtype relation (3.18). The concrete-type `extend T with I;` form is planned |
 | 140 | Field method promotion `promote` | **Decided 2026-11-20, not implemented**: only public methods, one level, fixed precedence (own → base → interface → promoted), conflicts at the type declaration, no `override`/interface satisfaction, generic resolution per instantiation (3.19) |
 

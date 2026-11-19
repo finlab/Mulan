@@ -45,7 +45,7 @@ namespace muc_detail {
     // filled in place so every reference keeps pointing at the same object.
     void Sema::resolve_sum(SumDecl* sd, Unit* u) {
         if (sd->alts.size() < 2) {
-            err("sum type `" + sd->name + "` needs at least two alternatives", sd);
+            err("variant `" + sd->name + "` needs at least two alternatives", sd);
         }
         std::vector<std::string> names;
         std::vector<std::vector<TypePtr>> fields;
@@ -53,23 +53,23 @@ namespace muc_detail {
         std::unordered_set<std::string> seen;
         for (auto& alt : sd->alts) {
             if (!seen.insert(alt.name).second) {
-                err("duplicate alternative `" + alt.name + "` in sum type `" + sd->name + "`", sd);
+                err("duplicate alternative `" + alt.name + "` in variant `" + sd->name + "`", sd);
             }
             std::vector<TypePtr> fts;
             for (auto& fs : alt.fields) {
                 TypePtr ft = resolve_type(fs.get(), u);
                 if (is_void(ft)) err("payload of alternative `" + alt.name + "` cannot be `void`", sd);
-                // A payload stored by value cannot contain the sum itself: `type H = Holds(H) | None`
+                // A payload stored by value cannot contain the variant itself: `variant H { Holds H; None; }`
                 // has no finite layout. `resolve_type` returns the same Type object, so identity is
                 // enough (a pointer to the sum is fine and is the documented way to recurse).
                 if (ft.get() == sd->ty.get()) {
-                    err("payload of alternative `" + alt.name + "` would make sum `" + sd->name +
+                    err("payload of alternative `" + alt.name + "` would make variant `" + sd->name +
                             "` infinitely large (store a pointer or a class handle instead)",
                         sd);
                 }
                 if (noncopyable_struct(ft)) {
                     err("payload of alternative `" + alt.name + "` is `" + ft->str() +
-                            "`, which needs a destructor and cannot be stored by value in a sum (use a "
+                            "`, which needs a destructor and cannot be stored by value in a variant (use a "
                             "pointer or a class)",
                         sd);
                 }
@@ -793,7 +793,7 @@ namespace muc_detail {
                         return false;
                     }()) {
                     err(ckw + " function `" + f->name +
-                            "` cannot use a sum type: its tag+payload layout is an implementation detail, "
+                            "` cannot use a variant: its tag+payload layout is an implementation detail, "
                             "not a public interface (pass a plain `struct { tag; union }` and convert)",
                         f);
                 }

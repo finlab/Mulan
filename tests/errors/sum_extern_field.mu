@@ -1,5 +1,8 @@
 unit sum_extern_field;
-type Option<T> = Some(T) | None;
+variant Option<T> {
+    Some T;
+    None;
+}
 
 struct Holder { public Option<int> o; }
 

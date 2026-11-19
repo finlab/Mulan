@@ -1,5 +1,8 @@
 unit sum_is_static;
-type O = A(int) | B;
+variant O {
+    A int;
+    B;
+}
 
 int main() {
     int x = 3;

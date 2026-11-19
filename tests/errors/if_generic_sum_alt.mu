@@ -1,7 +1,9 @@
 unit if_generic_sum_alt;
-type Pair<T> = Some(T)
+variant Pair<T> {
+    Some T;
 #if 1 == 1 {
-    | Extra(T)
+    Extra T;
 }
-    | None;
+    None;
+}
 int main() { return 0; }

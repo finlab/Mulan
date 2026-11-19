@@ -239,6 +239,7 @@ ExprPtr Parser::parse_mul() {
 
 ExprPtr Parser::parse_unary() {
     NestGuard guard(*this, nest_expr_, kMaxExprNest, kMaxParenNesting, "expression");
+    if (at_kw("match")) return parse_match_expr();
     const Token t = peek();
     const bool uninit = at_kw("uninit");
     if (uninit) {

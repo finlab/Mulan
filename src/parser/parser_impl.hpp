@@ -270,6 +270,8 @@ private:
     std::unique_ptr<Decl> parse_enum();
     std::unique_ptr<Decl> parse_class();
     std::unique_ptr<Decl> parse_interface();
+    // `variant Name { Alt T; Pair T, U; None; }` (SPEC 10.1.1)
+    std::unique_ptr<Decl> parse_variant();
     std::unique_ptr<FuncDecl> parse_operator_func(TypeSpecPtr ret, bool ret_ref, const Token& tk);
     std::unique_ptr<MethodDecl> parse_method(TypeSpecPtr ret, bool ret_ref, const Token& name_tok);
     // operator signature in an interface: `T operator+(T a, T b);` (no this)
@@ -318,6 +320,12 @@ private:
     std::unique_ptr<Stmt> parse_para();
     std::unique_ptr<Stmt> parse_switch();
     std::unique_ptr<Stmt> parse_try();
+    // `match` (SPEC 10.1.2): statement form (block arms) and expression form (expression arms).
+    std::unique_ptr<Stmt> parse_match_stmt();
+    ExprPtr parse_match_expr();
+    ExprPtr parse_match_scrut();
+    void parse_match_arms(std::vector<std::unique_ptr<MatchArm>>& arms, bool& has_else,
+                          bool expression_form);
 
     // ------------------------------------------------------ expressions
 

@@ -132,6 +132,15 @@ void subst_expr(Expr& e, const TypeBindings& b) {
         subst_expr(*p->obj, b);
         return;
     }
+    if (auto p = dynamic_cast<MatchExpr*>(&e)) {
+        subst_expr(*p->scrut, b);
+        for (auto& a : p->arms) {
+            if (a->guard) subst_expr(*a->guard, b);
+            if (a->value) subst_expr(*a->value, b);
+            if (a->body) subst_block(*a->body, b);
+        }
+        return;
+    }
 }
 
 void subst_init(Init& i, const TypeBindings& b) {
@@ -241,6 +250,15 @@ void subst_stmt(Stmt& s, const TypeBindings& b) {
         for (auto& arm : p->arms) {
             if (arm.cond) subst_expr(*arm.cond, b);
             for (auto& st : arm.stmts) subst_stmt(*st, b);
+        }
+        return;
+    }
+    if (auto p = dynamic_cast<MatchStmt*>(&s)) {
+        subst_expr(*p->scrut, b);
+        for (auto& a : p->arms) {
+            if (a->guard) subst_expr(*a->guard, b);
+            if (a->value) subst_expr(*a->value, b);
+            if (a->body) subst_block(*a->body, b);
         }
         return;
     }

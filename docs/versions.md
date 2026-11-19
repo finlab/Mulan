@@ -27,6 +27,29 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 258 — 2026-11-20
+
+**`type` is alias-only; tagged unions are declared with `variant` and dispatched with `match`.**
+
+- **Parser**: `variant Name { Alt T; Pair T, U; None; }` (type parameters allowed) replaces the
+  `type Name = Alt(T) | ...;` form; `match` has an expression form (expression arms, each `;`) and a
+  statement form (block arms); `match move v` reuses the ordinary move expression.
+- **Sema**: one-level patterns with value / `ref` / `const ref` bindings, per-arm guards, mandatory
+  exhaustiveness with an optional last `else`, and an unreachable-arm diagnostic; a `ref` binding
+  requires an addressable scrutinee; `switch` rejects a variant scrutinee and points at `match`; the
+  old `type` forms are rejected with migration diagnostics.
+- **Codegen**: `match` lowers to the existing tag dispatch; a value binding is retained and released
+  at the arm exit (including the guard-failure path); `ref` bindings address the scrutinee's own
+  storage.
+- **AST**: `MatchExpr` / `MatchStmt` / `MatchArm`; cloning, substitution and the may-throw walker
+  cover them.
+- **Tests**: the sum cases migrate to `variant`; `sum_match` and `generic_sum_switch` dispatch with
+  `match`; new `variant_match` and eight must-fail cases (`switch_variant_rejected`,
+  `type_sum_rejected`, `type_extend_rejected`, `match_nonexhaustive`, `match_ref_needs_lvalue`,
+  `match_const_ref_write`, `match_move_ref`, `match_mixed_forms`).
+
+Full suite: **909/909 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 257 — 2026-11-20
 
 **The may-throw analysis follows every call the emitter emits; an unknown construct is assumed to throw.**

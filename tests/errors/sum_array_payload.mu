@@ -4,6 +4,9 @@ unit sum_array_payload;
 
 struct R { int x; ~R() {} }
 
-type S = Values(R[1]) | None;
+variant S {
+    Values R[1];
+    None;
+}
 
 int main() { return 0; }

@@ -660,13 +660,6 @@ struct SwitchPat {
 struct SwitchArm : Node {
     std::vector<SwitchPat> pats;
     bool is_else = false;
-    // sum-type arm: an alternative name with optional payload bindings (`Some(v)`); when `alt` is
-    // empty the arm is a value/range pattern or `else`.
-    std::string alt;
-    std::vector<std::string> binds;
-    // sema
-    int alt_index = -1;                       // sum scrutinee: which alternative
-    std::vector<LocalVar*> bind_locals;        // sum scrutinee: one local per bound field
     std::unique_ptr<Block> body;
     int line = 0;
     int col = 0;
@@ -679,7 +672,52 @@ struct SwitchStmt : Stmt {
     TypePtr sty;
     bool has_else = false;
     bool enum_exhaustive = false;  // the enum covers all members (it is exhaustive even without an else)
-    bool is_sum = false;           // the scrutinee is a sum type: arms name alternatives and bind payloads
+};
+
+// ---------------------------------------------------------------- `match` (SPEC 10.1.2)
+
+// One binding of a match arm: `Alt(x)` (value), `Alt(ref x)` or `Alt(const ref x)`.
+struct MatchBind {
+    std::string name;
+    int mode = 0;  // 0 = value, 1 = `ref`, 2 = `const ref`
+    int line = 0;
+    int col = 0;
+};
+
+// One arm. The body is an expression in expression form (`MatchExpr`) and a block in statement form
+// (`MatchStmt`); a match never mixes the two forms.
+struct MatchArm : Node {
+    std::string alt;
+    bool is_else = false;         // `else:` covers the remaining alternatives
+    std::vector<MatchBind> binds;
+    ExprPtr guard;                // optional `if cond` after the pattern
+    ExprPtr value;                // expression form
+    std::unique_ptr<Block> body;  // statement form
+    // sema
+    int alt_index = -1;
+    std::vector<LocalVar*> bind_locals;  // one local per bound payload field
+    int line = 0;
+    int col = 0;
+};
+
+// `match v { Alt(x): expr; ... }`: produces one value. `match move v` consumes the scrutinee.
+struct MatchExpr : Expr {
+    ExprPtr scrut;
+    std::vector<std::unique_ptr<MatchArm>> arms;
+    // sema
+    TypePtr sty;
+    bool has_else = false;
+    bool match_ref = false;  // an arm binds by `ref`: the scrutinee is matched in place, not copied
+};
+
+// `match v { Alt(x): { ... } ... }` as a statement.
+struct MatchStmt : Stmt {
+    ExprPtr scrut;
+    std::vector<std::unique_ptr<MatchArm>> arms;
+    // sema
+    TypePtr sty;
+    bool has_else = false;
+    bool match_ref = false;
 };
 
 struct BreakStmt : Stmt {};struct ContinueStmt : Stmt {};

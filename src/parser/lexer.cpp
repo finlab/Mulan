@@ -44,7 +44,10 @@ bool ident_cont(int ch) { return ident_start(ch) || is_digit(ch); }
 // SPEC 2.5: identifiers reserved for future extensions. They are not keywords (nothing parses them
 // yet), but using one as a name would break later — so they are rejected at the point they appear
 // as an identifier. `move` graduated to a real keyword, so it is not in this list.
-bool reserved_word(const std::string& s) { return s == "where" || s == "typeof"; }
+bool reserved_word(const std::string& s) {
+    // `extend` is reserved by SPEC 3.18 but not parsed yet; `variant` / `match` are real keywords.
+    return s == "where" || s == "typeof" || s == "extend";
+}
 
 // keyword table (KEYWORDS in lexer.py)
 const std::unordered_set<std::string>& keywords() {
@@ -61,6 +64,7 @@ const std::unordered_set<std::string>& keywords() {
         "class",    "interface", "new",    "del",     "weak",     "this",     "super",
         "override", "virtual",  "operator",  "packed",   "union",    "nocopy",   "nomove",   "move",     "swap",
         "try",      "catch",     "throw",    "finally",
+        "variant",  "match",
     };
     return kws;
 }

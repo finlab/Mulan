@@ -53,6 +53,10 @@ using ArgPack = Emitter::ArgPack;
             emitParaFor(pf);
             return;
         }
+        if (auto m = dynamic_cast<MatchStmt*>(s)) {
+            emitMatchStmt(m);
+            return;
+        }
         if (auto tr = dynamic_cast<TryStmt*>(s)) {
             emitTry(tr);
             return;
@@ -647,58 +651,6 @@ using ArgPack = Emitter::ArgPack;
     // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
     void Emitter::emitSwitch(SwitchStmt* s) {
         Value* sv = eval(s->scrut.get());
-        // Sum scrutinee (SPEC 10.1.2): switch on the tag and bind the payload fields in each arm.
-        if (s->is_sum) {
-            const TypePtr& st = s->sty;
-            auto* slot = entryAlloca(lt(st), "switch.sum", alignOf(st));
-            b.CreateStore(sv, slot);
-            if (st->needs_cleanup() && valueOwned(s->scrut.get())) stmtTemps.emplace_back(slot, st);
-            BasicBlock* endBB = BasicBlock::Create(ctx, "switch.end", curFn);
-            Value* pay = fieldAddr(slot, st->sum_layout, 1);
-            Value* tag = loadAt(i32(), fieldAddr(slot, st->sum_layout, 0), false);
-            int elseIdx = -1;
-            std::vector<BasicBlock*> bodyBB;
-            for (size_t i = 0; i < s->arms.size(); ++i) {
-                bodyBB.push_back(BasicBlock::Create(ctx, "switch.arm", curFn));
-                if (s->arms[i]->is_else) elseIdx = static_cast<int>(i);
-            }
-            BasicBlock* fallback = elseIdx >= 0 ? bodyBB[static_cast<size_t>(elseIdx)] : endBB;
-            BasicBlock* defBB = BasicBlock::Create(ctx, "switch.default", curFn);
-            b.CreateBr(defBB);
-            b.SetInsertPoint(defBB);
-            auto* sw = b.CreateSwitch(tag, fallback, static_cast<unsigned>(s->arms.size()));
-            for (size_t i = 0; i < s->arms.size(); ++i) {
-                if (s->arms[i]->alt_index < 0) continue;
-                sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), s->arms[i]->alt_index)), bodyBB[i]);
-            }
-            for (size_t i = 0; i < s->arms.size(); ++i) {
-                b.SetInsertPoint(bodyBB[i]);
-                const int alt = s->arms[i]->alt_index;
-                const auto& binds = s->arms[i]->bind_locals;
-                if (alt >= 0 && !binds.empty()) {
-                    const auto& fs = st->sum_fields[static_cast<size_t>(alt)];
-                    for (size_t k = 0; k < binds.size(); ++k) {
-                        Value* src = pay;
-                        if (fs.size() > 1) {
-                            src = fieldAddr(pay, st->sum_payload[static_cast<size_t>(alt)],
-                                            static_cast<int>(k));
-                        }
-                        Value* v = loadAt(lt(fs[k]), src, false);
-                        auto* binding = entryAlloca(lt(fs[k]), sane(binds[k]->name), alignOf(fs[k]));
-                        b.CreateStore(v, binding);
-                        slots[binds[k]] = binding;
-                        if (fs[k]->needs_cleanup()) {
-                            emitRetainValue(binding, fs[k]);
-                            registerLocalCleanup(binds[k]);
-                        }
-                    }
-                }
-                block(s->arms[i]->body.get());
-                if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
-            }
-            b.SetInsertPoint(endBB);
-            return;
-        }
         LType* sty = sv->getType();
         BasicBlock* endBB = BasicBlock::Create(ctx, "switch.end", curFn);
 
@@ -754,6 +706,130 @@ using ArgPack = Emitter::ArgPack;
         for (size_t i = 0; i < s->arms.size(); ++i) {
             b.SetInsertPoint(bodyBB[i]);
             block(s->arms[i]->body.get());
+            if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
+        }
+        b.SetInsertPoint(endBB);
+    }
+
+    void Emitter::emitMatchStmt(MatchStmt* s) {
+        emitMatchCommon(s->scrut.get(), s->arms, s->sty, s->match_ref, nullptr);
+    }
+
+    Value* Emitter::evalMatch(MatchExpr* e) {
+        const bool voidResult = is_void(e->ty);
+        AllocaInst* result = nullptr;
+        if (!voidResult) result = entryAlloca(lt(e->ty), "match.res", alignOf(e->ty));
+        emitMatchCommon(e->scrut.get(), e->arms, e->sty, e->match_ref, result);
+        if (voidResult) return Constant::getNullValue(i32());
+        return loadAt(lt(e->ty), result, unalignedExpr(e));
+    }
+
+    // SPEC 10.1.2: dispatch on the tag, bind the payload, evaluate the guard, then the arm body.
+    // A `ref` match works on the scrutinee's own storage (the sema layer requires an addressable
+    // place); every other match copies the scrutinee into an owned temporary first.
+    void Emitter::emitMatchCommon(Expr* scrut, const std::vector<std::unique_ptr<MatchArm>>& arms,
+                                  const TypePtr& st, bool match_ref, AllocaInst* result) {
+        Value* addr = nullptr;
+        if (match_ref) {
+            addr = addrOf(scrut);
+        } else {
+            Value* sv = eval(scrut);
+            auto* slot = entryAlloca(lt(st), "match.sum", alignOf(st));
+            b.CreateStore(sv, slot);
+            if (st->needs_cleanup() && valueOwned(scrut)) stmtTemps.emplace_back(slot, st);
+            addr = slot;
+        }
+        BasicBlock* endBB = BasicBlock::Create(ctx, "match.end", curFn);
+        std::vector<BasicBlock*> armBB;
+        armBB.reserve(arms.size());
+        int elseIdx = -1;
+        for (size_t i = 0; i < arms.size(); ++i) {
+            armBB.push_back(BasicBlock::Create(ctx, "match.arm", curFn));
+            if (arms[i]->is_else) elseIdx = static_cast<int>(i);
+        }
+        BasicBlock* fallback = elseIdx >= 0 ? armBB[static_cast<size_t>(elseIdx)] : endBB;
+        Value* pay = fieldAddr(addr, st->sum_layout, 1);
+        Value* tag = loadAt(i32(), fieldAddr(addr, st->sum_layout, 0), false);
+
+        // The next arm of the same alternative: a failed guard falls through to it.
+        std::vector<int> next(arms.size(), -1);
+        for (size_t i = 0; i < arms.size(); ++i) {
+            if (arms[i]->is_else) continue;
+            for (size_t j = i + 1; j < arms.size(); ++j) {
+                if (!arms[j]->is_else && arms[j]->alt_index == arms[i]->alt_index) {
+                    next[i] = static_cast<int>(j);
+                    break;
+                }
+            }
+        }
+        auto nextBlockFor = [&](size_t i) -> BasicBlock* {
+            const int n = next[i];
+            return n >= 0 ? armBB[static_cast<size_t>(n)] : fallback;
+        };
+
+        BasicBlock* defBB = BasicBlock::Create(ctx, "match.default", curFn);
+        b.CreateBr(defBB);
+        b.SetInsertPoint(defBB);
+        auto* sw = b.CreateSwitch(tag, fallback, static_cast<unsigned>(st->sum_names.size()));
+        std::vector<char> first(st->sum_names.size(), 0);
+        for (size_t i = 0; i < arms.size(); ++i) {
+            const int alt = arms[i]->alt_index;
+            if (arms[i]->is_else || alt < 0 || first[static_cast<size_t>(alt)]) continue;
+            first[static_cast<size_t>(alt)] = 1;
+            sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), alt)), armBB[i]);
+        }
+
+        for (size_t i = 0; i < arms.size(); ++i) {
+            b.SetInsertPoint(armBB[i]);
+            pushRefScope();  // a value binding is retained for the arm and released when it ends
+            MatchArm* a = arms[i].get();
+            if (!a->is_else && a->alt_index >= 0) {
+                const auto& fs = st->sum_fields[static_cast<size_t>(a->alt_index)];
+                for (size_t k = 0; k < a->bind_locals.size() && k < fs.size(); ++k) {
+                    LocalVar* lv = a->bind_locals[k];
+                    Value* src = pay;
+                    if (fs.size() > 1) {
+                        src = fieldAddr(pay, st->sum_payload[static_cast<size_t>(a->alt_index)],
+                                        static_cast<int>(k));
+                    }
+                    if (lv->by_ref) {
+                        auto* slot = entryAlloca(ptrTy(), sane(lv->name));
+                        b.CreateStore(src, slot);
+                        slots[lv] = slot;
+                    } else {
+                        Value* v = loadAt(lt(fs[k]), src, false);
+                        auto* slot = entryAlloca(lt(fs[k]), sane(lv->name), alignOf(fs[k]));
+                        b.CreateStore(v, slot);
+                        slots[lv] = slot;
+                        if (fs[k]->needs_cleanup()) {
+                            emitRetainValue(slot, fs[k]);
+                            registerLocalCleanup(lv);
+                        }
+                    }
+                }
+            }
+            if (a->guard) {
+                Value* g = eval(a->guard.get());
+                BasicBlock* bodyBB = BasicBlock::Create(ctx, "match.body", curFn);
+                BasicBlock* failBB = BasicBlock::Create(ctx, "match.next", curFn);
+                b.CreateCondBr(g, bodyBB, failBB);
+                // A failed guard releases this arm's bindings before trying the next arm.
+                b.SetInsertPoint(failBB);
+                for (auto it = refScopes.back().rbegin(); it != refScopes.back().rend(); ++it) {
+                    releaseLocal(*it);
+                }
+                b.CreateBr(nextBlockFor(i));
+                b.SetInsertPoint(bodyBB);
+            }
+            if (a->body) {
+                block(a->body.get());
+            } else if (result) {
+                Value* v = eval(a->value.get());
+                b.CreateStore(v, result);
+            } else if (a->value) {
+                (void)eval(a->value.get());
+            }
+            popRefScope();  // releases the bindings on the arm's normal exit
             if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
         }
         b.SetInsertPoint(endBB);

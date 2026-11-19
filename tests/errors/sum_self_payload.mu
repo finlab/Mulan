@@ -1,7 +1,10 @@
 unit sum_self_payload;
 // A payload stored by value cannot be the sum itself: `Holds(H)` has no finite layout. This used to
 // be accepted and then killed the compiler in the layout recursion.
-type Holder = Holds(Holder) | None;
+variant Holder {
+    Holds Holder;
+    None;
+}
 
 int main() {
     Holder h = None;

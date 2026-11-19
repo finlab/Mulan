@@ -1,11 +1,17 @@
-// sum_generic — generic sum types (SPEC 10.1.1, stage 3): `type Option<T> = Some(T) | None;` and
-// `type Result<T, E> = Ok(T) | Err(E);` instantiate per type argument, like a generic struct.
+// sum_generic — generic sum types (SPEC 10.1.1, stage 3): `variant Option<T> { Some T; None; }` and
+// `variant Result<T, E> { Ok T; Err E; }` instantiate per type argument, like a generic struct.
 unit sum_generic;
 
 use std.cstdio;
 
-type Option<T> = Some(T) | None;
-type Result<T, E> = Ok(T) | Err(E);
+variant Option<T> {
+    Some T;
+    None;
+}
+variant Result<T, E> {
+    Ok T;
+    Err E;
+}
 
 int live = 0;
 
@@ -19,10 +25,10 @@ class Box {
 }
 
 int unwrap_or(Option<int> o, int fallback) {
-    switch o {
-        Some(v): { return v; }
-        None: { return fallback; }
-    }
+    return match o {
+        Some(v): v;
+        None: fallback;
+    };
 }
 
 int main() {
@@ -34,7 +40,7 @@ int main() {
 
     Option<const char*> s = Option<const char*>.Some("hi");
     int n = 0;
-    switch s {
+    match s {
         Some(p): { n = 1; }
         None: { n = 0; }
     }
@@ -43,7 +49,7 @@ int main() {
     // two parameters, and a payload that needs reference counting
     Result<int, const char*> r = Result<int, const char*>.Ok(5);
     int v = 0;
-    switch r {
+    match r {
         Ok(x): { v = x; }
         Err(e): { v = -1; }
     }
@@ -52,7 +58,7 @@ int main() {
     {
         Option<Box> ob = Option<Box>.Some(new Box(9));
         int id = 0;
-        switch ob {
+        match ob {
             Some(x): { id = x.id; }
             None: { id = -1; }
         }

@@ -249,6 +249,45 @@ std::unique_ptr<Decl> Parser::parse_enum() {
     return decl;
 }
 
+// `variant Name { Alt T; Pair T, U; None; }` (SPEC 10.1.1). The internal node is still `SumDecl`:
+// the surface name changed, the layout/value semantics did not.
+std::unique_ptr<Decl> Parser::parse_variant() {
+    const Token tk = expect_kw("variant");
+    const Token name_tok = expect_ident("variant name");
+    auto decl = std::make_unique<SumDecl>();
+    decl->name = name_tok.text;
+    decl->line = tk.line;
+    decl->col = tk.col;
+    if (at_op("<")) decl->type_params = parse_type_params();
+    type_names_.insert(decl->name);  // the name is a type from here on
+    expect_op("{");
+    while (!at_op("}")) {
+        if (at_eof()) throw err_at("unterminated variant declaration", tk);
+        if (at_directive()) throw no_directive_here("between the alternatives of a variant");
+        SumAlt alt;
+        const Token at = expect_ident("alternative name");
+        alt.name = at.text;
+        alt.line = at.line;
+        alt.col = at.col;
+        if (!at_op(";")) {
+            // Payload types are written like fields (`Some T;` / `Pair T, U;`), without parentheses.
+            for (;;) {
+                alt.fields.push_back(parse_type());
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+        }
+        expect_op(";");
+        decl->alts.push_back(std::move(alt));
+    }
+    expect_op("}");
+    if (at_op(";")) advance();
+    return decl;
+}
+
 std::string Parser::parse_qualified_name() {
     Token t = expect_ident("type name");
     std::string n = t.text;

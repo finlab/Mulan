@@ -1,15 +1,17 @@
-// A sum-type `switch` inside a generic body (issue #8B: the arm's `alt` / `binds` were not
-// copied, so a re-check saw a value arm and rejected the pattern).
+// A `match` on a variant inside a generic body: cloning/substitution must carry the arms.
 unit generic_sum_switch;
 extern int printf(const char* fmt, ...);
 
-type Option<T> = Some(T) | None;
+variant Option<T> {
+    Some T;
+    None;
+}
 
 T get_or<T>(Option<T> o, T dflt) {
-    switch o {
-        Some(v): { return v; }
-        None: { return dflt; }
-    }
+    return match o {
+        Some(v): v;
+        None: dflt;
+    };
 }
 
 int main() {

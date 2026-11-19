@@ -263,6 +263,11 @@ std::vector<StmtPtr> Parser::parse_stmt() {
         out.push_back(parse_switch());
         return out;
     }
+    if (at_kw("match")) {
+        std::vector<StmtPtr> out;
+        out.push_back(parse_match_stmt());
+        return out;
+    }
     if (at_kw("break")) {
         advance();
         semicolon();
@@ -854,39 +859,21 @@ std::unique_ptr<Stmt> Parser::parse_switch() {
             saw_else = true;
         } else {
             if (saw_else) throw err_at("`else:` must be the last branch of the switch", at);
-            // A sum-type arm with a payload binds its fields: `Some(v):`. A bare name label (`Red:` /
-            // `Some:`) is parsed as a value pattern and reinterpreted against a sum scrutinee in sema.
-            if (at.kind == TokKind::Ident && peek(1).is_op("(")) {
-                arm->alt = advance().text;
-                advance();  // `(`
-                if (!at_op(")")) {
-                    for (;;) {
-                        arm->binds.push_back(expect_ident("bound name").text);
-                        if (at_op(",")) {
-                            advance();
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                expect_op(")");
-            } else {
-                for (;;) {
-                    SwitchPat pat;
-                    pat.lo = parse_expr();
-                    if (at_op("..") || at_op("..=")) {
-                        pat.is_range = true;
-                        pat.inclusive = at_op("..=");
-                        advance();
-                        pat.hi = parse_expr();
-                    }
-                    if (peek().kind == TokKind::Ident && peek().text == "step") {
-                        throw err_at("`step` is not allowed in a switch pattern: list the values or use a range", peek());
-                    }
-                    arm->pats.push_back(std::move(pat));
-                    if (!at_op(",")) break;
+            for (;;) {
+                SwitchPat pat;
+                pat.lo = parse_expr();
+                if (at_op("..") || at_op("..=")) {
+                    pat.is_range = true;
+                    pat.inclusive = at_op("..=");
                     advance();
+                    pat.hi = parse_expr();
                 }
+                if (peek().kind == TokKind::Ident && peek().text == "step") {
+                    throw err_at("`step` is not allowed in a switch pattern: list the values or use a range", peek());
+                }
+                arm->pats.push_back(std::move(pat));
+                if (!at_op(",")) break;
+                advance();
             }
         }
         if (!at_op(":")) {
@@ -898,6 +885,104 @@ std::unique_ptr<Stmt> Parser::parse_switch() {
         node->arms.push_back(std::move(arm));
     }
     expect_op("}");
+    return node;
+}
+
+// `match` (SPEC 10.1.2): `match [move] expr { arms }`. The scrutinee stops at `{`; `move` is parsed
+// as the usual move expression so that sema's moved tracking applies unchanged.
+ExprPtr Parser::parse_match_scrut() {
+    if (at_kw("move")) return parse_not();
+    return parse_expr();
+}
+
+void Parser::parse_match_arms(std::vector<std::unique_ptr<MatchArm>>& arms, bool& has_else,
+                              bool expression_form) {
+    const Token open = expect_op("{");
+    bool saw_else = false;
+    while (!at_op("}")) {
+        if (at_eof()) throw err_at("unterminated match", open);
+        auto arm = std::make_unique<MatchArm>();
+        const Token at = peek();
+        arm->line = at.line;
+        arm->col = at.col;
+        if (at_kw("else")) {
+            advance();
+            if (saw_else) throw err_at("match can only have one `else` arm", at);
+            saw_else = true;
+            has_else = true;
+            arm->is_else = true;
+        } else {
+            if (saw_else) throw err_at("`else:` must be the last arm of the match", at);
+            arm->alt = expect_ident("alternative name").text;
+            if (at_op("(")) {
+                advance();
+                if (!at_op(")")) {
+                    for (;;) {
+                        MatchBind b;
+                        b.line = peek().line;
+                        b.col = peek().col;
+                        if (at_kw("const") && peek(1).is_kw("ref")) {
+                            advance();
+                            advance();
+                            b.mode = 2;  // `const ref`
+                        } else if (at_kw("ref")) {
+                            advance();
+                            b.mode = 1;
+                        }
+                        b.name = expect_ident("bound name").text;
+                        arm->binds.push_back(std::move(b));
+                        if (at_op(",")) {
+                            advance();
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                expect_op(")");
+            }
+            if (at_kw("if")) {
+                advance();
+                arm->guard = parse_expr();
+            }
+        }
+        expect_op(":");
+        if (expression_form) {
+            if (at_op("{")) {
+                throw err_at("an expression match uses expressions for its arms; write the statement "
+                             "form (`match v { Alt(x): { ... } }`) or an expression arm",
+                             peek());
+            }
+            arm->value = parse_expr();
+            expect_op(";");
+        } else {
+            if (!at_op("{")) {
+                throw err_at("a statement match uses a `{ ... }` block for every arm", peek());
+            }
+            arm->body = parse_block();
+            if (at_op(";")) advance();  // an optional `;` keeps the arm separator uniform
+        }
+        arms.push_back(std::move(arm));
+    }
+    expect_op("}");
+}
+
+std::unique_ptr<Stmt> Parser::parse_match_stmt() {
+    const Token tk = expect_kw("match");
+    auto node = std::make_unique<MatchStmt>();
+    node->line = tk.line;
+    node->col = tk.col;
+    node->scrut = parse_match_scrut();
+    parse_match_arms(node->arms, node->has_else, /*expression_form=*/false);
+    return node;
+}
+
+ExprPtr Parser::parse_match_expr() {
+    const Token tk = expect_kw("match");
+    auto node = std::make_unique<MatchExpr>();
+    node->line = tk.line;
+    node->col = tk.col;
+    node->scrut = parse_match_scrut();
+    parse_match_arms(node->arms, node->has_else, /*expression_form=*/true);
     return node;
 }
 

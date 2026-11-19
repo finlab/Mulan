@@ -1,5 +1,8 @@
 unit sum_extern_param;
-type Option<T> = Some(T) | None;
+variant Option<T> {
+    Some T;
+    None;
+}
 
 extern void take(Option<int> o);
 

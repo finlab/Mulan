@@ -11,7 +11,10 @@ class Obj {
     ~Obj() { live -= 1; }
 }
 
-type Holder = Holds(Obj) | Empty;
+variant Holder {
+    Holds Obj;
+    Empty;
+}
 
 int main() {
     Holder h = Holds(new Obj(1));

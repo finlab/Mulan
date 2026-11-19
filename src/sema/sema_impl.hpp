@@ -760,6 +760,13 @@ private:
 
     void check_switch(SwitchStmt* s);
 
+    // `match` (SPEC 10.1.2): the shared checker for the expression and statement forms.
+    TypePtr check_match(MatchExpr* m);
+    void check_match_stmt(MatchStmt* m);
+    void check_match_common(Expr* scrut, std::vector<std::unique_ptr<MatchArm>>& arms,
+                            bool& has_else, bool& match_ref, bool expression_form, Node* at,
+                            TypePtr& value_ty);
+
     // Index shape (SPEC 6.4.1): length() -> usize  +  operator[](C, usize) -> T
     void resolve_index_shape(ForInStmt* s, const TypePtr& st);
     void resolve_cursor_shape(ForInStmt* s, const TypePtr& st);

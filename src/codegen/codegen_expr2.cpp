@@ -650,6 +650,7 @@ using ArgPack = Emitter::ArgPack;
     }
 
     Value* Emitter::eval(Expr* e) {
+        if (auto m = dynamic_cast<MatchExpr*>(e)) return evalMatch(m);
         if (auto sw = dynamic_cast<SwapExpr*>(e)) {
             // A pure byte exchange: no constructor, destructor or reference-count operation runs, which is
             // both what makes it work for a type whose address must not be taken and why a reference-counted

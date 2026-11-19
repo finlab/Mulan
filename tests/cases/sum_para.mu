@@ -5,7 +5,10 @@ unit sum_para;
 
 use std.cstdio;
 
-type Option<T> = Some(T) | None;
+variant Option<T> {
+    Some T;
+    None;
+}
 type Get = delegate () => int;
 
 class Acc {
@@ -14,10 +17,10 @@ class Acc {
 }
 
 int classify(Option<int> o) {
-    switch o {
-        Some(n): { return n * 2; }
-        None: { return -1; }
-    }
+    return match o {
+        Some(n): n * 2;
+        None: -1;
+    };
 }
 
 int main() {

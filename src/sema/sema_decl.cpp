@@ -307,7 +307,7 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                     if (ui.interfaces.count(i->name)) err("duplicate definition of interface `" + i->name + "`", i);
                     ui.interfaces[i->name] = i;
                 } else if (auto sm = dynamic_cast<SumDecl*>(d.get())) {
-                    if (ui.sums.count(sm->name)) err("duplicate definition of sum type `" + sm->name + "`", sm);
+                    if (ui.sums.count(sm->name)) err("duplicate definition of variant `" + sm->name + "`", sm);
                     ui.sums[sm->name] = sm;
                 } else if (auto a = dynamic_cast<TypeAliasDecl*>(d.get())) {
                     if (ui.aliases.count(a->name)) err("duplicate definition of type alias `" + a->name + "`", a);

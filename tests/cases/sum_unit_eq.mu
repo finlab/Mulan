@@ -3,7 +3,10 @@ use std.cstdio;
 
 // Every alternative is a unit value, so equality is a tag comparison. The lowering used to emit an
 // empty switch and then branch into the terminated block (invalid IR).
-type Yes = A | B;
+variant Yes {
+    A;
+    B;
+}
 
 int main() {
     Yes a = A;

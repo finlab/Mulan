@@ -748,6 +748,13 @@ struct Emitter {
 
     // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
     void emitSwitch(SwitchStmt* s);
+
+    // `match` (SPEC 10.1.2): the tag dispatch shared by the expression and statement forms.
+    // `result` is the slot the expression form stores each arm value into (null for a statement match).
+    void emitMatchCommon(Expr* scrut, const std::vector<std::unique_ptr<MatchArm>>& arms,
+                         const TypePtr& sty, bool match_ref, AllocaInst* result);
+    void emitMatchStmt(MatchStmt* s);
+    Value* evalMatch(MatchExpr* e);
     Value* evalIs(IsExpr* e);
     // A `c_abi` function whose aggregates travel byval/sret/packed cannot be a function value.
     void checkFnValueAbi(FuncDecl* f, Node* at);

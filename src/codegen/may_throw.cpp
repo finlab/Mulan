@@ -187,6 +187,15 @@ struct Analysis {
             visitExpr(sw->b.get(), it);
             return;
         }
+        if (auto m = dynamic_cast<MatchExpr*>(e)) {
+            visitExpr(m->scrut.get(), it);
+            for (auto& a : m->arms) {
+                if (a->guard) visitExpr(a->guard.get(), it);
+                if (a->value) visitExpr(a->value.get(), it);
+                if (a->body) visitBlock(a->body.get(), it);
+            }
+            return;
+        }
         // Leaf kinds (a literal, a name, `sizeof(expr)` whose operand is not evaluated, `move x`) run
         // no user code. Any other kind is one this walker does not know: stay conservative instead of
         // silently classifying the function as nothrow (a missed exception check is a wrong program).
@@ -297,6 +306,15 @@ struct Analysis {
         }
         if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
             visitExpr(rs->value.get(), it);
+            return;
+        }
+        if (auto m = dynamic_cast<MatchStmt*>(s)) {
+            visitExpr(m->scrut.get(), it);
+            for (auto& a : m->arms) {
+                if (a->guard) visitExpr(a->guard.get(), it);
+                if (a->value) visitExpr(a->value.get(), it);
+                if (a->body) visitBlock(a->body.get(), it);
+            }
             return;
         }
         // BreakStmt / ContinueStmt: no calls.

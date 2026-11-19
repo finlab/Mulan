@@ -1,7 +1,9 @@
 unit if_sum_alt;
-type V = Holds(int)
+variant V {
+    Holds int;
 #if 1 == 1 {
-    | Extra(const char*)
+    Extra const char*;
 }
-    | None;
+    None;
+}
 int main() { return 0; }
