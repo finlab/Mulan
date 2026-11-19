@@ -36,6 +36,9 @@ host detection, the cross-target checks and the post-link checks (output format,
 now live in `target.hpp` / `target.cpp`; `main.cpp` keeps the CLI and the build driver (704 lines).
 Pure move, no behaviour change: the CLI checks (`tests/cli/*.py`, 9/9) and the full suite pass.
 
+Documentation (no build bump): SPEC 3.7 now states the decision on default member initializers — they
+stay limited to `const` fields, and a non-`const` field's initializer remains an error (`#110`).
+
 #### build 241 — 2026-11-19
 
 **Split `type_traits.cpp` out of `types.cpp` (1032 lines).**

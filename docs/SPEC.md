@@ -645,6 +645,13 @@ C++ model, with the deliberate omissions listed at the end of this section.
   apply the initializers); construct it instead. A type with a `const` field is still copy-constructible;
   assignment is **allowed** and runs as copy-and-swap, i.e. the destination is rebuilt as a whole rather
   than written field by field (decided 2026-11-17; C++ deletes the assignment instead).
+- **Default member initializers are limited to `const` fields** (decided 2026-11-19). `const int x = 5;` is
+  allowed; a non-`const` field cannot carry one — `int score = 10;` is a compile error and the diagnostic
+  points at the constructor body. A non-`const` field is part of the value, so a default would have to
+  interact with aggregate initialization, copy/move and the synthesized zero-argument constructor; C++
+  NSDMI is deliberately **not** adopted yet. Nothing above changes: aggregate initialization and the
+  synthesized constructor keep working, and a `const` field may still use `field(value)` in an
+  initializer list.
 - **Reassignment.** A top-level `const` variable cannot be reassigned (`const int x = 0; x = 1;` is an error).
   A `const struct` / `const class` variable has no top-level const (the immutability is a property of the
   type, not of the variable), so it may be reassigned as a whole — see the `const struct` item below.
