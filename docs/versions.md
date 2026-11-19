@@ -27,6 +27,22 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 229 — 2026-11-19
+
+**Split `sema_generic.cpp` (1384 lines) into instantiation and constraint satisfaction.**
+
+- `sema_constraint.cpp` (436 lines) now owns `satisfies_one`, the method lookup behind interface
+  bounds (`type_has_method`), the contract members a witness type receives (`add_contract_members`),
+  `check_bound` and the never-instantiated warning/contract pass; `sema_generic.cpp` (968 lines) keeps
+  monomorphization (`instantiate_generic`, cloning/substitution, the instance cache).
+- `split_qualified`, `canon_spec` and `definition_unchecked_{names,count}` moved out of the
+  file-local namespace into `sema_impl.hpp` declarations (defined once, in `sema_generic.cpp`), since
+  both halves need them.
+- Pure move: the IR of `examples/example.mu`, `examples/generics.mu`, `cases/forin_index.mu` and
+  `cases/iface_slot_return.mu` is byte-identical to build 228 (ignoring the `mulan.build` flag);
+  full suite green.
+- Full suite: **863/863 on Windows**, **861/861 on Linux**.
+
 #### build 228 — 2026-11-19
 
 **Integer division and remainder are checked.**

@@ -86,6 +86,17 @@ inline EnumConst* intern_enum_const(const std::string& unit, const std::string& 
 // `a`, `a.b`, `a.b.c` → the dotted name; empty for anything else (a call, an index, ...).
 std::string expr_dotted_name(const Expr& e);
 
+// Split `a.b.C` into (a.b, C); `unit` is empty when there is no prefix. Defined in sema_generic.cpp,
+// shared with the constraint pass (sema_constraint.cpp).
+void split_qualified(const std::string& full, std::string& unit, std::string& name);
+
+// Generic type-parameter helpers shared by instantiation (sema_generic.cpp) and the constraint pass
+// (sema_constraint.cpp). `canon_spec` is the canonical display name of a type spec (`Box<Vec<int>>`);
+// `definition_unchecked_*` describe the parameters that are only checked at instantiation.
+std::string canon_spec(const TypeSpec& s);
+std::string definition_unchecked_names(const std::vector<TypeParam>& tps);
+size_t definition_unchecked_count(const std::vector<TypeParam>& tps);
+
 // The constants visible to a `#if` condition at one point of the program (see `Sema::directive_scope`).
 struct DirectiveScope {
     UserConstTable table;
