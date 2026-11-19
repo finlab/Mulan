@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -74,7 +75,10 @@ struct Type {
     // apply to the type any more.
     bool implicit_ctor = false;
     std::vector<Field> fields;  // used by Struct/Class (a placeholder is created first and filled in later; Class stores flattened fields)
-    std::vector<MethodSig> methods;  // used by Class/Interface
+    // A deque, not a vector: sema stores `const MethodSig*` in AST nodes (`Call::method`,
+    // `Binary/Unary::op_method`, `Index::get_method`) and materialized interface defaults append to
+    // this list later. A vector reallocation would leave those pointers dangling.
+    std::deque<MethodSig> methods;  // used by Class/Interface
     std::vector<std::vector<TypePtr>> ctors;  // class constructor parameter lists (overloads)
     // Parallel to `ctors`: the declared parameter names, used to order named arguments.
     std::vector<std::vector<std::string>> ctor_param_names;

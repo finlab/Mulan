@@ -36,6 +36,10 @@ struct Program {
     std::vector<std::unique_ptr<Unit>> units;
     std::unordered_map<std::string, UnitInfo> infos;
     std::string entry;
+    // Method signatures synthesized during checking (interface-operator contract copies). AST nodes
+    // keep `const MethodSig*` into this list and codegen reads them after `analyze` returns, so the
+    // Program owns it rather than the Sema instance.
+    std::vector<std::unique_ptr<MethodSig>> synthesized_sigs;
 };
 
 std::string mangle(const std::string& unit, const std::string& name);

@@ -83,6 +83,8 @@ Program Sema::run() {
     prog.units = std::move(units_);
     prog.infos = std::move(infos_);
     prog.entry = entry_;
+    // AST nodes point into the cache and codegen runs after this Sema is gone.
+    prog.synthesized_sigs = std::move(op_sig_cache_);
     return prog;
 }
 

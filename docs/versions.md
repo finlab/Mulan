@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 259 — 2026-11-20
+
+**Synthesized method signatures live as long as the program.**
+
+`Sema::op_sig_cache_` owns the `MethodSig` copies created for interface-operator contracts, and AST
+nodes store `const MethodSig*` into it. `analyze` returns a `Program` and destroys the `Sema`, so
+codegen (and the may-throw walk) read freed signatures: compiling `contract_default_this` crashed with
+an access violation in `method_cname` about 8% of the time (ASLR-dependent). The cache now moves into
+`Program` before the `Sema` goes away. `Type::methods` is a `std::deque` as well, because materialized
+interface defaults append to that list after AST nodes have cached `MethodSig*` and a vector
+reallocation would dangle them.
+
+Verified: 300 consecutive compiles of `contract_default_this` (0 failures; previously ~8%); the full
+suite is green with this fix (recorded in build 260).
+
 #### build 258 — 2026-11-20
 
 **`type` is alias-only; tagged unions are declared with `variant` and dispatched with `match`.**
