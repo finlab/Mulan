@@ -27,6 +27,18 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 230 — 2026-11-19
+
+**Split `parser_unit.cpp` (1273 lines) into unit-level parsing and type declarations.**
+
+- `parser_type_decl.cpp` (768 lines) now owns the struct/class/interface/union/enum declaration bodies,
+  base lists, member/method/constructor/destructor/operator signatures, `mark_body_const` and the
+  `spec_display` helper used for generic base-class placeholders. `parser_unit.cpp` (528 lines) keeps
+  the unit header, `use`, `extern`/`builtin`, qualified names and the free-function operator form.
+- Pure move: the IR of `examples/example.mu`, `examples/generics.mu`, `cases/forin_index.mu` and
+  `cases/iface_slot_return.mu` is byte-identical to build 229 (ignoring `mulan.build`); full suite green.
+- Full suite: **863/863 on Windows**, **861/861 on Linux**.
+
 #### build 229 — 2026-11-19
 
 **Split `sema_generic.cpp` (1384 lines) into instantiation and constraint satisfaction.**

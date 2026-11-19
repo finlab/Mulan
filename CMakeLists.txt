@@ -64,6 +64,7 @@ add_executable(muc
   src/parser/lexer.cpp
   src/parser/parser.cpp
   src/parser/parser_unit.cpp
+  src/parser/parser_type_decl.cpp
   src/parser/parser_stmt.cpp
   src/parser/parser_expr.cpp
   src/parser/parser_directive.cpp
