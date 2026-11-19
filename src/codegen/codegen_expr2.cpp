@@ -21,6 +21,16 @@ using ArgPack = Emitter::ArgPack;
         for (auto& t : sig->params) ptys.push_back(lt(t));
         auto* fnTy = FunctionType::get(lt(sig->ret), ptys, false);
 
+        // The receiver is dereferenced (object -> descriptor -> vtable) before the call, so a null
+        // handle must be rejected here rather than inside the method (SPEC 8.2).
+        if (recv && recv->getType()->isPointerTy()) {
+            emitNullCheck(recv, "method call on a null `" + std::string(sig->owner ? sig->owner->name : std::string("class")) +
+                                    "` reference");
+        } else if (recv && recvTy && recvTy->kind == TypeKind::Interface) {
+            emitNullCheck(refObj(recv, recvTy),
+                          "method call on a null `" + recvTy->name + "` reference");
+        }
+
         bool ifaceCall = (recvTy && recvTy->kind == TypeKind::Interface) ||
                          (sig->owner && sig->owner->kind == TypeKind::Interface);
         if (ifaceCall) {
@@ -778,6 +788,7 @@ using ArgPack = Emitter::ArgPack;
             }
             if (m->kind == "field" && m->obj->ty && m->obj->ty->kind == TypeKind::Class) {
                 Value* p = eval(m->obj.get());
+                emitNullCheck(p, "field access on a null `" + m->obj->ty->name + "` reference");
                 Value* addr = fieldAddr(p, m->obj->ty, m->field_index);
                 Value* v = b.CreateLoad(lt(e->ty), addr);
                 if (ownsReference(m->obj.get())) emitReleaseRef(p, m->obj->ty);

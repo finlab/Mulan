@@ -1,0 +1,8 @@
+handle is null
+method call on a null `Dog` reference
+read caught
+write caught
+method call on a null `Speaker` reference
+bark
+meow
+normal path ok

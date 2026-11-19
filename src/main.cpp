@@ -70,6 +70,9 @@ build options:
   --emit-ir <path> also write the generated LLVM IR to <path>
   -g, --debug      emit DWARF debug info (line tables / function scopes)
   --bounds=on|off  subscript bounds checks for managed sequences (default: on)
+  --null-check=on|off
+                   null-reference checks before a class handle or interface value is
+                   dereferenced; a null dereference throws `NullReferenceError` (default: on)
   --single-thread  reference counting without atomics: `para`, `para for` and
                    `std.thread` / `std.task` become compile errors (default: off)
   --strict         warn about a generic that is never instantiated (its body is never checked)
@@ -699,6 +702,7 @@ struct BuildArgs {
     bool run = false;
     bool debug = false;
     bool bounds = true;  // emit subscript bounds checks for managed sequences (--bounds=off disables)
+    bool null_check = true;  // emit null-reference checks before a handle dereference (--null-check=off)
     bool single_thread = false;  // --single-thread: non-atomic reference counting
     bool strict = false;  // --strict: warn about generics that are never instantiated
     bool verbose = false;
@@ -741,6 +745,8 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "-g" || a == "--debug") b.debug = true;
         else if (a == "--bounds=on") b.bounds = true;
         else if (a == "--bounds=off") b.bounds = false;
+        else if (a == "--null-check=on") b.null_check = true;
+        else if (a == "--null-check=off") b.null_check = false;
         else if (a == "--single-thread") b.single_thread = true;
         else if (a == "--strict") b.strict = true;
         else if (!a.empty() && a[0] != '-') set_entry(a);
@@ -755,7 +761,7 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
 // platform spec decides the unit set; `--target` decides the object file, and its architecture
 // gives `ptr_bits` when the platform spec leaves it out.
 static void init_build_config(const std::string& platform_spec, const TargetInfo& target, bool debug,
-                              bool bounds, bool single_thread) {
+                              bool bounds, bool null_check, bool single_thread) {
     BuildConfig cfg;
     PlatformSpec spec;
     if (!platform_spec.empty()) {
@@ -773,6 +779,7 @@ static void init_build_config(const std::string& platform_spec, const TargetInfo
     cfg.big_endian = false;  // every target this compiler emits for is little-endian
     cfg.debug = debug;
     cfg.bounds = bounds;
+    cfg.null_check = null_check;
     cfg.single_thread = single_thread;
     set_build_config(cfg);
 }
@@ -783,6 +790,7 @@ static int cmd_dump_config(const std::vector<std::string>& args) {
     std::string target_triple;
     bool debug = false;
     bool bounds = true;
+    bool null_check = true;
     bool single_thread = false;
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
@@ -796,6 +804,8 @@ static int cmd_dump_config(const std::vector<std::string>& args) {
         else if (a == "-g" || a == "--debug") debug = true;
         else if (a == "--bounds=on") bounds = true;
         else if (a == "--bounds=off") bounds = false;
+        else if (a == "--null-check=on") null_check = true;
+        else if (a == "--null-check=off") null_check = false;
         else if (a == "--single-thread") single_thread = true;
         else throw MuError("unknown option `" + a + "`");
     }
@@ -804,7 +814,7 @@ static int cmd_dump_config(const std::vector<std::string>& args) {
     }
     if (!target_triple.empty()) check_explicit_target(target_triple);
     const TargetInfo work = target_triple.empty() ? host_target() : parse_triple(target_triple);
-    init_build_config(platform.empty() ? os : platform, work, debug, bounds, single_thread);
+    init_build_config(platform.empty() ? os : platform, work, debug, bounds, null_check, single_thread);
     std::cout << describe_build_config();
     return 0;
 }
@@ -839,7 +849,7 @@ static int cmd_check(const std::vector<std::string>& args) {
         throw MuError("`--os` and `--platform` select the same thing; use one of them");
     }
     std::string entry_name;
-    init_build_config(platform.empty() ? os : platform, host_target(), false, true, single_thread);
+    init_build_config(platform.empty() ? os : platform, host_target(), false, true, true, single_thread);
     auto units = load_units(entry, dirs, entry_name, platform.empty() ? os : platform, verbose);
     size_t n = units.size();
     auto prog = analyze(std::move(units), entry_name, single_thread, strict);
@@ -885,7 +895,7 @@ static int cmd_build(const std::vector<std::string>& args) {
         check_platform_matches_target(target_spec, option, spec, target);
     }
     std::string entry_name;
-    init_build_config(target_spec, target, ba.debug, ba.bounds, ba.single_thread);
+    init_build_config(target_spec, target, ba.debug, ba.bounds, ba.null_check, ba.single_thread);
     auto units = load_units(ba.entry, ba.dirs, entry_name, target_spec, ba.verbose);
     auto prog = analyze(std::move(units), entry_name, ba.single_thread, ba.strict);
 
@@ -910,6 +920,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     EmitOptions eo;
     eo.debug = ba.debug;
     eo.bounds = ba.bounds;
+    eo.null_check = ba.null_check;
     eo.export_mode = ba.export_mode;
     eo.extra_exports = ba.exports;
     eo.target = ba.target;
@@ -957,7 +968,7 @@ int main(int argc, char** argv) {
     enableUtf8Console();
     // Default to the host target so every command (including `dump`) parses with a real configuration;
     // `check` / `build` overwrite it once their options are known.
-    init_build_config("", host_target(), false, true, false);
+    init_build_config("", host_target(), false, true, true, false);
     std::vector<std::string> args(argv + 1, argv + argc);
     if (!args.empty() && (args[0] == "-V" || args[0] == "--version")) {
         std::cout << "muc " MUC_VERSION " (build " MUC_BUILD ")\n";

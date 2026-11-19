@@ -555,7 +555,7 @@ std::string builtin_const_type_name(const std::string& name) {
     if (name == "abi") return "Abi";
     if (name == "endian") return "Endian";
     if (name == "ptr_bits") return "int";
-    return "bool";  // debug / bounds / single_thread
+    return "bool";  // debug / bounds / null_check / single_thread
 }
 }  // namespace
 

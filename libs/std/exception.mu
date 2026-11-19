@@ -64,3 +64,19 @@ public void shift_fail(long count, int width) {
 public void cast_fail(double value, int width) {
     throw new NumericEdgeError(1, value, width as long);
 }
+
+// Thrown by the null-reference check the compiler emits before a class handle or an interface value
+// is dereferenced (SPEC 8.2): a method call or a field access on `null` has no object to work on.
+// `--null-check=off` drops the check and the access becomes undefined behavior.
+public class NullReferenceError : Exception {
+public:
+    NullReferenceError(string what) {
+        message = what;
+    }
+}
+
+// Cold path of the null check: the compiler calls this with a description of the access that failed
+// (`method call on `Dog``, `field access on `Dog``).
+public void null_fail(const char* what) {
+    throw new NullReferenceError(what);
+}

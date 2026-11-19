@@ -461,6 +461,7 @@ bool builtin_const(const std::string& name, long long& value) {
     if (name == "ptr_bits") { value = c.ptr_bits; return true; }
     if (name == "debug") { value = c.debug ? 1 : 0; return true; }
     if (name == "bounds") { value = c.bounds ? 1 : 0; return true; }
+    if (name == "null_check") { value = c.null_check ? 1 : 0; return true; }
     if (name == "single_thread") { value = c.single_thread ? 1 : 0; return true; }
     return false;
 }
@@ -480,6 +481,7 @@ std::string describe_build_config() {
     s += "endian = " + spelled("Endian", kEndian, c.big_endian ? "Big" : "Little") + "\n";
     s += std::string("debug = ") + (c.debug ? "true" : "false") + "\n";
     s += std::string("bounds = ") + (c.bounds ? "true" : "false") + "\n";
+    s += std::string("null_check = ") + (c.null_check ? "true" : "false") + "\n";
     s += std::string("single_thread = ") + (c.single_thread ? "true" : "false") + "\n";
     return s;
 }
@@ -517,7 +519,7 @@ bool eval_user_const(const Expr& e, const UserConstTable& table, UserConst& out,
 }
 
 void add_builtin_constants(UserConstTable& table) {    static const char* ints[] = {"ptr_bits"};
-    static const char* bools[] = {"debug", "bounds", "single_thread"};
+    static const char* bools[] = {"debug", "bounds", "null_check", "single_thread"};
     static const char* targets[] = {"os", "arch", "abi", "endian"};
     static const char* enums[] = {"OS", "Arch", "Abi", "Endian"};
     for (const char* n : ints) {

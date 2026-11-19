@@ -48,6 +48,7 @@ std::string llvm_emit_text(Program& prog, const EmitOptions& opts) {
     init_targets();
     muc_detail::Emitter em{prog, opts.debug, opts.bounds, opts.target};
     em.singleThread = opts.single_thread;
+    em.nullCheck = opts.null_check;
     em.exportMode = opts.export_mode;
     for (auto& e : opts.extra_exports) em.exports.insert(e);
     em.run();
@@ -62,6 +63,7 @@ void llvm_emit_object(Program& prog, const std::string& obj_path, const EmitOpti
     init_targets();
     muc_detail::Emitter em{prog, opts.debug, opts.bounds, opts.target};
     em.singleThread = opts.single_thread;
+    em.nullCheck = opts.null_check;
     em.exportMode = opts.export_mode;
     for (auto& e : opts.extra_exports) em.exports.insert(e);
     em.run();

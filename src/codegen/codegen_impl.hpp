@@ -127,6 +127,9 @@ struct Emitter {
     Program& prog;
     bool wantDebug = false;
     bool boundsCheck = true;
+    // `--null-check` (default on): a class handle or the object word of an interface value is tested
+    // for null before it is dereferenced; off makes the dereference UB again (see emitNullCheck).
+    bool nullCheck = true;
     // `--single-thread`: reference counting without atomics (see EmitOptions::single_thread).
     bool singleThread = false;
     // Symbol names that stay externally visible in the executable target (`--export`). Everything
@@ -445,6 +448,12 @@ struct Emitter {
     // Emits a call to std.exception.bounds_fail on the cold path.
     Value* emitSliceIndexChecked(Value* h, const std::vector<Value*>& idxs, const TypePtr& bt);
     void emitBoundsFail(Value* index, Value* length, Value* axis);
+
+    // Null-reference check for one dereference of a class handle / interface object word: the cold
+    // path calls std.exception.null_fail (`--null-check=off` skips the whole check, SPEC 8.2).
+    // `what` names the failing access in the reported message.
+    void emitNullCheck(Value* obj, const std::string& what);
+
     // Numeric-edge checks, emitted only when `--bounds` is on: a shift count outside [0, width) and a
     // float->int `as` whose value does not fit. Both throw `std.exception.NumericEdgeError`.
     void emitShiftCountCheck(Value* count, unsigned width);

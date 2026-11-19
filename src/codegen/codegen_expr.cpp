@@ -182,7 +182,9 @@ static bool is_numeric(const TypePtr& t) {
             }
             if (n->kind == "field" && n->implicit_this) {
                 if (!curClassTy || !thisSlot) fail("LLVM backend: implicit field access is missing `this`", n->line, n->col);
-                return fieldAddr(b.CreateLoad(ptrTy(), thisSlot), curClassTy, n->field_index);
+                Value* self = b.CreateLoad(ptrTy(), thisSlot);
+                emitNullCheck(self, "field access on a null `" + curClassTy->name + "` reference");
+                return fieldAddr(self, curClassTy, n->field_index);
             }
             if (auto lv = std::get_if<LocalVar*>(&n->sym)) {
                 Value* a = slotFor(*lv);
@@ -202,6 +204,7 @@ static bool is_numeric(const TypePtr& t) {
             TypePtr ot = m->obj->ty;
             if (ot->kind == TypeKind::Class) {
                 Value* p = eval(m->obj.get());
+                emitNullCheck(p, "field access on a null `" + ot->name + "` reference");
                 return fieldAddr(p, ot, m->field_index);
             }
             Value* base = addrOf(m->obj.get());

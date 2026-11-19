@@ -18,6 +18,7 @@ public builtin const int    ptr_bits;
 public builtin const Endian endian;
 public builtin const bool   debug;
 public builtin const bool   bounds;
+public builtin const bool   null_check;
 public builtin const bool   single_thread;
 
 public builtin bool is_windows();

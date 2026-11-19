@@ -22,6 +22,7 @@ struct BuildConfig {
     bool big_endian = false;
     bool debug = false;
     bool bounds = true;
+    bool null_check = true;
     bool single_thread = false;
 };
 

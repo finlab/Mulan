@@ -68,6 +68,22 @@ namespace muc_detail {
         emitColdThrow(callee, {index, length, axis}, "bf");
     }
 
+    // Null-reference check for one dereference of a class handle / interface object word. A null handle
+    // has no fields and no vtable, so the access that follows would read address 0 + offset (SPEC 8.2);
+    // the checked build throws `std.exception.NullReferenceError` with a description of the access.
+    void Emitter::emitNullCheck(Value* obj, const std::string& what) {
+        if (!nullCheck || !obj || !obj->getType()->isPointerTy()) return;
+        BasicBlock* ok = BasicBlock::Create(ctx, "nn.ok", curFn);
+        BasicBlock* bad = BasicBlock::Create(ctx, "nn.bad", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(obj, Constant::getNullValue(ptrTy())), bad, ok);
+        b.SetInsertPoint(bad);
+        FunctionCallee callee = mod->getOrInsertFunction(
+            mangle_unit("std.exception", "null__fail") + "$p$K$char",
+            FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
+        emitColdThrow(callee, {stringConst(what)}, "nn");
+        b.SetInsertPoint(ok);
+    }
+
     // A shift count must be in [0, width): LLVM's `shl`/`ashr` with any other count is poison, so the
     // checked build reports it instead of letting the optimizer produce a different answer per run
     // (SPEC 8.2 documents the unchecked operation as UB).

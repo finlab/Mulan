@@ -27,6 +27,25 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 227 — 2026-11-19
+
+**A class handle is a reference, not an object: initialize it, and check it before dereferencing.**
+
+- **`Dog d;` is now a compile error** (SPEC 4, decision 134). The type *is* the handle (SPEC 3.8), so
+  a bare declaration allocated a stack slot that held `null` while reading like a stack construction —
+  and a declared parameterless constructor never ran. Locals of class/interface type must be
+  initialized (`= null`, `= new Dog(...)`, or an existing reference). Codegen behavior is unchanged
+  (the slot is still nulled, because releasing a zero handle must be a no-op); the declaration site is
+  what changed. Cases `class_local_no_init`, `interface_local_no_init`.
+- **Null-reference check** (SPEC 3.8, 8.2; `--null-check=on|off`, default on): a method call, a field
+  read or a field write through a null class handle, or through the null object word of an interface
+  value, throws `std.exception.NullReferenceError` instead of faulting at address `0 + offset`. The
+  cold path is `std.exception.null_fail(what)` (`libs/std/exception.mu`), mirroring `bounds_fail`;
+  `--null-check=off` removes the check and the access is UB again. `null` stays a legal value — only
+  the dereference is checked. `null_check` is also a build constant (`#if null_check`, `dump-config`).
+  Run case `null_reference`.
+- Full suite: **862/862 on Windows**, **860/860 on Linux**.
+
 #### build 226 — 2026-11-19
 
 **Executed decisions: uncaught-exception report, C-style integer suffixes, named constructor

@@ -299,6 +299,19 @@ namespace muc_detail {
             err("`const` variable `" + lv->name + "` must be initialized", lv);
         }
 
+        // A class handle / interface value *refers to* an object, it is not storage for one, so a bare
+        // `Dog d;` reads like a stack construction while building nothing (SPEC 4). Requiring the
+        // initializer keeps the two apart at the declaration site instead of at the first use.
+        if (!lv->init && lv->rty &&
+            (lv->rty->kind == TypeKind::Class || lv->rty->kind == TypeKind::Interface)) {
+            const bool is_class = lv->rty->kind == TypeKind::Class;
+            err("`" + lv->name + "` is a reference to a `" + lv->rty->name +
+                    "` object, not an object: initialize it explicitly (`= null`, " +
+                    (is_class ? "`= new " + lv->rty->name + "(...)`" : "an existing value") +
+                    ", or an existing reference)",
+                lv);
+        }
+
         if (!lv->init && lv->rty && lv->rty->kind == TypeKind::Struct &&
             !lv->rty->ctors.empty()) {
             bool has_default = false;

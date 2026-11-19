@@ -795,6 +795,10 @@ class Cat {
   - `b = c;` rebinds (old target -1, new target +1)
   - `b = null;` rebinds to null
 - Null: class references allow `null`; `c == null` / `c != null` are legal.
+- **Null-reference check** (decided 2026-11-19): dereferencing a null class handle or a null interface
+  value (a method call, a field read or a field write) throws `std.exception.NullReferenceError`, and
+  `--null-check=off` removes the check, which makes the access undefined behavior (8.2). `null` itself
+  stays a legal value: the check fires only where the handle is used as an object.
 - Identity comparison: `c == d` compares whether both denote the same object; value comparison of classes is not supported (compare field by field when needed).
 - Member access auto-dereferences: `c.name`, `c.parent.name`; writes are constrained by `const`.
 - **Early release** (`del` was removed as of 0.0.47): just set the handle to null; `c = null;` releases one strong reference and sets `c` to null.
@@ -1776,7 +1780,10 @@ on the execution engine.
 
 - Declaration syntax: `Type name1 [= init1], name2 [= init2];`
   - Initialization forms:
-    - No initializer: `int x;` (reading an uninitialized local value is UB; unit-level variables are zero-initialized by default)
+    - No initializer: `int x;` (reading an uninitialized local value is UB; unit-level variables are zero-initialized by default).
+      A class or interface variable is **not** allowed to omit the initializer (decided 2026-11-19): the type *is* the handle
+      (3.8), so `Dog d;` would read like a stack construction while building nothing. Write `= null`, `= new Dog(...)`,
+      or initialize from an existing reference.
     - Expression initialization: `int x = 1;`, `Point p = Point(1, 2);`, `Point q = p;`
     - Brace aggregate initialization: `Point p = {1, 2};`, `Point p = {x = 1, y = 2};`, `int[5] a = {1, 2, 3};`
     - Empty-brace zero initialization (aggregate types only): `Point p = {};`, `int[5] a = {};`, `int[] s = {};`, `string s = {};`
@@ -2345,9 +2352,11 @@ an internal record (`agents/stdlib/c-bindings.md`) §3.
   optimization; the backend does not emit `nsw`/`nuw`). **Division is the one exception**: the CPU traps on `MIN / -1`,
   so it is UB exactly like division by zero; write `-x` (which wraps) when that value must be produced.
 - Managed-sequence out of bounds: checked by default and throws `BoundsError`; out-of-range shift counts and float-to-integer `as` conversions are checked the same way and throw `NumericEdgeError`; `--bounds=off` removes these checks (each is then UB, as listed above). Static arrays and `T*` are unchecked.
+- A null class handle / null interface value that is dereferenced: checked by default and throws `std.exception.NullReferenceError`
+  (`--null-check=off` removes the check, and the access is then UB, as listed above).
 - A pointer obtained by decaying an array **prvalue** (a function result, or the result of `?:`) is only
   valid until the end of the enclosing statement: the temporary it points into is gone afterwards.
-- Accessing a class reference that is `null`; continuing to use a handle after it has been set to null (equivalent to a null reference).
+- Accessing a class reference that is `null`; continuing to use a handle after it has been set to null (equivalent to a null reference). Reported at run time by the `--null-check` check (on by default, throws `std.exception.NullReferenceError`); `--null-check=off` removes the check and the access is UB.
 - Using `alloc/free` on a class object, or assigning memory obtained from `alloc` as a class handle (the two memory management schemes must not cross).
 
 ### 8.3 Reference counting, vtable, and weak for class
@@ -2585,6 +2594,7 @@ public builtin const int    ptr_bits;
 public builtin const Endian endian;
 public builtin const bool   debug;
 public builtin const bool   bounds;
+public builtin const bool   null_check;
 public builtin const bool   single_thread;
 
 public builtin bool is_windows();
@@ -2984,6 +2994,7 @@ switch v {
 | 131 | `std.comptime` unit / `builtin` | **Decided 2026-11-17, unit renamed to `std.comptime` 2026-11-18**: an ordinary unit shipped with the toolchain; `builtin` declares compiler-provided constants/functions with no initializer and no body; any unit may declare one, but only names in the compiler's built-in table are accepted and a name may be declared once; explicit `use std.comptime` (no implicit visibility); replaces `std.target` (9.3) |
 | 132 | `const class` inheritance and views | **Decided 2026-11-18**: a `const class` is a **leaf type whose content is fixed**, reached only through read-only views. It can never be a base class (`class E : D` and `const class D : const Base` are both errors), but it **may** derive from a mutable class base (`const class D : Base`); that subobject is written by the base constructor and by `D`'s own constructors/destructor — **construction is the only writable phase** (after a constructor returns, neither outside code nor the class's methods write). Every expression of the type is a read-only view (a class handle is already a shared reference), and converting it to any mutable view (base handle, interface handle, `ref`) needs `as` (writing through it is UB). Methods are implicitly `const`; a non-`const` method exists **only as an override slot** for a non-`const` virtual of the base — read-only body, not part of the public surface (`private` by default), not callable by name from outside, only from `D`'s constructors/destructor. Consequence accepted: an inherited non-`const` virtual then has **no caller** (external code holds only read-only views, method bodies cannot mutate, and a base constructor's own virtual call does not reach a derived override) — the override still keeps the vtable complete and turns a would-be write into a no-op, which is what makes inheriting a base with mutating virtuals usable at all. Rejected: banning class bases outright (loses implementation reuse for no extra safety), `const class D : const Base` (an extra constness-agreement rule for a case composition covers), and letting internal method bodies keep a mutable `this` (that makes the type only *outward* read-only — a second, weaker promise than `const struct`). Related: 3.7 |
 | 133 | Construction prologue: base call, delegation, field initializers | **Decided 2026-11-18**: one place for every construction step — the initializer list after the parameter list. An item is `Base(args)` (base constructor), `CtorName(args)` (delegating constructor) or `field(value)`; execution order is fixed as **delegate → base → members → field initializers in declaration order → body**, independent of the order the items are written in. `super(...)` as a constructor call is **removed** (it was a body statement that had to be hoisted to the prologue anyway, which forced a "must be the first statement" rule and made "base constructor with arguments + own `const` field" unwritable); `super.m(...)` stays as the qualified base-method call. Delegation cannot also name the base or a field, cannot target itself, and chains must not cycle (3.12) |
+| 134 | Null references: local initialization and the null check | **Decided 2026-11-19**: (a) a class/interface local must be initialized (4) — the type *is* the handle (3.8), so `Dog d;` must not read like a stack construction that builds nothing; (b) dereferencing a null handle (method call, field read, field write) throws `std.exception.NullReferenceError`, and `--null-check=off` drops the check, making the access UB (8.2); `null` itself stays a legal value. Rejected: leaving an uninitialized handle silently null (the declaration looked like construction and the failure moved to an unrelated line), and leaving the dereference purely UB with no diagnostic (a segfault instead of a catchable error) |
 
 ---
 

@@ -17,6 +17,9 @@ enum class ExportMode { ExportOnly, PublicOnly };
 struct EmitOptions {
     bool debug = false;
     bool bounds = true;
+    // Emit a null-reference check before a class handle / interface value is dereferenced
+    // (`--null-check=off` drops it and the access becomes UB, SPEC 8.2).
+    bool null_check = true;
     ExportMode export_mode = ExportMode::ExportOnly;
     // Extra symbol names to keep externally visible (`--export <name>`), on top of the surface.
     std::vector<std::string> extra_exports;
