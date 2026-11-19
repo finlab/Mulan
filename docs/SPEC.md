@@ -2469,6 +2469,8 @@ unit example;
 
   It must be the first declaration in the file.
 - `use other;` imports another unit and accesses it as `other.symbol`; cyclic dependencies are forbidden.
+  One statement may import several units (`use std.cstdio, std.string;`, build 249): a trailing comma is
+  accepted, and the whole statement is atomic — a missing or malformed item imports nothing.
 - **Unit name to file mapping** (implemented): a unit name may contain dots; `unit std.string` maps to `libs/std/string.mu`
   (dots map to directory separators). The library search path is, in order: the directory of the entry file, directories given with `-I` (may be repeated),
   the `MUC_LIBS` environment variable, and `libs` and `libs/std` under the current directory and its ancestors.

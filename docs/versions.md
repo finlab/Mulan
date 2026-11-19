@@ -77,6 +77,16 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   get one diagnostic that says the C-style form requires the parentheses. Must-fail case
   `for_paren_required`; SPEC 6.4 states it explicitly.
 
+#### build 249 — 2026-11-19
+
+**One `use` imports several units.**
+
+`use std.string; use std.cstdio;` written as `use std.string, std.cstdio;` (`#131`). The parser reads a
+comma-separated list, accepts a trailing comma, and publishes the declarations only after the semicolon,
+so a malformed item never imports the units before it. Every item still registers in the loader's
+candidate scan, and the `#if` declaration-mode path queues each one separately. Run case `use_list`;
+must-fail `use_list_bad_item` locks the "expected unit name" position. SPEC 6.1 states the form.
+
 #### build 248 — 2026-11-19
 
 **An interface default whose signature mentions `Self` is materialized per implementor.**

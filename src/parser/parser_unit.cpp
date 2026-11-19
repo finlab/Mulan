@@ -194,20 +194,31 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 throw err_at("layout modifier `packed` / `align(N)` can only be used in a `struct` or `union` declaration", layout_tok);
             }
             advance();
-            std::string uname = parse_unit_name();
+            // `use a;` and `use a, b.c, d;` (a trailing comma is accepted). The list is collected first
+            // and published only after the semicolon, so a malformed item never imports the units before it.
+            std::vector<std::unique_ptr<UseDecl>> batch;
+            for (;;) {
+                std::string uname = parse_unit_name();
+                auto use = std::make_unique<UseDecl>();
+                use->unit_name = std::move(uname);
+                use->line = tk.line;
+                use->col = tk.col;
+                batch.push_back(std::move(use));
+                if (!at_op(",")) break;
+                advance();
+                if (at_op(";")) break;
+            }
             semicolon();
-            auto use = std::make_unique<UseDecl>();
-            use->unit_name = std::move(uname);
-            use->line = tk.line;
-            use->col = tk.col;
-            if (!groups_.empty() && groups_.back().decl_mode && cur_decls_) {
-                // The arm may not be selected: the semantic pass decides and then adds the `use`
-                // (P3.3). The dependency is still discovered by the loader's candidate scan.
-                module_names_.insert(use->unit_name);
-                push_decl(std::move(use));
-            } else {
-                module_names_.insert(use->unit_name);
-                unit->uses.push_back(std::move(use));
+            for (auto& use : batch) {
+                if (!groups_.empty() && groups_.back().decl_mode && cur_decls_) {
+                    // The arm may not be selected: the semantic pass decides and then adds the `use`
+                    // (P3.3). The dependency is still discovered by the loader's candidate scan.
+                    module_names_.insert(use->unit_name);
+                    push_decl(std::move(use));
+                } else {
+                    module_names_.insert(use->unit_name);
+                    unit->uses.push_back(std::move(use));
+                }
             }
             continue;
         }
