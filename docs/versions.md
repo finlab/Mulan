@@ -27,6 +27,15 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 234 — 2026-11-19
+
+**Split `codegen_stmt.cpp` (1206 lines) into statement emission and the memory primitives.**
+
+`codegen_mem.cpp` now owns `storeAt` / `loadAt` / `storeValue` / `zeroMem` / `copyMem` and
+initialization into a destination slot (`initInto` / `initFromExpr`); `codegen_stmt.cpp` keeps the
+statement dispatch (995 lines). Pure move: 30 cases of emitted IR are byte-identical before and
+after.
+
 #### build 233 — 2026-11-19
 
 **Accept `-9223372036854775808` (the `long` minimum).**
