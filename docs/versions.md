@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 257 — 2026-11-20
+
+**The may-throw analysis follows every call the emitter emits; an unknown construct is assumed to throw.**
+
+A member operator, a user `operator[]` and an implicit conversion constructor were invisible to the
+analysis (`src/codegen/may_throw.cpp` followed only a free operator's `op_func`), so a function whose
+only throwing call was `c[i]`, `a + b` (a member operator) or `S s = 3` was classified nothrow, its
+callers skipped the pending-slot check, and the exception vanished (`catch` never ran and the program
+continued). `visitExpr`/`visitInit`/`visitStmt` now add those dependencies, also visit `is` and `swap`
+operands, and any node kind the walker does not recognize marks the function as throwing instead of
+being silently ignored.
+
+Cases `exception_subscript` (struct and class `operator[]`), `exception_member_op` (member `+` and
+unary `-`) and `exception_implicit_ctor`.
+
 #### build 256 — 2026-11-20
 
 **A user copy constructor runs at every copying position, and a by-value struct argument is handed to the callee.**

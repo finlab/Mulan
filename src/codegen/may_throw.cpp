@@ -104,6 +104,8 @@ struct Analysis {
 
     void visitExpr(Expr* e, Item& it) {
         if (!e) return;
+        // An implicit constructor (`implicit string(const char*)`) runs at the conversion site and may throw.
+        if (e->conv) addDep(it, e->conv->cname);
         if (auto c = dynamic_cast<Call*>(e)) {
             visitCall(c, it);
             return;
@@ -127,12 +129,16 @@ struct Analysis {
         }
         if (auto b = dynamic_cast<Binary*>(e)) {
             if (b->op_func) addDep(it, b->op_func->cname);
+            // A member operator is a method call just like a free one; missing it silently dropped
+            // the exception its body throws.
+            if (b->op_method) addDep(it, method_key(b->op_method));
             visitExpr(b->left.get(), it);
             visitExpr(b->right.get(), it);
             return;
         }
         if (auto u = dynamic_cast<Unary*>(e)) {
             if (u->op_func) addDep(it, u->op_func->cname);
+            if (u->op_method) addDep(it, method_key(u->op_method));
             visitExpr(u->operand.get(), it);
             return;
         }
@@ -141,6 +147,8 @@ struct Analysis {
             return;
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
+            // `c[i]` through a user operator is a method call (the built-in subscript has no method).
+            if (ix->get_method) addDep(it, method_key(ix->get_method));
             visitExpr(ix->base.get(), it);
             for (auto& idx : ix->indices) visitExpr(idx.get(), it);
             return;
@@ -169,6 +177,25 @@ struct Analysis {
             visitExpr(r->hi.get(), it);
             return;
         }
+        if (auto ise = dynamic_cast<IsExpr*>(e)) {
+            visitExpr(ise->obj.get(), it);
+            return;
+        }
+        if (auto sw = dynamic_cast<SwapExpr*>(e)) {
+            // the byte exchange itself runs no user code, but taking the address of a user subscript does
+            visitExpr(sw->a.get(), it);
+            visitExpr(sw->b.get(), it);
+            return;
+        }
+        // Leaf kinds (a literal, a name, `sizeof(expr)` whose operand is not evaluated, `move x`) run
+        // no user code. Any other kind is one this walker does not know: stay conservative instead of
+        // silently classifying the function as nothrow (a missed exception check is a wrong program).
+        if (dynamic_cast<Name*>(e) || dynamic_cast<IntLit*>(e) || dynamic_cast<FloatLit*>(e) ||
+            dynamic_cast<CharLit*>(e) || dynamic_cast<StringLit*>(e) || dynamic_cast<BoolLit*>(e) ||
+            dynamic_cast<NullLit*>(e) || dynamic_cast<SizeofExpr*>(e) || dynamic_cast<MoveExpr*>(e)) {
+            return;
+        }
+        it.unknown = true;
     }
 
     void visitInit(Init* init, Item& it) {
@@ -186,6 +213,7 @@ struct Analysis {
             visitExpr(ir->hi.get(), it);
             return;
         }
+        it.unknown = true;
     }
 
     void visitStmt(Stmt* s, Item& it) {
@@ -272,6 +300,10 @@ struct Analysis {
             return;
         }
         // BreakStmt / ContinueStmt: no calls.
+        if (dynamic_cast<BreakStmt*>(s) || dynamic_cast<ContinueStmt*>(s)) return;
+        // An unknown statement kind (a `para` section, say) runs code this walker cannot see:
+        // classify the enclosing function as throwing rather than miss an exception.
+        it.unknown = true;
     }
 
     // A value-typed subobject with a constructor is built before the enclosing constructor's body
