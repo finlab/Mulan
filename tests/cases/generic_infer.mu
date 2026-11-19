@@ -53,6 +53,14 @@ T bump<T>(ref T x) {
     return x;
 }
 
+// A value parameter: `const` is a view of the argument, so a `const int` argument still instantiates
+// `T = int` and the body can write its own `T` local.
+T bump_copy<T>(T x) {
+    T y = x;
+    y = y + 1;
+    return y;
+}
+
 T apply<T>(delegate (T) => T f, T x) { return f(x); }
 
 long mix<T, U>(T a, U b) { return (a as long) + (b as long); }
@@ -97,6 +105,10 @@ int main() {
     int m = 5;
     int j = bump(m);
 
+    const int ci = 41;
+    int c1 = bump_copy(ci);  // the first instance is built from a const argument
+    int c2 = bump_copy(7);   // ... and the same instance serves the later non-const one
+
     int k = apply((int q) => q + 2, 10);
     int l = apply(inc, 20);  // a non-capturing function value fits the delegate pattern
 
@@ -118,10 +130,11 @@ int main() {
     printf("user %ld mix %ld\n", o.cents, p);
     printf("rec %d\n", q);
     printf("nested %d %ld\n", r, s);
+    printf("const %d %d\n", c1, c2);
 
     if (a == 2 and b == 2 and explicit_arg == 7 and c == 7 and d == 7 and e == 9 and
         f == 11 and g == 21 and i == 31 and i2 == 31 and i3 == 31 and m == 6 and j == 6 and
-        k == 12 and l == 21 and
+        k == 12 and l == 21 and c1 == 42 and c2 == 8 and
         o.cents == 5 and p == 3 and q == 10 and r == 7 and s == 70) {
         puts("generic infer ok");
     }

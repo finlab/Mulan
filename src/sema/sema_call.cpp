@@ -148,6 +148,7 @@ namespace muc_detail {
                     err("`" + nm->ident + "` is a variable, not a function", c);
                 }
                 // struct construction: current unit first, then public types of `use`d units
+                std::string bare_tmpl_unit;
                 TypePtr st = find_type_named(cur_->name, nm->ident, false);
                 if (!st) {
                     std::string src;
@@ -173,33 +174,39 @@ namespace muc_detail {
                 } else if (lookup_enum_const(nm->ident) != nullptr) {
                     err("`" + nm->ident + "` is an enum member and cannot be called", c);
                 } else if (FuncDecl* gf = [&]() -> FuncDecl* {
-                               // Only the current unit and the visible `use`d units may name the template:
-                               // pointing a lookup failure at a private template of a unit that was never
-                               // imported would both mislead and leak that unit's location.
-                               Decl* d = nullptr;
+                               // The same lookup `instantiate_func` performs for a bare name: this unit
+                               // first, otherwise the unique template of that name; two templates of the
+                               // same name are ambiguous here exactly as they are for an explicit list.
+                               std::string tu, tn;
                                auto own = generic_templates_.find(cur_->name + "." + nm->ident);
-                               if (own != generic_templates_.end()) d = own->second;
-                               for (auto& use : cur_->uses) {
-                                   if (d) break;
-                                   if (!unit_visible(use->unit_name)) continue;
-                                   auto it = generic_templates_.find(use->unit_name + "." + nm->ident);
-                                   if (it != generic_templates_.end()) d = it->second;
+                               Decl* d = own != generic_templates_.end() ? own->second : nullptr;
+                               std::string unit = cur_->name;
+                               if (!d) {
+                                   for (const auto& kv : generic_templates_) {
+                                       split_qualified(kv.first, tu, tn);
+                                       if (tn != nm->ident) continue;
+                                       if (d) {
+                                           err("generic function `" + nm->ident +
+                                                   "` is ambiguous; qualify it with a unit name",
+                                               c);
+                                       }
+                                       d = kv.second;
+                                       unit = tu;
+                                   }
                                }
+                               bare_tmpl_unit = unit;
                                return d ? dynamic_cast<FuncDecl*>(d) : nullptr;
                            }()) {
                     // A bare call of a generic function: the type arguments are inferred from the
                     // argument types (SPEC 3.15.3). Every way inference can fail has its own
                     // diagnostic, so this branch never sends the reader to `<...>` without a reason.
-                    std::string tmpl_unit;
+                    const std::string& tmpl_unit = bare_tmpl_unit;
                     std::string where;
-                    for (auto& kv : generic_templates_) {
-                        if (kv.second != static_cast<Decl*>(gf)) continue;
-                        tmpl_unit = kv.first.substr(0, kv.first.rfind('.'));
+                    {
                         auto iu = infos_.find(tmpl_unit);
                         where = ((iu != infos_.end() && iu->second.unit) ? iu->second.unit->filename
                                                                         : tmpl_unit) +
                                 ":" + std::to_string(gf->line) + ":" + std::to_string(gf->col);
-                        break;
                     }
                     std::vector<TypeSpecPtr> inferred = infer_func_type_args(
                         c, gf, nm->ident,

@@ -7,4 +7,5 @@ fn 12 21
 user 5 mix 3
 rec 10
 nested 7 70
+const 42 8
 generic infer ok

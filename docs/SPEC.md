@@ -1251,11 +1251,15 @@ Box<int> b = new Box<int>(7);    // generic class construction
   (build 251). An explicit list is always used as written and is never checked by inference.
 - **Inference is structural and argument-driven**: every argument type is matched against its declared
   parameter *pattern*, top-down, and each type parameter is bound at its first occurrence:
-  - a bare parameter `T` binds the argument type itself (a `const` argument binds the same `T`);
+  - a bare parameter `T` binds the argument type itself; a `const` argument binds the same `T` (the
+    top-level `const` is a view, 3.10, so `f(const int)` instantiates `f<int>` and the body can write
+    its own `T` local);
   - `T*`, `T[N]`, `T[]`/`T[,]` bind the element type; the slice rank must agree, and the static array
     length is not part of the inference (only the element is). A static array fits a `T*` parameter
     through the array-to-pointer decay and a slice parameter of the same rank through the
-    `T[N] -> T[]` conversion (3.6); the conversion itself still runs at the call.
+    `T[N] -> T[]` conversion (3.6); the conversion itself still runs at the call. Decay applies to a
+    one-dimensional array only, so `int[2,3]` does not match `T*` (an explicit list is rejected there
+    too); a two-dimensional slice pattern `T[,]` does take `int[2,3]`.
   - a generic pattern `Vec<T>` / `Box<Vec<T>>` matches an instance of the same template and binds from
     its type arguments, so nesting any depth works;
   - `ref T` / `const ref T` bind the referent, i.e. the argument's own type;
@@ -1268,7 +1272,11 @@ Box<int> b = new Box<int>(7);    // generic class construction
   `T*` parameter, or `null` / a `void` / a range argument, none of which has a type of its own), or a
   parameter no argument determines. A deduced argument must also satisfy the template's constraint
   (`T: I`): `max2(p, q)` with a `Point` that has no `operator<` reports that the *inferred* `T = Point`
-  does not satisfy `IOrder` and that an explicit list can choose another type.
+  does not satisfy `IOrder` and that an explicit list can choose another type. An argument that cannot
+  be typed before its parameter type is known (`Some(3)` without a target sum type, an overloaded
+  function name used as a value) is reported with that reason plus the hint to write the list.
+- **Two visible templates of the same name are ambiguous** for a bare call exactly as they are for an
+  explicit list: qualify with a unit name.
 - **Scope**: only **free functions** infer. Method-level generics, constructors and a type in type
   position (`Vec<T>` inside another declaration) still require the arguments to be written out.
 - `auto` may be used to receive the result.

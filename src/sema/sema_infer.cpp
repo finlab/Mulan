@@ -15,6 +15,7 @@
 // occurrence and reports a conflict when a later one disagrees. Nothing here is speculative: every
 // failure has a diagnostic of its own, and the resulting argument list is handed to the ordinary
 // instantiation path, so there is exactly one way an instance is built.
+#include <algorithm>
 #include <functional>
 #include <string>
 #include <vector>
@@ -30,6 +31,32 @@ enum class Match {
     Shape,     // the argument does not have the structure the pattern describes
     Conflict,  // the same type parameter is bound to two different types
 };
+
+// The deduced type without its top-level `const`. `const` is a view of the argument (SPEC 3.10), not
+// part of what `T` denotes: `f(const int)` must instantiate `f<int>`, otherwise the body cannot write
+// its own `T` local, and the instance key — which prints the type name — would collide with the
+// non-const instance while the parameter types differ. A nested `const` (`const int*`) stays as it is;
+// that is a real part of the pointer type.
+TypePtr without_top_const(const TypePtr& t) {
+    if (!t || !t->is_const) return t;
+    auto c = std::make_shared<Type>(*t);
+    c->is_const = false;
+    return c;
+}
+
+// Type names in a diagnostic must stay meaningful: a constrained template body is checked with each
+// type parameter bound to a synthetic `$witness.<unit>.<template>.<param>` type, which the reader
+// never wrote and cannot qualify.
+std::string display_type(const TypePtr& t) {
+    if (!t) return "?";
+    const std::string s = t->str();
+    const std::string marker = "$witness.";
+    if (s.compare(0, marker.size(), marker) != 0) return s;
+    const size_t dot = s.rfind('.');
+    return dot == std::string::npos
+               ? s
+               : "the enclosing template's type parameter `" + s.substr(dot + 1) + "`";
+}
 
 // Index of `name` among the template's type parameters, or -1.
 int param_index(const std::vector<TypeParam>& tps, const std::string& name) {
@@ -125,7 +152,7 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
                     }
                     const size_t ki = static_cast<size_t>(k);
                     if (!bound[ki]) {
-                        bound[ki] = at;
+                        bound[ki] = without_top_const(at);
                         bound_at[ki] = current_arg;
                         return Match::Ok;
                     }
@@ -216,9 +243,21 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
     for (size_t i = 0; i < c->args.size(); ++i) {
         Expr* a = c->args[i].get();
         current_arg = i;
+        bad_pat = nullptr;
         // The argument is typed on its own: no parameter type is known before the parameters are bound,
-        // and the ordinary argument check runs again once the instance exists.
-        TypePtr at = check_expr(a);
+        // and the ordinary argument check runs again once the instance exists. An expression that needs
+        // a target type to be meaningful (`Some(3)` before the sum type is known, an overloaded function
+        // name used as a value) therefore cannot be typed here even though the call is fine with an
+        // explicit list: keep the original reason and name the way out.
+        TypePtr at;
+        try {
+            at = check_expr(a);
+        } catch (const MuError& e) {
+            err("`" + name + "`: cannot infer the type arguments: argument " + std::to_string(i + 1) +
+                    " cannot be typed on its own (" + e.msg + "); write `" + name +
+                    "<...>(...)` to give it its parameter type" + note,
+                a);
+        }
         const Param* p = i < tmpl->params.size() ? tmpl->params[i].get() : nullptr;
         if (!p) continue;  // `...`: extra arguments carry no parameter type
         if (!at || is_void(at)) {
@@ -231,20 +270,21 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
         const Match m = match(*p->spec, at);
         if (m == Match::Conflict) {
             const size_t k = static_cast<size_t>(conflict_param);
-            const std::string first = bound[k]->str();
-            const std::string second = conflict_ty ? conflict_ty->str() : at->str();
+            const std::string first = display_type(bound[k]);
+            const std::string second = display_type(conflict_ty ? conflict_ty : at);
             if (bound_at[k] == i) {
                 // Both positions are inside this one argument: `Pair<T, T>` against `Pair<int, long>`.
                 err("`" + name + "`: the type argument `" + tps[k].name + "` is inferred as `" + first +
                         "` from one part of argument " + std::to_string(i + 1) + " and as `" + second +
                         "` from another; write the type argument explicitly (`" + name + "<...>(...)`)" + note,
                     a);
+            } else {
+                err("`" + name + "`: the type argument `" + tps[k].name + "` inferred from argument " +
+                        std::to_string(bound_at[k] + 1) + " is `" + first + "`, but argument " +
+                        std::to_string(i + 1) + " gives `" + second +
+                        "`; write the type argument explicitly (`" + name + "<...>(...)`) to choose one" + note,
+                    a);
             }
-            err("`" + name + "`: the type argument `" + tps[k].name + "` inferred from argument " +
-                    std::to_string(bound_at[k] + 1) + " is `" + first + "`, but argument " +
-                    std::to_string(i + 1) + " gives `" + second +
-                    "`; write the type argument explicitly (`" + name + "<...>(...)`) to choose one" + note,
-                a);
         }
         if (m == Match::Shape) {
             std::vector<int> mentioned;
@@ -298,7 +338,7 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
             }
             if (!any) {
                 err("`" + name + "`: the type argument `" + tp.name + "` inferred from argument " +
-                        std::to_string(bound_at[k] + 1) + " is `" + bound[k]->str() +
+                        std::to_string(bound_at[k] + 1) + " is `" + display_type(bound[k]) +
                         "`, which does not satisfy any alternative bound of the constraint; write `" +
                         name + "<...>(...)` to choose the type explicitly" + note,
                     c->args[bound_at[k]].get());
@@ -308,7 +348,7 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
         for (const auto& b : tp.bounds) {
             if (satisfies_one(bound[k], b.get(), cur_, &why)) continue;
             err("`" + name + "`: the type argument `" + tp.name + "` inferred from argument " +
-                    std::to_string(bound_at[k] + 1) + " is `" + bound[k]->str() +
+                    std::to_string(bound_at[k] + 1) + " is `" + display_type(bound[k]) +
                     "`, which does not satisfy the constraint `" + canon_spec(*b) + "`: " + why +
                     "; write `" + name + "<...>(...)` to choose the type explicitly" + note,
                 c->args[bound_at[k]].get());

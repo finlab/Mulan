@@ -77,6 +77,28 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   get one diagnostic that says the C-style form requires the parentheses. Must-fail case
   `for_paren_required`; SPEC 6.4 states it explicitly.
 
+#### build 254 — 2026-11-19
+
+**Inference review fixes: the top-level `const` binding, ambiguous names, and arguments that need a target type.**
+
+- **A `const` argument binds the plain type.** `f(const int)` deduced `T = const int`, so the instance
+  parameter — and the template body's own `T` local — was read-only, and the error surfaced inside the
+  template instead of at the call. Worse, the instance key prints the type name, so `bump<const int>`
+  and `bump<int>` collapsed to the same key while their parameter types differed: whichever call came
+  first decided whether the later one compiled. The top-level `const` is now dropped when a parameter is
+  bound (a nested `const` such as `const int*` stays: it is part of the pointer type). Run case
+  `generic_infer` gained a `const int` argument that is also the first instance of its template.
+- **Two templates of the same name are ambiguous**, as they already were for an explicit list; the bare
+  path used to pick the first visible `use`d unit silently. Must-fail `generic_infer_ambiguous`.
+- **An argument that needs its parameter type is reported as such.** `unwrap(Some(3))` used to fail with
+  "undefined function `Some`" deep inside the argument, with no way out visible; the diagnostic now keeps
+  that reason and adds the hint to write the type arguments. Must-fail `generic_infer_needs_target`.
+- **Internal witness names never reach the reader**: a template body is checked with each type parameter
+  bound to a synthetic `$witness.<unit>.<template>.<param>` type, and that name is now described as the
+  enclosing template's parameter.
+- SPEC 3.15.3 states the `const` rule, the one-dimensional decay limit and both new diagnostics.
+  Windows 887/887, Linux 885/885.
+
 #### build 253 — 2026-11-19
 
 **Inference follows the array conversions.**

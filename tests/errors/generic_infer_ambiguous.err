@@ -1,0 +1,2 @@
+generic function `genid` is ambiguous; qualify it with a unit name
+!cannot infer
