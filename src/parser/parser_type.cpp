@@ -384,6 +384,11 @@ TypeSpecPtr Parser::type_suffixes(TypeSpecPtr spec, const Token& t) {
                 const Token n = peek();
                 if (n.kind == TokKind::Int) {
                     advance();
+                    if (n.int_min_mag) {
+                        throw err_at("integer literal is too large (maximum 2^63-1): a 2^63 magnitude "
+                                     "is only valid directly after unary `-`",
+                                     n);
+                    }
                     if (n.ival <= 0) throw err_at("array length must be greater than 0", n);
                     dims.emplace_back(static_cast<size_t>(n.ival), nullptr);
                 } else {

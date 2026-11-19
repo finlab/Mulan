@@ -113,14 +113,14 @@ namespace muc_detail {
         // `move x` is the sanctioned way to produce an uncopyable value: `check_move` already verified
         // that the type is movable.
         if (noncopyable_struct(dst) && !dynamic_cast<MoveExpr*>(e)) {
-            // A prvalue of the same type is moved, not copied: a construction (`Token(5)`), and a call
+            // A prvalue of the same type is moved, not copied: a construction (`Token(5)`) and a call
             // whose result is the value itself (`a = f();` — the callee's return slot is handed over).
-            if (auto call = dynamic_cast<Call*>(e)) {
-                if (auto nm = dynamic_cast<Name*>(call->callee.get());
-                    nm && lookup_local(nm->ident) == nullptr) {
-                    TypePtr built = check_expr(e, dst);
-                    if (built && same_type(built, dst)) return dst;
-                }
+            // A call returning a *borrow* (`ref T f()`) is not a prvalue: it must still be copied.
+            bool prvalue = false;
+            if (auto call = dynamic_cast<Call*>(e); call && !call->by_ref) prvalue = true;
+            if (prvalue) {
+                TypePtr built = check_expr(e, dst);
+                if (built && same_type(built, dst)) return dst;
             }
             err(what + ": struct `" + dst->str() + "` cannot be copied by value: " +
                     noncopyable_reason(dst) + "; declare `" + dst->str() + "(const ref " + dst->str() +
@@ -731,6 +731,14 @@ namespace muc_detail {
         }
         ConstDepthGuard depth(*this);
         if (auto il = dynamic_cast<IntLit*>(e)) {
+            // A `2^63` magnitude is only meaningful directly after unary `-`; the parser consumes it
+            // there, so one reaching constant evaluation is out of range (otherwise it would silently
+            // be the value 0).
+            if (il->min_magnitude) {
+                err("integer literal is too large (maximum 2^63-1): a 2^63 magnitude is only valid "
+                    "directly after unary `-`",
+                    e);
+            }
             out.ty = (il->value >= -(1LL << 31) && il->value < (1LL << 31)) ? t_int()
                                                                            : Type::make_prim("long");
             out.i = il->value;

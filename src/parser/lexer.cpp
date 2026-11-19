@@ -379,7 +379,8 @@ private:
             if (raw.empty()) throw err("hexadecimal literal has no digits", line, col);
             tok.isuffix = read_int_suffix();
             tok.kind = TokKind::Int;
-            tok.ival = int_digits(raw, 16, line, col, tok.isuffix);
+            tok.ival = int_digits(raw, 16, line, col, tok.isuffix, /*allow_min_mag=*/tok.isuffix != 1,
+                                  &tok.int_min_mag);
             return tok;
         }
 
@@ -391,7 +392,8 @@ private:
             if (raw.empty()) throw err("binary literal has no digits", line, col);
             tok.isuffix = read_int_suffix();
             tok.kind = TokKind::Int;
-            tok.ival = int_digits(raw, 2, line, col, tok.isuffix);
+            tok.ival = int_digits(raw, 2, line, col, tok.isuffix, /*allow_min_mag=*/tok.isuffix != 1,
+                                  &tok.int_min_mag);
             return tok;
         }
 

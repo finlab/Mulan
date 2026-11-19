@@ -12,6 +12,7 @@ int g_live = 0;
 struct Tagged {
     string tag;
     Tagged(const char* t) { tag = string(t); g_live = g_live + 1; }
+    Tagged(const ref Tagged o) { tag = o.tag; g_live = g_live + 1; }
     ~Tagged() { g_live = g_live - 1; }
 }
 
@@ -30,6 +31,16 @@ int main() {
     printf("%s\n", a.tag.cstr());
     a = make("three");
     printf("%s\n", a.tag.cstr());
+
+    // a conditional between two values keeps the copy path (the result may share with its operands)
+    Tagged b1 = Tagged("left");
+    Tagged b2 = Tagged("right");
+    int p = 0;
+    while (p < 200) {
+        a = (p % 2 == 0 ? b1 : b2);
+        p = p + 1;
+    }
+    printf("%s %s %s\n", a.tag.cstr(), b1.tag.cstr(), b2.tag.cstr());
 
     MoveOnly m = MoveOnly(1);
     m = MoveOnly(9);

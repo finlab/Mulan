@@ -131,14 +131,26 @@ namespace muc_detail {
     // the temporaries are swapped byte by byte, and the temporary (which now holds the old value) is
     // destroyed. A throwing copy constructor therefore leaves the destination untouched, and a source that
     // aliases the destination is still intact when it is read (agents/value-semantics.md §8.11).
+    // Whether an expression is a true prvalue whose storage the assignment may take over by a plain
+    // store. Deliberately narrower than `valueOwned`: a `?:` result or an operator result may be a
+    // borrowed/freshly-retained copy whose lifetime the expression itself manages, so those keep the
+    // copy path (measured: taking over a `?:` result double-released the operands).
+    static bool is_owned_prvalue(Expr* e) {
+        if (!e) return false;
+        if (dynamic_cast<MoveExpr*>(e)) return true;
+        if (auto c = dynamic_cast<Call*>(e)) return !c->by_ref;
+        if (dynamic_cast<NewExpr*>(e)) return true;
+        return false;
+    }
+
     void Emitter::emitAssignSwap(Value* dst, Expr* e, const TypePtr& ty) {
         Value* tmp = entryAlloca(lt(ty), "assign.tmp", alignOf(ty));
         if (auto mv = dynamic_cast<MoveExpr*>(e)) {
             emitMoveInto(tmp, ty, mv);
-        } else if (valueOwned(e) || convOwns(e, ty)) {
-            // A prvalue (`a = T(args);`, `a = f();`) is built in a slot the expression already owns:
-            // moving it into the temporary is a plain store — no copy constructor, so an uncopyable
-            // type works, and no extra retain.
+        } else if (is_owned_prvalue(e)) {
+            // An owned prvalue (`a = T(args);`, `a = f();`) is built in a slot the expression already
+            // owns: moving it into the temporary is a plain store — no copy constructor, so an
+            // uncopyable type works, and no extra retain.
             Value* v = coerce(e, ty);
             b.CreateStore(v, tmp);
         } else {
@@ -504,7 +516,9 @@ namespace muc_detail {
         if (dynamic_cast<NewExpr*>(e)) return true;
         // `move x` hands over the value: the source is zeroed and no longer owns it
         if (dynamic_cast<MoveExpr*>(e)) return true;
-        if (dynamic_cast<Call*>(e)) return true;
+        // A call that returns a borrow (`ref T f()`) hands over an address, not an owned value: the
+        // callee's object still owns it (the same distinction `Binary` makes below).
+        if (auto c = dynamic_cast<Call*>(e)) return !c->by_ref;
         // a capturing lambda materializes a fresh environment (rc = 1), so its value is owned; a
         // non-capturing lambda is a bare function address and carries no ownership either way
         if (dynamic_cast<Lambda*>(e)) return true;

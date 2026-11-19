@@ -670,7 +670,14 @@ namespace muc_detail {
             err("cases of an enum switch must be members of " + st->str(), e);
         }
 
-        if (auto* il = dynamic_cast<IntLit*>(e)) return checked_int_pattern(il->value, st, e);
+        if (auto* il = dynamic_cast<IntLit*>(e)) {
+            if (il->min_magnitude) {
+                err("integer literal is too large (maximum 2^63-1): a 2^63 magnitude is only valid "
+                    "directly after unary `-`",
+                    e);
+            }
+            return checked_int_pattern(il->value, st, e);
+        }
         if (auto* cl = dynamic_cast<CharLit*>(e)) return checked_int_pattern(cl->value, st, e);
         if (auto* u = dynamic_cast<Unary*>(e); u && (u->op == "-" || u->op == "+")) {
             if (auto* il = dynamic_cast<IntLit*>(u->operand.get())) {

@@ -1,5 +1,6 @@
 two
 three
+right left right
 9
 loop2
-live=1
+live=3

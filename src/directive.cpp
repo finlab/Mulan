@@ -270,6 +270,13 @@ bool g_comptime_visible = true;
 
 bool eval(const Expr& e, V& out, std::string& why) {
     if (const auto* p = dynamic_cast<const IntLit*>(&e)) {
+        // A `2^63` magnitude is only valid directly after unary `-` (there it becomes LLONG_MIN), so
+        // one reaching the `#if` evaluator is out of range — never silently 0.
+        if (p->min_magnitude) {
+            why = "integer literal is too large (maximum 2^63-1): a 2^63 magnitude is only valid "
+                  "directly after unary `-`";
+            return false;
+        }
         out = vint(p->value);
         // A literal takes the narrowest of the two fixed widths that holds it: `1` is an `int`, a value
         // past the 32-bit range is a `long` (SPEC 3.2 fixes `int`/`long` at 32/64 bits and gives no
