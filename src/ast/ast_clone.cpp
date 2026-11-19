@@ -207,6 +207,19 @@ ExprPtr clone_expr(const Expr& e) {
         r->operand = clone_expr(*p->operand);
         return r;
     }
+    if (auto p = dynamic_cast<const MoveExpr*>(&e)) {
+        auto r = mk<MoveExpr>(e);
+        r->operand = clone_expr(*p->operand);
+        // `moved` names the source local of the *original* body; the instantiated body binds its own
+        // parameters and locals, so sema fills this in again when it checks the clone.
+        return r;
+    }
+    if (auto p = dynamic_cast<const SwapExpr*>(&e)) {
+        auto r = mk<SwapExpr>(e);
+        r->a = clone_expr(*p->a);
+        r->b = clone_expr(*p->b);
+        return r;
+    }
     if (auto p = dynamic_cast<const Binary*>(&e)) {
         auto r = mk<Binary>(e);
         r->op = p->op;
