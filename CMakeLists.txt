@@ -102,6 +102,7 @@ add_executable(muc
   src/codegen/codegen_para.cpp
   src/codegen/codegen_mem.cpp
   src/codegen/codegen_class.cpp
+  src/codegen/codegen_destroy.cpp
   src/codegen/codegen_func.cpp
   src/codegen/codegen_unit.cpp
   src/codegen/abi.cpp

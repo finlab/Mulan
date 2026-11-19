@@ -27,6 +27,16 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 239 — 2026-11-19
+
+**Split `codegen_destroy.cpp` out of `codegen_class.cpp` (1091 lines).**
+
+`codegen_destroy.cpp` owns `emitReleaseValue` / `emitRetainValue` / `emitReleasePartialValue` and the
+destructor chain (`emitDtor`, `emitDestroy`, `emitDtorPartial`, `emitDestroyPartialFn`,
+`emitPartialDestroyCall`); `codegen_class.cpp` keeps the interface table, vtable, class descriptors and
+method bodies (766 lines). Pure move: emitted IR is identical for the same 30 cases (ignoring the
+`mulan.build` flag).
+
 #### build 238 — 2026-11-19
 
 **Split `sema_for.cpp` out of `sema_class2.cpp` (1121 lines).**
