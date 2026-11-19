@@ -1985,9 +1985,12 @@ Cat c = pick ? first : second;
   4. If none applies → compile error, requiring an explicit `as` conversion on one side.
 - Literals adapt to the context: in `cond ? 1 : 2.5` both sides are `double`; in `cond ? 'a' : b` (where `b` is `byte`/`char`) they adapt as 8-bit integers.
 - When both sides are `void` the result is `void`, usable only as an expression statement (`cond ? f() : g();`).
-- The result is produced with **value** semantics (prvalue): structs/strings/fixed-size arrays are copied (reference fields are retained field by field);
+- The result is produced with **value** semantics (prvalue): a borrowed branch is built into the result exactly
+  as `T x = <branch>` would build it — a type with a user copy constructor is copied **through that constructor
+  once** (3.4), every other struct/string/fixed-size array is retained field by field;
   class/interface yields a new strong reference (a borrowed branch is +1, a `new`/call result transfers ownership directly);
   a dynamic array transfers/shares the handle (consistent with the allocation semantics of `T[N] → T[]`).
+  Taking the result over (declaration initializer or assignment) copies it no further.
 - The result is not an lvalue: `(cond ? a : b) = x` and `&(cond ? a : b)` are both compile errors.
 - It does not participate in compile-time constant evaluation (consistent with `and`/`or`): `?:` cannot appear in a unit-level `const` initializer.
 - GNU's `a ?: b` shorthand is not provided; both branches must be written.
@@ -3015,7 +3018,7 @@ switch v {
 | 101 | Non-ASCII character literals | Decided: not supported in phase one (a literal is a single-byte `byte`; use `'\xNN'` or `string`) |
 | 102 | Enum comparison | Decided: only between the same enum; `== != < <= > >=` are supported, the order is the order of the underlying integer values; cross-enum or integer comparisons require `as` (see §3.5) |
 | 103 | Qualified references to enum members | Decided: `Color.Red` is equivalent to the unprefixed `Red`; across units write `unit.Color.Red`; members are constants (not assignable, and their address cannot be taken) |
-| 104 | Conditional expression `?:` | Decided (0.0.46): `cond ? a : b`, right-associative; the condition must be `bool`; only one branch is evaluated; the two sides must have the same type / implicit widening / `null` adaptation, otherwise `as` is required; the result is not an lvalue; see 5.2 |
+| 104 | Conditional expression `?:` | Decided (0.0.46): `cond ? a : b`, right-associative; the condition must be `bool`; only one branch is evaluated; the two sides must have the same type / implicit widening / `null` adaptation, otherwise `as` is required; the result is not an lvalue; it is one owned value (a user copy constructor runs once for a borrowed branch, build 247); see 5.2 |
 | 105 | `const` on field declarations | **Redesigned (2026-11-17)**: `const` fields are allowed (`const int x;`), must be initialized by every constructor (member initializer list `C(...) : x(v) {}` or a default member initializer `const int x = 5;`), and are read-only afterwards. Type-level constants are removed; `const` inside a type body means a field |
 | 106 | Floating-point `%` | Decided (implemented): legal, the semantics are LLVM `frem` / C `fmod` (the sign follows the dividend) |
 | 107 | Unit-level `const` referencing other `const`s/enum members | **Redesigned (2026-11-17)**: the evaluator supports references to **already declared and imported** constants (unit-level `const`, enum members); **forward references are gone** (`const int A = B; const int B = 1;` is an error). `const int B = A + 1;` and `const int C = sizeof(int) as int;` are legal; division by zero and a not-yet-evaluated reference are errors (3.7.2) |

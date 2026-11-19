@@ -1,0 +1,4 @@
+left live=3 copies=1
+right live=3 copies=2
+left live=3 copies=1002
+one one two

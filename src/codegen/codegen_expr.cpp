@@ -677,11 +677,17 @@ static bool is_numeric(const TypePtr& t) {
         return loadAt(lt(ty), res);
     }
 
-    // Write the branch value into the result slot with the same ownership rules as a statement-level
-    // write (`initFromExpr`): a borrowed source is retained, an owned source transfers ownership.
+    // Write the branch value into the result slot as one owned value. A borrowed arm of a type with a
+    // user copy constructor is built through that constructor (SPEC 3.4: it defines what copying means);
+    // every other arm follows the statement-level write rules (`initFromExpr`): a borrowed RC value is
+    // retained field by field, an owned source transfers ownership.
     void Emitter::emitTernaryArm(Value* addr, Expr* src, const TypePtr& ty) {
         if (!addr) {  // void branch: only evaluate
             eval(src);
+            return;
+        }
+        if (ty->kind == TypeKind::Struct && ty->has_copy_ctor && !src->conv && !valueOwned(src)) {
+            emitCopyInto(addr, addrOf(src), ty);
             return;
         }
         initFromExpr(addr, ty, src, false);

@@ -77,6 +77,22 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   get one diagnostic that says the C-style form requires the parentheses. Must-fail case
   `for_paren_required`; SPEC 6.4 states it explicitly.
 
+#### build 247 — 2026-11-19
+
+**`?:` copies a borrowed branch through the user copy constructor.**
+
+`Box a = (c ? b1 : b2);` where `Box` owns a `string` and declares `Box(const ref Box)`: the result slot
+was filled by a field-level retain (`emitRetainValue`), so the user's copy constructor never ran — the
+object counted as if it had been copied, but its copy logic (deep copy, counting, locking) was skipped,
+and the retained reference count of the branch leaked. The conditional now materializes **one owned
+value** the same way `T x = <branch>` would: a borrowed branch of a struct with a user copy constructor
+is built with `emitCopyInto`, every other branch keeps the field-retain / ownership-transfer rules. The
+assignment form no longer needs the narrower prvalue test: `is_owned_prvalue` accepts a `?:` again,
+because the slot now owns a fresh copy, so `a = (c ? b1 : b2)` copies once and takes the value over by a
+plain store (the double release measured under build 245 came from the slot's unowned retains).
+Run case `ternary_copy` (copy counter and live-object count over 1000 assignments, plus a struct without
+a copy constructor). SPEC 5.2 and decision 104 state the rule.
+
 #### build 244 — 2026-11-19
 
 **C-style `for (init; cond; step)`.**

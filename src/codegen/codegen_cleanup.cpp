@@ -132,14 +132,17 @@ namespace muc_detail {
     // destroyed. A throwing copy constructor therefore leaves the destination untouched, and a source that
     // aliases the destination is still intact when it is read (agents/value-semantics.md §8.11).
     // Whether an expression is a true prvalue whose storage the assignment may take over by a plain
-    // store. Deliberately narrower than `valueOwned`: a `?:` result or an operator result may be a
-    // borrowed/freshly-retained copy whose lifetime the expression itself manages, so those keep the
-    // copy path (measured: taking over a `?:` result double-released the operands).
+    // store. Deliberately narrower than `valueOwned`: an operator result may be a borrowed/freshly-
+    // retained copy whose lifetime the expression itself manages, so those keep the copy path.
+    // A `?:` result does qualify: `evalTernary` materializes one owned value into its result slot
+    // (copy constructor for a borrowed arm of a copyable type, field retain otherwise), so taking it
+    // over by a plain store leaves nothing behind.
     static bool is_owned_prvalue(Expr* e) {
         if (!e) return false;
         if (dynamic_cast<MoveExpr*>(e)) return true;
         if (auto c = dynamic_cast<Call*>(e)) return !c->by_ref;
         if (dynamic_cast<NewExpr*>(e)) return true;
+        if (dynamic_cast<Ternary*>(e)) return true;
         return false;
     }
 
