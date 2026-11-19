@@ -27,6 +27,15 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 241 — 2026-11-19
+
+**Split `type_traits.cpp` out of `types.cpp` (1032 lines).**
+
+`type_traits.cpp` owns the predicate family (`is_integer` … `needs_ctor`), `prim_names` /
+`is_prim_name` and the built-in integer table they need; `types.cpp` keeps construction, `str()`,
+field lookup, layout and the promotion helpers (755 lines). Pure move: emitted IR is identical for the
+same 30 cases (ignoring the `mulan.build` flag).
+
 #### build 240 — 2026-11-19
 
 **Split `sema_new.cpp` out of `sema_call.cpp` (1078 lines).**

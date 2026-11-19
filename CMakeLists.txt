@@ -60,6 +60,7 @@ add_executable(muc
   src/ast/ast_clone.cpp
   src/ast/ast_subst.cpp
   src/types/types.cpp
+  src/types/type_traits.cpp
   src/types/mangle.cpp
   src/parser/lexer.cpp
   src/parser/parser.cpp
