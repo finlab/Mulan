@@ -27,6 +27,23 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 244 — 2026-11-19
+
+**C-style `for (init; cond; step)`.**
+`#130` is implemented, superseding the SPEC §0 decision that kept only `while` and `for-in`:
+
+- parser: `for (` heads are told apart by lookahead — a C-style head starts with `;`, a declaration or
+  an expression, a for-in head starts with `[const] [ref] name [`,` ...] in`. Every clause is optional
+  (`for (;;)`, `for (; cond; step)`, `for (init; cond; )`); `init` is a declaration (several declarators
+  allowed) or one expression statement, `step` is one expression statement (`i++` / `++i` / `i = i + 1`).
+  The language has no comma operator, so `for (a = 1, b = 1; ...)` stays a syntax error.
+- AST/sema: new `ForStmt` with `init` (statement list), optional `cond`/`step` and a body; `init` and the
+  loop share one scope; `cond` must be `bool`; `continue`/`break` count on `loop_depth_` like any loop.
+- codegen: lowered to `init; while (cond) { body; step; }` with **`continue` branching to the step block**
+  (C semantics), `break` to the exit.
+- new `ForStmt` cases in `clone_expr`/`subst`, the may-throw walker and the AST dumper.
+- cases: `for_c_style` (run) and `for_c_style_cond` (must-fail); SPEC §0/3/6.1/6.3.1/§12 and decision 135.
+
 #### build 243 — 2026-11-19
 
 **Assign a prvalue to a resource-owning struct (`a = T(args);`, `a = f();`).**

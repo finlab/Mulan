@@ -25,7 +25,7 @@
 
 | Topic | Conclusion |
 |---|---|
-| Loops | Only `while` and `for-in` are kept; C-style `for` and `do-while` are not kept |
+| Loops | `while`, `for-in` and C-style `for (init; cond; step)` (implemented 2026-11-19, see 6.3.1); `do-while` is not kept |
 | Iteration | `for x in seq { }` (parentheses optional); ranges `a..b` / `a..=b` (optionally `step n`) and managed sequences (`T[]` / `T[,]` / `String` and library containers that provide `length()` + `operator[]`) are supported; static arrays are C storage and are not iterable; `continue` proceeds to the next iteration |
 | Mutability | C++ model (decided 2026-11-17): mutable by default; `const` is a **cv qualifier that is part of the type**, at every level (top-level and low-level), participating in overloads and symbol names; `const` methods are provided; `constexpr`/`consteval`/`constinit` are not |
 | Declaration initialization | Declarations use only `=`: `Point p = {1, 2}`, `Point p = {}`, `Point p = Point(1, 2)`; in non-declaration positions use `Point(...)` |
@@ -37,7 +37,7 @@
 | Strings | `string` (a value type provided by the std library: an immutable UTF-8 byte sequence; for layout and API see the library documentation) |
 | Generics | **Monomorphization** (one copy of the code per combination of type arguments); `<>` syntax; constraints use `interface` + `&`/`\|`; `Self` refers to the implementor; constraints are matched **structurally**, and built-in types satisfy them at zero cost; see 3.15 for details |
 | Memory | Pointers + `alloc/free/realloc` (raw memory); `class` uses `new` + atomic reference counting (write `x = null` to release early); no GC, no borrow checking |
-| Control flow | `if/else`, `while`, `for-in`, `break/continue/return`; conditions must be `bool`; braces are mandatory |
+| Control flow | `if/else`, `while`, `for-in`, C-style `for` (6.3.1), `break/continue/return`; conditions must be `bool`; braces are mandatory |
 | Conditional expression | `cond ? a : b` (right-associative; the condition must be `bool`; only one branch is evaluated; both sides use the same type / implicit widening / `null` adaptation) |
 | Condition parentheses | Optional; the canonical form omits them (`if cond { }`); C-style `if (cond)` is still legal |
 | Struct construction | `Point(x = 1, y = 2)` with named arguments, or `Point(1, 2)` with positional arguments; the two cannot be mixed |
@@ -50,8 +50,9 @@
 
 1. **Keep the hard capabilities of C**: value semantics, pointer arithmetic, manual memory, struct, C ABI.
 2. **Drop C's historical baggage**: no preprocessor (no macros, no textual substitution; `#if` only
-   selects code at build time, see 9.2), no implicit narrowing, no integer truthiness, no `do-while`,
-   no C-style `for`; `++/--` keep only the statement form (no value).
+   selects code at build time, see 9.2), no implicit narrowing, no integer truthiness, no `do-while`;
+   `++/--` keep only the statement form (no value). A C-style `for (init; cond; step)` **is** provided
+   (6.3.1) because it is the readable form of an index loop.
 3. **Explicit beats implicit**: use `as` for type conversions; use `const` for mutability; a read-only API boundary uses `const` methods (3.11) or a read-only `interface`.
 4. **Small and predictable**: generics only do monomorphization (no erasure, no runtime generics), no capturing closures, no hidden allocations; overloading is limited to the bounded rules in 3.11; errors that can be caught at compile time are not deferred to runtime.
 5. **Leave room for optimization without sacrificing semantics**: `const` is a static guarantee (each object is initialized once), a structured `for-in`, and future alias annotations.
@@ -2029,6 +2030,34 @@ while true { ... }   // infinite loop, exited via break
 - `continue` jumps to the condition check; `break` exits.
 - The C-style `while (cond) { ... }` is still legal; canonical style omits the parentheses.
 
+### 6.3.1 C-style for
+
+```c
+for (int i = 0; i < n; i++) { ... }
+for (; i < n; ) { ... }          // empty init and step
+for (int a = 1, b = n; a < b; a++) { ... }
+for (;;) { ... }                  // infinite loop, exited via break / return
+```
+
+- **Implemented** (decided 2026-11-19; this supersedes the earlier "no C-style `for`" decision). The head is
+  `( init ; cond ; step )` and **every clause is optional**: no init (`for (; cond; step)`), no condition
+  (always true, `for (;;)`) and no step (`for (init; cond; )`) are all legal.
+- `init` is either a declaration (one or more declarators, `const`/`auto` included) or exactly one
+  expression statement (assignment, `++`/`--`, call). It is parsed like a statement, so it ends with `;`.
+  A comma expression is not part of the language, so `for (a = 1, b = 1; ...)` is a syntax error — declare
+  the variables instead (`for (int a = 1, b = 1; ...)`).
+- `cond` must be `bool` when present (6.1). `step` is one expression statement; `++`/`--` are allowed there
+  as statement forms (`i++`, `++i`), like anywhere else.
+- **`continue` runs the step clause** (C semantics), not just the condition: `for (i = 0; i < n; i++) {
+  if (skip) continue; ... }` always advances. `break` leaves the loop. Both bind to the innermost loop.
+- `init`, `cond`, `step` and the body share one scope: a variable declared in `init` is visible in the
+  condition, the step and the body, and is destroyed when the loop exits.
+- The parenthesized form is required for this shape; `for x in seq` (no parentheses) stays for-in. The two
+  are told apart by the head: a C-style head starts with `;`, a declaration, or an expression, while a
+  for-in head starts with `[const] [ref] name [`,` ...] in`.
+
+`do-while` remains **not** part of the language (line 28); write `while true { ... }` with a `break`.
+
 ### 6.4 for-in
 
 ```c
@@ -3013,6 +3042,7 @@ switch v {
 | 132 | `const class` inheritance and views | **Decided 2026-11-18**: a `const class` is a **leaf type whose content is fixed**, reached only through read-only views. It can never be a base class (`class E : D` and `const class D : const Base` are both errors), but it **may** derive from a mutable class base (`const class D : Base`); that subobject is written by the base constructor and by `D`'s own constructors/destructor — **construction is the only writable phase** (after a constructor returns, neither outside code nor the class's methods write). Every expression of the type is a read-only view (a class handle is already a shared reference), and converting it to any mutable view (base handle, interface handle, `ref`) needs `as` (writing through it is UB). Methods are implicitly `const`; a non-`const` method exists **only as an override slot** for a non-`const` virtual of the base — read-only body, not part of the public surface (`private` by default), not callable by name from outside, only from `D`'s constructors/destructor. Consequence accepted: an inherited non-`const` virtual then has **no caller** (external code holds only read-only views, method bodies cannot mutate, and a base constructor's own virtual call does not reach a derived override) — the override still keeps the vtable complete and turns a would-be write into a no-op, which is what makes inheriting a base with mutating virtuals usable at all. Rejected: banning class bases outright (loses implementation reuse for no extra safety), `const class D : const Base` (an extra constness-agreement rule for a case composition covers), and letting internal method bodies keep a mutable `this` (that makes the type only *outward* read-only — a second, weaker promise than `const struct`). Related: 3.7 |
 | 133 | Construction prologue: base call, delegation, field initializers | **Decided 2026-11-18**: one place for every construction step — the initializer list after the parameter list. An item is `Base(args)` (base constructor), `CtorName(args)` (delegating constructor) or `field(value)`; execution order is fixed as **delegate → base → members → field initializers in declaration order → body**, independent of the order the items are written in. `super(...)` as a constructor call is **removed** (it was a body statement that had to be hoisted to the prologue anyway, which forced a "must be the first statement" rule and made "base constructor with arguments + own `const` field" unwritable); `super.m(...)` stays as the qualified base-method call. Delegation cannot also name the base or a field, cannot target itself, and chains must not cycle (3.12) |
 | 134 | Null references: local initialization and the null check | **Decided 2026-11-19**: (a) a class/interface local must be initialized (4) — the type *is* the handle (3.8), so `Dog d;` must not read like a stack construction that builds nothing; (b) dereferencing a null handle (method call, field read, field write) throws `std.exception.NullReferenceError`, and `--null-check=off` drops the check, making the access UB (8.2); `null` itself stays a legal value. Rejected: leaving an uninitialized handle silently null (the declaration looked like construction and the failure moved to an unrelated line), and leaving the dereference purely UB with no diagnostic (a segfault instead of a catchable error) |
+| 135 | C-style `for (init; cond; step)` | **Decided 2026-11-19: implemented** (6.3.1), superseding the earlier "no C-style `for`" decision — an index loop is the common case and `while` + a manual step reads poorly. Semantics are C's: every clause is optional (`for (;;)`), `cond` must be `bool`, and **`continue` runs the step clause**. `init` is a declaration or one expression statement; since the language has no comma operator, `for (a = 1, b = 1; ...)` is rejected — declare both in `init` instead. `do-while` remains not part of the language |
 
 ---
 

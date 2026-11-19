@@ -365,6 +365,14 @@ static void dump(const Node* n, int ind) {
         if (ws->body) dump(ws->body.get(), ind + 1);
         return;
     }
+    if (auto cs = dynamic_cast<const ForStmt*>(n)) {
+        std::cout << pad << "For\n";
+        for (auto& st : cs->init) dump(st.get(), ind + 1);
+        if (cs->cond) dump_expr(cs->cond.get(), ind + 1);
+        if (cs->step) dump(cs->step.get(), ind + 1);
+        if (cs->body) dump(cs->body.get(), ind + 1);
+        return;
+    }
     if (auto fs = dynamic_cast<const ForInStmt*>(n)) {
         std::cout << pad << "ForIn " << (fs->by_ref ? "ref " : "") << fs->var
                   << " (" << fs->loop_kind << ")\n";

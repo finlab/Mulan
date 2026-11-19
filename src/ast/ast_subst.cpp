@@ -186,6 +186,13 @@ void subst_stmt(Stmt& s, const TypeBindings& b) {
         subst_block(*p->body, b);
         return;
     }
+    if (auto p = dynamic_cast<ForStmt*>(&s)) {
+        for (auto& st : p->init) subst_stmt(*st, b);
+        if (p->cond) subst_expr(*p->cond, b);
+        if (p->step) subst_stmt(*p->step, b);
+        subst_block(*p->body, b);
+        return;
+    }
     if (auto p = dynamic_cast<ForInStmt*>(&s)) {
         subst_expr(*p->seq, b);
         if (p->step) subst_expr(*p->step, b);

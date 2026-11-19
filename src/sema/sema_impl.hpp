@@ -748,6 +748,7 @@ private:
     void resolve_cursor_shape(ForInStmt* s, const TypePtr& st);
 
     void check_for(ForInStmt* s);
+    void check_for_c(ForStmt* s);
     // ------------------------------------------------------------ assignment compatibility
     static bool contains_reference_type(const TypePtr& t);
 

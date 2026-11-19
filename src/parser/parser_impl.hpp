@@ -313,6 +313,8 @@ private:
     std::unique_ptr<Stmt> parse_if();
     std::unique_ptr<Stmt> parse_while();
     std::unique_ptr<Stmt> parse_for();
+    bool for_head_is_c_style();
+    std::unique_ptr<Stmt> parse_c_for(const Token& tk);
     std::unique_ptr<Stmt> parse_para();
     std::unique_ptr<Stmt> parse_switch();
     std::unique_ptr<Stmt> parse_try();

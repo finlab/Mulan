@@ -594,6 +594,15 @@ struct WhileStmt : Stmt {
     std::unique_ptr<Block> body;
 };
 
+// C-style `for (init; cond; step)`. An omitted clause means "none": no init, always-true condition,
+// no step (`for (;;) { ... }` is an infinite loop). `continue` runs the step clause (C semantics).
+struct ForStmt : Stmt {
+    std::vector<StmtPtr> init;  // declarations or one expression statement; empty when omitted
+    ExprPtr cond;               // nullptr = true
+    StmtPtr step;               // one expression statement, or nullptr
+    std::unique_ptr<Block> body;
+};
+
 struct ForInStmt : Stmt {
     bool by_ref = false;
     // `for const ref x in seq`: a read-only borrow (usable on a `const` sequence, decided 2026-11-17)

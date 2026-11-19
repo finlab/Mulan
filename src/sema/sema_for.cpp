@@ -239,4 +239,18 @@ namespace muc_detail {
         para_for_body_depth_ = saved_pf_depth;
         --loop_depth_;
     }
+
+    // C-style `for (init; cond; step)`: init, cond and step share one scope with the body (C semantics),
+    // so the init declaration is visible in the condition and the body. `continue` runs the step clause,
+    // which is why the step is checked inside the loop (a `move` in it counts as a loop move).
+    void Sema::check_for_c(ForStmt* s) {
+        push();
+        for (auto& st : s->init) check_stmt(st.get());
+        if (s->cond) check_cond(s->cond.get(), "for condition");
+        ++loop_depth_;
+        if (s->step) check_stmt(s->step.get());
+        check_block(s->body.get());
+        --loop_depth_;
+        pop();
+    }
 }  // namespace muc_detail

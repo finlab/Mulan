@@ -283,8 +283,16 @@ using ArgPack = Emitter::ArgPack;
             b.SetInsertPoint(endBB);
             return;
         }
+        if (auto cs = dynamic_cast<ForStmt*>(s)) {
+            emitForC(cs);
+            return;
+        }
         if (auto fs = dynamic_cast<ForInStmt*>(s)) {
             emitFor(fs);
+            return;
+        }
+        if (auto cs = dynamic_cast<ForStmt*>(s)) {
+            emitForC(cs);
             return;
         }
         if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
@@ -340,6 +348,39 @@ using ArgPack = Emitter::ArgPack;
         fail("LLVM backend: unknown statement");
     }
 
+
+    void Emitter::emitForC(ForStmt* s) {
+        // Lowered to `init; while (cond) { body; step; }` with `continue` branching to the step block
+        // (C semantics), not back to the condition.
+        pushRefScope();
+        for (auto& st : s->init) stmt(st.get());
+        BasicBlock* condBB = BasicBlock::Create(ctx, "for.cond", curFn);
+        BasicBlock* bodyBB = BasicBlock::Create(ctx, "for.body", curFn);
+        BasicBlock* stepBB = BasicBlock::Create(ctx, "for.step", curFn);
+        BasicBlock* endBB = BasicBlock::Create(ctx, "for.end", curFn);
+        b.CreateBr(condBB);
+        b.SetInsertPoint(condBB);
+        if (s->cond) {
+            size_t cmark = stmtTemps.size();
+            Value* cond = eval(s->cond.get());
+            destroyTempsFrom(cmark);  // struct rvalues in the condition are released each iteration
+            b.CreateCondBr(cond, bodyBB, endBB);
+        } else {
+            b.CreateBr(bodyBB);  // `for (;;)`: the only exits are `break` and `return`
+        }
+        b.SetInsertPoint(bodyBB);
+        loops.push_back({stepBB, endBB});
+        loopScopeDepth.push_back(refScopes.size());
+        block(s->body.get());
+        loopScopeDepth.pop_back();
+        loops.pop_back();
+        if (!hasTerm(b.GetInsertBlock())) b.CreateBr(stepBB);
+        b.SetInsertPoint(stepBB);
+        if (s->step) stmt(s->step.get());
+        b.CreateBr(condBB);
+        b.SetInsertPoint(endBB);
+        popRefScope();
+    }
 
     void Emitter::emitFor(ForInStmt* s) {
         BasicBlock* condBB = BasicBlock::Create(ctx, "for.cond", curFn);

@@ -223,6 +223,13 @@ struct Analysis {
             visitBlock(ws->body.get(), it);
             return;
         }
+        if (auto cs = dynamic_cast<ForStmt*>(s)) {
+            for (auto& st : cs->init) visitStmt(st.get(), it);
+            visitExpr(cs->cond.get(), it);
+            if (cs->step) visitStmt(cs->step.get(), it);
+            visitBlock(cs->body.get(), it);
+            return;
+        }
         if (auto fs = dynamic_cast<ForInStmt*>(s)) {
             visitExpr(fs->seq.get(), it);
             visitExpr(fs->step.get(), it);

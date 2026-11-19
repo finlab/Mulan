@@ -388,6 +388,18 @@ StmtPtr clone_stmt(const Stmt& s) {
     if (auto p = dynamic_cast<const ForInStmt*>(&s)) {
         return clone_for_in(*p);
     }
+    if (auto p = dynamic_cast<const ForStmt*>(&s)) {
+        auto r = mk<ForStmt>(s);
+        r->init.reserve(p->init.size());
+        for (const auto& st : p->init) {
+            if (!st) unsupported_kind("<null>", "statement");
+            r->init.push_back(clone_stmt(*st));
+        }
+        r->cond = p->cond ? clone_expr(*p->cond) : nullptr;
+        r->step = p->step ? clone_stmt(*p->step) : nullptr;
+        r->body = clone_block(*p->body);
+        return r;
+    }
     if (auto p = dynamic_cast<const ParaStmt*>(&s)) {
         auto r = mk<ParaStmt>(s);
         r->sections.reserve(p->sections.size());

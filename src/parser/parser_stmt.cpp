@@ -578,6 +578,7 @@ std::unique_ptr<Stmt> Parser::parse_while() {
 
 std::unique_ptr<Stmt> Parser::parse_for() {
     const Token tk = expect_kw("for");
+    if (at_op("(") && for_head_is_c_style()) return parse_c_for(tk);
     bool paren = false;
     if (at_op("(")) {
         advance();
@@ -660,6 +661,163 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     node->seq = std::move(seq);
     node->step = std::move(step);
     node->body = std::move(body);
+    node->line = tk.line;
+    node->col = tk.col;
+    return node;
+}
+
+
+// Whether `for (` opens a C-style loop. The for-in form inside parentheses always starts with a loop
+// variable: `(` [const] [ref] name [`,` [const] [ref] name] `in`. Everything else — an empty clause, a
+// declaration, or an expression such as `i = 0` / `i++` — is the C form.
+bool Parser::for_head_is_c_style() {
+    const Token& n = peek(1);  // the token right after `(`
+    if (n.is_op(";")) return true;                    // `for (;;)`
+    if (n.is_kw("ref")) return false;                 // `for (ref x in s)`
+    if (n.is_kw("const")) return !peek(2).is_kw("ref");  // `const ref x in` is for-in; `const int i = 0` is not
+    if (n.is_kw("auto")) return true;
+    if (n.kind == TokKind::Kw) return true;           // a type keyword starts a declaration
+    if (n.kind == TokKind::Ident) {
+        const Token& m = peek(2);
+        if (m.is_kw("in")) return false;              // `for (x in s)`
+        if (m.is_op(",")) return false;               // `for (i, ref x in s)`
+        return true;                                  // `x = 0`, `x++`, `T v = ...`
+    }
+    return true;  // anything else cannot start a for-in head, so the C form gives the better diagnostic
+}
+
+// `for (init; cond; step) body`. Each clause is optional; a declaration in `init` consumes its own `;`.
+std::unique_ptr<Stmt> Parser::parse_c_for(const Token& tk) {
+    expect_op("(");
+    auto node = std::make_unique<ForStmt>();
+    if (at_op(";")) {
+        advance();  // empty init clause
+    } else if (at_kw("const") && peek(1).kind == TokKind::Kw && peek(1).text == "auto") {
+        node->init = parse_local(true, true);  // consumes the `;`
+    } else if (at_kw("auto")) {
+        node->init = parse_local(false, true);
+    } else if (peek().kind == TokKind::Kw && is_type_start(peek())) {
+        node->init = parse_local(false, false);
+    } else if (looks_like_local_decl()) {
+        node->init = parse_local(false, false);
+    } else if (at_op("++", "--")) {
+        // prefix `++i` / `--i` in the init clause
+        const Token op = advance();
+        ExprPtr target = parse_unary();
+        auto s = std::make_unique<AssignStmt>();
+        s->target = std::move(target);
+        s->op = op.text == "++" ? "+=" : "-=";
+        auto one = std::make_unique<IntLit>();
+        one->value = 1;
+        one->line = op.line;
+        one->col = op.col;
+        s->value = std::move(one);
+        s->line = op.line;
+        s->col = op.col;
+        semicolon();
+        node->init.push_back(std::move(s));
+    } else {
+        const Token at = peek();
+        ExprPtr e = parse_expr();
+        auto step_assign = [&](const std::string& op, ExprPtr target, int line, int col) {
+            auto s = std::make_unique<AssignStmt>();
+            s->target = std::move(target);
+            s->op = op;
+            auto one = std::make_unique<IntLit>();
+            one->value = 1;
+            one->line = line;
+            one->col = col;
+            s->value = std::move(one);
+            s->line = line;
+            s->col = col;
+            return s;
+        };
+        if (at_op("++", "--")) {
+            const Token op = advance();
+            auto s = step_assign(op.text == "++" ? "+=" : "-=", std::move(e), at.line, at.col);
+            semicolon();
+            node->init.push_back(std::move(s));
+        } else if (peek().kind == TokKind::Op && assign_ops().count(peek().text) != 0) {
+            std::string op = advance().text;
+            ExprPtr value = parse_expr();
+            forbid_inc_expr();
+            auto s = std::make_unique<AssignStmt>();
+            s->target = std::move(e);
+            s->op = std::move(op);
+            s->value = std::move(value);
+            s->line = at.line;
+            s->col = at.col;
+            semicolon();
+            node->init.push_back(std::move(s));
+        } else {
+            forbid_inc_expr();
+            auto s = std::make_unique<ExprStmt>();
+            s->expr = std::move(e);
+            s->line = at.line;
+            s->col = at.col;
+            semicolon();
+            node->init.push_back(std::move(s));
+        }
+    }
+    if (!at_op(";")) node->cond = parse_expr();
+    expect_op(";");
+    if (!at_op(")")) {
+        // The step clause ends at `)`, so it cannot go through the statement parser (which expects `;`).
+        // It is always a single expression statement: `i++`, `i = i + 1`, `f()`.
+        if (at_op("++", "--")) {
+            const Token op = advance();
+            ExprPtr target = parse_unary();
+            auto s = std::make_unique<AssignStmt>();
+            s->target = std::move(target);
+            s->op = op.text == "++" ? "+=" : "-=";
+            auto one = std::make_unique<IntLit>();
+            one->value = 1;
+            one->line = op.line;
+            one->col = op.col;
+            s->value = std::move(one);
+            s->line = op.line;
+            s->col = op.col;
+            node->step = std::move(s);
+        } else {
+            const Token at = peek();
+            ExprPtr e = parse_expr();
+            if (at_op("++", "--")) {
+                // postfix `i++` / `i--` in the step clause
+                const Token op = advance();
+                auto s = std::make_unique<AssignStmt>();
+                s->target = std::move(e);
+                s->op = op.text == "++" ? "+=" : "-=";
+                auto one = std::make_unique<IntLit>();
+                one->value = 1;
+                one->line = op.line;
+                one->col = op.col;
+                s->value = std::move(one);
+                s->line = at.line;
+                s->col = at.col;
+                node->step = std::move(s);
+            } else if (peek().kind == TokKind::Op && assign_ops().count(peek().text) != 0) {
+                std::string op = advance().text;
+                ExprPtr value = parse_expr();
+                forbid_inc_expr();
+                auto s = std::make_unique<AssignStmt>();
+                s->target = std::move(e);
+                s->op = std::move(op);
+                s->value = std::move(value);
+                s->line = at.line;
+                s->col = at.col;
+                node->step = std::move(s);
+            } else {
+                forbid_inc_expr();
+                auto s = std::make_unique<ExprStmt>();
+                s->expr = std::move(e);
+                s->line = at.line;
+                s->col = at.col;
+                node->step = std::move(s);
+            }
+        }
+    }
+    expect_op(")");
+    node->body = parse_block();
     node->line = tk.line;
     node->col = tk.col;
     return node;

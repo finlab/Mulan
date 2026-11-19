@@ -738,6 +738,7 @@ struct Emitter {
 
 
     void emitFor(ForInStmt* s);
+    void emitForC(ForStmt* s);
 
     // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
     void emitSwitch(SwitchStmt* s);
