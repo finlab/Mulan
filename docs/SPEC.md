@@ -2052,6 +2052,9 @@ for (;;) { ... }                  // infinite loop, exited via break / return
   if (skip) continue; ... }` always advances. `break` leaves the loop. Both bind to the innermost loop.
 - `init`, `cond`, `step` and the body share one scope: a variable declared in `init` is visible in the
   condition, the step and the body, and is destroyed when the loop exits.
+- A `for (;;)` (or `while true`) whose body has no `break` leaving **that** loop never falls out, so a
+  non-void function does not need a trailing `return` after it. A `break` inside a nested loop or a
+  `switch` belongs to that construct, not to the outer loop.
 - The parenthesized form is required for this shape; `for x in seq` (no parentheses) stays for-in. The two
   are told apart by the head: a C-style head starts with `;`, a declaration, or an expression, while a
   for-in head starts with `[const] [ref] name [`,` ...] in`.
