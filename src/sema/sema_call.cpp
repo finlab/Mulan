@@ -199,6 +199,25 @@ namespace muc_detail {
                     struct_ty = st;
                 } else if (lookup_enum_const(nm->ident) != nullptr) {
                     err("`" + nm->ident + "` is an enum member and cannot be called", c);
+                } else if (FuncDecl* gf = [&]() -> FuncDecl* {
+                               Decl* d = find_generic_template(nm->ident, cur_);
+                               return d ? dynamic_cast<FuncDecl*>(d) : nullptr;
+                           }()) {
+                    // A bare call of a generic function is almost always a missing type argument list:
+                    // nothing infers `T` from the arguments, so name resolution finds no plain function.
+                    std::string where;
+                    for (auto& kv : generic_templates_) {
+                        if (kv.second != static_cast<Decl*>(gf)) continue;
+                        const std::string un = kv.first.substr(0, kv.first.rfind('.'));
+                        auto iu = infos_.find(un);
+                        where = ((iu != infos_.end() && iu->second.unit) ? iu->second.unit->filename : un) +
+                                ":" + std::to_string(gf->line) + ":" + std::to_string(gf->col);
+                        break;
+                    }
+                    err("`" + nm->ident + "` is a generic function: its type arguments cannot be inferred, "
+                        "write `" + nm->ident + "<...>(...)`" +
+                        (where.empty() ? std::string() : "\n  note: the template is declared at " + where),
+                        nm);
                 } else {
                     err("undefined function `" + nm->ident + "`", c);
                 }

@@ -27,6 +27,14 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 232 — 2026-11-19
+
+**Report a generic function called without type arguments.**
+
+`ident(a)` where `ident<T>` is a generic now says "is a generic function: its type arguments cannot
+be inferred, write `ident<...>(...)`" and points at the template's declaration, instead of the
+misleading "undefined function". New must-fail case `generic_call_no_type_args`.
+
 #### build 231 — 2026-11-19
 
 **Completed the `move` / `swap` instantiation fix (build 230 follow-up).**
