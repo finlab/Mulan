@@ -600,7 +600,13 @@ std::unique_ptr<Stmt> Parser::parse_for() {
             ref_const = true;
         }
     }
-    if (peek().kind != TokKind::Ident) throw err("for-in requires a loop variable name");
+    auto for_head_error = [&](const Token& at) -> ParserError {
+        return err_at("`for` needs either a for-in head (`for name in seq`, parentheses optional) or a "
+                      "C-style head in parentheses (`for (init; cond; step)`); the C-style form requires "
+                      "the parentheses",
+                      at);
+    };
+    if (peek().kind != TokKind::Ident) throw for_head_error(peek());
     std::string first = advance().text;
     bool has_idx = false;
     std::string idx_name;
@@ -625,7 +631,8 @@ std::unique_ptr<Stmt> Parser::parse_for() {
         has_idx = true;
     }
     std::string var = std::move(first);
-    expect_kw("in");
+    if (!at_kw("in")) throw for_head_error(peek());
+    advance();  // in
     ExprPtr seq = parse_expr();
     if (at_op("..") || at_op("..=")) {
         const bool inclusive = at_op("..=");

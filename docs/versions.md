@@ -46,7 +46,7 @@ misleading explanation is pinned: `generic_field_typo` (no hint) and `generic_mi
 kept). `generic_inst_chain` now uses an operator failure, which is what the once-only chain check was
 meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1`).
 
-#### build 245 — 2026-11-19
+#### build 246 — 2026-11-19
 
 **Audit follow-ups on builds 232–244.**
 
@@ -72,6 +72,10 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   block's terminator with `hasTerm`, cleared `loops` when switching to a `para` section, dropped the
   `namespace fs` alias from `target.hpp` and a duplicate declaration in `target.cpp`.
 - Case `for_c_style_cleanup` (break/continue through `try`/`finally`, per-iteration releases).
+- **A C-style `for` head requires its parentheses**: `for i = 0; i < 3; i++` used to fail inside the
+  for-in path ("for-in requires a loop variable name" / "expected `in` but got `=`"); both shapes now
+  get one diagnostic that says the C-style form requires the parentheses. Must-fail case
+  `for_paren_required`; SPEC 6.4 states it explicitly.
 
 #### build 244 — 2026-11-19
 

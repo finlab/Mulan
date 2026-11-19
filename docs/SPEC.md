@@ -2071,6 +2071,8 @@ for i, x in seq { ... }         // with index/ordinal (see 6.4.4)
 ```
 
 - The parenthesized forms `for (x in seq)` / `for (i, x in seq)` / `for (ref x in seq)` are also accepted; canonical style omits the parentheses.
+- The **C-style** head of 6.3.1 always needs its parentheses: `for i = 0; i < 3; i++` without them is
+  an error (a bare `for` is the for-in form), and the diagnostic names both shapes.
 - Built-in sequences: half-open range `a..b` and managed sequences (`T[]` and library containers). **Static arrays `T[N]` are C storage and are not iterable** (use an index loop). A `String` is iterated through the
   index form of 6.4.1 (`length()` + the library's member `operator[]`, byte by byte) — the compiler has no
   built-in knowledge of it.
