@@ -8,9 +8,9 @@
 > `comptime` unit with `builtin` declarations added (9.3); `constexpr`/`consteval`/`constinit` stay out.**
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
-> methods are forwarded with `promote` (10.1, 3.18, 3.19). `extend` and `promote` are decided but not
-> implemented yet.**
-> Status: draft, current through build 258 (2026-11-20; the per-build change log is docs/versions.md,
+> methods are forwarded with `promote` (10.1, 3.18, 3.19). `extend` is decided but not implemented yet;
+> `promote` is implemented (build 260).**
+> Status: draft, current through build 260 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -1864,7 +1864,7 @@ public extend I with J;     // J : I
 - The concrete-type form `extend S with I;` (declare that an already declared type satisfies an
   interface) is **planned for a later phase** and is not part of this rule.
 
-### 3.19 Field method promotion (`promote`, decided 2026-11-20, not implemented yet)
+### 3.19 Field method promotion (`promote`, decided 2026-11-20, implemented in build 260)
 
 ```mu
 class Box<T> {
@@ -3193,7 +3193,7 @@ int x = match v {
 | 137 | `match` (first version) | **Decided 2026-11-20, implemented in build 258**: `match` dispatches a `variant`; expression and statement forms; one-level patterns `Alt(x, y)`, value/`ref`/`const ref`/`match move` bindings, guards, mandatory exhaustiveness with an optional last `else`. Type patterns, nested patterns, or-patterns and public-contract branches are later phases (10.1.3) |
 | 138 | `switch` domain | **Decided 2026-11-20, implemented in build 258**: integers and enums only; a `variant` scrutinee is a compile error pointing at `match`. Whether integer/enum dispatch eventually folds into `match` stays open and is re-evaluated after `match` ships |
 | 139 | Interface extension `extend I with J;` | **Decided 2026-11-20, not implemented**: `J : I`, default methods only; applies to implementors of `I` in units that can see the extension; conflicts are ambiguity errors; it is not a subtype relation (3.18). The concrete-type `extend T with I;` form is planned |
-| 140 | Field method promotion `promote` | **Decided 2026-11-20, not implemented**: only public methods, one level, fixed precedence (own → base → interface → promoted), conflicts at the type declaration, no `override`/interface satisfaction, generic resolution per instantiation (3.19) |
+| 140 | Field method promotion `promote` | **Decided 2026-11-20, implemented in build 260**: only public methods, one level, fixed precedence (own → base → interface → promoted), conflicts at the type declaration, no `override`/interface satisfaction, generic resolution per instantiation (3.19) |
 
 ---
 

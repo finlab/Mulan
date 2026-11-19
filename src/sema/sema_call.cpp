@@ -33,6 +33,49 @@ namespace muc_detail {
         return ft->fret;
     }
 
+    // SPEC 3.19: `box.f()` falls back to `box.field.f()` when the wrapper's own, base and interface
+    // methods do not provide `f`. The rewrite reuses the ordinary method-call path, so argument
+    // checking, const filtering, visibility and codegen need no special case. One level only.
+    bool Sema::try_promote_method(Member* m, const TypePtr& ot, Node* at) {
+        if (!m || !ot || m->promote_depth > 0 || ot->promotes.empty()) return false;
+        int chosen = -1;
+        for (size_t i = 0; i < ot->promotes.size(); ++i) {
+            const PromoteInfo& pi = ot->promotes[i];
+            if (!pi.field_type) continue;
+            std::vector<const MethodSig*> hits;
+            collect_methods(pi.field_type, m->name, hits);
+            const MethodSig* hit = nullptr;
+            for (auto* sig : hits) {
+                if (sig && sig->is_public) {
+                    hit = sig;
+                    break;
+                }
+            }
+            if (!hit) continue;
+            if (!pi.methods.empty()) {
+                bool named = false;
+                for (auto& n : pi.methods) {
+                    if (n == m->name) named = true;
+                }
+                if (!named) continue;
+            }
+            if (chosen >= 0) {
+                err("method `" + m->name + "` is promoted by more than one field of `" + ot->str() + "`", at);
+            }
+            chosen = static_cast<int>(i);
+        }
+        if (chosen < 0) return false;
+        const PromoteInfo& pi = ot->promotes[static_cast<size_t>(chosen)];
+        auto inner = std::make_unique<Member>();
+        inner->name = ot->fields[static_cast<size_t>(pi.field_index)].name;
+        inner->obj = std::move(m->obj);
+        inner->line = m->line;
+        inner->col = m->col;
+        m->obj = std::move(inner);
+        m->promote_depth += 1;
+        return true;
+    }
+
     TypePtr Sema::check_call(Call* c, const TypePtr& expected) {
         Expr* callee = c->callee.get();
         if (!callee) err("call is missing a callee", c);
@@ -367,6 +410,7 @@ namespace muc_detail {
                             TypePtr ct = check_expr(callee);  // resolves the field access and sets the node's type
                             return check_fnptr_args(c, ct);
                         }
+                        if (try_promote_method(m, ot, c)) return check_call(c, expected);
                         err("type `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
                     filter_methods_for_receiver(ms, (ot && (ot->is_const || ot->decl_const)) || root_is_const(obj));
@@ -413,6 +457,7 @@ namespace muc_detail {
                             TypePtr ct = check_expr(callee);  // resolves the field access and sets the node's type
                             return check_fnptr_args(c, ct);
                         }
+                        if (try_promote_method(m, ot, c)) return check_call(c, expected);
                         err("struct `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
                     filter_methods_for_receiver(ms, (ot && (ot->is_const || ot->decl_const)) || root_is_const(obj));

@@ -135,6 +135,8 @@ struct Member : Expr {
     int sum_alt = -1;
     // a generic sum's alternative: `Option<int>.None` (the type arguments of the base type)
     std::vector<TypeSpecPtr> type_args;
+    // sema: how many `promote` rewrites produced this member access (promotion is one level only)
+    int promote_depth = 0;
 };
 
 struct Index : Expr {
@@ -368,6 +370,14 @@ struct ErrorDecl : Decl {
 
 struct DirectiveMembers;
 
+// `promote field;` / `promote field(f, g);` inside a type body (SPEC 3.19).
+struct PromoteSpec {
+    std::string field;
+    std::vector<std::string> methods;  // empty: every public method of the field's type
+    int line = 0;
+    int col = 0;
+};
+
 // A type body's member lists (the parallel vectors of StructDecl/ClassDecl/InterfaceDecl).
 struct MemberGroup {
     // A `#if` chain inside the body, at the position where it was written. `*_before` counts the
@@ -378,6 +388,7 @@ struct MemberGroup {
         size_t consts_before = 0;
         size_t methods_before = 0;
         size_t ctors_before = 0;
+        size_t promotes_before = 0;
         std::unique_ptr<DirectiveMembers> dir;
     };
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;
@@ -389,6 +400,7 @@ struct MemberGroup {
     std::vector<std::unique_ptr<MethodDecl>> methods;
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
+    std::vector<PromoteSpec> promotes;  // `promote field;` (SPEC 3.19)
     std::vector<Group> groups;
     std::vector<std::unique_ptr<ErrorDecl>> errors;  // `#error` inside a conditional member arm
 };
@@ -490,6 +502,7 @@ struct StructDecl : Decl {
     std::vector<std::unique_ptr<MethodDecl>> methods;  // value type methods (static dispatch)
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
+    std::vector<PromoteSpec> promotes;  // `promote field;` (SPEC 3.19)
     // The body as parsed: `collect` expands the conditional member groups into the lists above.
     MemberGroup body;
     // Layout modifiers
@@ -836,6 +849,7 @@ struct ClassDecl : Decl {
     std::vector<std::unique_ptr<MethodDecl>> methods;
     std::vector<std::unique_ptr<CtorDecl>> ctors;
     std::unique_ptr<DtorDecl> dtor;
+    std::vector<PromoteSpec> promotes;  // `promote field;` (SPEC 3.19)
     // The body as parsed: `collect` expands the conditional member groups into the lists above.
     MemberGroup body;
     TypePtr ty;  // sema reserved

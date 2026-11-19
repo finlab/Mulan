@@ -26,6 +26,14 @@ struct Field {
 };
 
 // Method signature (class / interface)
+// `promote field;` (SPEC 3.19): a field whose public methods are forwarded by the enclosing type.
+// `methods` empty means every public method of the field's type. The field is addressed by index.
+struct PromoteInfo {
+    int field_index = -1;
+    TypePtr field_type;
+    std::vector<std::string> methods;
+};
+
 struct MethodSig {
     std::string name;
     TypePtr ret;
@@ -79,6 +87,9 @@ struct Type {
     // `Binary/Unary::op_method`, `Index::get_method`) and materialized interface defaults append to
     // this list later. A vector reallocation would leave those pointers dangling.
     std::deque<MethodSig> methods;  // used by Class/Interface
+    // Struct/Class: `promote` declarations (SPEC 3.19). Looked up only after the type's own, base and
+    // interface methods fail to provide the name; a generic instance carries its own copy.
+    std::vector<PromoteInfo> promotes;
     std::vector<std::vector<TypePtr>> ctors;  // class constructor parameter lists (overloads)
     // Parallel to `ctors`: the declared parameter names, used to order named arguments.
     std::vector<std::vector<std::string>> ctor_param_names;

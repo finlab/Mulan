@@ -238,6 +238,7 @@ private:
         size_t consts_before = 0;
         size_t methods_before = 0;
         size_t ctors_before = 0;
+        size_t promotes_before = 0;
     };
     // A deque keeps the references to an enclosing arm's containers valid when a nested `#if` starts.
     std::deque<DirectiveGroup> groups_;
@@ -272,6 +273,8 @@ private:
     std::unique_ptr<Decl> parse_interface();
     // `variant Name { Alt T; Pair T, U; None; }` (SPEC 10.1.1)
     std::unique_ptr<Decl> parse_variant();
+    // `promote field;` / `promote field(f, g);` inside a struct/class body (SPEC 3.19)
+    bool try_parse_promote(bool is_union);
     std::unique_ptr<FuncDecl> parse_operator_func(TypeSpecPtr ret, bool ret_ref, const Token& tk);
     std::unique_ptr<MethodDecl> parse_method(TypeSpecPtr ret, bool ret_ref, const Token& name_tok);
     // operator signature in an interface: `T operator+(T a, T b);` (no this)

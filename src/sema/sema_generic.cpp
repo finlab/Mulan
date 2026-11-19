@@ -642,6 +642,14 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         ty->fields.push_back(std::move(fld));
     }
 
+    // `promote` is resolved against the instantiated field table (the field index is the same as in
+    // the template, but the field type is the concrete argument).
+    if (is_struct) {
+        if (!sd->promotes.empty()) resolve_promotes(sd->promotes, ty, sd, &sd->fields);
+    } else {
+        if (!cd->promotes.empty()) resolve_promotes(cd->promotes, ty, cd, &cd->fields);
+    }
+
     // Method / constructor / destructor signatures
     const auto& methods = is_struct ? sd->methods : cd->methods;
     ty->methods.clear();

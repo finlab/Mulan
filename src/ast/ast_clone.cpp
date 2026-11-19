@@ -604,6 +604,7 @@ std::unique_ptr<Decl> clone_decl(const Decl& d) {
         r->methods = clone_methods(p->methods);
         r->ctors = clone_ctors(p->ctors);
         r->dtor = p->dtor ? clone_dtor(*p->dtor) : nullptr;
+        r->promotes = p->promotes;
         r->is_packed = p->is_packed;
         r->is_union = p->is_union;
         r->align_expr = p->align_expr ? clone_expr(*p->align_expr) : nullptr;
@@ -641,6 +642,7 @@ std::unique_ptr<Decl> clone_decl(const Decl& d) {
         r->methods = clone_methods(p->methods);
         r->ctors = clone_ctors(p->ctors);
         r->dtor = p->dtor ? clone_dtor(*p->dtor) : nullptr;
+        r->promotes = p->promotes;
         r->type_params = clone_type_params(p->type_params);
         r->is_public = p->is_public;
         r->is_template = p->is_template;

@@ -27,6 +27,28 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 260 — 2026-11-20
+
+**`promote field;` forwards a field's public methods (SPEC 3.19).**
+
+- **Parser**: `promote field;` (every public method) and `promote field(f, g);` (whitelist) inside a
+  struct/class body; `promote` stays a contextual keyword. Conditional (`#if`) member groups carry the
+  declaration at the same position.
+- **Sema**: the field must be declared by this type (not inherited) and must have a struct, class or
+  interface type; only public methods are exposed; a whitelist name must be a public method of the
+  field's type; two promoted fields exposing the same method name is a declaration error. Lookup keeps
+  the fixed precedence own → base → interface → promoted (one level): the fallback rewrites
+  `obj.m` into `obj.field.m` and re-runs the ordinary method-call check, so arguments, `const`
+  filtering, visibility and codegen are unchanged.
+- **Generics**: the promoted set is resolved per instantiation (`Box<int>` promotes `int`'s public
+  methods); the field type is the concrete argument.
+- **Tests**: `promote_basic` (struct field, class field, generic wrapper, whitelist, real method wins)
+  and eight must-fail cases (`promote_missing_field`, `promote_not_promotable`, `promote_conflict`,
+  `promote_private_method`, `promote_whitelist_unknown`, `promote_union`, `promote_const`,
+  `promote_inherited_field`).
+
+Full suite: **918/918 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 259 — 2026-11-20
 
 **Synthesized method signatures live as long as the program.**

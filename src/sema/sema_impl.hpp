@@ -121,6 +121,7 @@ struct MemberSink {
     std::vector<std::unique_ptr<MethodDecl>>* methods = nullptr;
     std::vector<std::unique_ptr<CtorDecl>>* ctors = nullptr;
     std::unique_ptr<DtorDecl>* dtor = nullptr;
+    std::vector<PromoteSpec>* promotes = nullptr;
 };
 
 // ---------------------------------------------------------------- capacity limits (SPEC 9.4, C++ [implimits])
@@ -475,6 +476,13 @@ private:
     // Sum types: payload types + the synthesized `{ i32 tag; union payload }` layout.
     void resolve_sum(SumDecl* sd, Unit* u);
 
+    // `promote field;` (SPEC 3.19): fill `Type::promotes` after the field table is known.
+    void resolve_promotes(const std::vector<PromoteSpec>& specs, const TypePtr& ty, const Node* at,
+                          const std::vector<std::pair<std::string, TypeSpecPtr>>* own_fields);
+    // Validate the promoted sets once every type is resolved: public methods only, no two fields
+    // exposing the same method name.
+    void check_promotes(const TypePtr& ty, const std::vector<PromoteSpec>& specs, const Node* at);
+
     // ------------------------------------------------------------ layout modifiers
     //
     // The final layout of packed / align(N) is computed by type_align/type_size in types.cpp;
@@ -759,6 +767,10 @@ private:
     std::vector<std::pair<std::string, long long>> enum_members_of(const TypePtr& et);
 
     void check_switch(SwitchStmt* s);
+
+    // `promote` fallback: rewrite `obj.m` into `obj.<promoted field>.m` when the type's own/base/
+    // interface methods do not provide `m` (SPEC 3.19). Returns true when the AST was rewritten.
+    bool try_promote_method(Member* m, const TypePtr& ot, Node* at);
 
     // `match` (SPEC 10.1.2): the shared checker for the expression and statement forms.
     TypePtr check_match(MatchExpr* m);

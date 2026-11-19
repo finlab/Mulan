@@ -81,6 +81,7 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
         if (at_kw("export")) {
             throw err("`export` applies to top-level declarations only; export the type itself");
         }
+        if (try_parse_promote(is_union)) continue;
         if (at_op("~")) {
             if (explicit_mod) throw err("destructor cannot use `public`/`private`");
             if (is_union) throw err("union `" + name + "` cannot have a destructor");
@@ -288,6 +289,36 @@ std::unique_ptr<Decl> Parser::parse_variant() {
     return decl;
 }
 
+bool Parser::try_parse_promote(bool is_union) {
+    if (!(peek().kind == TokKind::Ident && peek().text == "promote" && peek(1).kind == TokKind::Ident &&
+          (peek(2).is_op(";") || peek(2).is_op("(")))) {
+        return false;
+    }
+    if (is_union) throw err_at("a union has no methods, so `promote` is not allowed", peek());
+    const Token pt = advance();
+    PromoteSpec ps;
+    ps.line = pt.line;
+    ps.col = pt.col;
+    ps.field = expect_ident("promoted field name").text;
+    if (at_op("(")) {
+        advance();
+        if (!at_op(")")) {
+            for (;;) {
+                ps.methods.push_back(expect_ident("method name").text);
+                if (at_op(",")) {
+                    advance();
+                    continue;
+                }
+                break;
+            }
+        }
+        expect_op(")");
+    }
+    semicolon();
+    cur_members_->promotes.push_back(std::move(ps));
+    return true;
+}
+
 std::string Parser::parse_qualified_name() {
     Token t = expect_ident("type name");
     std::string n = t.text;
@@ -468,6 +499,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
     cd->base_specs = std::move(base_specs);
 
     expect_op("{");
+    const bool is_union = false;  // a class is never a union (keeps the member loop's promote check uniform)
     bool cur_pub = false;  // class defaults to private
     const size_t g0 = groups_.size();
     while (true) {
@@ -494,6 +526,7 @@ std::unique_ptr<Decl> Parser::parse_class() {
         if (at_kw("export")) {
             throw err("`export` applies to top-level declarations only; export the type itself");
         }
+        if (try_parse_promote(is_union)) continue;
         if (at_op("~")) {
             if (explicit_mod) throw err("destructor cannot use `public`/`private`");
             if (cur_members_->dtor) throw err("class `" + cd->name + "` can only have one destructor");

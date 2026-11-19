@@ -92,6 +92,7 @@ void Parser::directive_header() {
             g.consts_before = cur_members_->const_members.size();
             g.methods_before = cur_members_->methods.size();
             g.ctors_before = cur_members_->ctors.size();
+            g.promotes_before = cur_members_->promotes.size();
             cur_members_ = &g.members;
             g.member_node = std::make_unique<DirectiveMembers>();
             g.member_node->line = nm.line;
@@ -155,6 +156,7 @@ void Parser::directive_arm_end() {
     if (g.member_mode) {
         g.outer_members->groups.push_back(MemberGroup::Group{g.fields_before, g.consts_before,
                                                              g.methods_before, g.ctors_before,
+                                                             g.promotes_before,
                                                              std::move(g.member_node)});
         cur_members_ = g.outer_members;
     }

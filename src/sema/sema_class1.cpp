@@ -511,6 +511,7 @@ namespace muc_detail {
 
     void Sema::check_struct(StructDecl* sd) {
         check_const_members(sd->const_members, sd->ty, sd->is_union ? "union" : "struct", sd->name);
+        if (!sd->promotes.empty()) check_promotes(sd->ty, sd->promotes, sd);
         // Duplicate signatures: a top-level `const` on a parameter is not part of the signature
         // (SPEC 3.7), so `m(int)` and `m(const int)` are the same method.
         std::vector<MethodDecl*> seen;
@@ -576,6 +577,7 @@ namespace muc_detail {
 
     void Sema::check_class(ClassDecl* c) {
         check_const_members(c->const_members, c->ty, "class", c->name);
+        if (!c->promotes.empty()) check_promotes(c->ty, c->promotes, c);
         // The hierarchy walkers (`is_subclass_of`, `is_interface`) stop at a fixed depth, and every class
         // copies its base's fields: a chain deeper than this both misbehaves and costs O(n^2).
         {

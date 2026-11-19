@@ -125,9 +125,9 @@ namespace muc_detail {
 
     void Sema::expand_member_body(MemberGroup& body, const DirectiveScope& scope, const MemberSink& sink,
                                   const Node* at) {
-        size_t fi = 0, ki = 0, mi = 0, ci = 0;
+        size_t fi = 0, ki = 0, mi = 0, ci = 0, pi = 0;
         // Take the members declared before the next group; a group's selected arm is spliced in place.
-        auto take = [&](size_t fend, size_t kend, size_t mend, size_t cend) {
+        auto take = [&](size_t fend, size_t kend, size_t mend, size_t cend, size_t pend) {
             for (; fi < fend; ++fi) {
                 const std::string& name = body.fields[fi].first;
                 bool vis = true;
@@ -145,15 +145,19 @@ namespace muc_detail {
             for (; ci < cend; ++ci) {
                 if (sink.ctors) sink.ctors->push_back(std::move(body.ctors[ci]));
             }
+            for (; pi < pend; ++pi) {
+                if (sink.promotes) sink.promotes->push_back(std::move(body.promotes[pi]));
+            }
         };
         for (auto& g : body.groups) {
-            take(g.fields_before, g.consts_before, g.methods_before, g.ctors_before);
+            take(g.fields_before, g.consts_before, g.methods_before, g.ctors_before, g.promotes_before);
             DirectiveMembers::Arm* chosen = choose_member_arm(*g.dir, scope);
             if (!chosen) continue;
             for (auto& e : chosen->members.errors) err("#error " + e->message, e.get());
             expand_member_body(chosen->members, scope, sink, at);
         }
-        take(body.fields.size(), body.const_members.size(), body.methods.size(), body.ctors.size());
+        take(body.fields.size(), body.const_members.size(), body.methods.size(), body.ctors.size(),
+             body.promotes.size());
         for (auto& e : body.errors) err("#error " + e->message, e.get());
         // Default member initializers are keyed by field name, so the order is not significant.
         if (sink.field_default) {
@@ -183,11 +187,11 @@ namespace muc_detail {
         if (auto* sd = dynamic_cast<StructDecl*>(d)) {
             body = &sd->body;
             sink = MemberSink{&sd->fields, &sd->field_visibility, &sd->field_default, &sd->const_members,
-                              &sd->methods, &sd->ctors, &sd->dtor};
+                              &sd->methods, &sd->ctors, &sd->dtor, &sd->promotes};
         } else if (auto* cd = dynamic_cast<ClassDecl*>(d)) {
             body = &cd->body;
             sink = MemberSink{&cd->fields, &cd->field_visibility, &cd->field_default, &cd->const_members,
-                              &cd->methods, &cd->ctors, &cd->dtor};
+                              &cd->methods, &cd->ctors, &cd->dtor, &cd->promotes};
         } else if (auto* id = dynamic_cast<InterfaceDecl*>(d)) {
             body = &id->body;
             sink.methods = &id->methods;

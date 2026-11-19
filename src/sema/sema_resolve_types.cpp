@@ -12,6 +12,8 @@
 
 #include "sema_impl.hpp"
 
+#include <set>
+
 #include "directive.hpp"
 
 namespace muc_detail {
@@ -165,7 +167,109 @@ namespace muc_detail {
         if (sd->is_union && sd->ty->fields.empty()) {
             err("union `" + sd->name + "` must have at least one member", sd);
         }
+        if (!sd->promotes.empty()) resolve_promotes(sd->promotes, sd->ty, sd, &sd->fields);
         sd->fields_resolved = true;
+    }
+
+    // SPEC 3.19: a promoted field must be a member declared by this type and its type must be a
+    // struct, class or interface (scalars, enums and variants have no methods to forward).
+    void Sema::resolve_promotes(const std::vector<PromoteSpec>& specs, const TypePtr& ty, const Node* at,
+                                const std::vector<std::pair<std::string, TypeSpecPtr>>* own_fields) {
+        std::vector<PromoteInfo> out;
+        std::unordered_set<std::string> seen;
+        for (auto& ps : specs) {
+            if (!seen.insert(ps.field).second) {
+                err("field `" + ps.field + "` is promoted more than once", at);
+            }
+            if (own_fields) {
+                bool own = false;
+                for (auto& f : *own_fields) {
+                    if (f.first == ps.field) {
+                        own = true;
+                        break;
+                    }
+                }
+                if (!own) {
+                    err("`promote` names `" + ps.field +
+                            "`, which is not a field declared by this type (an inherited field cannot be promoted)",
+                        at);
+                }
+            }
+            const int idx = ty->field_index(ps.field);
+            if (idx < 0) err("`promote` names `" + ps.field + "`, which is not a field of `" + ty->str() + "`", at);
+            TypePtr ft = ty->fields[static_cast<size_t>(idx)].type;
+            if (!ft || (ft->kind != TypeKind::Struct && ft->kind != TypeKind::Class &&
+                        ft->kind != TypeKind::Interface)) {
+                err("`promote` field `" + ps.field + "` has type `" + (ft ? ft->str() : std::string("?")) +
+                        "`: only struct, class and interface fields can be promoted",
+                    at);
+            }
+            PromoteInfo pi;
+            pi.field_index = idx;
+            pi.field_type = ft;
+            pi.methods = ps.methods;
+            out.push_back(std::move(pi));
+        }
+        ty->promotes = std::move(out);
+    }
+
+    void Sema::check_promotes(const TypePtr& ty, const std::vector<PromoteSpec>& specs, const Node* at) {
+        if (!ty) return;
+        // Explicit names must be public methods of the field's type.
+        for (auto& ps : specs) {
+            const int idx = ty->field_index(ps.field);
+            if (idx < 0) continue;  // resolve_promotes already reported it
+            TypePtr ft = ty->fields[static_cast<size_t>(idx)].type;
+            for (auto& mn : ps.methods) {
+                std::vector<const MethodSig*> hits;
+                collect_methods(ft, mn, hits);
+                // The field's type may still be unresolved at this point (a declaration later in the
+                // unit); the call site reports a missing method then.
+                if (hits.empty() && ft->methods.empty()) continue;
+                bool any_public = false;
+                for (auto* m : hits) any_public = any_public || (m && m->is_public);
+                if (!hits.empty() && !any_public) {
+                    err("`" + mn + "` is not a public method of `" + ft->str() + "`", at);
+                }
+                if (hits.empty()) {
+                    err("`" + mn + "` is not a method of `" + ft->str() + "` (the promoted field's type)", at);
+                }
+            }
+        }
+        // Two promoted fields may not expose the same method name (the call would be ambiguous).
+        const auto exposed = [](const PromoteInfo& pi) {
+            std::set<std::string> names;
+            if (!pi.methods.empty()) {
+                for (auto& n : pi.methods) names.insert(n);
+                return names;
+            }
+            for (TypePtr t = pi.field_type; t; t = t->base) {
+                for (auto& m : t->methods) {
+                    if (m.is_public) names.insert(m.name);
+                }
+            }
+            if (pi.field_type) {
+                for (auto& iface : pi.field_type->interfaces) {
+                    for (auto& m : iface->methods) {
+                        if (m.is_public) names.insert(m.name);
+                    }
+                }
+            }
+            return names;
+        };
+        for (size_t i = 0; i < ty->promotes.size(); ++i) {
+            for (size_t j = i + 1; j < ty->promotes.size(); ++j) {
+                auto a = exposed(ty->promotes[i]);
+                auto b = exposed(ty->promotes[j]);
+                for (auto& n : a) {
+                    if (b.count(n)) {
+                        err("method `" + n + "` is promoted by both `" + ty->fields[static_cast<size_t>(ty->promotes[i].field_index)].name +
+                                "` and `" + ty->fields[static_cast<size_t>(ty->promotes[j].field_index)].name + "`",
+                            at);
+                    }
+                }
+            }
+        }
     }
 
     void Sema::resolve_sizeof_types(const Expr* e, Unit* u) {
@@ -260,6 +364,7 @@ namespace muc_detail {
             fields.push_back(Field{fname, ft, spec->weak, field_pub});
         }
         c->ty->fields = std::move(fields);
+        if (!c->promotes.empty()) resolve_promotes(c->promotes, c->ty, c, &c->fields);
         c->fields_resolved = true;
     }
 
