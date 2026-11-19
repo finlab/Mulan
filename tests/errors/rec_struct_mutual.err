@@ -1,0 +1,2 @@
+contains itself by value (the cycle is `rec_struct_mutual.A -> rec_struct_mutual.B -> rec_struct_mutual.A`)
+break the cycle up with pointers or a class handle

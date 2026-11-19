@@ -1,0 +1,2 @@
+contains itself by value (the cycle is `rec_union_struct.U -> rec_union_struct.S -> rec_union_struct.U`)
+break the cycle up with pointers or a class handle

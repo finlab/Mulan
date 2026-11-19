@@ -1,0 +1,2 @@
+contains itself by value (the cycle is `rec_array_self.A -> rec_array_self.A[1] -> rec_array_self.A`)
+break the cycle up with pointers or a class handle

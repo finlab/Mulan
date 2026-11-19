@@ -45,10 +45,16 @@ namespace muc_detail {
                 if (!sd || !sd->ty) continue;
                 const TypePtr& ty = sd->ty;
                 const std::string kw = sd->is_union ? "union" : "struct";
-                // A by-value nesting deeper than the layout recursion limit would leave a silently wrong
-                // size (`type_size` stops recursing as a stack guard), so it is rejected here.
+                // A by-value cycle has no finite layout: `type_size` stops at the repeat and reports it
+                // through the cycle flag. It used to surface later as "field is not a fixed-size type"
+                // in codegen, or as a compiler stack overflow when the cycle ran through a union.
                 clear_type_depth_exceeded();
                 (void)type_size(ty);
+                if (type_cycle_detected()) {
+                    err(kw + " `" + sd->name + "` contains itself by value (the cycle is `" +
+                            type_cycle_name() +
+                            "`); break the cycle up with pointers or a class handle", sd);
+                }
                 if (type_depth_exceeded()) {
                     err(kw + " `" + sd->name +
                             "` nests more than 512 levels by value; break the chain up with pointers or "
@@ -103,7 +109,7 @@ namespace muc_detail {
                 clear_type_depth_exceeded();
                 (void)type_size(sd->ty);
                 if (type_cycle_detected()) {
-                    err("sum `" + sd->name + "` contains itself by value (the cycle passes through `" +
+                    err("sum `" + sd->name + "` contains itself by value (the cycle is `" +
                             type_cycle_name() +
                             "`); store a pointer or a class handle instead",
                         sd);
@@ -129,7 +135,7 @@ namespace muc_detail {
             (void)type_size(sd->ty);
             const std::string kw = sd->is_union ? "union" : "struct";
             if (type_cycle_detected()) {
-                err(kw + " `" + sd->name + "` contains itself by value (the cycle passes through `" +
+                err(kw + " `" + sd->name + "` contains itself by value (the cycle is `" +
                         type_cycle_name() + "`); break the cycle up with pointers or an interface",
                     sd);
             } else if (type_depth_exceeded()) {

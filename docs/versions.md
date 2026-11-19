@@ -77,6 +77,28 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   get one diagnostic that says the C-style form requires the parentheses. Must-fail case
   `for_paren_required`; SPEC 6.4 states it explicitly.
 
+#### build 255 — 2026-11-19
+
+**A by-value cycle through a struct, a union or a fixed-size array is rejected in sema, with the cycle spelled out.**
+
+`check_layouts` validated the by-value nesting depth of every struct/union but never consulted the cycle
+flag that the layout recursion already raises, so only *direct* self-containment was caught (by an
+earlier resolve-time check) and sum cycles were caught by the extra sum pass. Everything else slipped
+through:
+
+- `struct A { B b; }` + `struct B { A a; }` passed `muc check` and died in codegen with "field `a` is not
+  a fixed-size type" (the message pointed at std's `exception.mu`, not at the program);
+- `union U { S s; int x; }` + `struct S { U u; }` **killed the compiler with a stack overflow**
+  (`0xC00000FD`) — the union branch recursed without a guard until the OS stack ran out;
+- `struct A { A[1] a; }` behaved like the mutual case.
+
+The struct/union pass now reports the cycle like the sum and instance passes do, and the recursion keeps
+the ordered path so the diagnostic names it: ``contains itself by value (the cycle is `a.A -> a.B -> a.A`)``.
+Synthesized layout types (`$sum$L`, `$payload$L`) are filtered out of that path, and the array step shows
+the element (`A -> A[1] -> A`). Legal indirect recursion (pointer/class handle) is unchanged — run case
+`rec_indirect_ok`; must-fail `rec_struct_mutual`, `rec_union_struct`, `rec_array_self`,
+`rec_generic_mutual`. SPEC 3.9 (structs) states the rule.
+
 #### build 254 — 2026-11-19
 
 **Inference review fixes: the top-level `const` binding, ambiguous names, and arguments that need a target type.**

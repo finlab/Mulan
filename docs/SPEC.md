@@ -362,7 +362,10 @@ struct Point {
     with a constructor present, non-empty aggregate initialization is forbidden; use `{}` for the zero value (no constructor call, just zeroing);
   - `~S()` is called automatically at scope exit and on `return`/`break`/`continue` (local variables);
 - No inheritance, no virtual functions, no anonymous struct/union **members** (unions themselves see 3.4.1).
-- Recursion only through pointers: `struct Node { int v; Node* next; }`.
+- Recursion only through pointers: `struct Node { int v; Node* next; }`. A by-value cycle — direct, mutual
+  (`A` holds `B`, `B` holds `A`), through a fixed-size array, or through a `union` member — has no finite
+  layout and is a compile error that spells the cycle out (`A -> B -> A`). A generic template is checked
+  when it is instantiated, since the cycle can depend on the argument.
 - Fields can be scalars, pointers, enums, fixed-size arrays, dynamic arrays `T[]`, nested structs, `string` fields, and
   **class/interface reference fields** (in which case the struct is a non-POD value type).
 - A struct containing class/interface reference fields (including references in nested structs/arrays) gets compiler-generated field-by-field RC:

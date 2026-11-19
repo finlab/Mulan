@@ -1,0 +1,2 @@
+contains itself by value (the cycle is `rec_generic_mutual.B<int> -> rec_generic_mutual.A<int> -> rec_generic_mutual.B<int>`)
+break the cycle up with pointers or an interface

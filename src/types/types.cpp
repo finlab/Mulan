@@ -267,21 +267,49 @@ constexpr int kMaxTypeNesting = 512;
 bool g_type_depth_exceeded = false;
 bool g_type_cycle = false;
 std::string g_cycle_name;
-// The types currently on the recursion path: a repeat means the type contains itself by value.
+// The types currently on the recursion path: a repeat means the type contains itself by value. The
+// ordered stack keeps the path so the diagnostic can spell the cycle out (`A -> B -> A`).
 std::unordered_set<const Type*> g_path;
+std::vector<const Type*> g_stack;
 
 void note_cycle(const TypePtr& t) {
     g_type_cycle = true;
-    if (g_cycle_name.empty()) g_cycle_name = t->str();
+    if (!g_cycle_name.empty()) return;
+    // The path in order, from the first occurrence of the repeated type. Synthesized types
+    // (`$sum$L`, `$payload$L`) are left out: they are an implementation detail of the layout, not
+    // something the reader declared, and they would drown the actual cycle.
+    std::vector<std::string> names;
+    bool started = false;
+    for (const Type* p : g_stack) {
+        if (!started) {
+            if (p != t.get()) continue;
+            started = true;
+        }
+        std::string name = p->str();
+        if (name.find(".$") != std::string::npos) continue;
+        names.push_back(std::move(name));
+    }
+    names.push_back(t->str());
+    std::string out;
+    for (auto& n : names) {
+        if (!out.empty()) out += " -> ";
+        out += n;
+    }
+    g_cycle_name = out;
 }
 
 // Keeps `g_path` in sync with the recursion: `inserted` is false when the type was already on the path.
 struct PathGuard {
     const Type* t = nullptr;
     bool inserted = false;
-    explicit PathGuard(const TypePtr& tp) : t(tp.get()), inserted(g_path.insert(tp.get()).second) {}
+    explicit PathGuard(const TypePtr& tp) : t(tp.get()), inserted(g_path.insert(tp.get()).second) {
+        if (inserted) g_stack.push_back(tp.get());
+    }
     ~PathGuard() {
-        if (inserted) g_path.erase(t);
+        if (inserted) {
+            g_path.erase(t);
+            g_stack.pop_back();
+        }
     }
     PathGuard(const PathGuard&) = delete;
     PathGuard& operator=(const PathGuard&) = delete;
@@ -422,6 +450,7 @@ void clear_type_depth_exceeded() {
     g_type_cycle = false;
     g_cycle_name.clear();
     g_path.clear();
+    g_stack.clear();
 }
 
 uint64_t type_member_offset(const TypePtr& t, size_t idx) {
