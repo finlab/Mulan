@@ -77,6 +77,16 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   get one diagnostic that says the C-style form requires the parentheses. Must-fail case
   `for_paren_required`; SPEC 6.4 states it explicitly.
 
+#### build 250 — 2026-11-19
+
+**`type T += I;` gets its own diagnostic.**
+
+The planned interface extension was parsed as a declaration of a variable named after the type, so
+`type S += I;` reported `expected ; but got +=` and hid the reason (`#132`). The parser now recognizes
+the form and says that it is planned but not implemented, naming the two working alternatives (list the
+interface after `:` on a struct/class, or implement the members). Must-fail `type_extend_pending`;
+SPEC 4.5 states the status.
+
 #### build 249 — 2026-11-19
 
 **One `use` imports several units.**

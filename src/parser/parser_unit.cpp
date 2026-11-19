@@ -233,6 +233,16 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             continue;
         }
 
+        // `type T += I;` (interface extension) is designed but not implemented (agents/TODO.md). Without
+        // this branch the parser reads `type T` as a declaration and reports "expected `;` but got `+=`",
+        // which hides the reason (issue #132).
+        if (peek().kind == TokKind::Ident && peek().text == "type" && peek(1).kind == TokKind::Ident &&
+            peek(2).is_op("+=")) {
+            throw err_at("`type T += I` (interface extension) is planned but not implemented; "
+                         "list the interface after `:` on the type (`struct T : I`, `class T : I`) or "
+                         "implement its members directly",
+                         peek(2));
+        }
         // contextual keyword `type`: `type Ident = <type>;` (transparent type alias) or
         // `type Ident = Alt | Alt(T);` (sum type), optionally with type parameters for a sum.
         if (peek().kind == TokKind::Ident && peek().text == "type" && peek(1).kind == TokKind::Ident &&

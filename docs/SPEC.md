@@ -1906,6 +1906,10 @@ type PP = P;          // alias of an alias
 - Forward references and arbitrary declaration order are supported: `type A = B; type B = int;` is legal; a cyclic dependency
   (`type A = B; type B = A;`) is a compile error; an alias with the same name as another declaration in the same unit is a conflict.
 - Diagnostics prefer to show the alias name; `auto` deduces the **underlying type**.
+- **Interface extension** (`type T += I;`, for adding an interface to an existing type) is **planned, not
+  implemented**: the parser recognizes the form and reports it by name (the design is recorded in the
+  agents repository). Implement the members directly, or list the interface after `:` on a struct/class
+  (`struct T : I`).
 
 ---
 
