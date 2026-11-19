@@ -427,6 +427,15 @@ struct UseDecl : Decl {
 
 // Type alias: `type A = B;` — a transparent alias (produces no new type), and each declaration can define only one.
 // `type` is a **contextual keyword**: it is parsed as an alias only at the start of a declaration, in the form `type Ident =`.
+// `extend I with J;` (SPEC 3.18): the interface `I`'s implementors gain `J`'s default methods in the
+// units that can see this declaration. `J` must derive from `I` and add default methods only.
+struct ExtendDecl : Decl {
+    std::string target;    // `I`
+    std::string with;      // `J`
+    int line = 0;
+    int col = 0;
+};
+
 struct TypeAliasDecl : Decl {
     std::string name;
     TypeSpecPtr spec;

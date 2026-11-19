@@ -27,6 +27,29 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 261 — 2026-11-20
+
+**`extend I with J;` gives `I`'s implementors `J`'s default methods (SPEC 3.18).**
+
+- **Parser**: `[public] extend I with J;` at unit level; `extend` is a contextual keyword (it stays
+  usable as an identifier elsewhere, so it left the reserved list).
+- **Sema**: `J` must derive from `I`, and `J` may add **default methods only** (an abstract member `J`
+  adds but `I` does not declare is an error). The declarations are validated in their own pass, then
+  each type implementing `I` (a struct's `:` list, or a class's interface chain, transitively) receives
+  `J`'s defaults as ordinary methods — the same materialization interface defaults use, so codegen is
+  unchanged. A type's own method, or a default it already has, keeps precedence; two extensions
+  providing the same signature for the same type is a declaration error naming both units.
+- **Visibility**: an extension is active where its declaring unit is visible. A call to a method that
+  only an extension provides is rejected when the caller's unit does not `use` the declaring unit,
+  with a diagnostic naming the missing `use`.
+- `extend` does not create a subtype relation: an implementor of `I` still does not satisfy a `T: J`
+  constraint because of an extension.
+- **Tests**: `extend_basic` (struct and class implementors through a library unit) and six must-fail
+  cases (`extend_not_derived`, `extend_abstract_added`, `extend_not_interface`, `extend_unknown`,
+  `extend_conflict`, `extend_not_visible`).
+
+Full suite: **925/925 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 260 — 2026-11-20
 
 **`promote field;` forwards a field's public methods (SPEC 3.19).**

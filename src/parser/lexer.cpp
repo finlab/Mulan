@@ -45,8 +45,8 @@ bool ident_cont(int ch) { return ident_start(ch) || is_digit(ch); }
 // yet), but using one as a name would break later — so they are rejected at the point they appear
 // as an identifier. `move` graduated to a real keyword, so it is not in this list.
 bool reserved_word(const std::string& s) {
-    // `extend` is reserved by SPEC 3.18 but not parsed yet; `variant` / `match` are real keywords.
-    return s == "where" || s == "typeof" || s == "extend";
+    // `extend` is a contextual keyword now (SPEC 3.18), so it stays usable as an identifier elsewhere.
+    return s == "where" || s == "typeof";
 }
 
 // keyword table (KEYWORDS in lexer.py)

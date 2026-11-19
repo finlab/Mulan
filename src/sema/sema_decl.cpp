@@ -312,6 +312,9 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                 } else if (auto a = dynamic_cast<TypeAliasDecl*>(d.get())) {
                     if (ui.aliases.count(a->name)) err("duplicate definition of type alias `" + a->name + "`", a);
                     ui.aliases[a->name] = a;
+                } else if (auto ed = dynamic_cast<ExtendDecl*>(d.get())) {
+                    // `extend I with J;` — recorded here; validation and application are a later pass.
+                    ui.extensions.push_back(ed);
                 } else if (auto g = dynamic_cast<GlobalVar*>(d.get())) {
                     if (ui.globals.count(g->name)) err("duplicate definition of variable `" + g->name + "`", g);
                     ui.globals[g->name] = g;

@@ -8,9 +8,8 @@
 > `comptime` unit with `builtin` declarations added (9.3); `constexpr`/`consteval`/`constinit` stay out.**
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
-> methods are forwarded with `promote` (10.1, 3.18, 3.19). `extend` is decided but not implemented yet;
-> `promote` is implemented (build 260).**
-> Status: draft, current through build 260 (2026-11-20; the per-build change log is docs/versions.md,
+> methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
+> Status: draft, current through build 261 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -1841,7 +1840,7 @@ same hidden function with a per-item context `{ frame, item }` (the element addr
 The lowering calls `std.task.muc_para_start` / `muc_para_join`, so the language surface does not depend
 on the execution engine.
 
-### 3.18 Interface extension (`extend`, decided 2026-11-20, not implemented yet)
+### 3.18 Interface extension (`extend`, decided 2026-11-20, implemented in build 261)
 
 ```mu
 public extend I with J;     // J : I
@@ -1850,17 +1849,19 @@ public extend I with J;     // J : I
 - `J` must derive from `I` (`interface J : I`). It may add **default methods only**: every abstract
   member of `J` must already be declared by `I`, and an extension cannot add fields (interfaces have
   none) or access fields.
-- Effect: every type that implements (or structurally satisfies) `I` gains `J`'s default methods
-  **in the units that can see the extension**. An extension is active where its declaring unit is
-  used (`use`), not everywhere the interface is visible.
+- Effect: every type that **names `I` in its `:` list** (directly, or through a base class or a parent
+  interface) gains `J`'s default methods. An extension is active where its declaring unit is used
+  (`use`), not everywhere the interface is visible.
 - Visibility: `public` / `private`; it is not transitive. A unit that does not `use` the declaring
-  unit does not see the extension.
-- A type's own method (or an interface default it already has) wins over an extension. If two
-  extensions visible at a call site provide the same signature, the call is an ambiguity error.
+  unit cannot call a method that only the extension provides: the call is a compile error naming the
+  missing `use`.
+- A type's own method (or an interface default it already has) wins over an extension. Two extensions
+  providing the same signature for the same type are a **declaration** error naming both units.
 - **`extend` does not create a subtype relation**: an implementor of `I` does not satisfy a `T: J`
   constraint and cannot be used as a `J` interface value because of an extension.
 - The extension is materialized per concrete type during semantic analysis (the same machinery as
-  interface defaults); code generation is unchanged.
+  interface defaults) and marked with the extension's unit, so call sites can enforce the visibility
+  rule above; code generation is unchanged.
 - The concrete-type form `extend S with I;` (declare that an already declared type satisfies an
   interface) is **planned for a later phase** and is not part of this rule.
 
@@ -3192,7 +3193,7 @@ int x = match v {
 | 136 | Declaration split: `type` / `variant` / `extend` | **Decided 2026-11-20, implemented in build 258 for `type`/`variant`; `extend` pending**: `type` = transparent alias only (4.5); tagged unions = `variant` (10.1.1); interface extension = `extend I with J;` (3.18). Old `type V = A \| B;` and `type T += I;` are rejected with migration diagnostics |
 | 137 | `match` (first version) | **Decided 2026-11-20, implemented in build 258**: `match` dispatches a `variant`; expression and statement forms; one-level patterns `Alt(x, y)`, value/`ref`/`const ref`/`match move` bindings, guards, mandatory exhaustiveness with an optional last `else`. Type patterns, nested patterns, or-patterns and public-contract branches are later phases (10.1.3) |
 | 138 | `switch` domain | **Decided 2026-11-20, implemented in build 258**: integers and enums only; a `variant` scrutinee is a compile error pointing at `match`. Whether integer/enum dispatch eventually folds into `match` stays open and is re-evaluated after `match` ships |
-| 139 | Interface extension `extend I with J;` | **Decided 2026-11-20, not implemented**: `J : I`, default methods only; applies to implementors of `I` in units that can see the extension; conflicts are ambiguity errors; it is not a subtype relation (3.18). The concrete-type `extend T with I;` form is planned |
+| 139 | Interface extension `extend I with J;` | **Decided 2026-11-20, implemented in build 261**: `J : I`, default methods only; applies to implementors of `I` in units that can see the extension; conflicts are ambiguity errors; it is not a subtype relation (3.18). The concrete-type `extend T with I;` form is planned |
 | 140 | Field method promotion `promote` | **Decided 2026-11-20, implemented in build 260**: only public methods, one level, fixed precedence (own → base → interface → promoted), conflicts at the type declaration, no `override`/interface satisfaction, generic resolution per instantiation (3.19) |
 
 ---

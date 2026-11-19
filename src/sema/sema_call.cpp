@@ -33,6 +33,30 @@ namespace muc_detail {
         return ft->fret;
     }
 
+    // SPEC 3.18: a method materialized by `extend I with J;` is callable only in units that can see the
+    // declaring unit. Dropping the candidates here (before overload resolution) keeps the rule local to
+    // the call site; when nothing else provides the name, the diagnostic says which `use` is missing.
+    void Sema::filter_extension_visibility(std::vector<const MethodSig*>& ms, const TypePtr& ot, Member* m,
+                                           Call* c) {
+        if (ms.empty()) return;
+        std::vector<const MethodSig*> keep;
+        std::string blocked;
+        for (auto* s : ms) {
+            if (extension_visible(*s)) {
+                keep.push_back(s);
+            } else if (blocked.empty()) {
+                blocked = s->ext_unit;
+            }
+        }
+        if (keep.empty() && !blocked.empty()) {
+            err("method `" + m->name + "` on `" + ot->str() + "` comes from an interface extension "
+                    "declared in unit `" + blocked + "`, which is not visible here; add `use " + blocked +
+                    ";`",
+                c);
+        }
+        ms = std::move(keep);
+    }
+
     // SPEC 3.19: `box.f()` falls back to `box.field.f()` when the wrapper's own, base and interface
     // methods do not provide `f`. The rewrite reuses the ordinary method-call path, so argument
     // checking, const filtering, visibility and codegen need no special case. One level only.
@@ -404,6 +428,7 @@ namespace muc_detail {
                 if (is_reference_type(ot)) {
                     std::vector<const MethodSig*> ms;
                     collect_methods(ot, m->name, ms);
+                    filter_extension_visibility(ms, ot, m, c);
                     if (ms.empty()) {
                         TypePtr ft = ot->field_type(m->name);
                         if (ft && is_callable_value(ft)) {
@@ -451,6 +476,7 @@ namespace muc_detail {
                 if (ot && ot->kind == TypeKind::Struct) {
                     std::vector<const MethodSig*> ms;
                     collect_methods(ot, m->name, ms);
+                    filter_extension_visibility(ms, ot, m, c);
                     if (ms.empty()) {
                         TypePtr ft = ot->field_type(m->name);
                         if (ft && is_callable_value(ft)) {

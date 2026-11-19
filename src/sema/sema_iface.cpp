@@ -243,6 +243,169 @@ namespace muc_detail {
         }
     }
 
+    // ---------------------------------------------------------------- `extend I with J;` (SPEC 3.18)
+
+    bool Sema::iface_chain_has(const TypePtr& iface, const TypePtr& target, int depth) {
+        if (!iface || !target || depth > kMaxInterfaceDepth) return false;
+        if (same_type(iface, target)) return true;
+        for (const auto& p : iface->interfaces) {
+            if (iface_chain_has(p, target, depth + 1)) return true;
+        }
+        return false;
+    }
+
+    bool Sema::unit_can_see(const Unit* u, const std::string& other) {
+        if (!u) return false;
+        if (u->name == other) return true;
+        for (const auto& us : u->uses) {
+            if (us->unit_name == other) return true;
+        }
+        return false;
+    }
+
+    bool Sema::extension_visible(const MethodSig& sig) const {
+        if (sig.ext_unit.empty()) return true;
+        if (!cur_) return false;
+        return unit_can_see(cur_, sig.ext_unit);
+    }
+
+    TypePtr Sema::unit_level_type(const std::string& name, Unit* u) {
+        if (TypePtr t = find_type_named(u->name, name, false)) return t;
+        for (const auto& us : u->uses) {
+            if (!unit_visible(us->unit_name)) continue;
+            if (TypePtr t = find_type_named(us->unit_name, name, true)) return t;
+        }
+        return nullptr;
+    }
+
+    void Sema::apply_interface_extensions() {
+        for (auto& u : units_) {
+            cur_ = u.get();
+            for (auto& d : u->decls) {
+                auto* ed = dynamic_cast<ExtendDecl*>(d.get());
+                if (!ed) continue;
+                recover([&] { apply_one_extension(ed, u.get()); });
+            }
+        }
+    }
+
+    void Sema::apply_one_extension(ExtendDecl* ed, Unit* u) {
+        TypePtr itf = unit_level_type(ed->target, u);
+        if (!itf) {
+            err("`extend`: unknown interface `" + ed->target + "`", ed);
+            return;
+        }
+        if (itf->kind != TypeKind::Interface) {
+            err("`extend` applies to an interface (SPEC 3.18); `" + ed->target + "` is " +
+                    (itf->kind == TypeKind::Class ? "a class" : "not an interface"),
+                ed);
+            return;
+        }
+        TypePtr ext = unit_level_type(ed->with, u);
+        if (!ext) {
+            err("`extend`: unknown interface `" + ed->with + "`", ed);
+            return;
+        }
+        if (ext->kind != TypeKind::Interface) {
+            err("`extend I with J` needs `J` to be an interface; `" + ed->with + "` is not one", ed);
+            return;
+        }
+        // `J : I`: the extension only refines the interface it extends.
+        if (!iface_chain_has(ext, itf)) {
+            err("`extend " + ed->target + " with " + ed->with + "`: `" + ed->with + "` does not derive "
+                    "from `" + ed->target + "` (declare it `interface " + ed->with + " : " + ed->target +
+                    "`)",
+                ed);
+            return;
+        }
+        // Default methods only: an abstract member of `J` must already be declared by `I`.
+        for (const auto& m : ext->methods) {
+            if (!m.is_abstract) continue;
+            bool in_base = false;
+            for (const auto& b : itf->methods) {
+                if (same_sig(b, m)) {
+                    in_base = true;
+                    break;
+                }
+            }
+            if (!in_base) {
+                err("`extend " + ed->target + " with " + ed->with + "`: `" + m.name +
+                        "` is abstract but `" + ed->target + "` does not declare it; an extension can "
+                        "only add default methods",
+                    ed);
+                return;
+            }
+        }
+
+        // Apply to every type implementing `I`. The extension's visibility is enforced at call sites
+        // (`filter_extension_visibility`), so a type declared in a unit that never sees the extension
+        // still gains the method for the units that do.
+        for (auto& tu : units_) {
+            cur_ = tu.get();
+            for (auto& d : tu->decls) {
+                TypePtr ty;
+                std::vector<std::unique_ptr<MethodDecl>>* decls = nullptr;
+                std::string type_name;
+                std::vector<TypePtr> chains;
+                if (auto* sd = dynamic_cast<StructDecl*>(d.get()); sd && sd->ty && !sd->ty->is_union) {
+                    ty = sd->ty;
+                    decls = &sd->methods;
+                    type_name = sd->name;
+                    // A struct keeps its `:` list as specs; they are already resolved by now.
+                    for (auto& spec : sd->base_specs) {
+                        if (!spec) continue;
+                        TypePtr bt = resolve_type(spec.get(), tu.get());
+                        if (bt && bt->kind == TypeKind::Interface) chains.push_back(bt);
+                    }
+                } else if (auto* cd = dynamic_cast<ClassDecl*>(d.get()); cd && cd->ty) {
+                    ty = cd->ty;
+                    decls = &cd->methods;
+                    type_name = cd->name;
+                    for (TypePtr b = cd->ty; b && b->kind == TypeKind::Class; b = b->base) {
+                        for (auto& i : b->interfaces) chains.push_back(i);
+                    }
+                } else {
+                    continue;
+                }
+                bool implements = false;
+                for (auto& c : chains) {
+                    if (iface_chain_has(c, itf)) {
+                        implements = true;
+                        break;
+                    }
+                }
+                if (!implements) continue;
+                for (const auto& m : ext->methods) {
+                    if (m.is_abstract || m.is_operator) continue;
+                    // Already provided by the type itself or by an interface default: keep that one.
+                    const MethodSig* have = nullptr;
+                    for (const auto& existing : ty->methods) {
+                        if (same_sig(existing, m)) {
+                            have = &existing;
+                            break;
+                        }
+                    }
+                    if (have) {
+                        // A method already present is kept (the type's own, or an interface default).
+                        // Another extension providing the same signature is an ambiguity, not a merge.
+                        if (!have->ext_unit.empty() && have->ext_unit != u->name) {
+                            err("`extend`: `" + m.name + "` is provided for `" + ty->str() +
+                                    "` by extensions in both `" + have->ext_unit + "` and `" + u->name +
+                                    "`; remove one of them",
+                                ed);
+                            return;
+                        }
+                        continue;
+                    }
+                    const size_t before = ty->methods.size();
+                    materialize_iface_default(ty, *decls, type_name, ext, m);
+                    if (ty->methods.size() > before) ty->methods.back().ext_unit = u->name;
+                }
+            }
+        }
+        cur_ = u;
+    }
+
     void Sema::check_interface(InterfaceDecl* itf) {
         // The interface graph walker (`iface_extends`) stops at a fixed depth; a deeper chain would
         // silently drop inherited members. The metric is the *longest path*, not the number of visited

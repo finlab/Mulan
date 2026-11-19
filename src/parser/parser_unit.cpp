@@ -313,6 +313,26 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             continue;
         }
 
+        // `extend I with J;` (SPEC 3.18): interface extension. `extend` is a contextual keyword here
+        // only, so it stays usable as an identifier elsewhere.
+        if (peek().kind == TokKind::Ident && peek().text == "extend" &&
+            peek(1).kind == TokKind::Ident && peek(2).kind == TokKind::Ident && peek(2).text == "with") {
+            if (has_layout) {
+                throw err_at("`extend` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
+            }
+            const Token et = advance();
+            auto ed = std::make_unique<ExtendDecl>();
+            ed->line = et.line;
+            ed->col = et.col;
+            ed->target = expect_ident("extended interface name").text;
+            advance();  // `with`
+            ed->with = expect_ident("extension interface name").text;
+            semicolon();
+            ed->is_public = is_pub;
+            push_decl(std::move(ed));
+            continue;
+        }
+
         if (at_kw("variant")) {
             if (is_const_decl) throw err_at("`const` can only modify a `struct` or `class` declaration", const_tok);
             if (has_layout) {

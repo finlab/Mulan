@@ -44,6 +44,10 @@ Program Sema::run() {
             }
         }
     }
+    // `extend I with J;` (SPEC 3.18): materialize `J`'s defaults into the implementors of `I` before
+    // any body is checked, exactly like the interface defaults above (and after them, so a type's own
+    // or interface-provided method keeps precedence).
+    apply_interface_extensions();
     // A `const class` marks its methods `const`; an override of a **mutating** virtual of the base has to
     // carry the slot's signature instead. Resolve that before any body is checked, so calls anywhere see
     // the final signatures (SPEC 3.7).

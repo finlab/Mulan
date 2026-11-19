@@ -696,6 +696,19 @@ private:
     void apply_struct_iface_defaults(StructDecl* sd);
     void apply_class_iface_defaults(ClassDecl* c);
 
+    // `extend I with J;` (SPEC 3.18): validate each extension and materialize `J`'s default methods
+    // into the types that implement `I` and can see the declaring unit.
+    void apply_interface_extensions();
+    void apply_one_extension(ExtendDecl* ed, Unit* u);
+    static bool iface_chain_has(const TypePtr& iface, const TypePtr& target, int depth = 0);
+    // Whether `u` can see `other`'s declarations (it is `other`, or it `use`s it).
+    static bool unit_can_see(const Unit* u, const std::string& other);
+    // A method produced by an interface extension is only callable where its declaring unit is visible.
+    bool extension_visible(const MethodSig& sig) const;
+    void filter_extension_visibility(std::vector<const MethodSig*>& ms, const TypePtr& ot, Member* m,
+                                     Call* c);
+    TypePtr unit_level_type(const std::string& name, Unit* u);
+
     void check_class(ClassDecl* c);
     // `const class`: an override of a mutating virtual of the base takes the slot's (non-const) signature;
     // runs after every shape is final and before any body is checked (SPEC 3.7).
