@@ -1,4 +1,4 @@
-// contract_witness_ref_ret — a `ref` / `ref const` interface return keeps its referent type in a
+// contract_witness_ref_ret — a `ref` / `const ref` interface return keeps its referent type in a
 // generic constrained by that interface: `x.at()` is the field, not the receiver.
 unit contract_witness_ref_ret;
 
@@ -6,21 +6,21 @@ use std.cstdio;
 
 interface IRef {
     ref int at();
-    ref const int cat() const;
+    const ref int cat() const;
 }
 
 class Holder : IRef {
     public int v;
     Holder(int x) { v = x; }
     override ref int at() { return v; }
-    override ref const int cat() const { return v; }
+    override const ref int cat() const { return v; }
 }
 
 struct SBox : IRef {
     public int v;
     SBox(int x) { v = x; }
     override ref int at() { return v; }
-    override ref const int cat() const { return v; }
+    override const ref int cat() const { return v; }
 }
 
 int poke<T: IRef>(T x) {

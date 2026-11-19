@@ -323,7 +323,9 @@ struct Emitter {
     void emitFinallyBodies(size_t count);
     void emitFinallyForLoopExit();
     void emitAbortIfPending();
-    Value* emitDescMatches(Value* desc, Value* target);
+    // Report the pending exception on stderr, then abort: uncaught at the entry function, escaping a
+    // destructor/finally, or reaching a thread boundary (SPEC 3.14).
+    void emitUncaughtAbort();    Value* emitDescMatches(Value* desc, Value* target);
 
 
     // class object layout (model): { i64 rc, ptr desc } fixed at 16 bytes, fields start at 16 and are laid out per type_align.
@@ -394,6 +396,8 @@ struct Emitter {
     // Used by `new` and by the synthesized lambda environment (U41).
     Value* emitClassAlloc(const TypePtr& cls);
     Value* descOf(const TypePtr& cls);
+    // The qualified class name literal stored in a descriptor (used by the uncaught report).
+    Constant* descNameString(const TypePtr& cls);
 
     // ------------------------------------------------------------ C runtime allocation
     // `_aligned_malloc`/`_aligned_free` exist only on Windows; POSIX uses `posix_memalign` + `free`.
@@ -539,7 +543,8 @@ struct Emitter {
     void emitAssignSwap(Value* dst, Expr* e, const TypePtr& ty);
 
     // The member-initialization step of a class constructor (C++ order: base, members, body).
-    void emitMemberInits(Value* self, const TypePtr& cls);
+    void emitMemberInits(Value* self, const TypePtr& cls,
+                         const std::function<void()>& onThrow = {});
 
     void releaseLocal(const LocalVar* lv);
 

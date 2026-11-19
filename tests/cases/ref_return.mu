@@ -21,7 +21,7 @@ struct Small {
     ref int operator[](isize i) { return v[i]; }
 }
 
-ref const int peek(ref const Vec v, isize i) { return v.data[i]; }
+const ref int peek(const ref Vec v, isize i) { return v.data[i]; }
 
 void bump(ref int x) { x += 1; }
 
@@ -65,7 +65,7 @@ int main() {
     }
 
     if peek(v, 0) == 1 {
-        puts("ref const read ok");
+        puts("const ref read ok");
     }
 
     for ref e in v {

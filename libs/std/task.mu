@@ -100,11 +100,11 @@ void unlock_sched() { mutex_unlock(S); }
 // Both require the scheduler lock. Pushing a task wakes one sleeping carrier: without that signal a
 // task can sit in a non-empty queue while every carrier sleeps (lost wakeup), which hangs the join.
 void push_run(Task* t) {
-    (*t).qnext = null;
+    t->qnext = null;
     if (run_tail == null) {
         run_head = t;
     } else {
-        (*run_tail).qnext = t;
+        run_tail->qnext = t;
     }
     run_tail = t;
     run_n = run_n + 1;
@@ -116,11 +116,11 @@ Task* pop_run() {
     if (t == null) {
         return null;
     }
-    run_head = (*t).qnext;
+    run_head = t->qnext;
     if (run_head == null) {
         run_tail = null;
     }
-    (*t).qnext = null;
+    t->qnext = null;
     run_n = run_n - 1;
     return t;
 }
@@ -151,14 +151,14 @@ extern void* muc_eh_slot();
 
 void eh_load(Task* t) {
     ulong* slot = muc_eh_slot() as ulong*;
-    slot[0] = (*t).eh0;
-    slot[1] = (*t).eh1;
+    slot[0] = t->eh0;
+    slot[1] = t->eh1;
 }
 
 void eh_save(Task* t) {
     ulong* slot = muc_eh_slot() as ulong*;
-    (*t).eh0 = slot[0];
-    (*t).eh1 = slot[1];
+    t->eh0 = slot[0];
+    t->eh1 = slot[1];
 }
 
 // ---------------------------------------------------------------- task body, carrier loop
@@ -170,9 +170,9 @@ void eh_save(Task* t) {
 void fiber_main(void* p) {
     while true {
         Task* t = backend_tls_get(tls_next) as Task*;
-        (*t).body((*t).arg);
+        t->body(t->arg);
         lock_sched();
-        (*t).exited = true;
+        t->exited = true;
         unlock_sched();
         backend_fiber_switch(backend_tls_get(tls_self));
     }
@@ -192,18 +192,18 @@ void* fiber_acquire() {
 
 // Requires the lock: marks the task done, wakes everything waiting for it and recycles its fiber.
 void finish_locked(Task* t) {
-    (*t).state = T_DONE;
-    Task* w = (*t).waiters;
-    (*t).waiters = null;
+    t->state = T_DONE;
+    Task* w = t->waiters;
+    t->waiters = null;
     while w != null {
-        Task* nx = (*w).wnext;
-        (*w).wnext = null;
-        (*w).state = T_RUNNABLE;
+        Task* nx = w->wnext;
+        w->wnext = null;
+        w->state = T_RUNNABLE;
         push_run(w);
         w = nx;
     }
     cond_broadcast(dcv);
-    fiber_release_locked((*t).fiber);
+    fiber_release_locked(t->fiber);
 }
 
 void carrier_main(void* arg) {
@@ -214,25 +214,25 @@ void carrier_main(void* arg) {
         lock_sched();
         Task* t = pop_run();
         if (t == null) {
-            (*rec).busy = false;
-            (*rec).hb = backend_monotonic_ms();
+            rec->busy = false;
+            rec->hb = backend_monotonic_ms();
             cond_wait(qcv, S, WAIT_FOREVER);
             unlock_sched();
             continue;
         }
-        (*t).state = T_RUNNING;
-        (*rec).busy = true;
-        (*rec).hb = backend_monotonic_ms();
+        t->state = T_RUNNING;
+        rec->busy = true;
+        rec->hb = backend_monotonic_ms();
         backend_tls_set(tls_next, t);
         eh_load(t);
         unlock_sched();
-        backend_fiber_switch((*t).fiber);
+        backend_fiber_switch(t->fiber);
         // Back on the carrier: the task parked (`exited` false) or its body returned.
         lock_sched();
         eh_save(t);
-        (*rec).busy = false;
-        (*rec).hb = backend_monotonic_ms();
-        if ((*t).exited) {
+        rec->busy = false;
+        rec->hb = backend_monotonic_ms();
+        if (t->exited) {
             finish_locked(t);
         }
         unlock_sched();
@@ -304,9 +304,9 @@ void monitor_main(void* arg) {
             int i = 0;
             while i < carrier_n {
                 Carrier* c = &carriers[i];
-                if ((*c).busy and (now - (*c).hb) > 10) {
+                if (c->busy and (now - c->hb) > 10) {
                     add = true;
-                    (*c).hb = now;  // count one stall once
+                    c->hb = now;  // count one stall once
                 }
                 i = i + 1;
             }
@@ -344,16 +344,16 @@ public void* muc_para_start((void*) => void body, void* arg) {
     if (t == null) {
         abort();
     }
-    (*t).fiber = f;
-    (*t).body = body;
-    (*t).arg = arg;
-    (*t).qnext = null;
-    (*t).wnext = null;
-    (*t).waiters = null;
-    (*t).state = T_RUNNABLE;
-    (*t).exited = false;
-    (*t).eh0 = 0;
-    (*t).eh1 = 0;
+    t->fiber = f;
+    t->body = body;
+    t->arg = arg;
+    t->qnext = null;
+    t->wnext = null;
+    t->waiters = null;
+    t->state = T_RUNNABLE;
+    t->exited = false;
+    t->eh0 = 0;
+    t->eh1 = 0;
     live_tasks = live_tasks + 1;
     push_run(t);
     bool need_start = not started;
@@ -384,20 +384,20 @@ public void muc_para_join(void* h) {
         return;  // defensive: generated code always passes a handle returned by muc_para_start
     }
     lock_sched();
-    if ((*t).state != T_DONE) {
+    if (t->state != T_DONE) {
         // `started` implies the TLS key is allocated (both published under this lock).
         Task* cur = null;
         if (started) {
             cur = backend_tls_get(tls_next) as Task*;
         }
         if (cur == null) {
-            while (*t).state != T_DONE {
+            while t->state != T_DONE {
                 cond_wait(dcv, S, WAIT_FOREVER);
             }
         } else {
-            (*cur).wnext = (*t).waiters;
-            (*t).waiters = cur;
-            (*cur).state = T_PARKED;
+            cur->wnext = t->waiters;
+            t->waiters = cur;
+            cur->state = T_PARKED;
             unlock_sched();
             backend_fiber_switch(backend_tls_get(tls_self));
             lock_sched();
@@ -423,28 +423,28 @@ public void* muc_para_group_new() {
     if (g == null) {
         abort();
     }
-    (*g).hs = null;
-    (*g).n = 0;
-    (*g).cap = 0;
+    g->hs = null;
+    g->n = 0;
+    g->cap = 0;
     return g;
 }
 
 public void muc_para_group_add(void* p, void* h) {
     ParaGroup* g = p as ParaGroup*;
-    if ((*g).n == (*g).cap) {
-        usize nc = (*g).cap * 2;
+    if (g->n == g->cap) {
+        usize nc = g->cap * 2;
         if (nc == 0) {
             nc = 16;
         }
-        void** nh = realloc((*g).hs, nc * sizeof(void*)) as void**;
+        void** nh = realloc(g->hs, nc * sizeof(void*)) as void**;
         if (nh == null) {
             abort();
         }
-        (*g).hs = nh;
-        (*g).cap = nc;
+        g->hs = nh;
+        g->cap = nc;
     }
-    (*g).hs[(*g).n] = h;
-    (*g).n = (*g).n + 1;
+    g->hs[g->n] = h;
+    g->n = g->n + 1;
 }
 
 // Joins every started task (in start order) and releases the list. Used both at the source end and
@@ -452,11 +452,11 @@ public void muc_para_group_add(void* p, void* h) {
 public void muc_para_group_join_free(void* p) {
     ParaGroup* g = p as ParaGroup*;
     usize i = 0;
-    while i < (*g).n {
-        muc_para_join((*g).hs[i]);
+    while i < g->n {
+        muc_para_join(g->hs[i]);
         i = i + 1;
     }
-    free((*g).hs);
+    free(g->hs);
     free(g);
 }
 

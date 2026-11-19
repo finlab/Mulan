@@ -323,7 +323,8 @@ using ArgPack = Emitter::ArgPack;
             storeDesc();  // the ancestor constructor may have overwritten desc, restore it to the final type
             // This class declares no constructor of its own, so the member step has no constructor body to
             // hang off: run it here, after the inherited default construction and the descriptor restore.
-            emitMemberInits(p, cls);
+            // A member constructor that throws must release the object: nothing owns it yet at this point.
+            emitMemberInits(p, cls, [&] { emitPartialDestroyCall(p, cls); });
         }
         return p;
     }

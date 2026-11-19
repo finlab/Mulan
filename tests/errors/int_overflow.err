@@ -1,1 +1,1 @@
-integer literal is too large (maximum 2^63-1)
+integer literal is too large (maximum 2^63-1; add the `ul` suffix for an unsigned 64-bit value)

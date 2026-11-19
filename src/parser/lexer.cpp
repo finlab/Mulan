@@ -108,6 +108,24 @@ long long parse_digits(const std::string& digits, int base) {
     return static_cast<long long>(v);
 }
 
+// Unsigned 64-bit parse for the `ul` suffix: the same routine with the 2^64-1 ceiling.
+unsigned long long parse_digits_u64(const std::string& digits, int base) {
+    unsigned long long v = 0;
+    const unsigned long long maxv = 18446744073709551615ULL;
+    for (char c : digits) {
+        int d = -1;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        if (d < 0 || d >= base) continue;
+        if (v > (maxv - static_cast<unsigned long long>(d)) / static_cast<unsigned long long>(base)) {
+            throw std::overflow_error("integer literal out of range");
+        }
+        v = v * static_cast<unsigned long long>(base) + static_cast<unsigned long long>(d);
+    }
+    return v;
+}
+
 double parse_double(const std::string& text) {
     return std::strtod(text.c_str(), nullptr);
 }
@@ -302,12 +320,43 @@ private:
 
     // ------------------------------------------------------ numbers
 
-    long long int_digits(const std::string& raw, int base, int line, int col) {
+    long long int_digits(const std::string& raw, int base, int line, int col, int suffix) {
+        // `u` fixes the value to 32 bits, `l` stays signed 64-bit, `ul` allows the full unsigned
+        // 64-bit range; an unsuffixed literal keeps the 2^63-1 ceiling.
         try {
-            return parse_digits(raw, base);
+            if (suffix == 3) return static_cast<long long>(parse_digits_u64(raw, base));
+            const unsigned long long v = parse_digits_u64(raw, base);
+            if (suffix == 1 && v > 4294967295ULL) {
+                throw err("`u` literal is out of range for `uint` (maximum 4294967295)", line, col);
+            }
+            if (v > 9223372036854775807ULL) {
+                throw err(suffix == 0
+                              ? "integer literal is too large (maximum 2^63-1; add the `ul` suffix for an "
+                                "unsigned 64-bit value)"
+                              : "integer literal is too large (maximum 2^63-1 for a `l` literal; add `u`)",
+                          line, col);
+            }
+            return static_cast<long long>(v);
         } catch (const std::overflow_error&) {
-            throw err("integer literal is too large (maximum 2^63-1)", line, col);
+            throw err(suffix == 3
+                          ? "integer literal is too large (maximum 2^64-1)"
+                          : "integer literal is too large (maximum 2^63-1; add the `ul` suffix for an "
+                            "unsigned 64-bit value)",
+                      line, col);
         }
+    }
+
+    // C-style integer suffix: `u` (uint), `l` (long), `ul`/`lu` (ulong), either case.
+    int read_int_suffix() {
+        if (!in_set(peek(), "uUlL")) return 0;
+        const char c = static_cast<char>(peek());
+        adv();
+        const bool is_u = (c == 'u' || c == 'U');
+        if (in_set(peek(), is_u ? "lL" : "uU")) {
+            adv();
+            return 3;
+        }
+        return is_u ? 1 : 2;
     }
 
     Token number(int line, int col) {
@@ -321,8 +370,9 @@ private:
             while (i_ < n_ && in_set(peek(), "0123456789abcdefABCDEF_")) adv();
             std::string raw = src_.substr(ds, i_ - ds);
             if (raw.empty()) throw err("hexadecimal literal has no digits", line, col);
+            tok.isuffix = read_int_suffix();
             tok.kind = TokKind::Int;
-            tok.ival = int_digits(raw, 16, line, col);
+            tok.ival = int_digits(raw, 16, line, col, tok.isuffix);
             return tok;
         }
 
@@ -332,8 +382,9 @@ private:
             while (i_ < n_ && in_set(peek(), "01_")) adv();
             std::string raw = src_.substr(ds, i_ - ds);
             if (raw.empty()) throw err("binary literal has no digits", line, col);
+            tok.isuffix = read_int_suffix();
             tok.kind = TokKind::Int;
-            tok.ival = int_digits(raw, 2, line, col);
+            tok.ival = int_digits(raw, 2, line, col, tok.isuffix);
             return tok;
         }
 
@@ -382,8 +433,9 @@ private:
             tok.fval = parse_double(text);
             return tok;
         }
+        tok.isuffix = read_int_suffix();
         tok.kind = TokKind::Int;
-        tok.ival = int_digits(text, 10, line, col);
+        tok.ival = int_digits(text, 10, line, col, tok.isuffix);
         return tok;
     }
 

@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-// Ref: a borrow (`ref T` / `ref const T`). It appears only in the return type position of a function/method,
+// Ref: a borrow (`ref T` / `const ref T`). It appears only in the return type position of a function/method,
 // and in parameter patterns (the parameter side is still recorded with the pty_ref boolean, see FuncDecl). It cannot be used as a variable/field/element type.
 enum class TypeKind { Void, Prim, Ptr, Array, Slice, Struct, Enum, Class, Interface, Module, Null, Range, Ref, Func, Delegate, Sum };
 
@@ -49,7 +49,7 @@ struct MethodSig {
     // An interface default whose body reads `this` (static-only: materialized per implementor, no slot).
     bool body_self = false;
     // Operator members only: the receiver (the first operand) may be declared `ref Self` (mutate in
-    // place) or `ref const Self` (read-only) by a constraint. An implementation takes the receiver
+    // place) or `const ref Self` (read-only) by a constraint. An implementation takes the receiver
     // either by value or as a borrow; `recv_cref` is true only for the read-only form.
     bool recv_ref = false;
     bool recv_cref = false;
@@ -76,6 +76,8 @@ struct Type {
     std::vector<Field> fields;  // used by Struct/Class (a placeholder is created first and filled in later; Class stores flattened fields)
     std::vector<MethodSig> methods;  // used by Class/Interface
     std::vector<std::vector<TypePtr>> ctors;  // class constructor parameter lists (overloads)
+    // Parallel to `ctors`: the declared parameter names, used to order named arguments.
+    std::vector<std::vector<std::string>> ctor_param_names;
     std::vector<bool> ctor_is_public;        // parallel to ctors: whether the constructor is public
     std::vector<bool> ctor_is_implicit;      // parallel to ctors: `implicit` (usable as a conversion, struct only)
     TypePtr base;               // the base class of a Class

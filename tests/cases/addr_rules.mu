@@ -29,9 +29,9 @@ int main() {
 
     D d = {};
     D* pd = &d;
-    (*pd).x = 7;
+    pd->x = 7;
 
-    if *px != 1 or (*pa).x != 1 or *pe != 4 or **pp != 6 or *po != 8 or *pv != 11 {
+    if *px != 1 or pa->x != 1 or *pe != 4 or **pp != 6 or *po != 8 or *pv != 11 {
         puts("addr rules failed");
         return 1;
     }

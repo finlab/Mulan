@@ -27,6 +27,67 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 226 — 2026-11-19
+
+**Executed decisions: uncaught-exception report, C-style integer suffixes, named constructor
+arguments, and a message at the thread boundary.**
+
+- **An uncaught exception prints one line before aborting** (SPEC 3.14):
+  `Uncaught exception: <unit>.<Type>: <message>` on stderr. Class descriptors gained a name field
+  (field 5) to supply the type name; the report also covers an exception escaping a destructor or a
+  thread boundary. The platform thread trampolines print `Uncaught exception in a thread: <message>`
+  before aborting.
+- **C-style integer suffixes** (SPEC 2.4, decision table 65): `u` = `uint` (≤ 4294967295), `l` =
+  `long`, `ul`/`lu` = `ulong` (the full unsigned 64-bit range, `18446744073709551615ul`). A suffixed
+  literal has a fixed type and does not adapt to the expected type; unsuffixed literals keep the
+  2^63-1 ceiling, and the diagnostic now names the `ul` suffix. Cases `int_suffix`,
+  `int_suffix_u_range`, `int_suffix_too_large`.
+- **Named arguments work for constructors** (`T(b = 2, a = 1)` and `new T(b = 2, a = 1)`, SPEC 3.12):
+  the overload is selected by the parameter-name set (each name exactly once, no mixing with
+  positional) and the arguments are reordered to positional order. `Type::ctor_param_names` is filled
+  alongside `Type::ctors`. Cases `ctor_named_args`, `ctor_named_args_unknown`.
+- Full suite: **859/859 on Windows**, **857/857 on Linux**.
+
+#### build 225 — 2026-11-19
+
+**TODO sweep: interface slots keyed by return type, `para` read-only rules, a leak on a throwing
+member constructor, and the static-LLVM build fixes.**
+
+- **Interface slots include the return type in their key.** Two interfaces may declare the same name
+  and parameters with different return types (`bool next()` / `int next()`); the slot key and the
+  slot -> implementation match folded them into one slot, and the thunk used the first slot's return
+  type, producing invalid IR. `sigKey` appends the return type and the slot match compares it (a `ref T`
+  implementation still satisfies a declared `T`); class overload resolution is unchanged. Run case
+  `iface_slot_return`.
+- **A `para` section rejects a non-const method on a value captured from the caller's frame** (the
+  sections run concurrently; only `const` methods are allowed, class/interface handles are explicitly
+  shared and stay allowed). A throwing section no longer leaks `para_stack_` into the next
+  declaration. Cases `para_captured_method_write` / `para_captured_method_read`.
+- **A member `ref T operator[](isize)` satisfies `for ref`** (the member form used to be rejected while
+  the free-function form worked). Run case `for_ref_member_index`.
+- **A throwing member constructor inside `new C()` for a class without its own constructor released
+  nothing**: the member step now carries the partial-destroy callback, so the allocation and the
+  members that finished are released on unwind.
+- `const ref` receivers already rejected a non-const method; the rule is locked by
+  `const_ref_method_write`. `para for` over a throwing source while the body reads a captured `string`
+  is a run case (`para_for_throw_captured`).
+- Build: the static LLVM branch links `passes` (PassBuilder), and target registration follows
+  `LLVM_TARGETS_TO_BUILD` (`MUC_TARGET_X86` / `MUC_TARGET_AARCH64`) instead of `InitializeAllTargets`,
+  so an x86-only static link no longer needs every target symbol.
+- Full suite: **854/854 on Windows**, **852/852 on Linux**.
+
+#### build 224 — 2026-11-19
+
+**`const ref` is the unified spelling for a read-only borrow.**
+
+- The parameter position already accepted both orders; the **return type** and the **`for` header**
+  accepted only `ref const`. `parse_return_type` and the `for` parser now accept `const ref` too, so
+  `const ref T f()` and `for const ref x in s` compile; `ref const` stays accepted everywhere, so no
+  existing code changes meaning.
+- Rewrote every `ref const` in `libs/std`, the test corpus, the diagnostics and the docs to `const ref`.
+  SPEC 3.8 now states the preference: write `const ref` whenever `const` and `ref` appear together.
+- Full suite: **849/849 on Windows**, **847/847 on Linux** (both with `MUC_VERIFY_MEM=1`).
+
 #### build 223 — 2026-11-19
 
 **Four issue fixes: copy/move constructors, `nocopy` construction, `delegate.code/env`, and `ref T`
@@ -51,6 +112,12 @@ satisfying a declared `T` in a class's nominal `override`.**
   the emitted code needs a way to see it before the inliner rewrites it.
 - New run cases `move_ctor_rc_field`, `nocopy_ctorless_expr`, `delegate_code_env`,
   `class_iface_borrow_index`. Full suite: **849/849 on Windows** (with `MUC_VERIFY_MEM=1`).
+
+- **Style only, no behaviour change**: `(*p).f` rewritten as `p->f` in `libs/std/task.mu`, both
+  `std.thread` backends and four run cases (`extras`, `rc_stress`, `struct_rc_fields`, `union_basic`,
+  `addr_rules`); `ptr` / `arrow_basic` / `inc` keep the explicit form because there the dereference is
+  the subject. SPEC 3.2 now states the preference (`p->f`, including `&p->f` and `p->f[i]`). Suite stays
+  849/849 on Windows and 847/847 on Linux.
 
 #### build 222 — 2026-11-19
 

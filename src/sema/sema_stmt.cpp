@@ -184,7 +184,15 @@ namespace muc_detail {
             ctx.lambda_base = lambda_stack_.size();
             para_stack_.push_back(std::move(ctx));
             push();
-            check_block(sec.get());
+            try {
+                check_block(sec.get());
+            } catch (...) {
+                // `err` throws; the caller may continue with the next declaration, so the para
+                // bookkeeping must not leak into it (a stale entry would flag unrelated code).
+                pop();
+                para_stack_.pop_back();
+                throw;
+            }
             pop();
             ParaCtx done = std::move(para_stack_.back());
             para_stack_.pop_back();
@@ -212,7 +220,13 @@ namespace muc_detail {
         ctx.lambda_base = lambda_stack_.size();
         para_stack_.push_back(std::move(ctx));
         pending_para_for_ = true;
-        check_for(f);
+        try {
+            check_for(f);
+        } catch (...) {
+            pending_para_for_ = false;
+            para_stack_.pop_back();
+            throw;
+        }
         pending_para_for_ = false;
         ParaCtx done = std::move(para_stack_.back());
         para_stack_.pop_back();

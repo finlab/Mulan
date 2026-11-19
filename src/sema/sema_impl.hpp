@@ -36,6 +36,14 @@ inline bool is_enum_t(const TypePtr& t) { return t && t->kind == TypeKind::Enum;
 // Enums may only be explicitly converted to and from "real integer types" (neither bool nor enums count)
 inline bool is_plain_int(const TypePtr& t) { return is_prim(t) && t->is_integer(); }
 
+// The declared parameter names of a constructor (parallel to `Type::ctors`, used for named arguments).
+inline std::vector<std::string> ctor_param_names(const CtorDecl* cd) {
+    std::vector<std::string> out;
+    if (!cd) return out;
+    for (auto& p : cd->params) out.push_back(p->name);
+    return out;
+}
+
 // Textual form of a type syntax. ast.hpp declares TypeSpec::str(), but its definition lives in parser.cpp;
 // a local copy is kept here to avoid a link-time dependency of sema on parser (used only in error messages).
 inline std::string spec_text(const TypeSpec* s) {

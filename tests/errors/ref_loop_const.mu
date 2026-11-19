@@ -5,7 +5,7 @@ struct Vec {
     int* data;
 
     isize length() { return n; }
-    ref const int operator[](isize i) { return data[i]; }
+    const ref int operator[](isize i) { return data[i]; }
 }
 
 int main() {

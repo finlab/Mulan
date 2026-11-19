@@ -1068,6 +1068,7 @@ ExprPtr Parser::parse_primary() {
         advance();
         auto node = std::make_unique<IntLit>();
         node->value = t.ival;
+        node->isuffix = t.isuffix;
         node->line = t.line;
         node->col = t.col;
         return node;

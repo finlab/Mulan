@@ -24,6 +24,10 @@ namespace muc_detail {
 
     TypePtr Sema::check_expr_impl(Expr* e, const TypePtr& expected) {
         if (auto il = dynamic_cast<IntLit*>(e)) {
+            // A suffixed literal has a fixed type (C rule) and never adapts to the expected type.
+            if (il->isuffix == 1) return Type::make_prim("uint");
+            if (il->isuffix == 2) return Type::make_prim("long");
+            if (il->isuffix == 3) return Type::make_prim("ulong");
             if (is_prim(expected) && expected->is_numeric() &&
                 promote_int_literal(il->value, expected)) {
                 return expected;

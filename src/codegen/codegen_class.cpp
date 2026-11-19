@@ -18,8 +18,24 @@ namespace muc_detail {
     std::string Emitter::sigKey(const MethodSig& m) {
         std::string k = m.name + "(";
         for (auto& p : m.params) k += type_code(p) + ",";
-        k += ")";
+        // The return type is part of an interface slot: two interfaces may declare the same name and
+        // parameters with different return types, and they are different slots (`bool next()` vs
+        // `int next()`). Overload resolution inside a class still ignores it (C++ rule), so only the
+        // slot key and the slot->implementation match use this.
+        k += ")->" + type_code(m.ret);
         return k;
+    }
+
+    // Slot signature match: name + parameters (`same_sig`) plus a compatible return type. A `ref T`
+    // implementation satisfies a declared `T` (the thunk loads through the borrow), so that case counts
+    // as the same slot; anything else must match exactly.
+    static bool slot_sig_matches(const MethodSig& a, const MethodSig& b) {
+        if (!Emitter::same_sig(a, b)) return false;
+        if (!a.ret || !b.ret) return (!a.ret) == (!b.ret);
+        if (same_type(a.ret, b.ret)) return true;
+        if (is_borrow_type(a.ret) && same_type(referent_of(a.ret), b.ret)) return true;
+        if (is_borrow_type(b.ret) && same_type(referent_of(b.ret), a.ret)) return true;
+        return false;
     }
 
     void Emitter::buildIfaceSlots() {
@@ -51,7 +67,7 @@ namespace muc_detail {
     const MethodSig* Emitter::ifaceDefault(const TypePtr& t, const MethodSig& slot, int depth) {
         if (!t || depth > 256) return nullptr;
         for (auto& m : t->methods) {
-            if (same_sig(m, slot) && !m.is_abstract) return &m;
+            if (slot_sig_matches(m, slot) && !m.is_abstract) return &m;
         }
         for (auto& i : t->interfaces) {
             if (auto r = ifaceDefault(i, slot, depth + 1)) return r;
@@ -175,7 +191,7 @@ namespace muc_detail {
         TypePtr cur = cls;
         while (cur && cur->kind == TypeKind::Class) {
             for (auto& m : cur->methods) {
-                if (same_sig(m, sig)) return m.is_abstract ? nullptr : &m;
+                if (slot_sig_matches(m, sig)) return m.is_abstract ? nullptr : &m;
             }
             cur = cur->base;
         }
@@ -513,7 +529,8 @@ namespace muc_detail {
     // finished are destroyed by it, and the member that threw only gets its partial destructor, because
     // its constructor never returned (#24). An explicit `super(...)` runs this step from inside the body,
     // hence the lookup instead of a fresh sequence.
-    void Emitter::emitMemberInits(Value* self, const TypePtr& cls) {
+    void Emitter::emitMemberInits(Value* self, const TypePtr& cls,
+                                  const std::function<void()>& onThrow) {
         if (!self || !cls || cls->kind != TypeKind::Class) return;
         size_t total = cls->fields.size();
         size_t baseCount = 0;
@@ -528,7 +545,7 @@ namespace muc_detail {
             const Field& f = cls->fields[i];
             if (f.weak || !f.type || !f.type->needs_ctor()) continue;
             setCtorProgressNext(own, i);
-            emitCtorGlue(fieldAddr(self, cls, static_cast<int>(i)), f.type);
+            emitCtorGlue(fieldAddr(self, cls, static_cast<int>(i)), f.type, false, onThrow);
         }
         // Every own member is complete once the step returns, so the body starts with a fully built level.
         markCtorProgressBody(own);
@@ -861,6 +878,19 @@ namespace muc_detail {
         b.CreateCall(callee, {p});
     }
 
+    // The class name literal stored in a descriptor (field 5). Private string constant reused by
+    // every reference to the same class.
+    Constant* Emitter::descNameString(const TypePtr& cls) {
+        std::string qname = cls->unit + "." + cls->name;
+        auto* init = ConstantDataArray::getString(ctx, qname, /*AddNull=*/true);
+        auto* gv = new GlobalVariable(*mod, init->getType(), /*isConstant=*/true,
+                                      GlobalValue::PrivateLinkage, init,
+                                      "mu$" + cls->unit + "$descname$" + cls->name);
+        return llvm::ConstantExpr::getInBoundsGetElementPtr(
+            init->getType(), gv,
+            llvm::ArrayRef<llvm::Constant*>{ConstantInt::get(i64(), 0), ConstantInt::get(i64(), 0)});
+    }
+
     void Emitter::emitClassDesc(ClassDecl* c) {
         std::string destroyName = destroy_cname(c->ty->unit, c->name);
         FunctionCallee dfn =
@@ -878,6 +908,7 @@ namespace muc_detail {
             vt ? cast<Constant>(vt) : Constant::getNullValue(ptrTy()),
             it ? cast<Constant>(it) : Constant::getNullValue(ptrTy()),
             baseDesc,
+            descNameString(c->ty),
         };
         auto* gv = mod->getNamedGlobal(class_desc_name(c->ty->unit, c->name));
         if (!gv) {

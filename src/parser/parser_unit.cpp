@@ -402,7 +402,7 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             throw err_at("`static` has been removed: unit-level variables are private by default; use `public` to share across units", tk);
         }
 
-        if (at_kw("const")) {
+        if (at_kw("const") && !peek(1).is_kw("ref")) {
             // `const` at unit level introduces either a const variable (`const int N = 3;`) or a
             // readonly return type (`const char* f() { ... }`). Both start with a type; an
             // identifier followed by `(` or `<` makes it a function definition.
@@ -1118,7 +1118,7 @@ std::unique_ptr<Decl> Parser::parse_interface() {
         if (at_kw("export")) {
             throw err("`export` applies to top-level declarations only; export the interface itself");
         }
-        if (at_kw("const")) {
+        if (at_kw("const") && !peek(1).is_kw("ref")) {
             throw err("interface `" + id->name + "` does not support const members");
         }
         // `virtual` on an interface method is redundant (every interface method is abstract), accepted so
@@ -1144,11 +1144,26 @@ std::unique_ptr<Decl> Parser::parse_interface() {
 
 TypeSpecPtr Parser::parse_return_type(bool& ret_ref) {
     ret_ref = false;
+    // `const ref T`: the read-only borrow. `const ref` is the preferred spelling (it reads like C++'s
+    // `const&`); the older `ref const T` spelling stays accepted (SPEC 3.8).
+    bool const_before_ref = false;
+    if (at_kw("const") && peek(1).is_kw("ref")) {
+        advance();  // const
+        const_before_ref = true;
+    }
     if (at_kw("ref")) {
         advance();
         ret_ref = true;
     }
-    return parse_type();
+    TypeSpecPtr spec = parse_type();
+    if (const_before_ref) {
+        if (spec->kind != TypeSpec::K::Named) {
+            throw err_at("`const` before `ref` needs a named borrowed type; write `const ref T` for this shape",
+                         peek());
+        }
+        spec->is_const = true;
+    }
+    return spec;
 }
 
 std::unique_ptr<MethodDecl> Parser::parse_interface_operator(TypeSpecPtr ret, bool ret_ref) {

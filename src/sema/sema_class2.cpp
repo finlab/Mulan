@@ -302,7 +302,7 @@ namespace muc_detail {
             }
             if (root_is_const(t)) err("`" + n->ident + "` is a `const` binding and cannot be assigned", t);
             if (auto lv = std::get_if<LocalVar*>(&n->sym); lv && *lv && (*lv)->ref_const) {
-                err("cannot assign through a `for ref const` binding", t);
+                err("cannot assign through a `for const ref` binding", t);
             }
             // `int* const p`: the cv belongs to the pointer type, not to the binding, so the binding is
             // not `const` yet the object is read-only (`p` cannot be retargeted, `*p` can be written).
@@ -399,7 +399,7 @@ namespace muc_detail {
             // The result of a `ref T f()` call is also a writable lvalue (write-through borrow)
             if (auto* c = dynamic_cast<Call*>(s->target.get())) {
                 check_expr(c);
-                if (c->ref_const) err("cannot assign through a readonly (`ref const`) return value", s);
+                if (c->ref_const) err("cannot assign through a readonly (`const ref`) return value", s);
                 if (!c->by_ref) err("left side of an assignment must be assignable", s);
             } else {
                 err("left side of an assignment must be assignable", s);
@@ -420,7 +420,7 @@ namespace muc_detail {
                         s->target.get());
                 }
                 if (ix->ref_const)
-                    err("cannot assign through a readonly (`ref const`) subscript", s->target.get());
+                    err("cannot assign through a readonly (`const ref`) subscript", s->target.get());
                 check_writable(s->target.get());
                 // no return: falls through to the generic assignment/compound-assignment check below
             }
@@ -553,7 +553,7 @@ namespace muc_detail {
                     s->value.get());
             }
             if (!rt->is_const && root_is_const(s->value.get())) {
-                err("cannot return a mutable `ref` to a readonly (`const`) location; declare the return type as `ref const`",
+                err("cannot return a mutable `ref` to a readonly (`const`) location; declare the return type as `const ref`",
                     s->value.get());
             }
             return;
@@ -1056,8 +1056,8 @@ namespace muc_detail {
         }
         if (s->by_ref && s->loop_kind == "index" && is_borrow_type(idx_ret) && idx_ret->is_const &&
             !s->ref_const) {
-            err("`for ref` requires a mutable borrow: `operator[]` returns `ref const T`; write "
-                "`for ref const` for a read-only iteration",
+            err("`for ref` requires a mutable borrow: `operator[]` returns `const ref T`; write "
+                "`for const ref` for a read-only iteration",
                 s->seq.get());
         }
         if (s->by_ref && s->loop_kind == "range") {
@@ -1068,12 +1068,12 @@ namespace muc_detail {
         }
         if (s->by_ref && !s->ref_const && s->seq_ty && s->seq_ty->kind == TypeKind::Slice &&
             s->seq_ty->elem && s->seq_ty->elem->is_const) {
-            err("`for ref` cannot be used on a `const` slice; write `for ref const` for a read-only "
+            err("`for ref` cannot be used on a `const` slice; write `for const ref` for a read-only "
                 "iteration",
                 s->seq.get());
         }
         if (s->by_ref && !s->ref_const && root_is_const(s->seq.get())) {
-            err("`for ref` cannot be used on a `const` binding; write `for ref const` for a read-only "
+            err("`for ref` cannot be used on a `const` binding; write `for const ref` for a read-only "
                 "iteration",
                 s->seq.get());
         }

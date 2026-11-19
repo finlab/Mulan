@@ -4,8 +4,8 @@ struct P {
     int x;
 }
 
-// a `ref const` borrow cannot be returned as a mutable `ref`
-ref int bad(ref const P p) {
+// a `const ref` borrow cannot be returned as a mutable `ref`
+ref int bad(const ref P p) {
     return p.x;
 }
 

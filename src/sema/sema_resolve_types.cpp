@@ -443,6 +443,7 @@ namespace muc_detail {
                                             : ctor->is_copy ? copy_ctor_cname(u->name, sd->name)
                                                             : ctor_cname(u->name, sd->name, ctor->pty);
                 sd->ty->ctors.push_back(ctor->pty);
+                sd->ty->ctor_param_names.push_back(ctor_param_names(ctor.get()));
                 sd->ty->ctor_is_public.push_back(ctor->is_public);
                 sd->ty->ctor_is_implicit.push_back(ctor->is_implicit);
             }
@@ -559,6 +560,7 @@ namespace muc_detail {
                 }
                 ctor->cname = ctor_cname(u->name, c->name, ctor->pty);
                 c->ty->ctors.push_back(ctor->pty);
+                c->ty->ctor_param_names.push_back(ctor_param_names(ctor.get()));
                 c->ty->ctor_is_public.push_back(ctor->is_public);
             }
             if (c->dtor) c->dtor->cname = dtor_cname(u->name, c->name);

@@ -1,4 +1,4 @@
-// ref_param.mu — `ref` parameters: mutable borrow and read-only borrow (`ref const T p`)
+// ref_param.mu — `ref` parameters: mutable borrow and read-only borrow (`const ref T p`)
 unit ref_param;
 
 extern int puts(const char* s);
@@ -12,7 +12,7 @@ void bump(ref Point p) {
     p.y += 1;
 }
 
-void peek(ref const Point p) {
+void peek(const ref Point p) {
     int v = p.x;
     v += p.y;
     if v == 5 {
@@ -20,7 +20,7 @@ void peek(ref const Point p) {
     }
 }
 
-int total(ref const Point p) {
+int total(const ref Point p) {
     return p.x + p.y;
 }
 

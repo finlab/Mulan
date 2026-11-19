@@ -123,6 +123,11 @@ and or not override operator super this
 ### 2.4 Literals
 
 - **Integer**: decimal, `0x`, `0b`; `_` may be used as a separator; octal is not supported.
+  - A **C-style suffix** fixes the literal's type (implemented 2026-11-19): `u`/`U` = `uint` (value ≤ 4294967295),
+    `l`/`L` = `long`, `ul`/`UL`/`lu`/`LU` = `ulong`. A suffixed literal does not adapt to the expected type.
+  - Without a suffix the literal adapts to the expected numeric type when it fits, otherwise it is `int`
+    (fits in 32 bits) or `long`; the maximum is **2^63-1** — write `ul` for the full unsigned 64-bit range
+    (`ulong u = 18446744073709551615ul;`).
 - **Float**: decimal point / exponent; `double` by default, the `f` suffix means `float`.
 - **Character**: `'a'`; escapes `'\n' '\t' '\\' '\'' '\0' '\xNN' '\u{...}'`; the default type of a literal is `byte` (unsigned 8-bit), adapted to `char`/`byte` according to context.
   - `char` is **signed** 8-bit (C style, −128–127); `byte` is **unsigned** 8-bit (0–255). There is no `ubyte`/`uchar` alias.
@@ -187,7 +192,9 @@ where  move  typeof
 - Types: `T*`; `void*` is the untyped pointer; `T**` is legal.
 - Operations: `&expr`, `*p`, `p[i]`, `p + n`, `p - n`, pointer comparison, pointer subtraction, and the
   member shorthand `p->f`, which is exactly `(*p).f` (one dereference level; `p->f` and `p->f[i]` chain like
-  postfix operators). `p.f` on a pointer is an error — write `p->f`, or `(*p).f` explicitly.
+  postfix operators). `p.f` on a pointer is an error — write `p->f`. **Style: use `p->f` in preference to
+  `(*p).f`**, including `&p->f`, `p->f[i]` and `p->f->g`; spell out the dereference only when the
+  dereference itself is the subject (e.g. a test for `*p`).
 - `null` can only be assigned to a pointer or a class reference (see 3.8); `p == null` is legal.
 - `T*` implicitly converts to `void*`; `void*` to `T*` requires an explicit `as`.
 - `T*` implicitly converts to `const T*`; the reverse requires an explicit `as` (unsafe).
@@ -255,7 +262,7 @@ where  move  typeof
     (the latter yields null handles).
   - `s.length()`: 0 for a null handle; `s[i]` indexing (bounds-checked, see below); `for x in s` iterates over the elements.
   - `for ref x in s` can write to a shared array; **not allowed when the element is a class/interface** (the element is a handle, iterate with value binding);
-    `string` also cannot use `for ref` (immutable) — use `for ref const` (read-only) or value binding.
+    `string` also cannot use `for ref` (immutable) — use `for const ref` (read-only) or value binding.
   - Null value: `T[] s = null;` and `T[] s = {};` are equivalent (both null handles); but **a slice cannot be compared with `null`**
     (use `s.length() == 0`).
   - Releasing a dynamic array: setting the handle to empty (`s = {}` / `s = null`) releases it once; `del` was removed (0.0.47).
@@ -698,7 +705,7 @@ C++ model, with the deliberate omissions listed at the end of this section.
     in-language write path at all, so a `const class` and a `const struct` make the same promise;
     `mutable` is still not provided.
 - **Address-of and iteration.** `&const_local` / `&s.const_field` / `&const_slice[i]` yield `const T*`.
-  `for ref const x in s` is read-only iteration; `for x in s` copies (a copy of a const element is mutable).
+  `for const ref x in s` is read-only iteration; `for x in s` copies (a copy of a const element is mutable).
 - **No backdoors.** `const_cast` is not provided — use `as` (explicit and unsafe, 4.3); `mutable` is not
   provided (a `const class` base subobject is writable only while constructing/destructing — that is a phase,
   not a per-field modifier); `volatile` is not provided. `constexpr` / `consteval` / `constinit` are **not**
@@ -811,8 +818,9 @@ class Cat {
 - **`ref` is a binding mode, not a storable type** (since 0.0.62; extended in 0.0.63): borrows appear in exactly two places, **parameters** and **return types**,
   written as the prefix keyword `ref T p` / `const ref T p` (or its older spelling `ref const T p`) / `ref T f()`; **no `T&` type suffix is introduced**. The reason: `&` in this language already is
   the unary address-of operator and the binary bitwise-and operator; modifiers in type position uniformly use a lowercase prefix (`weak`, `const`, `ref`).
+  **Style: when `const` and `ref` appear together, write `const ref`** (in parameters, return types and `for const ref x in s`); the older `ref const` order is still accepted but is not to be used in new code.
   A borrow cannot be the type of a variable, field, or array element (`ref T x;` and `T&[]` are both errors, and the compiler emits a clear diagnostic).
-- The borrow family shares one rule: **not storable** — the results of `for ref x in s` / `for ref const x in s`, `ref T p`, and `ref T f()` must not be assigned to another variable or field,
+- The borrow family shares one rule: **not storable** — the results of `for ref x in s` / `for const ref x in s`, `ref T p`, and `ref T f()` must not be assigned to another variable or field,
   must not have their address taken, and must not outlive the expression that produced them.
 - `ref T` parameters (0.0.62; scalars supported since 0.0.63): `void f(ref Point p)` / `void inc(ref int x)` borrow the caller's variable;
   the callee may write to it; it cannot be rebound.
@@ -822,7 +830,7 @@ class Cat {
   - The argument must be an **addressable lvalue**; `ref` parameters perform no conversion (they do not accept temporaries).
   - Assignment to a struct borrow is still a "rebinding" error (as in 0.0.62); assignment to a scalar/enum/pointer borrow **writes through** to the caller's variable.
   - Method/constructor parameters do not support `ref` yet; operator parameters do (see 3.11); `extern` does not.
-- `ref const T p` (read-only borrow, 0.0.62): symmetric with the `const` rules of `for ref`; the callee can neither
+- `const ref T p` (read-only borrow, 0.0.62): symmetric with the `const` rules of `for ref`; the callee can neither
   rebind the parameter itself nor write fields/elements through the borrow; the argument must be an **addressable lvalue** (temporaries are not accepted).
   Difference from a by-value `const T p`: the latter protects the **copy** inside the function body, whereas the former restricts **writes to the caller's object**.
   A mutable `ref T` does not accept a `const` argument ("cannot bind a readonly variable to a mutable `ref` parameter").
@@ -831,11 +839,11 @@ class Cat {
     Borrowing a local variable, a by-value parameter (including its inlined fields), or a temporary is a compile error.
   - The result is **not storable** (`ref T r = f();` is an error); but it can be written through in place: `f() = v;`, `f() += 1;`, `f().field = v;`,
     and it can also serve as the argument of a `ref` parameter, or be bound in a `for ref`.
-  - A `ref const T` position cannot be returned as a mutable `ref`; the result of `ref const T f()` can only be read.
+  - A `const ref T` position cannot be returned as a mutable `ref`; the result of `const ref T f()` can only be read.
 - **A `const` method cannot return a mutable `ref T`** (decided 2026-11-18): its receiver is borrowed
   read-only, so anything it hands out must be read-only as well — otherwise a `const` handle could write a
   field through `ref int at() const` and the deep-readonly rule would hold only at the call site. The
-  read-only spelling `ref const T at() const` is the way to lend a view; a mutable borrow comes from a
+  read-only spelling `const ref T at() const` is the way to lend a view; a mutable borrow comes from a
   non-`const` method or a free function. (This also covers passing a `ref` parameter's borrow through: the
   compiler does not track provenance, and the caller may have aliased the receiver.)
 - **Parameters are owning local variables** (since 0.0.47): on entry to a function a reference is retained for the parameter value, and on exit (including `return`/`break`/
@@ -909,9 +917,9 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
   carry both ordinary methods and operators (`interface IBoth { int area(); Self operator+(Self, Self); }`).
   The receiver is the first operand and must be spelled `Self`; the operands after it are any types
   (`Self operator<<(Self b, byte c)`, `Self operator*(Self a, int k)`, `bool operator<(Self a, int b)`).
-  The receiver may borrow: `ref Self` (mutate in place) or `ref const Self` (read-only). A `ref Self`
+  The receiver may borrow: `ref Self` (mutate in place) or `const ref Self` (read-only). A `ref Self`
   receiver needs a free `operator` whose first parameter is `ref` (or a struct member operator, whose
-  `this` is borrowed); a `ref const Self` receiver is satisfied by a free `ref const` (or by-value) first
+  `this` is borrowed); a `const ref Self` receiver is satisfied by a free `const ref` (or by-value) first
   parameter, or by a `const` member operator (whose `this` is `const Self`, 3.11).
 - A default method may only call interface methods and cannot access fields; **it may also use `this`**,
   whose type is `Self`: a contract operator applies to it (`this[0]`, `this + x`), `return this` returns
@@ -1032,7 +1040,7 @@ struct Vec {
   The left side must be side-effect free to re-evaluate — a name, a field, or a subscript whose indices
   contain no calls — because the rewrite spells it twice; an impure target is a compile error that asks
   for the update to be written out.
-- **Operator parameters may be `ref` / `ref const`** (free functions only): the receiver is the first
+- **Operator parameters may be `ref` / `const ref`** (free functions only): the receiver is the first
   operand, so `Buf operator<<(ref Buf b, byte c)` mutates the caller's value. A mutable `ref` argument must
   be an addressable lvalue and binds no conversion; a readonly borrow never binds a mutable `ref`.
 - **An operator may return `ref T`** (`ref Buf operator<<(ref Buf b, byte c) { ... return b; }`): the result
@@ -1068,7 +1076,9 @@ class Button : Widget {
 ```
 
 - A constructor has no return type and its name equals the class name; it may be overloaded; `new T(args)` is resolved by the rules of 3.11.
-  **Named arguments are not supported for constructor/`new` parameters** (`new C(v = 1)` is a compile error); named arguments are only used for struct construction (3.4).
+  **Named arguments work for constructors too** (2026-11-19): `T(b = 2, a = 1)` / `new T(b = 2, a = 1)` select the
+  overload whose parameter names they spell out (each exactly once) and are reordered to positional order;
+  positional and named cannot be mixed, and the names must match one overload exactly.
 - **`implicit`** (implemented 0.0.88, struct only): `implicit string(const char* c) { ... }` marks a single-parameter
   constructor as the implicit conversion path (see 3.6). It must be `public`, and writing it in a class body or
   union is a compile error. The marker is contextual: `implicit` is a modifier only in front of a constructor name.
@@ -1152,7 +1162,8 @@ void g() {
 - A `finally` body must not `return`, `break`, `continue`, or `throw` directly (compile errors). A nested `try/catch` inside `finally` is allowed; an exception that escapes it aborts, i.e. cleanup code must not throw.
 - An exception object is an RC-managed class handle. The runtime pending slot owns one strong reference; a catch scope owns it until the scope ends. `throw e;` inside a catch rethrows (retains the object).
 - Destructors must not throw; a pending exception inside a destructor aborts.
-- Uncaught → `abort` at `main` (or at a thread/foreign-call boundary).
+- Uncaught → `abort` at `main` (or at a thread/foreign-call boundary), after printing one line to
+  `stderr`: `Uncaught exception: <unit>.<Type>: <message>` (2026-11-19).
 - Exceptions do not cross the C ABI and do not cross threads.
 - A constructor may throw: the partially constructed object is zero-initialized and released through its destructor, then the exception propagates.
 - **Implementation (B2)**: the function ABI is unchanged. A thread-local pending slot (`flag` + object pointer) is checked after every mu_lan call. On `throw`, the function releases its active scopes and returns a dummy value with the flag set; callers propagate it until a matching `catch`. `extern "C"` calls are not checked. No platform unwind tables, personality functions or unwinding runtime are needed; only libc and TLS are used, keeping Windows/Linux/macOS on one lowering.
@@ -1263,11 +1274,11 @@ T: A | B  →  type set is the union (wider)  →  available members of T are th
   member operator of a visible unit. A **subscript** is the same shape (`T operator[](Self c, isize i)`);
   its index is never `Self`.
 - **A `ref` receiver** declares that the operator mutates the receiver in place:
-  `Self operator<<(ref Self b, byte c)` (mutable) or `Self operator<<(ref const Self b, byte c)`
+  `Self operator<<(ref Self b, byte c)` (mutable) or `Self operator<<(const ref Self b, byte c)`
   (read-only). Satisfaction requires a matching implementation form: a mutable `ref Self` needs a free
   `operator` whose first parameter is `ref`, or a struct member operator (its `this` is borrowed); a
-  by-value implementation only touches a copy and does not satisfy it. A `ref const Self` is satisfied by
-  a free `ref const` (or by-value) first parameter, or by a `const` member operator (`this` is
+  by-value implementation only touches a copy and does not satisfy it. A `const ref Self` is satisfied by
+  a free `const ref` (or by-value) first parameter, or by a `const` member operator (`this` is
   `const Self`, 3.11). Only the receiver may be a `ref` parameter in an interface
   operator declaration; the remaining operands are ordinary values.
 - A `ref T` return satisfies a declared `T` (a borrow is usable as a value), and a declared `ref T` needs a
@@ -1835,7 +1846,7 @@ on the execution engine.
   primitive types/enums/pointers/pure value structs may be borrowed; methods/constructors and `extern` are not supported.
 - `ref T` returns (**0.0.63**): the borrow must originate from a `ref` parameter, `this`, global/static storage, or pointer·slice storage; the result cannot be stored,
   it can only be written through on the spot or passed as a borrow argument (see 3.8).
-- `ref const T p` is a **read-only borrow**: it cannot be rebound, and fields/elements cannot be written through the borrow; the argument must be addressable (temporaries are not allowed).
+- `const ref T p` is a **read-only borrow**: it cannot be rebound, and fields/elements cannot be written through the borrow; the argument must be addressable (temporaries are not allowed).
 - **`ref` is a binding mode, not a storable type**: it does not introduce `T&`; a borrow cannot be the type of a variable/field/element/array element
   (no `ref T x;`, no `T&[]`), sharing the "not storable" rule with `for ref` (see 3.8).
 - **`move` is a binding mode too** (C++ `&&`; decided 2026-11-17): `move T` is a non-const rvalue reference.
@@ -1999,7 +2010,7 @@ while true { ... }   // infinite loop, exited via break
 ```c
 for x in seq { ... }            // x is the value binding for each iteration (copied by default)
 for ref x in seq { ... }        // x is a mutable reference to the element
-for ref const x in seq { ... }  // x is a read-only reference (usable on a `const` sequence, decided 2026-11-17)
+for const ref x in seq { ... }  // x is a read-only reference (usable on a `const` sequence, decided 2026-11-17)
 for i, x in seq { ... }         // with index/ordinal (see 6.4.4)
 ```
 
@@ -2012,12 +2023,12 @@ for i, x in seq { ... }         // with index/ordinal (see 6.4.4)
   built-in sequences do not participate in form matching.
 - `x` is scoped to the loop body only; immutable and bound by value by default; `x` is an **owning local variable** (0.0.47 semantics), so when the element is a
   class/interface it is retained on entry and released on exit of each round; the `ref` form can write to elements.
-- **`for ref const x in seq`** (decided 2026-11-17) is read-only iteration: `x` is a `ref const` borrow, it can
+- **`for const ref x in seq`** (decided 2026-11-17) is read-only iteration: `x` is a `const ref` borrow, it can
   be read but not written, and it is the only `for ref` form accepted on a `const` sequence (`const T[]`,
   `const T[N]`, or a const container). `for x in` always copies, so a copy of a const element is mutable.
 - `seq` is evaluated only once; its length is fixed at the start; elements must not be added or removed during iteration (UB or a runtime error).
   - A simple lvalue (a variable, a member access chain) is iterated directly; other expressions are evaluated by the compiler first, stored, and then iterated.
-  - The sequence of `for ref` / `for ref const` must be a variable or member access (it must be addressable); `for ref v in arr[f()]` is an error.
+  - The sequence of `for ref` / `for const ref` must be a variable or member access (it must be addressable); `for ref v in arr[f()]` is an error.
 - `continue` → the next iteration; `break` → exit.
 - An empty sequence iterates zero times.
 - Ranges: half-open `a..b` by default (includes `a`, excludes `b`); `..=` includes the upper bound; an optional `step n` (must be a non-zero compile-time constant).
@@ -2048,7 +2059,7 @@ int operator[](Vec v, isize i) { return v.data[i]; }   // free-function operator
 - `length()` must equal the number of valid indices of `[]`; a mismatch is a user error (debug bounds checks catch it).
 - In `for i, x`, `i` is the real `isize` index.
 - `for ref` requires `operator[]` to return `ref T` (the element is then addressable); when `[]` returns a value, use `for i, x` + `c[i] = ...`.
-  `for ref const` accepts an `operator[]` returning `ref T` or `ref const T` and binds a read-only element.
+  `for const ref` accepts an `operator[]` returning `ref T` or `const ref T` and binds a read-only element.
 - **Copy cost**: a subscript is **always a member operator** (6.4.1, build 161), whose receiver is the
   implicit `this`: the object address for a `struct`, the handle for a `class`. Both are borrowed, so an
   iteration is a plain indexed load with no copy and no retain/release.
@@ -2849,7 +2860,7 @@ switch v {
 | 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, and a constant expression reports it |
 | 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
 | 10 | `goto`/`typedef`/function pointers/varargs | `goto` is not done (phase one); function pointers and lambdas are implemented in 3.16 (0.0.84); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
-| 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding by default; `for i, x` provides an `isize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; **`for ref` works for user types in the index form when the container's `operator[]` returns a mutable `ref T`** — either spelling of the operator (member or free function, 6.4.1); it is unavailable for ranges, `string`, the cursor form, class/interface elements and `const` sequences (a `const` sequence uses **`for ref const`** for read-only iteration); **multi-dimensional arrays forbid `for-in`** |
+| 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding by default; `for i, x` provides an `isize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; **`for ref` works for user types in the index form when the container's `operator[]` returns a mutable `ref T`** — either spelling of the operator (member or free function, 6.4.1); it is unavailable for ranges, `string`, the cursor form, class/interface elements and `const` sequences (a `const` sequence uses **`for const ref`** for read-only iteration); **multi-dimensional arrays forbid `for-in`** |
 | 12 | `..=` / `step` / reverse order for ranges | Implemented (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`) and must be a non-zero compile-time constant; reverse order relies on an **explicit negative step** (`a..b` does not reverse automatically); switch case ranges support `..=` and **do not support `step`** |
 | 13 | Local type inference | Decided: `auto x = expr;`; locals only, an initializer is required; all declarators must have the same type |
 | 14 | Default mutability of parameters | Mutable (C semantics) |
@@ -2903,7 +2914,7 @@ switch v {
 | 62 | `string` comparison semantics | Decided (0.0.89): library `operator==` compares byte values, with overloads for `string` and `const char*` (a literal); `!=` is derived by negating; comparing a struct value with `null` is a compile error; the zero value equals `""` |
 | 63 | Floating-point literal narrowing | Decided: literals adapt to the context (`float f = 1.5;` is legal), but variables still require `as` |
 | 64 | Integer ↔ enum conversions | Decided: no implicit conversion in either direction, `as` is required (an enum is not a widening target for an integer, and an integer is not an implicit source for an enum) |
-| 65 | Upper limit of integer literals | Decided: `2^63-1`, exceeding it is an error |
+| 65 | Upper limit of integer literals | Decided: `2^63-1` without a suffix; a `ul` suffix allows the full unsigned 64-bit range (`u` = uint, `l` = long) |
 | 66 | Writability checks for `const` objects / const views / `string` | Decided: the compiler must reject writes (see 3.7) |
 | 67 | Object model | Decided: struct values / class references; RC + weak; no cycle collector (see 3.8 / 8.3) |
 | 68 | Scope of `weak` | Class fields only; locals/parameters/return values are forbidden |
@@ -2937,7 +2948,7 @@ switch v {
 | 96 | Reserved words | Decided: see 2.5 |
 | 97 | Exception unwinding ABI | Resolved by B2 (0.0.81): no platform unwinding ABI; a thread-local pending slot + call-site checks; no `.eh_frame`/`.pdata`/personality dependency |
 | 98 | `const` class views / `const` methods | **Redesigned (2026-11-17)**: `const` methods are provided (`ret f() const`, `this` is `const Self`, `f()` / `f() const` overload); a `const` object is deeply read-only (only const methods may be called, fields cannot be written); `const struct` / `const class` makes every field/method implicitly const without putting cv on the type name — the object's content is fixed once constructed, it can be copied and moved, and a variable of such a type can be reassigned as a whole (destroy-and-construct). `const_cast`/`mutable` are not provided (use `as` for an explicit const removal). **Refined 2026-11-18 for `const class` — see 132** |
-| 99 | `ref` parameters / return values | Implemented (0.0.62 for parameters; extended in 0.0.63): `ref` is a binding mode rather than a storable type — `ref T p` / `ref const T p` / `ref T f()`, and no `T&` is introduced; primitive types/enums/pointers/pure-value structs can be borrowed; a returned borrow must originate from a `ref` parameter, `this`, a global, or pointer/slice storage, and the result is not storable (it can only be written through on the spot / passed as a borrow / used with `for ref`); borrowing a local, a by-value parameter, or a temporary is a compile error; method/constructor parameters and `extern` do not support it (see 3.8, backlog U8) |
+| 99 | `ref` parameters / return values | Implemented (0.0.62 for parameters; extended in 0.0.63): `ref` is a binding mode rather than a storable type — `ref T p` / `const ref T p` / `ref T f()`, and no `T&` is introduced; primitive types/enums/pointers/pure-value structs can be borrowed; a returned borrow must originate from a `ref` parameter, `this`, a global, or pointer/slice storage, and the result is not storable (it can only be written through on the spot / passed as a borrow / used with `for ref`); borrowing a local, a by-value parameter, or a temporary is a compile error; method/constructor parameters and `extern` do not support it (see 3.8, backlog U8) |
 | 100 | Downcast from an `interface` to a derived `interface` | Decided: not supported in phase one (only upcasts are allowed; `as` is an error) |
 | 101 | Non-ASCII character literals | Decided: not supported in phase one (a literal is a single-byte `byte`; use `'\xNN'` or `string`) |
 | 102 | Enum comparison | Decided: only between the same enum; `== != < <= > >=` are supported, the order is the order of the underlying integer values; cross-enum or integer comparisons require `as` (see §3.5) |

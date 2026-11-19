@@ -3,7 +3,7 @@ unit rr4;
 struct Counter {
     int n;
 
-    ref const int peek() { return n; }
+    const ref int peek() { return n; }
 }
 
 int main() {

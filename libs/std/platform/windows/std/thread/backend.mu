@@ -18,6 +18,8 @@ extern int CloseHandle(void* h);
 extern void Sleep(uint ms);
 extern ulong GetTickCount64();
 extern void abort();
+extern void* __acrt_iob_func(int idx);
+extern int fprintf(void* stream, const char* fmt, ...);
 
 struct ThreadCtx {
     (void*) => void body;
@@ -30,8 +32,9 @@ uint thread_trampoline(void* p) {
     // thread-local, so it would vanish with the thread. Abort instead, like a `para` task body
     // (SPEC 3.17.7).
     try {
-        (*c).body((*c).arg);
+        c->body(c->arg);
     } catch (e: Exception) {
+        fprintf(__acrt_iob_func(2), "Uncaught exception in a thread: %s\n", e.message.cstr());
         abort();
     }
     free(c);
@@ -41,8 +44,8 @@ uint thread_trampoline(void* p) {
 public void* backend_thread_start((void*) => void body, void* arg) {
     ThreadCtx* c = alloc(sizeof(ThreadCtx)) as ThreadCtx*;
     if (c == null) { abort(); }
-    (*c).body = body;
-    (*c).arg = arg;
+    c->body = body;
+    c->arg = arg;
     void* h = CreateThread(null, 0, thread_trampoline, c, 0, null);
     if (h == null) {
         // No thread object exists, so the caller decides: `para` turns this into a TaskLimitError,

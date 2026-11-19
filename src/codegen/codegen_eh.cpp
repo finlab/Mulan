@@ -80,18 +80,52 @@ namespace muc_detail {
         }
     }
 
+    // Terminate with a one-line report of the exception that has nowhere to go (SPEC 3.14): the
+    // pending object's descriptor names the class, and the base `Exception.message` field supplies
+    // the text. Written to stderr; the run ends through `abort` (exit 3).
+    void Emitter::emitUncaughtAbort() {
+        ensureEHSlot();
+        Value* obj = loadPendingObj();
+        BasicBlock* report = BasicBlock::Create(ctx, "uncaught.report", curFn);
+        BasicBlock* dead = BasicBlock::Create(ctx, "uncaught.dead", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(obj, Constant::getNullValue(ptrTy())), dead, report);
+        b.SetInsertPoint(report);
+        // desc = obj->desc (offset 8); desc.name is field 5 (offset 40).
+        Value* desc = b.CreateLoad(ptrTy(), b.CreateGEP(i8(), obj, ConstantInt::get(i64(), 8)));
+        Value* descName = b.CreateLoad(ptrTy(), b.CreateGEP(i8(), desc, ConstantInt::get(i64(), 40)));
+        // `Exception.message` sits at offset 16: { byte* p; isize n; byte[] owner }.
+        Value* msgP = b.CreateLoad(ptrTy(), b.CreateGEP(i8(), obj, ConstantInt::get(i64(), 16)));
+        Value* msgN = b.CreateLoad(i64(), b.CreateGEP(i8(), obj, ConstantInt::get(i64(), 24)));
+        Value* err = nullptr;
+        if (isWindowsTarget()) {
+            // Windows CRT headers make `stderr` a macro over this accessor.
+            err = b.CreateCall(libFn("__acrt_iob_func", ptrTy(), {i32()}),
+                               {ConstantInt::get(i32(), 2)});
+        } else {
+            auto* sg = mod->getOrInsertGlobal("stderr", ptrTy());
+            err = b.CreateLoad(ptrTy(), sg);
+        }
+        Constant* fmt = b.CreateGlobalString("Uncaught exception: %s: %.*s\n");
+        auto* fprintfTy = FunctionType::get(i32(), {ptrTy(), ptrTy()}, /*isVarArg=*/true);
+        auto* fprintfFn = cast<Function>(mod->getOrInsertFunction("fprintf", fprintfTy).getCallee());
+        b.CreateCall(fprintfFn,
+                     {err, fmt, descName, b.CreateTrunc(msgN, i32()), msgP});
+        b.CreateBr(dead);
+        b.SetInsertPoint(dead);
+        b.CreateCall(abortTrap(), {});
+        b.CreateUnreachable();
+    }
+
     // The current `throw`/failed-check target: innermost try dispatch, or the caller.
     void Emitter::emitUnwindCurrent(const std::function<void()>& onThrow) {
         // A destructor / finally may still catch locally (a try inside it); only abort when
         // the exception would escape that cleanup context.
         if (!abortBases.empty() && ehStack.size() <= abortBases.back()) {
-            b.CreateCall(abortTrap(), {});
-            b.CreateUnreachable();
+            emitUncaughtAbort();
             return;
         }
         if (ehStack.empty() && (inNothrow || curIsEntry)) {
-            b.CreateCall(abortTrap(), {});
-            b.CreateUnreachable();
+            emitUncaughtAbort();
             return;
         }
 
@@ -131,8 +165,7 @@ namespace muc_detail {
         BasicBlock* nested = BasicBlock::Create(ctx, "unwind.nested", curFn);
         b.CreateCondBr(b.CreateICmpNE(loadPendingFlag(), ConstantInt::get(i32(), 0)), nested, ok);
         b.SetInsertPoint(nested);
-        b.CreateCall(abortTrap(), {});
-        b.CreateUnreachable();
+        emitUncaughtAbort();
 
         b.SetInsertPoint(ok);
         storePending(saved);
@@ -217,8 +250,7 @@ namespace muc_detail {
         BasicBlock* bad = BasicBlock::Create(ctx, "cleanup.throw", curFn);
         b.CreateCondBr(b.CreateICmpNE(loadPendingFlag(), ConstantInt::get(i32(), 0)), bad, ok);
         b.SetInsertPoint(bad);
-        b.CreateCall(abortTrap(), {});
-        b.CreateUnreachable();
+        emitUncaughtAbort();
         b.SetInsertPoint(ok);
     }
 

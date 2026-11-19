@@ -55,8 +55,8 @@ P make_p(C c) {
 }
 
 void fill_s(S* out, C c) {
-    (*out).i = c;
-    (*out).c = c;
+    out->i = c;
+    out->c = c;
 }
 
 int main() {

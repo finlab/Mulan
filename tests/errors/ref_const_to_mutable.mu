@@ -5,7 +5,7 @@ struct Vec {
     int* data;
 }
 
-ref const int peek(ref const Vec v, usize i) { return v.data[i]; }
+const ref int peek(const ref Vec v, usize i) { return v.data[i]; }
 
 void bump(ref int x) { x += 1; }
 

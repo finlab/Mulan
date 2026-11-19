@@ -15,6 +15,7 @@ struct Token {
     long long ival = 0;    // Int / Char
     double fval = 0;       // Float
     bool f32 = false;      // Float suffix f
+    int isuffix = 0;       // Int suffix: 0 none, 1 `u` (uint), 2 `l` (long), 3 `ul` (ulong)
     std::string bytes;     // raw bytes of a Str
     int line = 0;
     int col = 0;

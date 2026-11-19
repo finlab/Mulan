@@ -208,7 +208,7 @@ std::string Type::str() const {
         }
         case TypeKind::Ref: {
             std::string base = elem_str(elem);
-            return is_const ? "ref const " + base : "ref " + base;
+            return is_const ? "const ref " + base : "ref " + base;
         }
         case TypeKind::Array: {
             // A nested static array is displayed as T[m,n,...]

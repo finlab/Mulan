@@ -94,6 +94,6 @@ int main() {
 
     // ---- address-of (union is POD, not under struct's U24 restriction) ----
     Value* pv = &v;
-    print_int((*pv).i); nl();     // 1094861636
+    print_int(pv->i); nl();     // 1094861636
     return 0;
 }

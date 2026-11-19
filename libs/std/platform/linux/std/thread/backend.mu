@@ -20,6 +20,8 @@ use std.exception;
 // ---------------------------------------------------------------- libc
 
 extern void abort();
+extern void* stderr;
+extern int fprintf(void* stream, const char* fmt, ...);
 extern int get_nprocs();
 extern int clock_gettime(int clock_id, ulong* ts);
 extern int nanosleep(ulong* req, ulong* rem);
@@ -60,8 +62,9 @@ void* thread_entry(void* p) {
     // thread-local, so it would vanish with the thread. Abort instead, like a `para` task body
     // (SPEC 3.17.7).
     try {
-        (*c).body((*c).arg);
+        c->body(c->arg);
     } catch (e: Exception) {
+        fprintf(stderr, "Uncaught exception in a thread: %s\n", e.message.cstr());
         abort();
     }
     free(c);
@@ -71,8 +74,8 @@ void* thread_entry(void* p) {
 public void* backend_thread_start((void*) => void body, void* arg) {
     ThreadCtx* c = alloc(sizeof(ThreadCtx)) as ThreadCtx*;
     if (c == null) { abort(); }
-    (*c).body = body;
-    (*c).arg = arg;
+    c->body = body;
+    c->arg = arg;
     ulong t = 0;
     if (pthread_create(&t, null, thread_entry, c) != 0) {
         // No thread object exists, so the caller decides: `para` turns this into a TaskLimitError,
@@ -129,7 +132,7 @@ void fiber_entry(uint lo, uint hi) {
     ulong bits = (hi as ulong) << 32;
     bits = bits | (lo as ulong);
     Fiber* f = bits as Fiber*;
-    (*f).start((*f).param);
+    f->start(f->param);
     // std.task's fiber entry never returns: it switches back to the carrier. Reaching here means the
     // task body escaped the scheduler, so there is no context left to resume.
     abort();
@@ -165,16 +168,16 @@ public void* backend_fiber_new((void*) => void start, void* param, usize commit,
     Fiber* f = alloc(sizeof(Fiber)) as Fiber*;
     void* stack = alloc(reserve);
     if (f == null or stack == null) { abort(); }
-    (*f).start = start;
-    (*f).param = param;
-    (*f).stack = stack;
-    getcontext(&(*f).uc);
-    (*f).uc.link = null;
-    (*f).uc.ss_sp = stack;
-    (*f).uc.ss_flags = 0;
-    (*f).uc.ss_size = reserve;
+    f->start = start;
+    f->param = param;
+    f->stack = stack;
+    getcontext(&f->uc);
+    f->uc.link = null;
+    f->uc.ss_sp = stack;
+    f->uc.ss_flags = 0;
+    f->uc.ss_size = reserve;
     ulong bits = (f as void*) as ulong;
-    makecontext(&(*f).uc, fiber_entry, 2, (bits & 0xFFFFFFFF) as uint, (bits >> 32) as uint);
+    makecontext(&f->uc, fiber_entry, 2, (bits & 0xFFFFFFFF) as uint, (bits >> 32) as uint);
     return f as void*;
 }
 
@@ -193,7 +196,7 @@ public void backend_fiber_switch(void* f) {
 
 public void backend_fiber_free(void* p) {
     Fiber* f = p as Fiber*;
-    free((*f).stack);
+    free(f->stack);
     free(f);
 }
 

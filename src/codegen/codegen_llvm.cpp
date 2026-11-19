@@ -19,10 +19,33 @@
 
 using namespace llvm;
 
-std::string llvm_emit_text(Program& prog, const EmitOptions& opts) {
+// Register the targets this LLVM build actually contains. `InitializeAllTargets` names every target
+// LLVM knows about, so an x86-only static link misses `LLVMInitializeLanai/Mips/...`. The CMake side
+// defines MUC_TARGET_<ARCH> from LLVM_TARGETS_TO_BUILD; a build that reports no target list keeps the
+// all-in-one path.
+static void init_targets() {
+#if defined(MUC_TARGET_X86) || defined(MUC_TARGET_AARCH64)
+#if defined(MUC_TARGET_X86)
+    LLVMInitializeX86TargetInfo();
+    LLVMInitializeX86Target();
+    LLVMInitializeX86TargetMC();
+    LLVMInitializeX86AsmPrinter();
+#endif
+#if defined(MUC_TARGET_AARCH64)
+    LLVMInitializeAArch64TargetInfo();
+    LLVMInitializeAArch64Target();
+    LLVMInitializeAArch64TargetMC();
+    LLVMInitializeAArch64AsmPrinter();
+#endif
+#else
     llvm::InitializeAllTargets();
     llvm::InitializeAllTargetMCs();
     llvm::InitializeAllAsmPrinters();
+#endif
+}
+
+std::string llvm_emit_text(Program& prog, const EmitOptions& opts) {
+    init_targets();
     muc_detail::Emitter em{prog, opts.debug, opts.bounds, opts.target};
     em.singleThread = opts.single_thread;
     em.exportMode = opts.export_mode;
@@ -36,9 +59,7 @@ std::string llvm_emit_text(Program& prog, const EmitOptions& opts) {
 }
 
 void llvm_emit_object(Program& prog, const std::string& obj_path, const EmitOptions& opts) {
-    llvm::InitializeAllTargets();
-    llvm::InitializeAllTargetMCs();
-    llvm::InitializeAllAsmPrinters();
+    init_targets();
     muc_detail::Emitter em{prog, opts.debug, opts.bounds, opts.target};
     em.singleThread = opts.single_thread;
     em.exportMode = opts.export_mode;

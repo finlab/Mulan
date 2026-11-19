@@ -29,7 +29,7 @@ int main() {
 
     Pair pr = {1, 2};
     Pair* pp = &pr;
-    if (*pp).b == 2 { puts("ptr struct ok"); }
+    if pp->b == 2 { puts("ptr struct ok"); }
 
     int x = 0;
     while true {

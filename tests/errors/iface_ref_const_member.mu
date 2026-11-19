@@ -1,6 +1,6 @@
 unit iface_ref_const_member;
 
-interface IRead { int operator<<(ref const Self b, byte c); }
+interface IRead { int operator<<(const ref Self b, byte c); }
 
 struct Buf {
     int n;

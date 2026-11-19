@@ -4,7 +4,7 @@ struct P {
     int x;
 }
 
-void f(ref const P p) {
+void f(const ref P p) {
     p.x = 3;
 }
 

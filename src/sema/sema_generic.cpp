@@ -717,6 +717,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
                     : ctor->is_copy ? copy_ctor_cname(tmpl_unit, display)
                                     : ctor_cname(tmpl_unit, display, ctor->pty);
         ty->ctors.push_back(ctor->pty);
+        ty->ctor_param_names.push_back(ctor_param_names(ctor.get()));
         ty->ctor_is_public.push_back(ctor->is_public);
     }
 
@@ -1115,7 +1116,7 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
                     }
                     if (i != 0 || !sig->recv_ref) continue;
                     // A receiver declared `ref Self` must be able to mutate the caller's value: a
-                    // by-value implementation would only touch a copy. A `ref const Self` receiver
+                    // by-value implementation would only touch a copy. A `const ref Self` receiver
                     // promises read-only use, which a by-value copy also honors.
                     const bool impl_ref = i < f->pty_ref.size() && f->pty_ref[i];
                     const bool impl_cref = i < f->pty_cref.size() && f->pty_cref[i];
@@ -1141,7 +1142,7 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
         if (!found && std_info()) try_unit(*std_info(), true);
         // Member operator on a value type: the receiver is the implicit `this`, so the declared parameter
         // list is the interface signature minus its first operand. `this` is a writable borrow, which
-        // satisfies both a by-value receiver and a mutable `ref Self` one; a `ref const Self` contract
+        // satisfies both a by-value receiver and a mutable `ref Self` one; a `const ref Self` contract
         // is not satisfied (there are no `const` methods, so `this` could still write).
         if (!found && !(sig->recv_ref && sig->recv_cref) &&
             (t->kind == TypeKind::Struct || t->kind == TypeKind::Class)) {
@@ -1170,8 +1171,8 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
                 *why = "no `" + sig->name + "` accepting `(" + sigdesc + ")`";
                 if (sig->recv_ref) {
                     *why += sig->recv_cref
-                                ? "; a `ref const Self` receiver needs an implementation whose first "
-                                  "parameter is `ref const` (there are no `const` member operators)"
+                                ? "; a `const ref Self` receiver needs an implementation whose first "
+                                  "parameter is `const ref` (there are no `const` member operators)"
                                 : "; a `ref Self` receiver needs an implementation whose first parameter "
                                   "is `ref` (a member operator qualifies, its `this` is borrowed)";
                 }

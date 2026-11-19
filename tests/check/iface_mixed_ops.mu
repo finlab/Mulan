@@ -1,11 +1,11 @@
-// iface_mixed_ops.mu — contract operator members: mixed operands, `ref` and `ref const` receivers
+// iface_mixed_ops.mu — contract operator members: mixed operands, `ref` and `const ref` receivers
 unit iface_mixed_ops;
 
 interface IOut { Self operator<<(Self b, byte c); }
 interface IScale { Self operator*(Self a, int k); }
 interface IOrderInt { bool operator<(Self a, int b); }
 interface IRefOut { Self operator<<(ref Self b, byte c); }
-interface IReadOut { int operator<<(ref const Self b, byte c); }
+interface IReadOut { int operator<<(const ref Self b, byte c); }
 
 // by-value receiver: a member operator (the receiver is the implicit `this`)
 struct ValBuf {
@@ -27,9 +27,9 @@ struct Cmp {
 struct RefBuf { int n; }
 RefBuf operator<<(ref RefBuf b, byte c) { b.n = b.n * 10 + c; return b; }
 
-// `ref const Self` receiver: read-only, so a `ref const` free operator qualifies
+// `const ref Self` receiver: read-only, so a `const ref` free operator qualifies
 struct ReadBuf { int n; }
-int operator<<(ref const ReadBuf b, byte c) { return b.n + c; }
+int operator<<(const ref ReadBuf b, byte c) { return b.n + c; }
 
 T emit<T: IOut>(T b) { return b << 1; }
 T scale<T: IScale>(T v, int k) { return v * k; }

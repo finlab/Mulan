@@ -15,6 +15,33 @@
 
 namespace muc_detail {
 
+    // Named arguments for a constructor call: the names must be exactly the parameter names of the
+    // chosen overload (each once). The arguments are moved into positional order before the usual
+    // type checks, so codegen only ever sees positional arguments.
+    static bool named_args_match(const std::vector<std::string>& params,
+                                 const std::vector<std::pair<std::string, ExprPtr>>& named) {
+        if (params.size() != named.size()) return false;
+        std::unordered_set<std::string> want(params.begin(), params.end());
+        if (want.size() != params.size()) return false;
+        std::unordered_set<std::string> seen;
+        for (auto& [n, e] : named) {
+            if (!want.count(n)) return false;
+            if (!seen.insert(n).second) return false;
+        }
+        return true;
+    }
+
+    static void reorder_named_args(std::vector<ExprPtr>& args,
+                                   std::vector<std::pair<std::string, ExprPtr>>& named,
+                                   const std::vector<std::string>& params) {
+        std::unordered_map<std::string, size_t> idx;
+        for (size_t i = 0; i < params.size(); ++i) idx[params[i]] = i;
+        std::vector<ExprPtr> ordered(params.size());
+        for (auto& [n, e] : named) ordered[idx[n]] = std::move(e);
+        named.clear();
+        args = std::move(ordered);
+    }
+
     TypePtr Sema::check_fnptr_args(Call* c, const TypePtr& ft) {
         if (!c->type_args.empty()) err("a call through a function value cannot take type arguments", c);
         if (!c->named.empty()) {
@@ -371,6 +398,14 @@ namespace muc_detail {
                     if (ms.empty())
                         err("cannot call a non-const method `" + m->name + "` on a `const` object", c);
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
+                    // A `para` section borrows the suspended caller's frame; writing through a captured
+                    // value's non-const method is a data race with the other sections.
+                    if (roots_at_outer_value_local(obj) && !sig->is_const) {
+                        err("cannot call a non-const method `" + m->name +
+                                "` on a value captured by a `para` section: the sections run concurrently, "
+                                "so only `const` methods are allowed (copy the value if each section needs its own)",
+                            c);
+                    }
                     if (!decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
                         err("method `" + m->name + "` is not declared public and cannot be called from another unit", c);
                     }
@@ -422,7 +457,33 @@ namespace muc_detail {
                 err("union `" + struct_ty->str() + "` cannot be constructed with `T(...)`; use `{ member = value }`", c);
             }
             if (!struct_ty->ctors.empty()) {
-                if (!c->named.empty()) err("struct constructors do not support named arguments", c);
+                if (!c->named.empty()) {
+                    // Named arguments pick the overload whose parameter names they spell out
+                    // (`Point(x = 1, y = 2)`); the type checks below then see positional arguments.
+                    int hit = -1;
+                    int hits = 0;
+                    for (size_t i = 0; i < struct_ty->ctors.size(); ++i) {
+                        const auto& pn = struct_ty->ctor_param_names.size() > i
+                                             ? struct_ty->ctor_param_names[i]
+                                             : std::vector<std::string>{};
+                        if (named_args_match(pn, c->named)) {
+                            if (hit < 0) hit = static_cast<int>(i);
+                            hits += 1;
+                        }
+                    }
+                    if (hits == 0) {
+                        err("no constructor of `" + struct_ty->str() +
+                                "` has parameters matching the named arguments (each parameter name must be "
+                                "given exactly once)",
+                            c);
+                    }
+                    if (hits > 1) {
+                        err("named arguments match more than one constructor of `" + struct_ty->str() +
+                                "`; use positional arguments",
+                            c);
+                    }
+                    reorder_named_args(c->args, c->named, struct_ty->ctor_param_names[hit]);
+                }
                 if (struct_ty->has_dtor && c != direct_init_expr_) {
                     err("a struct with a destructor can only be constructed in a declaration initializer", c);
                 }
@@ -506,13 +567,13 @@ namespace muc_detail {
                         err("cannot bind a readonly (`const`) variable to a mutable `ref` parameter", a);
                     }
                     if (auto* bc = dynamic_cast<Call*>(a); bc && bc->by_ref && bc->ref_const) {
-                        err("cannot bind a readonly (`ref const`) borrow to a mutable `ref` parameter", a);
+                        err("cannot bind a readonly (`const ref`) borrow to a mutable `ref` parameter", a);
                     }
                     if (auto* bi = dynamic_cast<Index*>(a); bi && bi->by_ref && bi->ref_const) {
-                        err("cannot bind a readonly (`ref const`) borrow to a mutable `ref` parameter", a);
+                        err("cannot bind a readonly (`const ref`) borrow to a mutable `ref` parameter", a);
                     }
                     if (auto* bb = dynamic_cast<Binary*>(a); bb && bb->by_ref && bb->ref_const) {
-                        err("cannot bind a readonly (`ref const`) borrow to a mutable `ref` parameter", a);
+                        err("cannot bind a readonly (`const ref`) borrow to a mutable `ref` parameter", a);
                     }
                 }
                 continue;
@@ -557,7 +618,7 @@ namespace muc_detail {
         }
     }
 
-    // Return type resolution for `ref T` / `ref const T` / `T` (shared by methods and free functions).
+    // Return type resolution for `ref T` / `const ref T` / `T` (shared by methods and free functions).
     TypePtr Sema::make_borrow_ret(TypeSpec* spec, bool ret_ref, Node* at, Unit* u, const std::string& what) {
         const bool ret_const = ret_ref && spec && spec->is_const;
         if (ret_ref && spec) spec->is_const = false;
@@ -576,11 +637,11 @@ namespace muc_detail {
         // A `const` method borrows its receiver read-only, so everything it can hand out must be
         // read-only too; a mutable `ref T` return would be a hole in the deep-readonly rule
         // (`ref int at() const` let a const handle write a field, issue #66). The read-only spelling
-        // `ref const T` already exists and is what the method should return.
+        // `const ref T` already exists and is what the method should return.
         const bool ret_const = m->ret_ref && m->ret && m->ret->is_const;
         if (m->is_const && m->ret_ref && !ret_const) {
             err("method `" + m->name +
-                    "` is `const`, so it cannot return a mutable borrow; return `ref const " +
+                    "` is `const`, so it cannot return a mutable borrow; return `const ref " +
                     (m->ret && m->ret->kind == TypeSpec::K::Named ? m->ret->name : std::string("T")) +
                     "` (the caller of a const method cannot write through it)",
                 m);
@@ -767,9 +828,36 @@ namespace muc_detail {
                     (missing.empty() ? "" : ": it does not implement " + missing),
                 ne);
         }
-        if (!ne->named.empty()) err("constructors do not support named arguments yet", ne);
-
         const auto& ctors = t->ctors;
+        if (!ne->named.empty()) {
+            // Same rule as `C(...)`: named arguments select the overload whose parameter names they
+            // spell out, then become positional arguments.
+            if (ctors.empty()) {
+                err("class `" + t->str() + "` declares no constructor, so `new` takes no arguments", ne);
+            }
+            int hit = -1;
+            int hits = 0;
+            for (size_t i = 0; i < ctors.size(); ++i) {
+                const auto& pn = t->ctor_param_names.size() > i ? t->ctor_param_names[i]
+                                                                : std::vector<std::string>{};
+                if (named_args_match(pn, ne->named)) {
+                    if (hit < 0) hit = static_cast<int>(i);
+                    hits += 1;
+                }
+            }
+            if (hits == 0) {
+                err("no constructor of `" + t->str() +
+                        "` has parameters matching the named arguments (each parameter name must be given "
+                        "exactly once)",
+                    ne);
+            }
+            if (hits > 1) {
+                err("named arguments match more than one constructor of `" + t->str() +
+                        "`; use positional arguments",
+                    ne);
+            }
+            reorder_named_args(ne->args, ne->named, t->ctor_param_names[hit]);
+        }
         ne->has_ctor = !ctors.empty();
         if (ctors.empty()) {
             if (!ne->args.empty()) err("class `" + t->str() + "` has no matching constructor", ne);

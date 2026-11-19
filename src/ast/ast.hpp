@@ -91,6 +91,9 @@ using ExprPtr = std::unique_ptr<Expr>;
 
 struct IntLit : Expr {
     long long value = 0;
+    // C-style suffix: 0 none, 1 `u` (uint), 2 `l` (long), 3 `ul` (ulong). A suffixed literal has a
+    // fixed type and does not adapt to the expected type.
+    int isuffix = 0;
 };
 struct FloatLit : Expr {
     double value = 0;
@@ -138,7 +141,7 @@ struct Index : Expr {
     // build 161: it copied the receiver on every element access)
     const MethodSig* get_method = nullptr;  // borrowed receiver for a struct, the handle for a class
     bool by_ref = false;      // `operator[]` returns a borrow: the expression type is the referent and the value is the element address
-    bool ref_const = false;   // whether the borrow is read-only (`ref const T`)
+    bool ref_const = false;   // whether the borrow is read-only (`const ref T`)
 };
 
 struct Unary : Expr {
@@ -205,7 +208,7 @@ struct Call : Expr {
     const MethodSig* method = nullptr;      // the selected method / interface default method
     const std::vector<TypePtr>* ctor_pty = nullptr;  // the selected constructor (used by super)
     bool by_ref = false;      // the called function/method returns a borrow (the expression type is the referent and the value is the address)
-    bool ref_const = false;   // whether the borrow is read-only (`ref const T`)
+    bool ref_const = false;   // whether the borrow is read-only (`const ref T`)
 };
 
 // Lambda expression: `(int a) => expr` / `(int a) => { ... }`, optionally with a capture list
@@ -559,7 +562,7 @@ struct LocalVar : Stmt {
     bool zero = false;
     std::string cname;
     bool by_ref = false;  // a for-in ref binding / ref parameter: it is T* on the C side and is dereferenced at the use site
-    bool ref_const = false;  // a `for ref const` binding: a read-only borrow (cannot write the element)
+    bool ref_const = false;  // a `for const ref` binding: a read-only borrow (cannot write the element)
     bool is_ref_param = false;  // a `ref` parameter: it cannot be rebound (a for-in ref variable can write elements)
     int env_index = -1;   // >= 0: a lambda capture; the storage is field `env_index` of the environment object
     int group = 0;        // shared by multiple declarators in the same declaration statement (used for the auto consistency check)
@@ -590,7 +593,7 @@ struct WhileStmt : Stmt {
 
 struct ForInStmt : Stmt {
     bool by_ref = false;
-    // `for ref const x in seq`: a read-only borrow (usable on a `const` sequence, decided 2026-11-17)
+    // `for const ref x in seq`: a read-only borrow (usable on a `const` sequence, decided 2026-11-17)
     bool ref_const = false;
     std::string var;
     bool has_idx = false;      // `for i, x in seq`
@@ -815,7 +818,7 @@ struct FuncDecl : Decl {
     TypePtr rty;
     std::vector<TypePtr> pty;
     std::vector<bool> pty_ref;   // whether each parameter is a `ref` borrow (one pointer on the C side)
-    std::vector<bool> pty_cref;  // `ref const T`: a read-only borrow
+    std::vector<bool> pty_cref;  // `const ref T`: a read-only borrow
     std::vector<std::unique_ptr<LocalVar>> param_locals;
     // Lambda captures: locals whose storage lives in the environment object (`LocalVar::env_index` is
     // the field). They are declared in the lambda's scope after the parameters, so `param_locals`

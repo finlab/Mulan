@@ -1,1 +1,1 @@
-requires a mutable borrow: `operator[]` returns `ref const T`
+requires a mutable borrow: `operator[]` returns `const ref T`

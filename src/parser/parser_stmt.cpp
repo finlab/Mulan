@@ -66,8 +66,8 @@ std::vector<std::unique_ptr<Param>> Parser::parse_params(bool* varargs, bool all
                     "parameter must be written as `type name`; each parameter declares its own type, shared types like `int a, b` are not supported",
                     ptok);
             }
-            // `const ref T p` / `ref const T p`: a read-only borrow. `const ref` is the preferred spelling
-            // (it reads like C++'s `const&`); `ref const` stays accepted.
+            // `const ref T p`: a read-only borrow. `const ref` is the preferred spelling (it reads like
+            // C++'s `const&`); the older `ref const T p` spelling stays accepted.
             bool by_ref = false;
             bool const_before_ref = false;
             if (at_kw("const") && peek(1).is_kw("ref")) {
@@ -585,6 +585,12 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     }
     bool by_ref = false;
     bool ref_const = false;
+    // `const ref x`: the read-only binding. `const ref` is the preferred spelling; the older
+    // `ref const x` spelling stays accepted.
+    if (at_kw("const") && peek(1).is_kw("ref")) {
+        advance();  // const
+        ref_const = true;
+    }
     if (at_kw("ref")) {
         advance();
         by_ref = true;
@@ -600,6 +606,10 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     if (at_op(",")) {
         if (by_ref) throw err("`for ref i, x` is invalid: write the index form as `for i, ref x in seq` (`ref` must directly precede the element variable)");
         advance();  // ,
+        if (at_kw("const") && peek(1).is_kw("ref")) {
+            advance();  // const
+            ref_const = true;
+        }
         if (at_kw("ref")) {
             advance();
             by_ref = true;

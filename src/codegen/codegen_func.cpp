@@ -350,7 +350,9 @@ namespace muc_detail {
 
         sliceTy = ptrTy();  // dynamic array handle (header pointer)
         descTy = LStruct::create(ctx, "mu_desc");
-        descTy->setBody({i64(), ptrTy(), ptrTy(), ptrTy(), ptrTy()}, false);
+        // {size, destroy, vtable, itable, base, name}: `name` is the qualified class name (an i8*
+        // literal), used by the uncaught-exception report.
+        descTy->setBody({i64(), ptrTy(), ptrTy(), ptrTy(), ptrTy(), ptrTy()}, false);
         ifaceTy = LStruct::create(ctx, "mu_iface");
         ifaceTy->setBody({ptrTy(), ptrTy()}, false);
         delegateTy = LStruct::create(ctx, "mu_delegate");

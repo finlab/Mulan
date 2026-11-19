@@ -27,13 +27,13 @@ class Node {
     }
 }
 
-// A zeroed Slot holds a null class field, so `(*s).n = ...` releases nothing on first store.
+// A zeroed Slot holds a null class field, so `s->n = ...` releases nothing on first store.
 struct Slot { Node n; }
 
 void producer(void* arg) {
     for i in 0..ROUNDS {
         Slot* s = calloc(1, sizeof(Slot) as usize) as Slot*;
-        (*s).n = new Node();
+        s->n = new Node();
         mutex_lock(g_m);
         while g_slot != null {
             cond_wait(g_has_space, g_m, WAIT_INFINITE);
@@ -63,8 +63,8 @@ void consumer(void* arg) {
         cond_signal(g_has_space);
         mutex_unlock(g_m);
 
-        Node n = (*s).n;      // retain on this thread
-        (*s).n = null;        // drop the slot's reference
+        Node n = s->n;        // retain on this thread
+        s->n = null;          // drop the slot's reference
         free(s);
         n.v = n.v + 1;        // local release at the end of the iteration -> destructor here
     }

@@ -131,6 +131,17 @@ endif()
 if(TARGET LLVM)
   target_link_libraries(muc PRIVATE LLVM)
 else()
-  llvm_map_components_to_libnames(LLVM_LIBS core support target x86codegen x86desc x86info)
+  # `passes` carries PassBuilder / buildPerModuleDefaultPipeline (codegen_func.cpp). Without it a
+  # static LLVM build fails to link those symbols.
+  llvm_map_components_to_libnames(LLVM_LIBS passes core support target x86codegen x86desc x86info)
   target_link_libraries(muc PRIVATE ${LLVM_LIBS})
+endif()
+
+# Register only the targets this LLVM build contains. `InitializeAllTargets` would reference every
+# target LLVM knows about; an x86-only static build then misses `LLVMInitializeLanai/Mips/...`.
+if("X86" IN_LIST LLVM_TARGETS_TO_BUILD)
+  target_compile_definitions(muc PRIVATE MUC_TARGET_X86)
+endif()
+if("AArch64" IN_LIST LLVM_TARGETS_TO_BUILD)
+  target_compile_definitions(muc PRIVATE MUC_TARGET_AARCH64)
 endif()
