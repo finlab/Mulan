@@ -97,9 +97,7 @@ namespace muc_detail {
             check_for(fs);
             --move_loop_count_;
         } else if (auto cs = dynamic_cast<ForStmt*>(s)) {
-            ++move_loop_count_;
             check_for_c(cs);
-            --move_loop_count_;
         } else if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
             check_switch(sw);
         } else if (dynamic_cast<BreakStmt*>(s)) {

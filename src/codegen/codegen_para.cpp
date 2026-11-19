@@ -214,6 +214,7 @@ namespace muc_detail {
         thisSlot = nullptr;
         refScopes.clear();
         loopScopeDepth.clear();
+        loops.clear();  // reak/continue cannot cross a section (sema), so no entry may survive
         stmtTemps.clear();
         ehStack.clear();
         finallyStack.clear();
@@ -290,6 +291,7 @@ namespace muc_detail {
         thisSlot = nullptr;
         refScopes.clear();
         loopScopeDepth.clear();
+        loops.clear();  // reak/continue cannot cross a section (sema), so no entry may survive
         stmtTemps.clear();
         ehStack.clear();
         finallyStack.clear();

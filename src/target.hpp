@@ -19,8 +19,6 @@
 #include "common.hpp"
 #include "loader.hpp"  // PlatformSpec
 
-namespace fs = std::filesystem;
-
 // A build produces one object file, for the target named by `--target` (the host by default).
 // The platform (`--platform os[-arch[-abi]]`) selects the unit set that goes into it. Both have to
 // describe the same machine: units written for another architecture or another C runtime describe a
@@ -43,9 +41,9 @@ void check_explicit_target(const std::string& triple);
 TargetInfo host_target();
 bool is_cross_target(const std::string& triple);
 std::string suggest_target(const std::string& os, const std::string& arch, const std::string& abi);
-void check_output_format(const fs::path& out, const std::string& target);
-std::string elf_interpreter(const fs::path& path);
-void check_linked_abi(const fs::path& out, const std::string& target);
+void check_output_format(const std::filesystem::path& out, const std::string& target);
+std::string elf_interpreter(const std::filesystem::path& path);
+void check_linked_abi(const std::filesystem::path& out, const std::string& target);
 void check_target_abi_os(const std::string& triple);
 void check_platform_matches_target(const std::string& platform_spec, const std::string& option,
                                    const PlatformSpec& spec, const TargetInfo& target);

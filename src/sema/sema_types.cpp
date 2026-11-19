@@ -729,6 +729,30 @@ std::string builtin_const_type_name(const std::string& name) {
             at);
     }
 
+    // Whether a `break` inside `s` leaves the *enclosing* loop (nested loops and `switch` own theirs).
+    static bool breaks_enclosing_loop(Stmt* s) {
+        if (!s) return false;
+        if (dynamic_cast<BreakStmt*>(s)) return true;
+        if (auto b = dynamic_cast<Block*>(s)) {
+            for (auto& st : b->stmts) {
+                if (breaks_enclosing_loop(st.get())) return true;
+            }
+            return false;
+        }
+        if (auto i = dynamic_cast<IfStmt*>(s)) {
+            return breaks_enclosing_loop(i->then.get()) || breaks_enclosing_loop(i->els.get());
+        }
+        if (auto tr = dynamic_cast<TryStmt*>(s)) {
+            if (breaks_enclosing_loop(tr->body.get())) return true;
+            for (auto& c : tr->catches) {
+                if (breaks_enclosing_loop(c->body.get())) return true;
+            }
+            return breaks_enclosing_loop(tr->finally_body.get());
+        }
+        // A nested `while` / `for` / `for-in` / `switch` consumes its own `break`.
+        return false;
+    }
+
     bool Sema::guarantees_return(Stmt* s) {
         if (!s) return false;
         if (dynamic_cast<ReturnStmt*>(s)) return true;
@@ -741,6 +765,17 @@ std::string builtin_const_type_name(const std::string& name) {
         if (auto i = dynamic_cast<IfStmt*>(s)) {
             if (!i->els) return false;
             return guarantees_return(i->then.get()) && guarantees_return(i->els.get());
+        }
+        // `for (;;)` and `while true` never fall out on their own: only a `break` inside the same loop
+        // (or a nested-loop-owning `break`) leaves it, so a body without one cannot reach the end.
+        if (auto fs = dynamic_cast<ForStmt*>(s)) {
+            if (fs->cond) return false;
+            return !breaks_enclosing_loop(fs->body.get());
+        }
+        if (auto ws = dynamic_cast<WhileStmt*>(s)) {
+            auto bl = dynamic_cast<BoolLit*>(ws->cond.get());
+            if (!bl || !bl->value) return false;
+            return !breaks_enclosing_loop(ws->body.get());
         }
         // A try guarantees a return when its body and every catch body do; an unmatched exception
         // propagates instead of falling through, so it also counts as a terminating path.

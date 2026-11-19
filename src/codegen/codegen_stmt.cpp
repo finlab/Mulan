@@ -291,10 +291,6 @@ using ArgPack = Emitter::ArgPack;
             emitFor(fs);
             return;
         }
-        if (auto cs = dynamic_cast<ForStmt*>(s)) {
-            emitForC(cs);
-            return;
-        }
         if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
             emitSwitch(sw);
             return;
@@ -377,7 +373,7 @@ using ArgPack = Emitter::ArgPack;
         if (!hasTerm(b.GetInsertBlock())) b.CreateBr(stepBB);
         b.SetInsertPoint(stepBB);
         if (s->step) stmt(s->step.get());
-        b.CreateBr(condBB);
+        if (!hasTerm(b.GetInsertBlock())) b.CreateBr(condBB);
         b.SetInsertPoint(endBB);
         popRefScope();
     }

@@ -3,11 +3,12 @@
 
 // `for-in` over a range, the cursor shape and the index shape (definitions of Sema members).
 //
-// owns:      the `for-in` check (`check_for`) and the two sequence-shape recognizers:
-//            `resolve_cursor_shape` (iterator/next/... structural contract) and `resolve_index_shape`
+// owns:      the `for-in` check (`check_for`), the C-style `for` check (`check_for_c`) and the two
+//            sequence-shape recognizers: `resolve_cursor_shape` (iterator/next/... structural contract)
+//            and `resolve_index_shape`
 // not:       the rest of the statement pass (sema_class2.cpp), expression typing, call resolution
 // pass:      body checking
-// concept:   statements, for-in-shape
+// concept:   statements, for-in-shape, for-c-shape
 
 #include "sema_impl.hpp"
 
@@ -242,15 +243,17 @@ namespace muc_detail {
 
     // C-style `for (init; cond; step)`: init, cond and step share one scope with the body (C semantics),
     // so the init declaration is visible in the condition and the body. `continue` runs the step clause,
-    // which is why the step is checked inside the loop (a `move` in it counts as a loop move).
+    // which is why the step is checked inside the loop (a `move` in it counts as a loop move). The init
+    // clause itself runs once, before the loop, so it is checked outside that move level.
     void Sema::check_for_c(ForStmt* s) {
-        push();
+        ScopeGuard guard(*this);  // pops the scope and restores the loop/move counters on a throw
         for (auto& st : s->init) check_stmt(st.get());
         if (s->cond) check_cond(s->cond.get(), "for condition");
         ++loop_depth_;
+        ++move_loop_count_;
         if (s->step) check_stmt(s->step.get());
         check_block(s->body.get());
+        --move_loop_count_;
         --loop_depth_;
-        pop();
     }
 }  // namespace muc_detail

@@ -558,6 +558,7 @@ private:
             errors_.push_back(e.what());
             scopes_.clear();
             loop_depth_ = 0;
+            move_loop_count_ = 0;
             in_finally_ = false;
             auto_groups_.clear();
             direct_init_expr_ = nullptr;

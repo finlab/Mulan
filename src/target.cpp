@@ -115,7 +115,6 @@ TargetInfo parse_triple(const std::string& triple) {
     return info;
 }
 
-std::string suggest_target(const std::string& os, const std::string& arch, const std::string& abi);
 
 // An explicit `--target` must name an OS this compiler can emit for: an unknown one used to be treated
 // as the host, which linked a host binary and called it a success (#98).
@@ -167,7 +166,7 @@ std::string suggest_target(const std::string& os, const std::string& arch, const
 
 // The link step must produce the object format the target asks for. A host driver that does not know
 // the format still exits 0 and writes a broken file, so verify the magic instead of trusting `rc`.
-void check_output_format(const fs::path& out, const std::string& target) {
+void check_output_format(const std::filesystem::path& out, const std::string& target) {
     if (target.empty()) return;  // host target: the driver is the host toolchain
     std::ifstream f(out, std::ios::binary);
     // Some PE drivers append `.exe` to an output name without an extension.
@@ -200,7 +199,7 @@ void check_output_format(const fs::path& out, const std::string& target) {
 // The dynamic loader an ELF executable names in its program headers (`PT_INTERP`): a glibc binary
 // names `ld-linux-*.so.*`, a musl one `ld-musl-*.so.1`. The ELF magic alone does not tell the two
 // runtimes apart, but the interpreter does.
-std::string elf_interpreter(const fs::path& path) {
+std::string elf_interpreter(const std::filesystem::path& path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return "";
     std::vector<char> buf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -243,14 +242,14 @@ std::string elf_interpreter(const fs::path& path) {
 // A binary linked against another C runtime than the target asks for is not the target: the
 // object format alone does not tell glibc from musl, so the interpreter name decides. A static
 // binary has no interpreter and cannot be checked this way.
-void check_linked_abi(const fs::path& out, const std::string& target) {
+void check_linked_abi(const std::filesystem::path& out, const std::string& target) {
     if (target.empty()) return;
     const std::string want = normalize_abi(parse_triple(target).abi);
     if (want != "gnu" && want != "musl" && want != "android") return;
-    fs::path path = out;
-    if (!fs::exists(path)) {
-        const fs::path alt = fs::path(out.string() + ".exe");
-        if (fs::exists(alt)) path = alt;
+    std::filesystem::path path = out;
+    if (!std::filesystem::exists(path)) {
+        const std::filesystem::path alt = std::filesystem::path(out.string() + ".exe");
+        if (std::filesystem::exists(alt)) path = alt;
     }
     const std::string interp = elf_interpreter(path);
     std::string got;
