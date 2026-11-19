@@ -77,6 +77,47 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   get one diagnostic that says the C-style form requires the parentheses. Must-fail case
   `for_paren_required`; SPEC 6.4 states it explicitly.
 
+#### build 251 — 2026-11-19
+
+**The type arguments of a free generic function call are inferred from the argument types** (SPEC
+3.15.3, `Mulan-Agents#133`). `max2(1, 2)` used to be rejected with "`max2` is a generic function: its
+type arguments cannot be inferred, write `max2<...>(...)`".
+
+A bare call now matches every argument type against its declared parameter *pattern*, top-down, and
+binds each type parameter at its first occurrence: a bare `T`, a pointer `T*`, a static array `T[N]`
+(the element only — the length is a constant expression, not a type), a slice `T[]`/`T[,]` (the rank is
+part of the type), `ref T` / `const ref T` (the referent), a nested instance `Vec<T>` / `Box<Vec<T>>`
+(via the instance's type arguments — `Type::targs`, filled by `instantiate_generic`), and function /
+delegate types (`(T) => R`, including a plain function value passed to a `delegate` parameter). The
+return type never takes part, and an explicit list is still used as written and never re-checked.
+
+Each failure has its own diagnostic instead of one "write `<...>`":
+
+- **conflicting arguments**: `` `max2`: the type argument `T` inferred from argument 1 is `int`, but
+  argument 2 gives `long`; write the type argument explicitly (`max2<...>(...)`) to choose one ``;
+- **return-only parameter**: `` `empty`: cannot infer the type argument `T` from the arguments: no
+  parameter mentions it, so only the return type could, and the return type is not used for inference;
+  write `empty<...>(...)` ``;
+- **unmatched structure**: `` `deref`: cannot infer the type argument `T` from argument 1: `Thing` does
+  not match the parameter type `T*` (`p`) ``, which also covers a `null` / `void` / range argument
+  (none has a type of its own to instantiate with);
+- **constraint violated**: `` `max2`: the type argument `T` inferred from argument 1 is `Point`, which
+  does not satisfy the constraint `IOrder`: no `operator<` accepting `(Point, Point)`; write
+  `max2<...>(...)` to choose the type explicitly ``.
+
+The bindings are handed to the existing instantiation path as if they had been written out
+(`infer_func_type_args` returns the list and `instantiate_func` takes it as a parameter instead of
+reading `c->type_args`, so a template body's call node never bakes in a concrete list that later
+clones would inherit), and the instantiation is looked up in the template's own unit, so a same-named
+generic elsewhere is never picked. Method-level generics, constructors and type-position arguments still require explicit
+arguments. `infer_func_type_args` lives in the new `src/sema/sema_infer.cpp`.
+
+Run case `generic_infer` (bare, pointer, static array, slice, `ref`, nested `Box<Box<T>>`, class
+handle, delegate + plain function, user type satisfying `IAdd`, two parameters inferred independently,
+a recursive instance, and an explicit list unchanged). Must-fail `generic_infer_conflict`,
+`generic_infer_bound`, `generic_infer_shape`, and `generic_call_no_type_args` rewritten to the
+return-only shape it is named after. Full suite: **887/887 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 250 — 2026-11-19
 
 **`type T += I;` gets its own diagnostic.**

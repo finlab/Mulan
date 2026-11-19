@@ -1242,11 +1242,34 @@ T max2<T>(T a, T b) { return a > b ? a : b; }
 Vec<int> v;
 Vec<Vec<int>> nested;            // `>>` split apart
 int n = max2<int>(1, 2);         // explicit type arguments
+int m = max2(1, 2);              // inferred: `T = int` from the argument types
 Pair<int, long> p = Pair<int, long>(3, 9);   // generic struct value construction
 Box<int> b = new Box<int>(7);    // generic class construction
 ```
 
-- **Type arguments must be given explicitly**; no deduction is performed (`max2(1, 2)` is an error). `auto` may be used to receive the result.
+- **A free function call may omit the type arguments**; they are then inferred from the argument types
+  (build 251). An explicit list is always used as written and is never checked by inference.
+- **Inference is structural and argument-driven**: every argument type is matched against its declared
+  parameter *pattern*, top-down, and each type parameter is bound at its first occurrence:
+  - a bare parameter `T` binds the argument type itself (a `const` argument binds the same `T`);
+  - `T*`, `T[N]`, `T[]`/`T[,]` bind the element type; the slice rank must agree, and the static array
+    length is not part of the inference (only the element is);
+  - a generic pattern `Vec<T>` / `Box<Vec<T>>` matches an instance of the same template and binds from
+    its type arguments, so nesting any depth works;
+  - `ref T` / `const ref T` bind the referent, i.e. the argument's own type;
+  - `(T) => R` and `delegate (T1) => R` match the parameter and return types the same way (a delegate
+    pattern also accepts a plain function value, which converts to a delegate).
+- **The return type is never used for inference.** A type parameter that no parameter mentions therefore
+  cannot be inferred: `T empty<T>()` must be called as `empty<int>()`.
+- **A failed inference is a compile error with the reason**: two arguments giving different types for one
+  parameter (`max2(1, 2L)`), an argument whose shape does not match the pattern (a `Thing` value for a
+  `T*` parameter, or `null` / a `void` / a range argument, none of which has a type of its own), or a
+  parameter no argument determines. A deduced argument must also satisfy the template's constraint
+  (`T: I`): `max2(p, q)` with a `Point` that has no `operator<` reports that the *inferred* `T = Point`
+  does not satisfy `IOrder` and that an explicit list can choose another type.
+- **Scope**: only **free functions** infer. Method-level generics, constructors and a type in type
+  position (`Vec<T>` inside another declaration) still require the arguments to be written out.
+- `auto` may be used to receive the result.
 - In an expression, `name<...>(` is resolved as a generic call/generic construction: it first tries to resolve as a type argument list,
   and it only holds if the resolution succeeds and is immediately followed by `(`; otherwise it falls back to being a comparison expression (`a < b`).
 - The `>>` of nested arguments is treated as two `>`.
@@ -1365,12 +1388,12 @@ type `Money` does not satisfy `IAdd` for type parameter `T`: no `operator+` acce
 - `Self` may only be used bare (`Self x`); nesting is not supported yet (`Self[]`).
 - `auto` is not used as a substitute: `auto` is a deduction placeholder and `Self` is a dependent type; the semantics of the two are orthogonal.
 
-#### 3.15.7 Current limitations (updated 2026-11-16, build 159)
+#### 3.15.7 Current limitations (updated 2026-11-19, build 251)
 
 | Limitation | Description |
 |---|---|
 | ~~A generic struct/class does not support `const` members~~ | **Lifted 2026-11-17**: `const` fields in a generic type are ordinary per-instance fields (type-level constants are gone) |
-| Not supported | Method-level generics, type argument deduction, associated types, specialization, generic `extern`, generic type aliases |
+| Not supported | Method-level generics, associated types, specialization, generic `extern`, generic type aliases. Type-argument inference covers free function calls only (3.15.3) |
 
 Lifted since 0.0.72 (kept here so the old table's rows are not misread as current): a generic interface is
 a **usable value type** (`IIterator<int>` as a local/field/return type, dispatch through the itable,

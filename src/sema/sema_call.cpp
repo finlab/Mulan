@@ -109,7 +109,7 @@ namespace muc_detail {
                 // Generic function takes precedence; otherwise it is treated as value construction of a generic struct
                 Decl* tdecl = find_generic_template(nm->ident, cur_);
                 if (dynamic_cast<FuncDecl*>(tdecl)) {
-                    target = instantiate_func(c, nm->ident, cur_);
+                    target = instantiate_func(c, nm->ident, cur_, c->type_args);
                     nm->kind = "func";
                     nm->sym = target;
                 } else {
@@ -187,21 +187,32 @@ namespace muc_detail {
                                }
                                return d ? dynamic_cast<FuncDecl*>(d) : nullptr;
                            }()) {
-                    // A bare call of a generic function is almost always a missing type argument list:
-                    // nothing infers `T` from the arguments, so name resolution finds no plain function.
+                    // A bare call of a generic function: the type arguments are inferred from the
+                    // argument types (SPEC 3.15.3). Every way inference can fail has its own
+                    // diagnostic, so this branch never sends the reader to `<...>` without a reason.
+                    std::string tmpl_unit;
                     std::string where;
                     for (auto& kv : generic_templates_) {
                         if (kv.second != static_cast<Decl*>(gf)) continue;
-                        const std::string un = kv.first.substr(0, kv.first.rfind('.'));
-                        auto iu = infos_.find(un);
-                        where = ((iu != infos_.end() && iu->second.unit) ? iu->second.unit->filename : un) +
+                        tmpl_unit = kv.first.substr(0, kv.first.rfind('.'));
+                        auto iu = infos_.find(tmpl_unit);
+                        where = ((iu != infos_.end() && iu->second.unit) ? iu->second.unit->filename
+                                                                        : tmpl_unit) +
                                 ":" + std::to_string(gf->line) + ":" + std::to_string(gf->col);
                         break;
                     }
-                    err("`" + nm->ident + "` is a generic function: its type arguments cannot be inferred, "
-                        "write `" + nm->ident + "<...>(...)`" +
-                        (where.empty() ? std::string() : "\n  note: the template is declared at " + where),
-                        nm);
+                    std::vector<TypeSpecPtr> inferred = infer_func_type_args(
+                        c, gf, nm->ident,
+                        where.empty() ? std::string()
+                                      : "\n  note: the template is declared at " + where);
+                    // Qualified with the template's own unit: another unit's same-named generic must
+                    // not be instantiated instead of the one that was matched.
+                    target = instantiate_func(c,
+                                              tmpl_unit.empty() ? nm->ident
+                                                                : tmpl_unit + "." + nm->ident,
+                                              cur_, inferred);
+                    nm->kind = "func";
+                    nm->sym = target;
                 } else {
                     err("undefined function `" + nm->ident + "`", c);
                 }

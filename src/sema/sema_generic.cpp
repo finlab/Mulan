@@ -314,6 +314,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
                                    : (cd_tmpl ? TypeKind::Class : TypeKind::Interface));
     in_progress->unit = tmpl_unit;
     in_progress->name = display;
+    in_progress->targs = arg_types;  // structural matching for inference (SPEC 3.15.3)
     in_progress->in_progress = true;
     generic_insts_[key] = in_progress;
     struct PendingGuard {
@@ -780,7 +781,9 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     return ty;
 }
 
-FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {    std::string want_unit;
+FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u,
+                                 const std::vector<TypeSpecPtr>& targs) {
+    std::string want_unit;
     std::string name;
     split_qualified(base, want_unit, name);
 
@@ -814,23 +817,23 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     auto* tmpl = dynamic_cast<FuncDecl*>(tmpl_decl);
     if (!tmpl) err("`" + name + "` is not a generic function", c);
     if (tmpl->is_extern) err("`extern` function `" + name + "` cannot be generic", c);
-    if (tmpl->type_params.size() != c->type_args.size()) {
+    if (tmpl->type_params.size() != targs.size()) {
         err("generic function `" + name + "` expects " + std::to_string(tmpl->type_params.size()) +
-                " type argument(s) but got " + std::to_string(c->type_args.size()),
+                " type argument(s) but got " + std::to_string(targs.size()),
             c);
     }
 
     // Constraint check (U34 M3b): structural matching, argument types resolved first
     std::vector<TypePtr> arg_types;
-    for (const auto& ta : c->type_args) arg_types.push_back(resolve_type(ta.get(), u));
+    for (const auto& ta : targs) arg_types.push_back(resolve_type(ta.get(), u));
     for (size_t i = 0; i < tmpl->type_params.size(); ++i) {
         check_bound(arg_types[i], tmpl->type_params[i], u, c);
     }
 
     std::string display = name + "<";
-    for (size_t i = 0; i < c->type_args.size(); ++i) {
+    for (size_t i = 0; i < targs.size(); ++i) {
         if (i) display += ", ";
-        display += instance_label(arg_types[i], c->type_args[i].get(), tmpl_unit);
+        display += instance_label(arg_types[i], targs[i].get(), tmpl_unit);
     }
     display += ">";
 
@@ -875,7 +878,7 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     auto* fn = static_cast<FuncDecl*>(clone.get());
     TypeBindings bindings;
     for (size_t i = 0; i < tmpl->type_params.size(); ++i) {
-        bindings[tmpl->type_params[i].name] = TypeBinding{c->type_args[i].get(), arg_types[i]};
+        bindings[tmpl->type_params[i].name] = TypeBinding{targs[i].get(), arg_types[i]};
     }
     subst_decl(*fn, bindings);
     fn->type_params.clear();

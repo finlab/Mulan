@@ -79,6 +79,7 @@ add_executable(muc
   src/sema/sema_directive.cpp
   src/sema/sema_types.cpp
   src/sema/sema_generic.cpp
+  src/sema/sema_infer.cpp
   src/sema/sema_constraint.cpp
   src/sema/sema_class1.cpp
   src/sema/sema_iface.cpp

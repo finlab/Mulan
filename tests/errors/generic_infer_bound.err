@@ -1,0 +1,4 @@
+the type argument `T` inferred from argument 1 is `generic_infer_bound.Point`
+which does not satisfy the constraint `IOrder`
+write `max2<...>(...)` to choose the type explicitly
+!is a generic function: its type arguments cannot be inferred

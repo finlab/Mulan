@@ -108,6 +108,10 @@ struct Type {
     std::vector<std::vector<TypePtr>> sum_fields;
     std::vector<TypePtr> sum_payload;
     TypePtr sum_layout;
+    // An instantiated generic (`Vec<int>`): the type arguments the instance was built with, in
+    // declaration order. `name` spells them (`Vec<int>`), but it is a display string — inference
+    // (sema_infer.cpp) matches a parameter pattern `Vec<T>` against the arguments structurally.
+    std::vector<TypePtr> targs;
 
     static TypePtr make_void();
     static TypePtr make_prim(const std::string& name);

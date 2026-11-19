@@ -1,0 +1,10 @@
+max 2 2 7
+box 7 7
+class 9
+ptr 11 slice 21 array 31
+ref 6 6
+fn 12 21
+user 5 mix 3
+rec 10
+nested 7 70
+generic infer ok

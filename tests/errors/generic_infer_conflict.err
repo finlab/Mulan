@@ -1,0 +1,4 @@
+the type argument `T` inferred from argument 1 is `int`
+but argument 2 gives `long`
+write the type argument explicitly
+!does not satisfy

@@ -1,9 +1,13 @@
+// The type argument appears only in the return type, so no argument can determine it: an explicit
+// list is the only way to call this template (SPEC 3.15.3).
 unit generic_call_no_type_args;
 
-T ident<T>(T v) { return v; }
+T empty<T>() {
+    T[] none = null;
+    return none[0];
+}
 
 int main() {
-    int a = 3;
-    int b = ident(a);
-    return b;
+    int a = empty();
+    return a;
 }

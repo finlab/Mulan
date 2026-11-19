@@ -511,8 +511,20 @@ private:
                                       const std::vector<TypeSpecPtr>& args, Unit* u);
     // Find a generic template by name (this unit first, then a unique suffix match); returns nullptr when none
     Decl* find_generic_template(const std::string& full, Unit* u);
-    // Free function monomorphization: `c->type_args` holds the explicit type arguments; returns the instance function (check_func already run)
-    FuncDecl* instantiate_func(Call* c, const std::string& base, Unit* u);
+    // Free function monomorphization: `targs` holds the type arguments (written out at the call site,
+    // or inferred — see infer_func_type_args); returns the instance function (check_func already run)
+    FuncDecl* instantiate_func(Call* c, const std::string& base, Unit* u,
+                               const std::vector<TypeSpecPtr>& targs);
+    // Type-argument inference for a bare generic call (`max2(1, 2)`, SPEC 3.15.3): binds every type
+    // parameter of `tmpl` by structural matching of the argument types against the parameter patterns
+    // and returns the resulting argument list; raises a diagnostic that names the reason when a
+    // parameter stays unbound, two arguments disagree, or the inferred type breaks a constraint.
+    // `note` is appended to every diagnostic (the template's declaration site).
+    // The call node is left untouched: the arguments are handed to instantiate_func directly, so a
+    // template body checked at its definition (against witness types) cannot bake a concrete list
+    // into the node and leak it into later instances.
+    std::vector<TypeSpecPtr> infer_func_type_args(Call* c, FuncDecl* tmpl, const std::string& name,
+                                                  const std::string& note);
     // Structural constraint check (U34 M3b): whether `t` satisfies every bound of `p` (`&` requires all / `|` requires any)
     void check_bound(const TypePtr& t, const TypeParam& p, Unit* u, const Node* at);
     bool satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::string* why);
