@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 265 — 2026-11-20
+
+**A generic bound is resolved in the unit that declares it, not at the call site.**
+
+Instantiating `compare<int>` from `std.mem` failed with "unknown type `IOrder`" in the *caller's*
+file: `instantiate_func` resolved every `T: ...` bound against the unit making the call, so a library
+template whose constraint names a type the library imports became unusable for every caller that did
+not import that type too. Argument types still resolve at the call site (they are written there); the
+bounds now resolve in the template's unit.
+
+Case `generic_bound_xunit` (a fixture unit with `T: IOrder` instantiated by a unit that only imports
+the fixture).
+
+Full suite: **930/930 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 264 — 2026-11-20
 
 **`is_some` / `is_ok` are gone: presence is the language's `is` test.**

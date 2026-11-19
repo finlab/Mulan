@@ -831,11 +831,18 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u,
             c);
     }
 
-    // Constraint check (U34 M3b): structural matching, argument types resolved first
+    // Constraint check (U34 M3b): structural matching, argument types resolved first.
+    // The argument types come from the call site, so they are resolved there; the **bounds** are
+    // declared in the template's unit and may name types only that unit imports (`T: IOrder` from
+    // `std.interfaces`), so they are resolved there instead of blaming the caller.
+    Unit* tmpl_unit_ptr = u;
+    if (auto it = infos_.find(tmpl_unit); it != infos_.end() && it->second.unit) {
+        tmpl_unit_ptr = it->second.unit;
+    }
     std::vector<TypePtr> arg_types;
     for (const auto& ta : targs) arg_types.push_back(resolve_type(ta.get(), u));
     for (size_t i = 0; i < tmpl->type_params.size(); ++i) {
-        check_bound(arg_types[i], tmpl->type_params[i], u, c);
+        check_bound(arg_types[i], tmpl->type_params[i], tmpl_unit_ptr, c);
     }
 
     std::string display = name + "<";
