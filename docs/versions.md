@@ -46,6 +46,33 @@ misleading explanation is pinned: `generic_field_typo` (no hint) and `generic_mi
 kept). `generic_inst_chain` now uses an operator failure, which is what the once-only chain check was
 meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1`).
 
+#### build 245 — 2026-11-19
+
+**Audit follow-ups on builds 232–244.**
+
+- **`2^63` magnitude is rejected wherever a literal is consumed** (was: silently the value 0 in
+  `switch` patterns, `#if`, array lengths). The lexer flag is now checked in the constant evaluators
+  (`eval_const`, the `#if` evaluator, `pattern_value`) and in the parser's array-length path, with the
+  same diagnostic as ordinary expressions. `-0x8000000000000000` / `-0b1…0` are accepted like the
+  decimal spelling (any base, matching that hex/binary are ordinary literal forms). Cases
+  `int_min_magnitude_case` / `int_min_magnitude_array`.
+- **`for (;;)` / `while true` no longer report a missing return**: a body without a `break` that leaves
+  the loop cannot fall out, so `guarantees_return` accepts it (nested loops and `switch` still own their
+  `break`). Case `for_c_style_infinite`.
+- **Rvalue assignment takes over only a true prvalue**: the new `is_owned_prvalue` (move, call that does
+  not return a borrow, `new`) replaces the wider `valueOwned` test, and `valueOwned` no longer treats a
+  `ref T f()` call as owned. Measured before the change: `a = (c ? b1 : b2)` on a copyable
+  destructor-bearing struct double-released both operands (`live` went negative). `check_assign` also
+  requires `!call->by_ref` now. `rvalue_assign` extended with the conditional form and `g_live`
+  accounting.
+- **`for` init is not "inside the loop"**: the move level is raised after the init clause is checked, so
+  `for (Buf cur = move src; …)` is accepted; `recover()` now resets `move_loop_count_` too, and
+  `check_for_c` uses `ScopeGuard`.
+- Plumbing: removed the duplicate (unreachable) `ForStmt` dispatch in `stmtImpl`, guarded the step
+  block's terminator with `hasTerm`, cleared `loops` when switching to a `para` section, dropped the
+  `namespace fs` alias from `target.hpp` and a duplicate declaration in `target.cpp`.
+- Case `for_c_style_cleanup` (break/continue through `try`/`finally`, per-iteration releases).
+
 #### build 244 — 2026-11-19
 
 **C-style `for (init; cond; step)`.**
@@ -61,7 +88,8 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
 - codegen: lowered to `init; while (cond) { body; step; }` with **`continue` branching to the step block**
   (C semantics), `break` to the exit.
 - new `ForStmt` cases in `clone_expr`/`subst`, the may-throw walker and the AST dumper.
-- cases: `for_c_style` (run) and `for_c_style_cond` (must-fail); SPEC §0/3/6.1/6.3.1/§12 and decision 135.
+- cases: `for_c_style` (run) and `for_c_style_cond` (must-fail); SPEC §0 (Loops and Control flow rows,
+  principle 2), 6.3.1 and decision 135.
 
 #### build 243 — 2026-11-19
 

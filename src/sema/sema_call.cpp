@@ -173,7 +173,18 @@ namespace muc_detail {
                 } else if (lookup_enum_const(nm->ident) != nullptr) {
                     err("`" + nm->ident + "` is an enum member and cannot be called", c);
                 } else if (FuncDecl* gf = [&]() -> FuncDecl* {
-                               Decl* d = find_generic_template(nm->ident, cur_);
+                               // Only the current unit and the visible `use`d units may name the template:
+                               // pointing a lookup failure at a private template of a unit that was never
+                               // imported would both mislead and leak that unit's location.
+                               Decl* d = nullptr;
+                               auto own = generic_templates_.find(cur_->name + "." + nm->ident);
+                               if (own != generic_templates_.end()) d = own->second;
+                               for (auto& use : cur_->uses) {
+                                   if (d) break;
+                                   if (!unit_visible(use->unit_name)) continue;
+                                   auto it = generic_templates_.find(use->unit_name + "." + nm->ident);
+                                   if (it != generic_templates_.end()) d = it->second;
+                               }
                                return d ? dynamic_cast<FuncDecl*>(d) : nullptr;
                            }()) {
                     // A bare call of a generic function is almost always a missing type argument list:

@@ -129,8 +129,8 @@ and or not override operator super this
   - Without a suffix the literal adapts to the expected numeric type when it fits, otherwise it is `int`
     (fits in 32 bits) or `long`; the maximum is **2^63-1** — write `ul` for the full unsigned 64-bit range
     (`ulong u = 18446744073709551615ul;`).
-  - `-9223372036854775808` (the magnitude `2^63` directly after unary `-`, with or without the `l` suffix)
-    is the minimum of `long`; the magnitude alone is a compile error.
+  - `-9223372036854775808` (the magnitude `2^63` directly after unary `-`, in any base, with or without
+    the `l` suffix) is the minimum of `long`; the magnitude alone is a compile error.
 - **Float**: decimal point / exponent; `double` by default, the `f` suffix means `float`.
 - **Character**: `'a'`; escapes `'\n' '\t' '\\' '\'' '\0' '\xNN' '\u{...}'`; the default type of a literal is `byte` (unsigned 8-bit), adapted to `char`/`byte` according to context.
   - `char` is **signed** 8-bit (C style, −128–127); `byte` is **unsigned** 8-bit (0–255). There is no `ubyte`/`uchar` alias.
@@ -2056,7 +2056,7 @@ for (;;) { ... }                  // infinite loop, exited via break / return
   are told apart by the head: a C-style head starts with `;`, a declaration, or an expression, while a
   for-in head starts with `[const] [ref] name [`,` ...] in`.
 
-`do-while` remains **not** part of the language (line 28); write `while true { ... }` with a `break`.
+`do-while` remains **not** part of the language (SPEC §0 table); write `while true { ... }` with a `break`.
 
 ### 6.4 for-in
 
@@ -2179,7 +2179,7 @@ class List { Iter iterator() { ... } }
 
 - `return expr;` / `return;` (void).
 - Releasing a reference: `c = null;` (since 0.0.47 `del` has been removed; see 3.8 / 8.3).
-- `do-while`, C-style `for`, and `goto` are not provided.
+- `do-while` and `goto` are not provided (C-style `for` is, see 6.3.1).
 - `switch` is covered in 6.6: no fallthrough, and branch bodies must use braces.
 - Exceptions use `try`/`catch`/`throw` (3.14); for fatal errors `abort()` (libc) is still available.
 
