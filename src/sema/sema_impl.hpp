@@ -29,6 +29,14 @@ namespace muc_detail {
 
 // ---------------------------------------------------------------- small helpers
 
+// Named arguments for a constructor call: the names must be exactly the parameter names of the chosen
+// overload (each once). Defined in sema_new.cpp.
+bool named_args_match(const std::vector<std::string>& params,
+                      const std::vector<std::pair<std::string, ExprPtr>>& named);
+void reorder_named_args(std::vector<ExprPtr>& args,
+                        std::vector<std::pair<std::string, ExprPtr>>& named,
+                        const std::vector<std::string>& params);
+
 inline bool is_integer(const TypePtr& t) { return t && t->is_integer(); }
 inline bool is_numeric(const TypePtr& t) { return t && t->is_numeric(); }
 inline bool is_prim(const TypePtr& t) { return t && t->kind == TypeKind::Prim; }

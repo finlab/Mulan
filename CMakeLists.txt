@@ -88,6 +88,7 @@ add_executable(muc
   src/sema/sema_member.cpp
   src/sema/sema_lambda.cpp
   src/sema/sema_call.cpp
+  src/sema/sema_new.cpp
   src/sema/sema_resolve.cpp
   src/codegen/codegen_llvm.cpp
   src/codegen/codegen_abi.cpp

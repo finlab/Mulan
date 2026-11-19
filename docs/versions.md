@@ -27,6 +27,14 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 240 — 2026-11-19
+
+**Split `sema_new.cpp` out of `sema_call.cpp` (1078 lines).**
+
+`sema_new.cpp` owns `check_new`, `check_ctor_args`, the named-argument helpers (now shared through
+`sema_impl.hpp`) and `missing_default_ctor`; `sema_call.cpp` keeps ordinary call resolution (865
+lines). Pure move: emitted IR is identical for the same 30 cases (ignoring the `mulan.build` flag).
+
 #### build 239 — 2026-11-19
 
 **Split `codegen_destroy.cpp` out of `codegen_class.cpp` (1091 lines).**
