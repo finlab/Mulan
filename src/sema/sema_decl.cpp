@@ -21,7 +21,7 @@ namespace muc_detail {
     [[noreturn]] void Sema::err(const std::string& msg, const Node* node) const {
         const int line = node ? node->line : 0;
         const int col = node ? node->col : 0;
-        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string(), inst_notes_text());
+        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string(), inst_notes_text(msg));
     }
 
     void Sema::warn(const std::string& msg, const Node* node) const {
@@ -34,15 +34,29 @@ namespace muc_detail {
     [[noreturn]] void Sema::err_ts(const std::string& msg, const TypeSpec* spec) const {
         const int line = spec ? spec->line : 0;
         const int col = spec ? spec->col : 0;
-        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string(), inst_notes_text());
+        throw SemaError(msg, line, col, cur_ ? cur_->filename : std::string(), inst_notes_text(msg));
     }
 
-    std::string Sema::inst_notes_text() const {
+    std::string Sema::inst_notes_text(const std::string& msg) const {
         // Innermost instantiation first: the reader asked for the outermost call, but the body that
         // failed is the innermost one, so the chain reads "error → who expanded it → who expanded that".
+        // The "add a constraint" explanation is attached to the innermost frame only, and only when
+        // the error is a missing *capability* a bound would supply (an operator, a method). On a shape
+        // error — a misspelled field, a missing member, an undefined name, a wrong argument count — it
+        // sends the reader hunting for a constraint that would not have prevented the mistake (#134).
+        const bool shape_error = msg.find("has no field") != std::string::npos ||
+                                 msg.find("has no member") != std::string::npos ||
+                                 msg.find("unknown identifier") != std::string::npos ||
+                                 msg.find("undefined identifier") != std::string::npos ||
+                                 (msg.find("expects ") != std::string::npos &&
+                                  msg.find(" argument") != std::string::npos);
+        const bool explain = !shape_error;
         std::string notes;
-        for (auto it = instantiation_notes_.rbegin(); it != instantiation_notes_.rend(); ++it) {
-            notes += "\n" + *it;
+        for (size_t i = instantiation_notes_.size(); i > 0; --i) {
+            notes += "\n" + instantiation_notes_[i - 1];
+            if (i == instantiation_notes_.size() && explain && i <= instantiation_hints_.size()) {
+                notes += instantiation_hints_[i - 1];
+            }
         }
         return notes;
     }

@@ -27,6 +27,25 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 245 — 2026-11-19
+
+**The "add a constraint" note is attached only where a constraint could have helped** (public issue
+#134). Every diagnostic raised while an instantiation is in progress carried
+
+> `T` is unconstrained, so the definition is checked only when it is instantiated; add a constraint …
+
+even when the error was a misspelled field: `this.value = …` inside a `Box<T>` constructor reported
+"has no field `value`" followed by advice to add an interface bound, which has nothing to do with the
+mistake. The note and the hint are now separate stacks (`instantiation_notes_` / `instantiation_hints_`),
+and `inst_notes_text(msg)` attaches the hint to the innermost frame only when the error is *not* a shape
+error — a missing field, a missing member, an undefined name or a wrong argument count. Operator and
+method failures keep it.
+
+`tests/errors/*.err` gained `!<text>` (a substring that must **not** appear), so the absence of a
+misleading explanation is pinned: `generic_field_typo` (no hint) and `generic_missing_operator` (hint
+kept). `generic_inst_chain` now uses an operator failure, which is what the once-only chain check was
+meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 244 — 2026-11-19
 
 **C-style `for (init; cond; step)`.**

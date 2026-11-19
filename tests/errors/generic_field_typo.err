@@ -1,0 +1,5 @@
+has no field `value`
+while instantiating `Box<int>`
+# A field typo has nothing to do with the constraint on `T`: the hint would send the reader looking
+# for an interface to add (#134).
+!unconstrained, so the definition

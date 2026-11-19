@@ -1,0 +1,3 @@
+has no `+` operator overload
+# Here the missing capability *is* what a bound would supply, so the explanation must stay.
+unconstrained, so the definition is checked only when it is instantiated

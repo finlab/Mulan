@@ -360,6 +360,10 @@ private:
     // Innermost-last stack of "while instantiating ..." lines; every diagnostic raised while the
     // stack is non-empty carries them (see `err`). Mutable because diagnostics are `const` members.
     mutable std::vector<std::string> instantiation_notes_;
+    // Parallel stack: the "add a constraint" explanation each frame *could* contribute. It is only
+    // attached when the error is about a capability a constraint would supply (an operator or a
+    // method), not for every error that happens to surface while an instance is being checked (#134).
+    mutable std::vector<std::string> instantiation_hints_;
     size_t generic_instance_count_ = 0;
     std::vector<std::unique_ptr<Decl>> generic_decls_;          // instantiation products (lifetime)
     std::vector<std::unique_ptr<Decl>> synth_decls_;            // synthesized lambda environment classes (lifetime)
@@ -375,7 +379,7 @@ private:
     [[noreturn]] void err_ts(const std::string& msg, const TypeSpec* spec) const;
 
     // Rendered instantiation chain for a diagnostic (innermost first); empty when none is active.
-    std::string inst_notes_text() const;
+    std::string inst_notes_text(const std::string& msg) const;
 
     UnitInfo& info();
 

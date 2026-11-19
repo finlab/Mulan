@@ -559,6 +559,7 @@ def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
     # `@ <args>` lines add compiler options (same convention as the run and IR cases), so a
     # diagnostic that only appears under a flag (for example `--single-thread`) can be pinned.
     wanted: list[str] = []
+    unwanted: list[str] = []
     extra: list[str] = []
     for raw in case.spec.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
@@ -566,6 +567,11 @@ def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
             continue
         if line.startswith("@"):
             extra += shlex.split(line[1:].strip())
+            continue
+        if line.startswith("!"):
+            # `!<text>`: must NOT appear. A diagnostic that explains the wrong thing is a defect of
+            # its own (#134), so a case can pin the absence of a misleading explanation.
+            unwanted.append(line[1:].strip())
             continue
         wanted.append(line)
     cmd = resolve_compiler() + ["check", str(case.src.relative_to(ROOT))] + extra
@@ -582,6 +588,12 @@ def run_error_case(case: ErrCase, verbose: bool) -> tuple[bool, str]:
     text = (r.stderr or "") + "\n" + (r.stdout or "")
     if r.returncode == 0:
         return False, "the compiler accepted this program, which must be rejected (missed diagnostic)\n  command: " + " ".join(cmd)
+    present = [u for u in unwanted if u in text]
+    if present:
+        lines = ["diagnostics contain text that must not appear: " + ", ".join(repr(p) for p in present),
+                 "  actual output:"]
+        lines += ["    " + ln for ln in text.strip().splitlines()[:10]]
+        return False, "\n".join(lines)
     missing = [w for w in wanted if w not in text]
     if missing:
         lines = ["diagnostics are missing expected keywords: " + ", ".join(repr(m) for m in missing), "  actual output:"]

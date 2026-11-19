@@ -39,10 +39,17 @@ struct BusyGuard {
 // successful instantiation pays nothing beyond a small string.
 struct InstNoteGuard {
     std::vector<std::string>& notes;
-    InstNoteGuard(std::vector<std::string>& n, std::string text) : notes(n) {
+    std::vector<std::string>& hints;
+    InstNoteGuard(std::vector<std::string>& n, std::vector<std::string>& h, std::string text,
+                  std::string hint)
+        : notes(n), hints(h) {
         notes.push_back(std::move(text));
+        hints.push_back(std::move(hint));
     }
-    ~InstNoteGuard() { notes.pop_back(); }
+    ~InstNoteGuard() {
+        notes.pop_back();
+        hints.pop_back();
+    }
     InstNoteGuard(const InstNoteGuard&) = delete;
     InstNoteGuard& operator=(const InstNoteGuard&) = delete;
 };
@@ -68,16 +75,6 @@ std::string unchecked_hint(const std::vector<TypeParam>& tps) {
            " unconstrained, so the definition is checked only when it is instantiated; add a "
            "constraint (for example `" + first + ": IAdd` for `+`, `" + first +
            ": IOrder` for comparisons) to check it at the definition";
-}
-
-// Attach the hint to the outermost unchecked frame only: a nested chain would otherwise repeat the
-// same explanation on every line.
-std::string unchecked_hint_once(const std::vector<TypeParam>& tps,
-                                const std::vector<std::string>& notes) {
-    for (const auto& n : notes) {
-        if (n.find("unconstrained, so the definition") != std::string::npos) return {};
-    }
-    return unchecked_hint(tps);
 }
 
 // A structural key for an array-length expression (`SIZE`, `SIZE * 2`, `std.comptime.ptr_bits`): two
@@ -331,13 +328,14 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         sm_tmpl ? sm_tmpl->type_params
                 : (sd_tmpl ? sd_tmpl->type_params
                            : (cd_tmpl ? cd_tmpl->type_params : id_tmpl->type_params));
-    // Every diagnostic raised below now carries the use site and, for an unchecked parameter, the
-    // reason it could not be reported at the definition.
+    // Every diagnostic raised below now carries the use site; the "why only now" explanation rides
+    // along separately and is attached only when the error is about a missing capability.
     InstNoteGuard inst_note(
-        instantiation_notes_,
+        instantiation_notes_, instantiation_hints_,
         "  while instantiating `" + display + "` (requested at " +
             (u ? u->filename : std::string()) + ":" + std::to_string(spec->line) + ":" +
-            std::to_string(spec->col) + ")" + unchecked_hint_once(tps, instantiation_notes_));
+            std::to_string(spec->col) + ")",
+        unchecked_hint(tps));
     instantiated_templates_.insert(tmpl_decl);
     if (tps.size() != spec->args.size()) {
         err_ts("generic `" + base + "` expects " + std::to_string(tps.size()) +
@@ -867,10 +865,10 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u) {   
     BusyGuard busy_guard{generic_busy_, key};
     // The instantiation chain + "why only now" hint for an unchecked parameter.
     InstNoteGuard inst_note(
-        instantiation_notes_,
+        instantiation_notes_, instantiation_hints_,
         "  while instantiating `" + display + "` at " + (u ? u->filename : std::string()) + ":" +
-            std::to_string(c->line) + ":" + std::to_string(c->col) +
-            unchecked_hint_once(tmpl->type_params, instantiation_notes_));
+            std::to_string(c->line) + ":" + std::to_string(c->col),
+        unchecked_hint(tmpl->type_params));
     instantiated_templates_.insert(tmpl);
 
     std::unique_ptr<Decl> clone = clone_decl(*tmpl);
