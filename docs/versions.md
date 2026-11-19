@@ -39,6 +39,12 @@
   `cases/iface_slot_return.mu` is byte-identical to build 229 (ignoring `mulan.build`); full suite green.
 - Full suite: **863/863 on Windows**, **861/861 on Linux**.
 
+**Follow-up in the same build: `clone_expr` clones `move` and `swap`** (public issue #42). Instantiating
+a generic whose body contains either used to abort with "AST node kind not handled by the generic
+instantiator" (`MoveExpr` had no clone case, `SwapExpr` neither). The move clone drops `moved`: it names
+a local of the original body, and the instantiated body binds its own parameters and locals, so sema
+resolves it again. New run case `generic_move_expr`; full suite **864/864 on Windows**.
+
 #### build 229 — 2026-11-19
 
 **Split `sema_generic.cpp` (1384 lines) into instantiation and constraint satisfaction.**
