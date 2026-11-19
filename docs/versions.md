@@ -27,6 +27,16 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 235 — 2026-11-19
+
+**Split `codegen_cleanup.cpp` out of `codegen_runtime.cpp` (1273 lines).**
+
+`codegen_cleanup.cpp` owns the ref-scope stack, local/temporary release, moved-flag bookkeeping, the
+copy/move/assign helpers, constructor-progress cleanup, the `MUC_VERIFY_MEM` stack-write verifier and
+`prepareReturn`; `codegen_runtime.cpp` keeps the RC runtime, dynamic arrays, the weak registry and the
+cold-path throw helpers (739 lines). Pure move: emitted IR is identical for the same 30 cases
+(ignoring the `mulan.build` flag).
+
 #### build 234 — 2026-11-19
 
 **Split `codegen_stmt.cpp` (1206 lines) into statement emission and the memory primitives.**

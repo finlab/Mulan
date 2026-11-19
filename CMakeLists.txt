@@ -91,6 +91,7 @@ add_executable(muc
   src/codegen/codegen_abi.cpp
   src/codegen/codegen_support.cpp
   src/codegen/codegen_runtime.cpp
+  src/codegen/codegen_cleanup.cpp
   src/codegen/codegen_eh.cpp
   src/codegen/may_throw.cpp
   src/codegen/codegen_expr.cpp
