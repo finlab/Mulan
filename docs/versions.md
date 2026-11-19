@@ -27,6 +27,24 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 256 — 2026-11-20
+
+**A user copy constructor runs at every copying position, and a by-value struct argument is handed to the callee.**
+
+`return x;` and `f(x)` of a struct declaring `T(const ref T other)` copied the bytes (a field-level
+retain) instead of calling the copy constructor, while the argument/result was still destroyed: a
+raw-pointer field was freed twice (heap corruption on exit) and the caller's object dangled. The copy
+constructor is now used for a by-value argument (`coerceArg`, covering function, method, operator and
+delegate calls) and for a by-value return (`prepareReturn`); the copy happens exactly once per position
+(SPEC 3.4 rule of three). Ownership is aligned with SPEC 3.8: the caller hands the argument copy over,
+the callee's `ownParams` releases it, and the caller does not release it a second time; for a type the
+compiler copies, the argument is first retained into a copy of its own. `valueOwned` also treats a
+member operator (`op_method`) and a by-value user subscript (`operator[]`) as owned, so initializing a
+local from their result transfers the value instead of copying it again and leaking the temporary.
+
+Cases `copy_positions` (copy initialization / argument / return / `?:`), `copy_param_handover` (the
+caller's object stays valid, one release per allocation) and `op_result_owned` (allocs == frees).
+
 #### build 245 — 2026-11-19
 
 **The "add a constraint" note is attached only where a constraint could have helped** (public issue

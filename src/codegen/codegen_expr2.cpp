@@ -197,8 +197,10 @@ using ArgPack = Emitter::ArgPack;
                 pack.vals.push_back(addrOf(args[i]));  // borrow: the callee does not own it, no cleanup after the call
                 continue;
             }
-            Value* v = coerce(args[i], f->pty[i]);
-            if (needsCleanup(f->pty[i]) && convOwns(args[i], f->pty[i])) {
+            Value* v = coerceArg(args[i], f->pty[i]);
+            // the callee owns a by-value struct parameter (ownParams releases it); see prepareArgs
+            const bool handedOver = f->pty[i] && f->pty[i]->kind == TypeKind::Struct;
+            if (!handedOver && needsCleanup(f->pty[i]) && convOwns(args[i], f->pty[i])) {
                 pack.owned.emplace_back(v, f->pty[i]);
             }
             if (f->c_abi) {

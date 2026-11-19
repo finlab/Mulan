@@ -1,0 +1,2 @@
+values -1 4
+allocs 3 frees 3

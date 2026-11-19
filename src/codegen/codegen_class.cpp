@@ -363,6 +363,10 @@ namespace muc_detail {
             if (it == slots.end()) continue;
             if (isRefKind(pl->rty)) {
                 emitRetainRef(b.CreateLoad(lt(pl->rty), it->second), pl->rty);
+            } else if (pl->rty->kind == TypeKind::Struct) {
+                // A by-value struct parameter arrives as a copy the caller already owns: coerceArg
+                // retains the fields (or runs the copy constructor) and hands that reference over.
+                // The cleanup below consumes it; retaining it here would leak one reference.
             } else {
                 emitRetainValue(it->second, pl->rty);
             }

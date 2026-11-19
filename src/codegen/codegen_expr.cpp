@@ -697,14 +697,41 @@ static bool is_numeric(const TypePtr& t) {
     ArgPack Emitter::prepareArgs(const std::vector<Expr*>& args, const std::vector<TypePtr>& ptys) {
         ArgPack pack;
         for (size_t i = 0; i < args.size() && i < ptys.size(); ++i) {
-            Value* v = coerce(args[i], ptys[i]);
-            // parameters are passed as borrows (the callee does not release them); only argument temporaries whose ownership the caller holds need cleanup after the call
-            if (needsCleanup(ptys[i]) && convOwns(args[i], ptys[i])) {
+            Value* v = coerceArg(args[i], ptys[i]);
+            // A by-value struct parameter is handed over to the callee (ownParams releases it), so the
+            // caller never releases it here. Class/interface handles keep the old rule: the callee
+            // retains its own reference, and a caller-owned temporary is released after the call.
+            const bool handedOver = ptys[i] && ptys[i]->kind == TypeKind::Struct;
+            if (!handedOver && needsCleanup(ptys[i]) && convOwns(args[i], ptys[i])) {
                 pack.owned.emplace_back(v, ptys[i]);
             }
             pack.vals.push_back(v);
         }
         return pack;
+    }
+
+    // A by-value struct parameter is an owning local of the callee, so the caller hands over one owned
+    // copy: through the user copy constructor when the type declares one (SPEC 3.4 rule of three), and
+    // by retaining the reference fields otherwise (SPEC 3.4 "pass by value"). The callee releases it
+    // (ownParams); the caller must not release it again.
+    Value* Emitter::coerceArg(Expr* arg, const TypePtr& pty) {
+        Value* v = coerce(arg, pty);
+        if (!pty || pty->kind != TypeKind::Struct) return v;
+        if (valueOwned(arg)) return v;  // already a fresh value the caller owns
+        if (pty->has_copy_ctor) {
+            auto* src = entryAlloca(lt(pty), "arg.copy.src", alignOf(pty));
+            b.CreateStore(v, src);
+            auto* dst = entryAlloca(lt(pty), "arg.copy", alignOf(pty));
+            emitCopyInto(dst, src, pty);
+            return b.CreateLoad(lt(pty), dst);
+        }
+        if (needsCleanup(pty)) {
+            auto* tmp = entryAlloca(lt(pty), "arg.retain", alignOf(pty));
+            b.CreateStore(v, tmp);
+            emitRetainValue(tmp, pty);
+            return b.CreateLoad(lt(pty), tmp);
+        }
+        return v;
     }
 
     // C default argument promotion: integers smaller than int -> int, float -> double, everything else unchanged (required by the C varargs ABI)

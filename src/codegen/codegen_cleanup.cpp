@@ -516,6 +516,9 @@ namespace muc_detail {
     // whether the expression result already holds a transferable strong reference (not limited to class handles; also used for reference arrays)
     bool Emitter::valueOwned(Expr* e) {
         if (!e) return false;
+        // An implicit conversion constructs a fresh value of the destination type (the conversion
+        // temporary is not destroyed separately), so the result is owned.
+        if (e->conv) return true;
         if (dynamic_cast<NewExpr*>(e)) return true;
         // `move x` hands over the value: the source is zeroed and no longer owns it
         if (dynamic_cast<MoveExpr*>(e)) return true;
@@ -525,9 +528,14 @@ namespace muc_detail {
         // a capturing lambda materializes a fresh environment (rc = 1), so its value is owned; a
         // non-capturing lambda is a bare function address and carries no ownership either way
         if (dynamic_cast<Lambda*>(e)) return true;
-        if (auto b = dynamic_cast<Binary*>(e); b && b->op_func && !b->by_ref) return true;
+        // A member operator (`op_method`) returns a fresh value exactly like a free one (`op_func`);
+        // missing it would copy the result again and leak the original temporary.
+        if (auto b = dynamic_cast<Binary*>(e); b && (b->op_func || b->op_method) && !b->by_ref) return true;
         if (dynamic_cast<Ternary*>(e)) return true;  // the result slot is already materialized with owned semantics
-        if (auto u = dynamic_cast<Unary*>(e); u && u->op_func) return true;
+        if (auto u = dynamic_cast<Unary*>(e); u && (u->op_func || u->op_method)) return true;
+        // `c[i]` through a user `operator[]` that returns by value is a fresh value (a `ref T` return
+        // is a borrow instead, `by_ref`).
+        if (auto ix = dynamic_cast<Index*>(e); ix && ix->get_method && !ix->by_ref) return true;
         if (auto c = dynamic_cast<Cast*>(e)) return valueOwned(c->expr.get());
         return false;
     }
@@ -558,13 +566,24 @@ namespace muc_detail {
             emitRetainValue(tmp, curRetTy);
             return b.CreateLoad(lt(curRetTy), tmp);
         }
-        if (curRetTy && curRetTy->kind == TypeKind::Struct && needsCleanup(curRetTy)) {
-            // the return value transfers as owned: a borrowed value is retained field by field first, and the local is released later in releaseAllScopes
-            if (valueOwned(e)) return v;
-            auto* tmp = entryAlloca(lt(curRetTy), "ret.struct", alignOf(curRetTy));
-            b.CreateStore(v, tmp);
-            emitRetainValue(tmp, curRetTy);
-            return b.CreateLoad(lt(curRetTy), tmp);
+        if (curRetTy && curRetTy->kind == TypeKind::Struct && !valueOwned(e)) {
+            // the return value transfers as owned: a borrowed value is copied first, and the local is
+            // released later in releaseAllScopes
+            if (curRetTy->has_copy_ctor) {
+                // `return x;` is a copy, so the user copy constructor defines it (SPEC 3.4 rule of
+                // three). Retaining the fields would alias a resource the source still owns.
+                auto* src = entryAlloca(lt(curRetTy), "ret.copy.src", alignOf(curRetTy));
+                b.CreateStore(v, src);
+                auto* tmp = entryAlloca(lt(curRetTy), "ret.struct", alignOf(curRetTy));
+                emitCopyInto(tmp, src, curRetTy);
+                return b.CreateLoad(lt(curRetTy), tmp);
+            }
+            if (needsCleanup(curRetTy)) {
+                auto* tmp = entryAlloca(lt(curRetTy), "ret.struct", alignOf(curRetTy));
+                b.CreateStore(v, tmp);
+                emitRetainValue(tmp, curRetTy);
+                return b.CreateLoad(lt(curRetTy), tmp);
+            }
         }
         if (curRetTy && curRetTy->kind == TypeKind::Slice) {
             if (convOwns(e, curRetTy)) return v;

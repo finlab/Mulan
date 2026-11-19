@@ -611,6 +611,12 @@ struct Emitter {
     // A fixed-size array -> dynamic array conversion allocates a new array in coerce, so it counts as owned too.
     bool convOwns(Expr* e, const TypePtr& dst);
 
+    // Coerce one by-value argument, then copy it through the user copy constructor when the parameter
+    // type declares one (SPEC 3.4 rule of three). A field-level retain would instead leave the callee's
+    // temporary owning the same resource the caller still owns. The caller hands the result to the
+    // callee (ownParams releases it) and must not release it again.
+    Value* coerceArg(Expr* arg, const TypePtr& pty);
+
     // Turn a borrow into a new strong reference when returning a class reference
     Value* prepareReturn(Expr* e);
 
