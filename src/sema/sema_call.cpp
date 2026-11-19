@@ -476,8 +476,9 @@ namespace muc_detail {
                     }
                     reorder_named_args(c->args, c->named, struct_ty->ctor_param_names[hit]);
                 }
-                if (struct_ty->has_dtor && c != direct_init_expr_) {
-                    err("a struct with a destructor can only be constructed in a declaration initializer", c);
+                if (struct_ty->has_dtor && c != direct_init_expr_ && c != assign_rhs_expr_) {
+                    err("a struct with a destructor can only be constructed in a declaration initializer",
+                        c);
                 }
                 const auto* chosen = choose_ctor(struct_ty->ctors, raw_args(c->args),
                                                  "struct `" + struct_ty->str() + "`", c);

@@ -391,6 +391,16 @@ namespace muc_detail {
     }
 
     void Sema::check_assign_stmt(AssignStmt* s) {
+        // `a = T(args);` builds the value in place and move-assigns it: the construction on the right
+        // is not a copy of an existing object (see check_call).
+        struct AssignRhsGuard {
+            Sema& self;
+            Expr* saved;
+            explicit AssignRhsGuard(Sema& sema, Expr* e) : self(sema), saved(sema.assign_rhs_expr_) {
+                self.assign_rhs_expr_ = e;
+            }
+            ~AssignRhsGuard() { self.assign_rhs_expr_ = saved; }
+        } rhs_guard(*this, s->value.get());
         // `x = ...` makes a moved variable usable again, so revive it before the target is checked.
         if (s->op == "=") {
             if (auto n = dynamic_cast<Name*>(s->target.get())) note_assigned_local(n->ident);

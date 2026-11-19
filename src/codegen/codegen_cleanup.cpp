@@ -135,6 +135,12 @@ namespace muc_detail {
         Value* tmp = entryAlloca(lt(ty), "assign.tmp", alignOf(ty));
         if (auto mv = dynamic_cast<MoveExpr*>(e)) {
             emitMoveInto(tmp, ty, mv);
+        } else if (valueOwned(e) || convOwns(e, ty)) {
+            // A prvalue (`a = T(args);`, `a = f();`) is built in a slot the expression already owns:
+            // moving it into the temporary is a plain store — no copy constructor, so an uncopyable
+            // type works, and no extra retain.
+            Value* v = coerce(e, ty);
+            b.CreateStore(v, tmp);
         } else {
             Value* v = coerce(e, ty);
             Value* src = entryAlloca(lt(ty), "assign.src", alignOf(ty));

@@ -27,6 +27,20 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 243 — 2026-11-19
+
+**Assign a prvalue to a resource-owning struct (`a = T(args);`, `a = f();`).**
+
+The construction of a destructor-bearing struct was limited to a declaration initializer, so the only
+way to assign was `T t = T(args); a = move t;`. An assignment whose right side is a prvalue of the same
+type now moves the value in place: sema records the assignment's right-hand side (like the existing
+direct-initialization slot) and allows the construction there, and `check_assign` accepts a call whose
+result is the value (`a = f();`). `emitAssignSwap` moves an owned right-hand side into its temporary
+instead of copy-constructing, so uncopyable types work and no extra retain happens; the destination's
+old value is still destroyed by the swap. An lvalue right-hand side is unchanged (still needs a copy
+constructor or `move`). Run case `rvalue_assign` (also counts live objects: 0 leaked over 10000
+iterations); SPEC 3.13 updated.
+
 #### build 242 — 2026-11-19
 
 **Split `target.cpp` / `target.hpp` out of `main.cpp` (1006 lines).**

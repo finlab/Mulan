@@ -113,16 +113,13 @@ namespace muc_detail {
         // `move x` is the sanctioned way to produce an uncopyable value: `check_move` already verified
         // that the type is movable.
         if (noncopyable_struct(dst) && !dynamic_cast<MoveExpr*>(e)) {
-            // A construction of the same type is not a copy: `Token a = Token(5);` builds the value
-            // (`nocopy` forbids copying an existing value, not building one — SPEC 3.4/3.13).
-            if (auto call = dynamic_cast<Call*>(e); call && call->callee_kind.empty()) {
+            // A prvalue of the same type is moved, not copied: a construction (`Token(5)`), and a call
+            // whose result is the value itself (`a = f();` — the callee's return slot is handed over).
+            if (auto call = dynamic_cast<Call*>(e)) {
                 if (auto nm = dynamic_cast<Name*>(call->callee.get());
                     nm && lookup_local(nm->ident) == nullptr) {
                     TypePtr built = check_expr(e, dst);
-                    if (built && same_type(built, dst) && call->ctor && same_type(call->ctor, dst) &&
-                        (call->callee_kind == "ctor" || call->callee_kind == "struct_ctor")) {
-                        return dst;
-                    }
+                    if (built && same_type(built, dst)) return dst;
                 }
             }
             err(what + ": struct `" + dst->str() + "` cannot be copied by value: " +

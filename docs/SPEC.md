@@ -444,6 +444,11 @@ struct Point {
   leaves the destination untouched, and self-assignment is safe without an identity check. Value types must
   not store pointers into themselves (the swap is a byte swap) — such types belong to `nocopy`. A
   user-written `operator=` and the explicit construct form `S(a)` are not available yet.
+  **A prvalue on the right of an assignment is moved, not copied** (decided 2026-11-19):
+  `a = T(args);` and `a = f();` (where `f` returns a value of the type) build the value in a slot the
+  expression owns and move it into the destination; the old value is destroyed as above. This works for
+  uncopyable types too (`nocopy`, `has_dtor`) and needs no `move` spelling. An **lvalue** right-hand side
+  still requires copyability (`a = b;` needs the copy constructor, or `a = move b;`).
 
 - **`nomove` modifier** (**implemented, 2026-11-18**): `nomove struct Node { int v; }` declares a value
   type that must never be moved — its address is part of its meaning (a node in an intrusive list, a

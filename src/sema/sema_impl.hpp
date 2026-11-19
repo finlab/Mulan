@@ -266,6 +266,9 @@ private:
     int const_depth_ = 0;  // constant evaluation recursion depth (see DepthGuard)
     std::unordered_map<int, TypePtr> auto_groups_;  // inference result shared by auto in one declaration
     Expr* direct_init_expr_ = nullptr;  // direct-initialization expression currently under check (in-place constructor construction)
+    // The right-hand side of the assignment under check: a struct construction there is an in-place
+    // move-assign (`a = T(args);`), not a copy of an existing value.
+    Expr* assign_rhs_expr_ = nullptr;
     // Inside a `return` statement: an array-typed return still copies (array returns are a Mu
     // extension; C99 has no array prvalues), while assignment/copy-initialization of arrays is rejected.
     bool in_return_ = false;
@@ -554,6 +557,7 @@ private:
             in_finally_ = false;
             auto_groups_.clear();
             direct_init_expr_ = nullptr;
+            assign_rhs_expr_ = nullptr;
             if (errors_.size() >= kMaxErrors) throw MuErrorList(errors_);
         }
     }
