@@ -24,6 +24,13 @@ namespace muc_detail {
 
     TypePtr Sema::check_expr_impl(Expr* e, const TypePtr& expected) {
         if (auto il = dynamic_cast<IntLit*>(e)) {
+            // A `2^63` magnitude is only meaningful directly after unary `-`; the parser consumes it
+            // there, so one reaching this point is out of range.
+            if (il->min_magnitude) {
+                err("integer literal is too large (maximum 2^63-1): a 2^63 magnitude is only valid "
+                    "directly after unary `-`",
+                    e);
+            }
             // A suffixed literal has a fixed type (C rule) and never adapts to the expected type.
             if (il->isuffix == 1) return Type::make_prim("uint");
             if (il->isuffix == 2) return Type::make_prim("long");

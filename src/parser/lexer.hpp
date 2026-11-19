@@ -16,6 +16,9 @@ struct Token {
     double fval = 0;       // Float
     bool f32 = false;      // Float suffix f
     int isuffix = 0;       // Int suffix: 0 none, 1 `u` (uint), 2 `l` (long), 3 `ul` (ulong)
+    // The magnitude is exactly 2^63 with a signed suffix: `ival` is 0 and the literal is only valid
+    // directly after unary `-` (it spells the minimum of a signed 64-bit type).
+    bool int_min_mag = false;
     std::string bytes;     // raw bytes of a Str
     int line = 0;
     int col = 0;

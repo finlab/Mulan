@@ -94,6 +94,9 @@ struct IntLit : Expr {
     // C-style suffix: 0 none, 1 `u` (uint), 2 `l` (long), 3 `ul` (ulong). A suffixed literal has a
     // fixed type and does not adapt to the expected type.
     int isuffix = 0;
+    // The magnitude is exactly 2^63 and was written without a sign. Only a directly applied unary `-`
+    // turns it into the minimum of a signed 64-bit type; anywhere else it is out of range.
+    bool min_magnitude = false;
 };
 struct FloatLit : Expr {
     double value = 0;

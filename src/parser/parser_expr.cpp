@@ -11,6 +11,7 @@
 #include "parser_impl.hpp"
 
 #include <memory>
+#include <limits>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -710,6 +711,20 @@ ExprPtr Parser::parse_unary() {
     if (t.kind == TokKind::Op && at_op("-", "+", "&", "*", "~")) {
         advance();
         ExprPtr operand = parse_unary();
+        // `-9223372036854775808`: the magnitude is exactly 2^63, which no signed 64-bit literal can
+        // hold on its own. Only a directly applied unary `-` makes it the signed minimum.
+        if (auto il = dynamic_cast<IntLit*>(operand.get()); il && il->min_magnitude) {
+            if (t.text != "-") {
+                throw err_at("integer literal is too large (maximum 2^63-1): a 2^63 magnitude is only "
+                             "valid directly after unary `-`",
+                             t);
+            }
+            il->min_magnitude = false;
+            il->value = std::numeric_limits<long long>::min();
+            il->line = t.line;
+            il->col = t.col;
+            return parse_postfix_tail(std::move(operand));
+        }
         auto node = std::make_unique<Unary>();
         node->op = t.text;
         node->operand = std::move(operand);
@@ -1069,6 +1084,7 @@ ExprPtr Parser::parse_primary() {
         auto node = std::make_unique<IntLit>();
         node->value = t.ival;
         node->isuffix = t.isuffix;
+        node->min_magnitude = t.int_min_mag;
         node->line = t.line;
         node->col = t.col;
         return node;

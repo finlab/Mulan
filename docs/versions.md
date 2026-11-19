@@ -27,6 +27,17 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 233 — 2026-11-19
+
+**Accept `-9223372036854775808` (the `long` minimum).**
+
+A `2^63` magnitude has no positive spelling in 64 bits, so the lexer now accepts it as an
+"unsignable" literal that only a directly applied unary `-` converts to `LLONG_MIN`; anywhere else it
+reports "integer literal is too large", and the `+` form is rejected too. The `l` suffix follows the
+same rule. Cloning a literal now also copies its suffix and this flag (a generic instantiation no
+longer drops them). Cases: `int_min_magnitude` (run) and `int_min_magnitude_unsigned` (must-fail).
+SPEC 2.4 and decision table 65 updated.
+
 #### build 232 — 2026-11-19
 
 **Report a generic function called without type arguments.**

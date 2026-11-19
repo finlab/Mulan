@@ -151,6 +151,8 @@ ExprPtr clone_expr(const Expr& e) {
     if (auto p = dynamic_cast<const IntLit*>(&e)) {
         auto r = mk<IntLit>(e);
         r->value = p->value;
+        r->isuffix = p->isuffix;
+        r->min_magnitude = p->min_magnitude;
         return r;
     }
     if (auto p = dynamic_cast<const FloatLit*>(&e)) {

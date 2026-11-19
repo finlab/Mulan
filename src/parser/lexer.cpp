@@ -320,7 +320,8 @@ private:
 
     // ------------------------------------------------------ numbers
 
-    long long int_digits(const std::string& raw, int base, int line, int col, int suffix) {
+    long long int_digits(const std::string& raw, int base, int line, int col, int suffix,
+                         bool allow_min_mag = false, bool* min_mag = nullptr) {
         // `u` fixes the value to 32 bits, `l` stays signed 64-bit, `ul` allows the full unsigned
         // 64-bit range; an unsuffixed literal keeps the 2^63-1 ceiling.
         try {
@@ -328,6 +329,12 @@ private:
             const unsigned long long v = parse_digits_u64(raw, base);
             if (suffix == 1 && v > 4294967295ULL) {
                 throw err("`u` literal is out of range for `uint` (maximum 4294967295)", line, col);
+            }
+            if (v == 9223372036854775808ULL && allow_min_mag) {
+                // Exactly 2^63: the spelling of a signed minimum. Kept unsignable so only a directly
+                // applied unary `-` accepts it (see `T IntLit::min_magnitude`).
+                if (min_mag) *min_mag = true;
+                return 0;
             }
             if (v > 9223372036854775807ULL) {
                 throw err(suffix == 0
@@ -435,7 +442,8 @@ private:
         }
         tok.isuffix = read_int_suffix();
         tok.kind = TokKind::Int;
-        tok.ival = int_digits(text, 10, line, col, tok.isuffix);
+        tok.ival = int_digits(text, 10, line, col, tok.isuffix, /*allow_min_mag=*/tok.isuffix != 1,
+                              &tok.int_min_mag);
         return tok;
     }
 

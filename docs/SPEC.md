@@ -128,6 +128,8 @@ and or not override operator super this
   - Without a suffix the literal adapts to the expected numeric type when it fits, otherwise it is `int`
     (fits in 32 bits) or `long`; the maximum is **2^63-1** — write `ul` for the full unsigned 64-bit range
     (`ulong u = 18446744073709551615ul;`).
+  - `-9223372036854775808` (the magnitude `2^63` directly after unary `-`, with or without the `l` suffix)
+    is the minimum of `long`; the magnitude alone is a compile error.
 - **Float**: decimal point / exponent; `double` by default, the `f` suffix means `float`.
 - **Character**: `'a'`; escapes `'\n' '\t' '\\' '\'' '\0' '\xNN' '\u{...}'`; the default type of a literal is `byte` (unsigned 8-bit), adapted to `char`/`byte` according to context.
   - `char` is **signed** 8-bit (C style, −128–127); `byte` is **unsigned** 8-bit (0–255). There is no `ubyte`/`uchar` alias.
@@ -2928,7 +2930,7 @@ switch v {
 | 62 | `string` comparison semantics | Decided (0.0.89): library `operator==` compares byte values, with overloads for `string` and `const char*` (a literal); `!=` is derived by negating; comparing a struct value with `null` is a compile error; the zero value equals `""` |
 | 63 | Floating-point literal narrowing | Decided: literals adapt to the context (`float f = 1.5;` is legal), but variables still require `as` |
 | 64 | Integer ↔ enum conversions | Decided: no implicit conversion in either direction, `as` is required (an enum is not a widening target for an integer, and an integer is not an implicit source for an enum) |
-| 65 | Upper limit of integer literals | Decided: `2^63-1` without a suffix; a `ul` suffix allows the full unsigned 64-bit range (`u` = uint, `l` = long) |
+| 65 | Upper limit of integer literals | Decided: `2^63-1` without a suffix; a `ul` suffix allows the full unsigned 64-bit range (`u` = uint, `l` = long); the `2^63` magnitude is accepted only directly after unary `-` (the `long` minimum) |
 | 66 | Writability checks for `const` objects / const views / `string` | Decided: the compiler must reject writes (see 3.7) |
 | 67 | Object model | Decided: struct values / class references; RC + weak; no cycle collector (see 3.8 / 8.3) |
 | 68 | Scope of `weak` | Class fields only; locals/parameters/return values are forbidden |
