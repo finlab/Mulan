@@ -22,7 +22,8 @@ use std.exception;
 // ---------------------------------------------------------------- public surface
 
 // Live execution units are capped; a refused start throws (SPEC 3.17.7). This is a runtime setting,
-// not a per-region parameter: a bigger source is chunked by the user (`chunks(k)`), not by `para`.
+// not a per-region parameter: a bigger source is split by the user (an explicit index loop over
+// smaller ranges), not by `para`.
 
 public class TaskLimitError : Exception {
 public:
@@ -338,7 +339,7 @@ public void* muc_para_start((void*) => void body, void* arg) {
     if (live_tasks >= max_live_tasks) {
         fiber_release_locked(f);
         unlock_sched();
-        throw new TaskLimitError("too many live tasks (limit reached): chunk a large source with chunks(k) or use a plain loop");
+        throw new TaskLimitError("too many live tasks (limit reached): use a plain index loop over smaller ranges");
     }
     Task* t = alloc(sizeof(Task)) as Task*;
     if (t == null) {

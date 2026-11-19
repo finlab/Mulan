@@ -93,6 +93,10 @@ plain store (the double release measured under build 245 came from the slot's un
 Run case `ternary_copy` (copy counter and live-object count over 1000 assignments, plus a struct without
 a copy constructor). SPEC 5.2 and decision 104 state the rule.
 
+Documentation/library (no extra build bump): the never-implemented `chunks(k)` is gone from the
+`TaskLimitError` message, the `std.task` comment and SPEC 3.17.3/3.17.7 — the recommendation is an
+explicit index loop over smaller ranges (`#14`).
+
 #### build 244 — 2026-11-19
 
 **C-style `for (init; cond; step)`.**

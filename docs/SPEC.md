@@ -1716,8 +1716,9 @@ para for req in server.requests() { handle(req); }
 - Iteration order is unspecified. `for ref` follows 6.4.1 (distinct elements only).
 - The body obeys the same restrictions as a `para` section; in addition `break`, `continue` and
   `return` are errors — a region ends when its source ends, or by cancellation.
-- One task per item is the semantics. A chunked view (`a.chunks(k)`, library) is how a large finite
-  source reduces per-item overhead; it does not change the semantics.
+- One task per item is the semantics. A large finite source is split by the user (an explicit index
+  loop over smaller ranges) to reduce per-item overhead; nothing in the language does it automatically,
+  and it does not change the semantics.
 
 #### 3.17.4 `thread` — compute pool
 
@@ -1774,8 +1775,8 @@ para thread for i in 0..n { heavy(i); }
 - `this` and implicit field access inside a section are **compile errors** in v1 (pass the object as
   an explicit argument). Writing, taking the address of, or passing by `ref` an enclosing local are
   compile errors (3.17.2).
-- `para for` has **one task per item; chunking is never automatic** — a user or library splits the
-  work (`chunks(k)` or an explicit index loop). The producer is a single puller (3.17.3).
+- `para for` has **one task per item; chunking is never automatic** — a user splits the work with an
+  explicit index loop over smaller ranges. The producer is a single puller (3.17.3).
 - A refused task start is an ordinary exception (`TaskLimitError`): the region releases the failed
   item, joins the tasks that already started, and propagates.
 - An exception raised while **producing** an item is an ordinary exception of the region; the tasks
