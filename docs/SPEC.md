@@ -1253,7 +1253,9 @@ Box<int> b = new Box<int>(7);    // generic class construction
   parameter *pattern*, top-down, and each type parameter is bound at its first occurrence:
   - a bare parameter `T` binds the argument type itself (a `const` argument binds the same `T`);
   - `T*`, `T[N]`, `T[]`/`T[,]` bind the element type; the slice rank must agree, and the static array
-    length is not part of the inference (only the element is);
+    length is not part of the inference (only the element is). A static array fits a `T*` parameter
+    through the array-to-pointer decay and a slice parameter of the same rank through the
+    `T[N] -> T[]` conversion (3.6); the conversion itself still runs at the call.
   - a generic pattern `Vec<T>` / `Box<Vec<T>>` matches an instance of the same template and binds from
     its type arguments, so nesting any depth works;
   - `ref T` / `const ref T` bind the referent, i.e. the argument's own type;

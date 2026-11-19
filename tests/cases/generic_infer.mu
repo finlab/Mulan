@@ -91,6 +91,8 @@ int main() {
 
     int[4] arr = {31, 32, 33, 34};
     int i = firsta(arr);
+    int i2 = first(arr);  // a static array converts to the slice (T[N] -> T[])
+    int i3 = deref(arr);  // ... and decays to the pointer to its first element
 
     int m = 5;
     int j = bump(m);
@@ -110,7 +112,7 @@ int main() {
     printf("max %d %ld %d\n", a, b, explicit_arg);
     printf("box %d %d\n", c, d);
     printf("class %ld\n", e);
-    printf("ptr %d slice %d array %d\n", f, g, i);
+    printf("ptr %d slice %d array %d decay %d %d\n", f, g, i, i2, i3);
     printf("ref %d %d\n", m, j);
     printf("fn %d %d\n", k, l);
     printf("user %ld mix %ld\n", o.cents, p);
@@ -118,7 +120,8 @@ int main() {
     printf("nested %d %ld\n", r, s);
 
     if (a == 2 and b == 2 and explicit_arg == 7 and c == 7 and d == 7 and e == 9 and
-        f == 11 and g == 21 and i == 31 and m == 6 and j == 6 and k == 12 and l == 21 and
+        f == 11 and g == 21 and i == 31 and i2 == 31 and i3 == 31 and m == 6 and j == 6 and
+        k == 12 and l == 21 and
         o.cents == 5 and p == 3 and q == 10 and r == 7 and s == 70) {
         puts("generic infer ok");
     }

@@ -77,6 +77,18 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   get one diagnostic that says the C-style form requires the parentheses. Must-fail case
   `for_paren_required`; SPEC 6.4 states it explicitly.
 
+#### build 253 — 2026-11-19
+
+**Inference follows the array conversions.**
+
+A static array argument now fits a pattern through the same conversions an explicit call uses: `T*`
+takes `int[4]` by the array-to-pointer decay (`T = int`, only for a one-dimensional array), and
+`T[]` / `T[,]` take a static array of the same rank through `T[N] -> T[]` (`T[,]` against `int[2,3]`
+binds `T = int`). Before this, `first(arr)` with `T first<T>(T[] s)` reported "does not match the
+parameter type" even though `first<int>(arr)` compiles. Two-dimension arrays still do not decay to `T*`
+(`int[2,3]` to `int*` is rejected on the explicit path too, so inference refuses it as well). Run case
+`generic_infer` extended with both forms; SPEC 3.15.3 states the rule.
+
 #### build 252 — 2026-11-19
 
 **Dropped the unused signed integer literal parser.** `parse_digits` in `lexer.cpp` had no caller

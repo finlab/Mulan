@@ -152,13 +152,34 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
                 return Match::Ok;
             }
             case TypeSpec::K::Ptr:
+                // A one-dimensional static array decays to a pointer to its first element (C99 6.3.2.1),
+                // so `T* p` accepts `int[4]` with `T = int`; the argument check performs the decay.
+                if (at->kind == TypeKind::Array && pat.elem && at->elem &&
+                    at->elem->kind != TypeKind::Array) {
+                    return match(*pat.elem, at->elem);
+                }
                 if (at->kind != TypeKind::Ptr || !pat.elem) {
                     bad_pat = &pat;
                     return Match::Shape;
                 }
                 return match(*pat.elem, at->elem);
             case TypeSpec::K::Slice:
-                // The rank (`T[]` / `T[,]`) is part of the sequence type, so it has to agree.
+                // The rank (`T[]` / `T[,]`) is part of the sequence type, so it has to agree. A static
+                // array of the same rank converts to the slice (`T[N] -> T[]`, SPEC 3.6), so it binds the
+                // element type here; the argument check performs the conversion.
+                if (at->kind == TypeKind::Array && pat.elem) {
+                    const TypePtr* cur = &at;
+                    int depth = 0;
+                    while ((*cur)->kind == TypeKind::Array && depth < pat.rank && (*cur)->elem) {
+                        cur = &(*cur)->elem;
+                        ++depth;
+                    }
+                    if (depth != pat.rank || (*cur)->kind == TypeKind::Array) {
+                        bad_pat = &pat;
+                        return Match::Shape;
+                    }
+                    return match(*pat.elem, *cur);
+                }
                 if (at->kind != TypeKind::Slice || at->rank != pat.rank || !pat.elem) {
                     bad_pat = &pat;
                     return Match::Shape;
