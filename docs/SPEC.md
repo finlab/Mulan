@@ -1647,6 +1647,9 @@ immediate-invocation stack environments; `[weak x]` captures since 0.0.130) — 
 - **Deferred join (a future) is a library facility**, not syntax: `TaskGroup` plus a one-slot
   `Channel<T>` already expresses "start now, join later". The language adds no `spawn` / `await`
   keyword, so no part of the language surface depends on a `Task` type.
+  **Planned, not implemented yet**: neither `TaskGroup` nor `Channel<T>` exists in the library or in
+  StdLibSPEC §6.4 at this point — the sentence describes the intended library shape, and the language
+  guarantees only that no syntax will be added for it.
 - Tasks are not bound to threads (a task may resume on another carrier). Code must not rely on thread
   identity, and a C library that keeps `thread_local` state across calls must run in a `thread` section.
 

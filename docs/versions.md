@@ -38,6 +38,9 @@
   `sdiv`. `ArithmeticError { long value; int kind }` carries the dividend and `kind` 0 (zero divisor)
   or 1 (overflow); the cold path is `std.exception.div_fail(value, kind)`, mirroring `bounds_fail`.
   Run case `div_zero_check`.
+- **SPEC 3.17.1 / StdLibSPEC §6.4: `TaskGroup` and `Channel<T>` are marked planned, not implemented**
+  (follow-up in the same build, doc-only) — the text described the deferred-join facility in the
+  present tense while neither exists.
 - Full suite: **863/863 on Windows**, **861/861 on Linux**.
 
 #### build 227 — 2026-11-19

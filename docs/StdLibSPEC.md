@@ -227,6 +227,9 @@ declaration checking the same shape, `class` equality staying identity — is SP
   what already started, then propagates.
 - The language surface (`para`, `para for`, `thread`) and its rules are SPEC 3.17. The runtime model,
   guarantees and limitations are an internal record (`agents/stdlib/task.md`).
+- **Planned, not implemented**: `Channel<T>` and `TaskGroup` (the deferred-join facility SPEC 3.17.1
+  refers to as a future library addition) do not exist yet. Until they do, a deferred join has no
+  library spelling.
 
 ### 6.5 `std.thread`
 
