@@ -80,3 +80,22 @@ public:
 public void null_fail(const char* what) {
     throw new NullReferenceError(what);
 }
+
+// Thrown by the arithmetic checks the compiler emits when `--bounds` is on: integer division or
+// remainder by zero (`kind` 0) and `MIN / -1` / `MIN % -1` (`kind` 1). The CPU traps on all of them,
+// so with `--bounds=off` they are undefined behavior instead (SPEC 8.2).
+public class ArithmeticError : Exception {
+public:
+    long value;   // the dividend
+    int kind;
+
+    ArithmeticError(long v, int k) {
+        value = v;
+        kind = k;
+    }
+}
+
+// Cold paths of those checks (the compiler calls them; they always throw).
+public void div_fail(long value, int kind) {
+    throw new ArithmeticError(value, kind);
+}

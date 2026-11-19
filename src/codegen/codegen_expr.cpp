@@ -639,8 +639,14 @@ static bool is_numeric(const TypePtr& t) {
         if (op == "+") return fl ? b.CreateFAdd(l, r) : b.CreateAdd(l, r);
         if (op == "-") return fl ? b.CreateFSub(l, r) : b.CreateSub(l, r);
         if (op == "*") return fl ? b.CreateFMul(l, r) : b.CreateMul(l, r);
-        if (op == "/") return fl ? b.CreateFDiv(l, r) : (sg ? b.CreateSDiv(l, r) : b.CreateUDiv(l, r));
-        if (op == "%") return fl ? b.CreateFRem(l, r) : (sg ? b.CreateSRem(l, r) : b.CreateURem(l, r));
+        if (op == "/") {
+            if (!fl) emitDivCheck(l, r, sg);
+            return fl ? b.CreateFDiv(l, r) : (sg ? b.CreateSDiv(l, r) : b.CreateUDiv(l, r));
+        }
+        if (op == "%") {
+            if (!fl) emitDivCheck(l, r, sg);
+            return fl ? b.CreateFRem(l, r) : (sg ? b.CreateSRem(l, r) : b.CreateURem(l, r));
+        }
         if (op == "&") return b.CreateAnd(l, r);
         if (op == "|") return b.CreateOr(l, r);
         if (op == "^") return b.CreateXor(l, r);

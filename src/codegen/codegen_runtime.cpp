@@ -15,6 +15,8 @@
 
 #include "llvm/IR/Intrinsics.h"
 
+#include "llvm/ADT/APInt.h"
+
 namespace muc_detail {
 
     // ------------------------------------------------------------ dynamic arrays (T[] / T[,])
@@ -82,6 +84,49 @@ namespace muc_detail {
             FunctionType::get(LType::getVoidTy(ctx), {ptrTy()}, false));
         emitColdThrow(callee, {stringConst(what)}, "nn");
         b.SetInsertPoint(ok);
+    }
+
+    // Integer division / remainder traps: `x / 0`, `x % 0` and `MIN / -1` (the last one also for `%`).
+    // All three are UB (SPEC 8.2) and the hardware faults on this platform, so the checked build
+    // reports them instead. A constant divisor that cannot fail emits no code at all.
+    void Emitter::emitDivCheck(Value* lhs, Value* rhs, bool is_signed) {
+        if (!boundsCheck || !lhs || !rhs) return;
+        LType* ty = rhs->getType();
+        if (!ty->isIntegerTy()) return;
+        auto* c = dyn_cast<ConstantInt>(rhs);
+        const bool check_zero = !c || c->isZero();
+        const bool check_overflow = is_signed && (!c || c->isMinusOne());
+        if (!check_zero && !check_overflow) return;
+        if (check_zero) {
+            BasicBlock* bad = BasicBlock::Create(ctx, "dv.zero", curFn);
+            BasicBlock* ok = BasicBlock::Create(ctx, "dv.ok", curFn);
+            b.CreateCondBr(b.CreateICmpEQ(rhs, ConstantInt::get(ty, 0)), bad, ok);
+            b.SetInsertPoint(bad);
+            emitDivFail(lhs, 0, is_signed);
+            b.SetInsertPoint(ok);
+        }
+        if (check_overflow) {
+            BasicBlock* bad = BasicBlock::Create(ctx, "dv.ovf", curFn);
+            BasicBlock* ok = BasicBlock::Create(ctx, "dv.ok", curFn);
+            const unsigned bits = ty->getIntegerBitWidth();
+            // The sign bit alone is the minimum value: an exact constant for every width, without APInt.
+            Value* is_min = b.CreateICmpEQ(lhs, ConstantInt::get(ty, uint64_t(1) << (bits - 1)));
+            Value* is_neg1 = c ? b.getTrue()
+                               : b.CreateICmpEQ(rhs, ConstantInt::get(ty, uint64_t(-1), /*isSigned=*/true));
+            b.CreateCondBr(b.CreateAnd(is_min, is_neg1), bad, ok);
+            b.SetInsertPoint(bad);
+            emitDivFail(lhs, 1, is_signed);
+            b.SetInsertPoint(ok);
+        }
+    }
+
+    // Cold path of the division checks: call std.exception.div_fail(dividend, kind), which throws.
+    void Emitter::emitDivFail(Value* dividend, int kind, bool is_signed) {
+        FunctionCallee callee = mod->getOrInsertFunction(
+            mangle_unit("std.exception", "div__fail") + "$long$int",
+            FunctionType::get(LType::getVoidTy(ctx), {i64(), i32()}, false));
+        Value* v = b.CreateIntCast(dividend, i64(), /*isSigned=*/is_signed);
+        emitColdThrow(callee, {v, ConstantInt::get(i32(), kind)}, "dv");
     }
 
     // A shift count must be in [0, width): LLVM's `shl`/`ashr` with any other count is poison, so the

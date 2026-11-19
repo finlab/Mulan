@@ -70,7 +70,7 @@ that matter for the layer model:
 | `std.ctypes` | L0 | no | `c_char` … `c_voidp` | §5, §7 |
 | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv`, `cstd.streams` | L1 | no | the ISO headers, one unit per header, in the separate `cstd` library; platform differences live in `#if` arms inside the unit (`windows` = MSVC CRT, `linux` = glibc) | §5, §7 |
 | `std.string` | L2 | **yes** | `String`: `String()` (empty; the zero value), `String(const char*)` (implicit, copies), `length`, `is_empty`, `operator[]`, `==`, `sub`, `concat`, `find`, `trim`, `starts_with`, `ends_with`, `cstr`, `strlen` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
-| `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `bounds_fail`, `NullReferenceError`, `null_fail` | §6.1 |
+| `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `bounds_fail`, `NullReferenceError`, `null_fail`, `ArithmeticError`, `div_fail` | §6.1 |
 | `std.interfaces` | L3 | **yes** | `IIterator<T>`, `IIterable<T>`, `IIndex<T>`, `IEqual`, `IOrder`, `IAdd` … | §6.2 |
 | `std.task` | L3 | **yes** | `muc_para_*` (compiler entry points), `set_max_live_tasks`, `set_task_stack`, `set_carrier_limit`, `live_task_count`, `carrier_count`, `TaskLimitError` | §6.4 |
 | `std.thread` | L3 | **yes** | `Thread`, `thread_start/join/detach`, `thread_sleep`, `monotonic_ms`, `Mutex`, `CondVar`, `WAIT_INFINITE` | §6.5 |
@@ -94,7 +94,7 @@ Planned (no code yet, listed so that naming and layering are decided before impl
 |---|---|
 | L2 | an exception: a subclass of `std.exception.Exception`, named `*Error` (`BoundsError`, `TaskLimitError`, …) |
 | L1 | C's own signal: `-1` / `null` / a partial count, plus `errno` |
-| L3 | contract-specific: `TaskLimitError` from a refused task start; `BoundsError` from a managed-sequence subscript; `NullReferenceError` from a dereferenced null class/interface handle |
+| L3 | contract-specific: `TaskLimitError` from a refused task start; `BoundsError` from a managed-sequence subscript; `NullReferenceError` from a dereferenced null class/interface handle; `ArithmeticError` from integer division/remainder by zero |
 
 - **Bounds checks belong to the language** (SPEC 3.3): a managed-sequence subscript that is out of
   range throws `BoundsError`; `--bounds=off` removes the check. The library adds no second policy
@@ -154,6 +154,12 @@ public class NullReferenceError : Exception {
 public:
     // message names the failed access, e.g. "method call on a null `Dog` reference"
 }
+
+public class ArithmeticError : Exception {
+public:
+    long value;                      // the dividend
+    int kind;                        // 0 = division/remainder by zero, 1 = MIN / -1
+}
 ```
 
 - `Exception` is the root of every throwable/catchable class (SPEC 3.14). It carries only `message`;
@@ -162,6 +168,8 @@ public:
   the cold path the checker calls.
 - `NullReferenceError` is thrown by the compiler-emitted null-reference check (SPEC 3.8, 8.2);
   `null_fail(what)` is the cold path. `--null-check=off` removes the check.
+- `ArithmeticError` is thrown by the compiler-emitted division checks (SPEC 8.2): division/remainder by
+  zero and `MIN / -1`; `div_fail(value, kind)` is the cold path. `--bounds=off` removes the checks.
 - `TaskLimitError` is declared in `std.task`, not here: it belongs to the scheduler contract.
 
 ### 6.2 `std.interfaces`

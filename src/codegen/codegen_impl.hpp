@@ -458,6 +458,11 @@ struct Emitter {
     // float->int `as` whose value does not fit. Both throw `std.exception.NumericEdgeError`.
     void emitShiftCountCheck(Value* count, unsigned width);
     void emitFloatToIntCheck(Value* value, const TypePtr& to);
+    // Integer division / remainder by zero and `MIN / -1` (both trap at the CPU, SPEC 8.2): the
+    // checked build throws `std.exception.ArithmeticError`. A constant divisor that cannot fail
+    // emits nothing, so `x / 2` stays a bare `sdiv`.
+    void emitDivCheck(Value* lhs, Value* rhs, bool is_signed);
+    void emitDivFail(Value* dividend, int kind, bool is_signed);
     // Calls `callee` (which always throws) and unwinds through the current handler.
     void emitColdThrow(FunctionCallee callee, const std::vector<Value*>& args, const char* tag);
 

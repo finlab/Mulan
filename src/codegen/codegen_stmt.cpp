@@ -440,8 +440,14 @@ using ArgPack = Emitter::ArgPack;
             if (op == "+") res = fl ? b.CreateFAdd(old, rv) : b.CreateAdd(old, rv);
             else if (op == "-") res = fl ? b.CreateFSub(old, rv) : b.CreateSub(old, rv);
             else if (op == "*") res = fl ? b.CreateFMul(old, rv) : b.CreateMul(old, rv);
-            else if (op == "/") res = fl ? b.CreateFDiv(old, rv) : (sg ? b.CreateSDiv(old, rv) : b.CreateUDiv(old, rv));
-            else if (op == "%") res = fl ? b.CreateFRem(old, rv) : (sg ? b.CreateSRem(old, rv) : b.CreateURem(old, rv));
+            else if (op == "/") {
+                if (!fl) emitDivCheck(old, rv, sg);
+                res = fl ? b.CreateFDiv(old, rv) : (sg ? b.CreateSDiv(old, rv) : b.CreateUDiv(old, rv));
+            }
+            else if (op == "%") {
+                if (!fl) emitDivCheck(old, rv, sg);
+                res = fl ? b.CreateFRem(old, rv) : (sg ? b.CreateSRem(old, rv) : b.CreateURem(old, rv));
+            }
             else if (op == "&") res = b.CreateAnd(old, rv);
             else if (op == "|") res = b.CreateOr(old, rv);
             else if (op == "^") res = b.CreateXor(old, rv);

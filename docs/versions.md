@@ -27,6 +27,19 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 228 — 2026-11-19
+
+**Integer division and remainder are checked.**
+
+- **`/`, `%`, `/=` and `%=` throw `std.exception.ArithmeticError` instead of trapping** when the
+  divisor is zero, or when `MIN / -1` / `MIN % -1` overflows (SPEC 8.2, decision 8). The check is part
+  of `--bounds` (on by default; `--bounds=off` leaves the UB and the CPU fault), covers signed and
+  unsigned divisors, and emits nothing for a constant divisor that cannot fail — `x / 2` stays a bare
+  `sdiv`. `ArithmeticError { long value; int kind }` carries the dividend and `kind` 0 (zero divisor)
+  or 1 (overflow); the cold path is `std.exception.div_fail(value, kind)`, mirroring `bounds_fail`.
+  Run case `div_zero_check`.
+- Full suite: **863/863 on Windows**, **861/861 on Linux**.
+
 #### build 227 — 2026-11-19
 
 **A class handle is a reference, not an object: initialize it, and check it before dereferencing.**
