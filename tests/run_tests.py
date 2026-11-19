@@ -89,6 +89,8 @@ def parse_expected(path: Path) -> tuple[list[str], int, list[str]]:
       * `@exit <code>` — the run must end with that process exit code (default 0; a case that
         documents abnormal termination expects 3);
       * `@platform <os>[,<os>]` — the case only runs on those hosts (see `platform_skips`);
+      * `@stderr-contains <text>` — the run's stderr must contain this substring (see
+        `stderr_needles`; stdout is what the body of the file compares);
       * `@ <args>` — extra options appended to the `muc build` command (for example `@ --bounds=off`).
     """
     exit_code = 0
@@ -101,6 +103,8 @@ def parse_expected(path: Path) -> tuple[list[str], int, list[str]]:
                 exit_code = int(line[len("@exit"):].strip())
             elif line.startswith("@platform"):
                 continue
+            elif line.startswith("@stderr-contains"):
+                continue  # asserted separately, by stderr_needles
             elif line.startswith("@"):
                 extra += shlex.split(line[1:].strip())
             else:
@@ -362,6 +366,21 @@ def abnormal_exit(rc: int) -> bool:
     return rc < 0 or rc >= 0xC0000000
 
 
+def stderr_needles(path: Path) -> list[str]:
+    """`@stderr-contains <text>` marker lines: substrings the run's stderr must contain.
+
+    stderr is not compared line by line (the compiler writes its status lines there), so a case that
+    pins a runtime message — the uncaught-exception report, a bounds message — lists what it expects.
+    """
+    needles: list[str] = []
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        for raw in f.read().splitlines():
+            line = raw.strip()
+            if line.startswith("@stderr-contains"):
+                needles.append(line[len("@stderr-contains"):].strip())
+    return needles
+
+
 def compare_run_output(expected: Path, expected_code: int, r, cmd: list[str],
                        verbose: bool) -> tuple[bool, str]:
     """Compare the run's exit code and stdout with the expectation (compiler status lines stripped)."""
@@ -373,6 +392,11 @@ def compare_run_output(expected: Path, expected_code: int, r, cmd: list[str],
         ]
         msg += ["    " + ln for ln in (r.stderr.strip().splitlines() or ["<empty>"])[-8:]]
         return False, "\n".join(msg)
+
+    for needle in stderr_needles(expected):
+        if needle not in (r.stderr or ""):
+            return False, ("stderr does not contain " + repr(needle) + "\n  --- stderr ---\n" +
+                           "\n".join("  " + ln for ln in (r.stderr or "<empty>").splitlines()))
 
     actual = normalize(r.stdout)
     with open(expected, "r", encoding="utf-8", newline="") as f:

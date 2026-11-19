@@ -1,0 +1,2 @@
+@exit 3
+@stderr-contains Uncaught exception: exception_uncaught.MyError: from-main

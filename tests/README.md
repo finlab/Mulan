@@ -110,10 +110,13 @@ Notes per kind:
 - **Check (`tests/check/`)**: only the semantic checker runs — visibility across units and
   libraries, `use` import forms, declaration shapes. `main` is written for the checker, not for
   execution; features that deserve a runtime assertion belong in `tests/cases/`.
-- **Run (`tests/cases/`)**: besides plain output lines, an expected file may contain two marker
-  lines that are stripped before comparison:
+- **Run (`tests/cases/`)**: besides plain output lines, an expected file may contain marker lines that
+  are stripped before comparison:
   - `@exit <code>` — the run must end with this exit code (default `0`; a case whose documented
     behaviour is abnormal termination writes `@exit 3`, the status `muc`-generated code exits with);
+  - `@stderr-contains <text>` — the run's stderr must contain this substring; stderr is not compared
+    line by line, so a case that pins a runtime message (the uncaught-exception report, a bounds
+    message) names only what it needs;
   - `@ <args>` — extra options appended to the `muc build` command (for example `@ --bounds=off`).
 - **C ABI (`tests/abi/`)**: both sides are really different compilers' object files, which is what
   checks the C ABI of `extern` / `export` aggregates (byval / sret) — something no single-language
