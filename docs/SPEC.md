@@ -6,10 +6,14 @@
 > surface (0.0.104), arrays decay to pointers (C99, 0.0.106).
 > **2026-11-17: `const` redesigned on the C++ model (3.7), `move` defined as `&&` (3.8/4.4), and the
 > `comptime` unit with `builtin` declarations added (9.3); `constexpr`/`consteval`/`constinit` stay out.**
-> Status: draft, current through build 167 (2026-11-17; the per-build change log is docs/versions.md,
+> **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
+> dispatched with `match`; interface extension uses `extend`; a field's public methods are forwarded with
+> `promote` (10.1, 3.18, 3.19). The switch to the new surface syntax is decided but not implemented yet.**
+> Status: draft, current through build 257 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
-> Items marked **decided 2026-11-17** are frozen by design but not implemented yet.
+> Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
+> (for example the 2026-11-20 syntax surface), the compiler still has to catch up.
 > Positioning: a compact, modern, C-like small language; it retains the core capabilities of C; manual memory management + reference counting for heap objects.
 > Non-goals for phase one: multiple inheritance, closures, GC, a preprocessor (no macros or textual substitution; `#if` only selects code at build time, see 9.2), reflection. (Generics have landed, see 3.15; exceptions have landed, see 3.14; destructors are specified in 3.13.)
 >
@@ -30,12 +34,15 @@
 | Mutability | C++ model (decided 2026-11-17): mutable by default; `const` is a **cv qualifier that is part of the type**, at every level (top-level and low-level), participating in overloads and symbol names; `const` methods are provided; `constexpr`/`consteval`/`constinit` are not |
 | Declaration initialization | Declarations use only `=`: `Point p = {1, 2}`, `Point p = {}`, `Point p = Point(1, 2)`; in non-declaration positions use `Point(...)` |
 | Type inference | Local variables may use `auto x = expr;`; local only, and an initializer is required; `dynamic`/`any` are reserved names only |
-| Dynamic types | Not done in phase one; heterogeneous values prefer library-level Variant/sum types; `dynamic`/`any` are reserved only |
+| Dynamic types | Not done in phase one; heterogeneous values use language `variant` types (10.1); `dynamic`/`any` are reserved only |
 | Scope | Declarations do not write `T x(...)`; `Point p` is uninitialized, `= {}` zero-initializes; unit-level variables are declared directly and are `private` by default |
 | Unit initialization | Unit-level variables may be initialized at runtime and are destroyed at exit (9.1, implemented 0.0.102); the order is a DFS post-order over `use` edges from the entry unit, cleanup is its exact reverse, declaration order inside a unit; **the same sequence orders compile-time constant evaluation and `#if` selection** (9.2) |
 | Object model | Values and references are separated: `struct` is a value type; `class` is a reference type (single inheritance + interfaces; virtual methods by default; atomic RC + weak; no GC/cycle collector) |
 | Strings | `string` (a value type provided by the std library: an immutable UTF-8 byte sequence; for layout and API see the library documentation) |
 | Generics | **Monomorphization** (one copy of the code per combination of type arguments); `<>` syntax; constraints use `interface` + `&`/`\|`; `Self` refers to the implementor; constraints are matched **structurally**, and built-in types satisfy them at zero cost; see 3.15 for details |
+| Tagged unions | Declared with `variant Name { Alt T; Pair T, U; None; }` (decided 2026-11-20; layout and value semantics unchanged from the 0.0.115 sum implementation); dispatched **only** with `match` (10.1) |
+| Declaration split | `type` declares only transparent aliases (4.5); `extend I with J;` extends an interface with another interface's default methods (3.18); `promote field;` forwards a field's **public methods** (3.19) |
+| Dispatch | `switch` is constant dispatch over integers and enums (6.6); `match` dispatches a `variant` (10.1.2). The two domains do not overlap |
 | Memory | Pointers + `alloc/free/realloc` (raw memory); `class` uses `new` + atomic reference counting (write `x = null` to release early); no GC, no borrow checking |
 | Control flow | `if/else`, `while`, `for-in`, C-style `for` (6.3.1), `break/continue/return`; conditions must be `bool`; braces are mandatory |
 | Conditional expression | `cond ? a : b` (right-associative; the condition must be `bool`; only one branch is evaluated; both sides use the same type / implicit widening / `null` adaptation) |
@@ -157,15 +164,15 @@ and or not override operator super this
 The following identifiers are reserved for future features; the compiler should reject their use as variable/function/type names:
 
 ```
-where  move  typeof
+where  move  typeof  variant  match  extend
 ```
 
 - Generics: `where` (reserved; constraint syntax currently uses `<T: I>`, see 3.15).
+- Syntax rework (decided 2026-11-20): `variant` declares a tagged union (10.1.1), `match` dispatches on it (10.1.2), and `extend` declares an interface extension (3.18). `promote` is a **contextual keyword**: it is recognized only at the start of a member declaration inside a type body (3.19), so it remains usable as an identifier elsewhere. `sum` is **not** a keyword (the declaration uses `variant`).
+- `type` remains a contextual keyword and declares only a transparent alias (4.5).
 - Others: `move` / `typeof`.
 - **Released from the reserved list**: `async` / `await` are decided **not** to be provided (see 10); `shared` / `atomic` are not language features (sharing is explicit and atomics are a library intrinsic, see 3.17.1); `spawn` is released as well — deferred join is a library facility (`TaskGroup` + a one-slot `Channel<T>`), not syntax; `para` became a **keyword** in 0.0.92 (3.17.2); **`unsafe` is released**: there is **no unsafe mechanism** (principle 7 in 1) — every facility is available to every programmer, so the marker has nothing to protect and would only be decoration; the C-level surface stays documented UB (8.2).
 - `try` / `catch` / `throw` / `finally` (exceptions) are **implemented keywords** listed in 2.3.
-  > `match` is no longer a reserved word: the only dispatch construct kept is `switch` (see 6.6). **Pattern-matching style extensions are decided not to be done**
-  > (expression form / guards / bindings / or-patterns / type branches / destructuring, see 6.6); if sum types later need dispatch, a separate construct will be discussed then.
 
 ---
 
@@ -466,7 +473,7 @@ struct Point {
   duplicated, so it needs no opt-out), `union` is copied by bits, and `interface`/`enum`/`unit`/`extern`
   reject it outright.
   - `copyable` becomes false for the type **and for every type that contains it** (the property is
-    recursive): `S b = a;`, `f(s)`, `return s;`, a sum/union payload, and copying an array of it are all
+    recursive): `S b = a;`, `f(s)`, `return s;`, a `variant`/`union` payload, and copying an array of it are all
     compile errors. Borrowing (`ref`), pointer access, field assignment and aggregate initialization are
     unaffected — they do not copy.
   - Also refused at the C boundary, because C copies by value.
@@ -560,7 +567,7 @@ enum Color { Red, Green, Blue }
 ```
 
 - Underlying type `int`; increments from 0 by default; explicit assignment `Red = 1` is allowed.
-- Named constants only, not a sum type; `switch` performs a compile-time exhaustiveness check on enums (see 6.6).
+- Named constants only, not a tagged union (`variant`, 10.1.1); `switch` performs a compile-time exhaustiveness check on enums (see 6.6).
 - Member names must be unique within the same enum.
 - **Reference syntax**: members can be used without a prefix (`Red`, both in this unit and in units imported with `use`),
   or with the qualified name `Color.Red`; across units write `unit.Color.Red`. `type.member` holds only for enums;
@@ -1276,7 +1283,7 @@ Box<int> b = new Box<int>(7);    // generic class construction
   parameter no argument determines. A deduced argument must also satisfy the template's constraint
   (`T: I`): `max2(p, q)` with a `Point` that has no `operator<` reports that the *inferred* `T = Point`
   does not satisfy `IOrder` and that an explicit list can choose another type. An argument that cannot
-  be typed before its parameter type is known (`Some(3)` without a target sum type, an overloaded
+  be typed before its parameter type is known (`Some(3)` without a target variant type, an overloaded
   function name used as a value) is reported with that reason plus the hint to write the list.
 - **Two visible templates of the same name are ambiguous** for a bare call exactly as they are for an
   explicit list: qualify with a unit name.
@@ -1422,7 +1429,7 @@ and `weak`. Therefore this language explicitly does not provide:
 
 - Runtime polymorphism → `class` (single inheritance + interfaces + vtable + RC);
 - Compile-time capability checking → `T: I` (3.15.5) and `struct S : I` (U33), at zero runtime cost;
-- Heterogeneous value collections → sum types (10.1), rather than interface boxing.
+- Heterogeneous value collections → `variant` types (10.1), rather than interface boxing.
 
 Two questions are often mixed up here; only the second one stays closed.
 
@@ -1833,6 +1840,64 @@ same hidden function with a per-item context `{ frame, item }` (the element addr
 The lowering calls `std.task.muc_para_start` / `muc_para_join`, so the language surface does not depend
 on the execution engine.
 
+### 3.18 Interface extension (`extend`, decided 2026-11-20, not implemented yet)
+
+```mu
+public extend I with J;     // J : I
+```
+
+- `J` must derive from `I` (`interface J : I`). It may add **default methods only**: every abstract
+  member of `J` must already be declared by `I`, and an extension cannot add fields (interfaces have
+  none) or access fields.
+- Effect: every type that implements (or structurally satisfies) `I` gains `J`'s default methods
+  **in the units that can see the extension**. An extension is active where its declaring unit is
+  used (`use`), not everywhere the interface is visible.
+- Visibility: `public` / `private`; it is not transitive. A unit that does not `use` the declaring
+  unit does not see the extension.
+- A type's own method (or an interface default it already has) wins over an extension. If two
+  extensions visible at a call site provide the same signature, the call is an ambiguity error.
+- **`extend` does not create a subtype relation**: an implementor of `I` does not satisfy a `T: J`
+  constraint and cannot be used as a `J` interface value because of an extension.
+- The extension is materialized per concrete type during semantic analysis (the same machinery as
+  interface defaults); code generation is unchanged.
+- The concrete-type form `extend S with I;` (declare that an already declared type satisfies an
+  interface) is **planned for a later phase** and is not part of this rule.
+
+### 3.19 Field method promotion (`promote`, decided 2026-11-20, not implemented yet)
+
+```mu
+class Box<T> {
+    private T _value;
+    public Box(move T value) { this._value = move value; }
+
+    promote _value;             // every public method of the field
+    promote _value(f, g);       // optional whitelist form
+}
+```
+
+- `promote` is a contextual keyword at the start of a member declaration; the field must be a member
+  of the enclosing type and must have a `struct`, `class` or `interface` type (scalar, enum and
+  variant fields are rejected).
+- **Only public methods are promoted.** Fields, constructors, destructors, operators (including
+  `operator[]`) and function values are never promoted. The field itself may be `private`: promotion
+  grants a method-call surface, not access to the field.
+- Resolution order for `obj.m(...)`: methods of the type itself, then base-class methods, then
+  interface methods (including materialized defaults), then promoted fields in declaration order.
+  A real method always wins. If two promoted fields provide the same method name, the enclosing type
+  declaration is an error (not the call site).
+- A promoted method does **not** participate in `override` and does **not** satisfy an interface; an
+  interface must be implemented by the type's own methods.
+- Promotion is **one level**: a promoted field's own promoted fields are not followed.
+- `this` inside the promoted method is the field object, not the wrapper. Dynamic dispatch follows
+  the field type's normal rules (a class field dispatches through its handle; a struct field is
+  static).
+- `const` rules are unchanged: a `const` receiver may call only the field's `const` methods; a
+  `const class` view keeps its existing read-only rules.
+- Inside a generic type the promoted set is resolved per instantiation (the public methods of the
+  instantiated field type); diagnostics name the instantiated type.
+- The promoted method must be visible from the caller's unit (the field type and the method must be
+  visible there); promotion adds no exported symbol.
+
 ## 4. Declarations and scopes
 
 - Declaration syntax: `Type name1 [= init1], name2 [= init2];`
@@ -1942,10 +2007,10 @@ type PP = P;          // alias of an alias
 - Forward references and arbitrary declaration order are supported: `type A = B; type B = int;` is legal; a cyclic dependency
   (`type A = B; type B = A;`) is a compile error; an alias with the same name as another declaration in the same unit is a conflict.
 - Diagnostics prefer to show the alias name; `auto` deduces the **underlying type**.
-- **Interface extension** (`type T += I;`, for adding an interface to an existing type) is **planned, not
-  implemented**: the parser recognizes the form and reports it by name (the design is recorded in the
-  agents repository). Implement the members directly, or list the interface after `:` on a struct/class
-  (`struct T : I`).
+- **`type` is alias-only** (decided 2026-11-20): a right-hand side that lists alternatives
+  (`type V = A | B;`) is a compile error pointing at `variant` (10.1.1), and an interface extension
+  (`type T += I;`) is a compile error pointing at `extend` (3.18). A concrete-type extension
+  (`extend T with I;`) is planned, not implemented; the interface form `extend I with J;` is decided.
 
 ---
 
@@ -2258,23 +2323,23 @@ switch code {
   - Range cases are not supported (enum members have no numeric order).
   - **Exhaustiveness is mandatory**: all members must be covered, otherwise it is a compile error listing the missing members; writing `else` gives up the exhaustiveness guarantee (in that case, if all members are already covered, `else` is unreachable and a warning is emitted).
 - **Integers / `char` / `byte`**: `else` is optional; unmatched values are simply skipped, which is not an error.
-- The type of the matched value is restricted to integers, enums and **sum types** (0.0.118); `bool`, floating point, pointers, class, interface, `string`, struct, and arrays are all compile errors.
-  **This is a decision, not an implementation limitation**: `switch` will not be extended to other matched types (a `string` case would need hashing or a comparison chain, which is a performance trap). A sum scrutinee dispatches on the tag and its labels are alternatives with optional payload bindings (10.1.2).
+- The type of the matched value is restricted to **integers and enums** (decided 2026-11-20); `bool`, floating point, pointers, class, interface, `string`, struct, arrays and **`variant`** are all compile errors.
+  **This is a decision, not an implementation limitation**: `switch` will not be extended to other matched types (a `string` case would need hashing or a comparison chain, which is a performance trap). A `variant` is dispatched with `match` (10.1.2), never with `switch`; the diagnostic for a variant scrutinee points at `match`.
 - The matched expression is evaluated only once; cases are matched in source order. Duplicate or overlapping patterns (intersecting ranges, a value intersecting a range) are compile errors, so order does not affect semantics and the backend is free to reorder.
 - `break` / `continue` **do not belong** to `switch`: they always apply to the nearest loop; with no enclosing loop they are errors under the existing rules. `switch` cannot be the target of `break`.
 - When `as` produces an undeclared value for an enum and there is no `else`, falling through is **UB** (consistent with `as` performing no checking); debug builds may trap.
 - Implementation: dense integer/enum values use LLVM `switch` (jump table), range cases use a comparison chain, and `else` becomes the default case.
-- **No extensions (settled, 0.0.62)**: `switch` is positioned as C-style **constant dispatch**, kept "small and predictable", and will not be
-  dragged by pattern matching into a second control-flow construct. All of the following are **explicitly not done**:
+- **No pattern extensions (settled)**: `switch` is positioned as C-style **constant dispatch**, kept
+  "small and predictable", and is not dragged by pattern matching. Variant dispatch, guards, bindings
+  and the expression form live in **`match`** (10.1.2); the two constructs have disjoint domains.
+  The following are **explicitly not done in `switch`**:
   - `switch` expression form (`let x = switch ...`);
   - guards (an `if` clause on a case);
   - bindings (`x @ pattern`);
   - or patterns (`p1 | p2`; for multiple values use a comma list);
-  - runtime type cases (class/interface dispatch uses `as`; a sum type dispatches on its **alternatives** through `switch`, which is the one exception and is not a type test);
+  - runtime type cases (class/interface dispatch uses `as`);
   - struct / tuple / array destructuring;
-  - C-style `case` labels and fallthrough;
-  - the `match` keyword (not reserved).
-  If sum types/pattern matching are introduced in the future, a separate construct will be established rather than overloading `switch` semantics.
+  - C-style `case` labels and fallthrough.
 
 ---
 
@@ -2335,7 +2400,7 @@ extern int puts(const char* s);
   reference. SysV's per-eightbyte SSE classification is not implemented yet (the target machine is fixed to
   Windows; recorded in `agents/design-backlog.md`).
 - Which types may cross is checked: a class/interface (reference counted), a `delegate` (owns an environment),
-  a dynamic array `T[]` (RC header), or a sum type (`{tag, union}` is an implementation detail) is a compile
+  a dynamic array `T[]` (RC header), or a `variant` (`{tag, union}` is an implementation detail) is a compile
   error in an `extern`/`export` signature, including when nested in an array element or a struct field.
   `ref T` parameters are refused too (a language borrow; write `T*`).
 - A `c_abi` function whose aggregates travel differently cannot be used as a **function value** (a function
@@ -2667,10 +2732,10 @@ use std.comptime;                              // required before using os/arch/
 - **`use` inside an arm** is allowed, and only the units of selected arms join the dependency graph.
 - `muc dump-config` prints every builtin value; that output plus the platform spec is the reproduction
   key of a build.
-- **Deliberately not supported** (decided 2026-11-16): `#if` **inside** an enum variant list, between
-  the alternatives of a sum type (`type V = A | B;`), or inside a single parameter list. A conditional
-  variant would silently shift the implicit values of every later variant; a sum alternative would
-  split a single `type` declaration; a conditional parameter would need the comma list split. The
+- **Deliberately not supported** (decided 2026-11-16): `#if` **inside** an enum member list, between
+  the alternatives of a `variant` declaration, or inside a single parameter list. A conditional enum
+  member would silently shift the implicit values of every later member; a variant alternative would
+  split a single `variant` declaration; a conditional parameter would need the comma list split. The
   granularity is too fine to pay for. Wrap the whole declaration instead — a declaration list is a
   supported position. The diagnostic names the rule and points here.
 
@@ -2788,8 +2853,8 @@ Two properties hold for every row:
 - **A truncated walk is never kept.** The internal walkers stop at the same bound as the enforced limit
   (class / interface relations, `type_size`), so a program that compiles cannot carry a silently wrong
   layout, subclass relation or inherited member. That covers every composite type the checker can size:
-  a `struct`/`class`, the synthesized layout of a `sum` (tag + payload union), and every generic
-  instance. A type that contains itself by value — through a `sum` payload as well as directly — has no
+  a `struct`/`class`, the synthesized layout of a `variant` (tag + payload union), and every generic
+  instance. A type that contains itself by value — through a `variant` payload as well as directly — has no
   finite layout and is reported as a cycle rather than as a deep chain.
 
 The interface and base-class graphs are DAGs: a diamond makes any memo-less walk visit shared ancestors
@@ -2818,16 +2883,22 @@ method lookup, abstract-method collection) keeps a visited set, so a generated d
 ### 10.1 Recommended route for heterogeneous values
 
 - **Phase one**: `void*` + manual tag (a low-level escape hatch).
-- **Near term**: ~~library-level `Variant` / `Any` structs~~ → **language-level sum types landed in
-  0.0.115** (declaration, layout, construction, value semantics; `match` is the next step). A library
-  `Option<T>` / `Result<T,E>` becomes ordinary code once `match` exists.
+- **Language-level tagged unions** landed in 0.0.115 as "sum types"; the declaration keyword is now
+  `variant` (decided 2026-11-20) and `match` is the dispatch construct. Layout, construction and value
+  semantics are unchanged. A library `Option<T>` / `Result<T,E>` becomes ordinary code once `match`
+  is implemented.
 - `dynamic` is only reserved as the name for future "runtime dynamic typing" and does not enter phase one; even if needed later, it should be an independent runtime layer rather than a core language feature.
 - `any` is reserved as a static top type/library type, distinct from `dynamic`.
 
-#### 10.1.1 Sum types (§12 row 55)
+#### 10.1.1 `variant` declarations (§12 row 55)
 
 ```c
-type Value = Int(int) | Pair(int, int) | Text(const char*) | None;
+variant Value {
+    Int int;
+    Pair int, int;
+    Text const char*;
+    None;
+}
 
 Value a = Value.Int(3);
 Value b = Value.Pair(4, 5);
@@ -2835,15 +2906,17 @@ Value c = Value.Text("hi");
 Value d = Value.None;        // a unit alternative is a plain value
 ```
 
-- **Declaration** is a `type` declaration whose right-hand side is two or more alternatives separated
-  by `|`: `type Name = Alt | Alt(T1, ...) | ...;`. Anything else after `type X =` remains a
-  transparent alias (4.5), so existing code is unaffected. `|` is the same operator the constraint
-  syntax uses (`T: int | long`): the alternatives are the value set.
-- **Generic sums** (0.0.117): `type Option<T> = Some(T) | None;` takes type parameters and instantiates
-  per concrete argument, exactly like a generic struct — `Option<int>` and `Option<const char*>` are
-  two different types with their own layout and alternatives. Construction and `match` use the same
-  forms: `Option<int>.Some(3)`, `Option<int>.None`, `match o { Some(v): ... None: ... }`. A generic
-  alias (`type A<T> = B<T>;`) is still rejected, as before.
+- **Declaration** is a `variant` declaration (decided 2026-11-20) with a block of two or more
+  alternatives: `variant Name { Alt T; Pair T, U; None; }`. Each alternative is `;`-terminated; a
+  single payload is written without parentheses (`Some T;`), several payloads are comma-separated
+  (`Pair T, U;`), and a unit alternative is just the name. Alternative names are unique within the
+  declaration; a name that collides with a visible type is an error in this phase. `type` no longer
+  declares a tagged union (4.5): an old `type V = A | B;` is rejected with a diagnostic pointing here.
+- **Generic variants** (0.0.117): `variant Option<T> { Some T; None; }` takes type parameters and
+  instantiates per concrete argument, exactly like a generic struct — `Option<int>` and
+  `Option<const char*>` are two different types with their own layout and alternatives. Construction
+  and `match` use the same forms: `Option<int>.Some(3)`, `Option<int>.None`,
+  `match o { Some(v): ... None: ... }`.
 - **Alternatives** have 0..n payload types (types only, no names, as with any anonymous function
   type). Duplicate alternative names and a single alternative are errors.
 - **Layout**: `{ i32 tag; union payload }` — the payload area behaves like a `union` (every
@@ -2852,13 +2925,13 @@ Value d = Value.None;        // a unit alternative is a plain value
 - **Value semantics**: assignment and argument passing copy the value; the active payload is
   retained, overwriting or leaving scope releases it. A payload whose type needs cleanup
   (class/interface handle, `String`, slice, struct with reference fields) is therefore safe to store:
-  the sum owns one reference. Payload types with a **user destructor** are rejected (they cannot be
+  the variant owns one reference. Payload types with a **user destructor** are rejected (they cannot be
   copied by value, same rule as array elements).
 - **Construction**: `Type.Alt(values...)` for a payload alternative, `Type.Alt` (no parentheses) for a
   unit alternative, and — when the target type is already known — the **bare alternative name**. The
   target is known in every target-typed position: a declaration or assignment (`Option<int> o = Some(3);`,
   `o = None;`), a call argument (`take(Some(3))`, whose target is the parameter type), a `return`, both
-  arms of a ternary, and either operand of `==` / `!=` with a sum value (`if o == None`,
+  arms of a ternary, and either operand of `==` / `!=` with a variant value (`if o == None`,
   `if o == Some(3)`, `if Some(3) == o`). A user function with the same name wins at a call site that has
   no such target, so existing code is unaffected (0.0.119; argument and comparison positions restored
   2026-11-19).
@@ -2872,44 +2945,63 @@ Value d = Value.None;        // a unit alternative is a plain value
 - **Value equality** (0.0.119): `==` / `!=` compare the tag and, when it matches, the payload fields.
   Only alternatives whose payload types have value equality take part (scalars, enums, pointers,
   function values); a class/interface/`String`/slice/struct payload is rejected with "no value
-  equality (read it with `switch`)" — reference payloads would need an identity rule.
-- **Not allowed in C signatures**: a sum (or any struct/array containing one) is rejected in an
+  equality (read it with `match`)" — reference payloads would need an identity rule.
+- **Not allowed in C signatures**: a variant (or any struct/array containing one) is rejected in an
   `extern` parameter or return position — its `{tag; union}` layout is a compiler implementation
   detail, not a public interface. To talk to C, declare a plain `struct { tag; union }` on both sides
   and convert explicitly.
-- **`para` / `thread`**: nothing special. A sum is an ordinary value type: a section may read and copy
+- **`para` / `thread`**: nothing special. A variant is an ordinary value type: a section may read and copy
   it, a delegate may capture it by value, and a reference-counted payload follows the usual RC rules.
 - Equality (`==`, `!=`) compares the tag and then the payload fields (0.0.119); only payload types with
   value equality take part.
 - C ABI: the layout is the classic `{ tag, union }` shape, but the type **never** crosses into C (see
   the `extern` rule above): it is a language built-in whose representation is not a public interface.
 
-#### 10.1.2 Dispatching on a sum: `switch` (merged in 0.0.118)
+#### 10.1.2 Dispatching a variant: `match` (decided 2026-11-20, not implemented yet)
 
-`switch` is the **single dispatch construct**: the label domain is decided by the scrutinee's type.
+`match` is the **only** construct that dispatches a `variant`; `switch` keeps constant dispatch over
+integers and enums and rejects a variant scrutinee (6.6).
 
 ```c
-switch v {
-    Int(n): { total = total + n; }
-    Pair(a, b): { total = total + a * b; }
-    Text(s): { total = total + 1; }
-    None: { }
-}
+int x = match v {
+    Int(n): n;
+    Pair(a, b): a + b;
+    Text(s): 1;
+    None: 0;
+};
 ```
 
-- With a **sum** scrutinee, an arm is `Alt` or `Alt(a, b)` followed by `:` and a block; the bound
-  names are ordinary locals of that arm (one per payload field, in declaration order). A
-  reference-typed payload is retained for the arm and released when it ends.
-- **Exhaustiveness**: without `else` every alternative must be covered (a missing one is a compile
-  error naming it); `else: { ... }` may appear once and covers the rest. Unknown or duplicate
-  alternatives, and a label whose binding count does not match the payload, are errors.
-- The same rule already applied to `enum` (member labels) and is unchanged for integers (literals,
-  several values, `..=` ranges, `else` required). Guards, or-patterns, nested destructuring and value
-  patterns on a payload are **not** provided (6.6).
-- A sum `switch` counts as a terminating path for the return-value check when every arm returns, so a
-  function over a sum type needs no trailing `return`.
-- There is **no separate `match` keyword**: `switch` covers both value and alternative dispatch, so the
-  language keeps one construct (the earlier `match` was folded into it before it ever shipped widely).
+- **Expression form**: every arm body is an expression; arms end with `;` and the whole `match`
+  produces one value. **Statement form**: every arm body is a brace-delimited block; the `match` is a
+  statement. The two forms are not mixed in one `match` (a mix is a compile error).
+- An arm is `pattern [if guard] : body`. The pattern is one alternative (`Alt`, `Alt(x)`,
+  `Alt(x, y)`); the binding count must equal the payload count. Bindings are ordinary locals of the
+  arm. A reference-typed payload is retained for the arm and released when it ends.
+- Bindings are by value by default; `ref x` is a mutable borrow of the payload and `const ref x` a
+  read-only borrow (they cannot escape the arm body). `match move v { ... }` consumes the whole
+  variant, and `v` cannot be used afterwards.
+- A guard is evaluated after the bindings; when it fails, matching continues with the next arm. An
+  arm with a guard does **not** cover its alternative for exhaustiveness.
+- **Exhaustiveness is mandatory** (unless the match has an `else`): every alternative must be
+  covered, and a missing one is a compile error naming it. There is at most one `else`, and it is
+  last; an `else` after a fully covered match is unreachable and warns.
+- The first version supports **one pattern level only**: nested patterns, or-patterns, range patterns,
+  type (class/interface) patterns and public-contract branches are not provided yet (10.1.3).
+- `is` keeps its current rule (a binding only when the `is` is the whole condition, 10.1.1); guarded
+  cases are written with `match`, not with `is`.
+- A `match` over a variant counts as a terminating path for the return-value check when every arm
+  returns, so a function over a variant needs no trailing `return`.
+- Implementation: `match` lowers to the existing tag dispatch, so no new representation is needed.
+
+#### 10.1.3 Later phases for `match`
+
+- Type patterns (class/interface branches, replacing `is` chains), nested patterns, or-patterns and
+  range patterns.
+- Public-contract branches (an arm covering the remaining alternatives whose payload satisfies a
+  constraint), with element-wise and interface-view forms.
+- Relaxing `is` so a binding can compose with `and` (currently a binding must be the whole condition).
+- A POD `variant` crossing the C ABI: still rejected in this phase (10.1.1); any future ABI rule must
+  be written into the specification first.
 
 ---
 
@@ -2968,7 +3060,7 @@ switch v {
 | 6 | Whether dynamic arrays are included in phase one | Decided: included. `T[]` / `T[,]` / `T[,,]` are **built-in types** (2026-11-16, superseding the earlier "sugar for `Array<T>`" rule): the compiler owns the representation `{rc,len,data}` (no capacity field — a block never grows, so its addresses stay valid), the built-in members are only `length()` / `operator[]` / `ptr()`, and `new T[n]` zeroes the elements unless written `uninit new T[n]` (trivial element types only). The `buffer<T>` name is removed. A library container (`Array<T>` and friends) wraps a `T[]` and adds methods |
 | 7 | Bounds checking strategy | Managed sequences checked by default (`--bounds=on` / `--bounds=off`), a violation throws `BoundsError`; static arrays and `T*` unchecked |
 | 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, a constant expression reports it, and the runtime `--bounds` check throws `ArithmeticError` for a non-constant divisor |
-| 9 | `switch`/`match` | Decided (0.0.45; extended in 0.0.62, explicitly not done): only `switch` (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); **the expression form/guards/bindings/or-patterns/type branches/destructuring are all not done**; `match` is not retained, and if pattern matching is needed later a separate construct will be defined |
+| 9 | `switch`/`match` | **Superseded 2026-11-20** (rows 137/138): `switch` is constant dispatch over integers/enums (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); `variant` is dispatched with `match` (expression/statement, one-level patterns, bindings, guards, exhaustive with `else`). The old "match is not retained" decision is withdrawn |
 | 10 | `goto`/`typedef`/function pointers/varargs | `goto` is not done (phase one); function pointers and lambdas are implemented in 3.16 (0.0.84); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
 | 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding by default; `for i, x` provides an `isize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; **`for ref` works for user types in the index form when the container's `operator[]` returns a mutable `ref T`** — either spelling of the operator (member or free function, 6.4.1); it is unavailable for ranges, `string`, the cursor form, class/interface elements and `const` sequences (a `const` sequence uses **`for const ref`** for read-only iteration); **multi-dimensional arrays forbid `for-in`** |
 | 12 | `..=` / `step` / reverse order for ranges | Implemented (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`) and must be a non-zero compile-time constant; reverse order relies on an **explicit negative step** (`a..b` does not reverse automatically); switch case ranges support `..=` and **do not support `step`** |
@@ -3011,7 +3103,7 @@ switch v {
 | 49 | `0` in expressions vs zero-value initialization in declarations | In an expression it is an int; in a declaration, aggregates use `{}` and scalars use constants |
 | 50 | Language-level dynamic typing | Not a goal of phase one; `dynamic` is only reserved |
 | 51 | The purpose of `any` | Reserved as a static top-level type/library type; distinguished from `dynamic` |
-| 55 | Heterogeneous value scheme | **Sum types landed in 0.0.115** (SPEC 10.1.1): `type Value = Int(int) \| Text(const char*) \| None;` with a `{ i32 tag; union payload }` layout, payload-aware value semantics (retain/release) and argument-checked construction. `match`/pattern dispatch is the next step; `Option<T>`/`Result<T,E>` follow it. `any`/`dynamic` stay reserved |
+| 55 | Heterogeneous value scheme | **Variant types** (decided 2026-11-20; landed in 0.0.115 as "sum types"): declared with `variant Value { Int int; Text const char*; None; }` and dispatched with `match` (10.1.2); the `{ i32 tag; union payload }` layout, payload-aware value semantics and argument-checked construction are unchanged. `Option<T>`/`Result<T,E>` follow once `match` is implemented. `any`/`dynamic` stay reserved |
 | 56 | The relationship between `any` and `dynamic` | `any` is for static top-level/library types; `dynamic` is for runtime dynamism; they are not mixed |
 | 52 | `auto` and `const` | Decided (implemented): `const auto` is allowed |
 | 53 | Multiple declarators with `auto` | All variables must have the same inferred type |
@@ -3071,10 +3163,10 @@ switch v {
 | 109 | Bit-fields | Decided (0.0.62): **explicitly not done**. No C-style `int x : 3;` is provided, nor is any Zig/Rust-style explicit bit-width syntax; the allocation order and cross-unit boundaries are implementation-defined, which conflicts with predictable layout. Alternatives: mask+shift / `byte[N]`+offset / `packed`+accessors / a C shim (see 3.4) |
 | 110 | A generic interface as a value type / a value type as an interface value | **Split (0.0.108).** (a) *Generic interface as a value type*: **implemented** — `IIterator<int> x`, `class C : IIterator<int>`, `class Src<T> : IIterable<T>`, interface-valued returns/fields/locals, `T: IIterable<int>` constraints, `as` downcasts; two words `{obj, desc}`, itable slots keyed by the concrete signature, no boxing. (b) *Value type → interface value*: **still explicitly not done** (0.0.75 decision stands) — a struct would have to be boxed, so `Animal a = cat;` is a compile error and `struct S : I` is a compile-time contract only |
 | 111 | `const` members in generic types / generic interface inheritance | **Generic interface inheritance implemented (0.0.108)**: `interface Derived<T> : Base<T>` instantiates per level and both levels are interface values of their own type. **`const` fields in generic structs/classes are ordinary fields since 2026-11-17** (type-level constants are gone), so no special wiring is needed |
-| 112 | Type alias `type A = B;` | Decided (0.0.62): `type` is a **contextual keyword** (it is parsed as an alias only at the start of a declaration, `type Ident =`; elsewhere it is still an identifier, which protects the `type` field of C-interop structs); each declaration declares one alias; aliases are transparent (not newtypes) (see 4.5) |
+| 112 | Type alias `type A = B;` | Decided (0.0.62), narrowed 2026-11-20: `type` is a **contextual keyword** (it is parsed as an alias only at the start of a declaration, `type Ident =`; elsewhere it is still an identifier, which protects the `type` field of C-interop structs); each declaration declares one alias; aliases are transparent (not newtypes) (see 4.5). `type` **declares only an alias**: a tagged union is a `variant` (10.1.1) and an interface extension is `extend` (3.18); the old `type V = A \| B;` and `type T += I;` forms are rejected with a migration diagnostic |
 | 113 | Range extensions `..=` / `step` / reverse order | Decided (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`); reverse order relies on an **explicit negative step**, `a..b` does not reverse automatically; `step 0` is a compile error; the step size is limited to compile-time constants (see 6.4) |
 | 114 | Range expansion in array initialization | Decided (0.0.62): in `int[10] a = {1, 2, 5..9, 10};` the `5..9` expands to 5,6,7,8; the endpoints must be compile-time constants; only `..` is supported inside braces (it does not take `..=`/`step`); after expansion it participates in "zero-pad when short / error when too long" (see 4.1) |
-| 115 | `switch` extensions | Decided (0.0.62): **explicitly not done** (the expression form/guards/bindings/or-patterns/type branches/destructuring/`case`/fallthrough); the matched type is limited to integers and enums (see 6.6) |
+| 115 | `switch` extensions | **Superseded 2026-11-20** by the `match` decision (row 137): `switch` remains C-style constant dispatch over integers and enums, with no expression form/guards/bindings/or-patterns/type branches/destructuring/`case`/fallthrough; a `variant` scrutinee is rejected and points at `match` (6.6, 10.1.2) |
 | 116 | Function type syntax | Decided and implemented (3.16, 0.0.84): `(T1, T2) => R`; a one-word pointer value with no `*` and no declarator nesting; `sizeof` = pointer size; `=>` has lowest precedence and is right-associative; `*`/`[]` bind to the return type; block-/unit-level declarations never begin with an anonymous function type and a return type is never anonymous (use `auto` or a `type` alias), while fields and parameters may |
 | 117 | Lambdas | Decided and implemented (3.16, 0.0.84): `(int a) => expr` or `(int a) => { ... }`; parameter types are always written; the return type is inferred from the body (all `return` types must be identical; no `return expr` means `void`); **no captures**; each lambda is a hidden `private` function (C ABI, no allocation); stateful callbacks use `class` + single-method `interface` |
 | 118 | Free function / method values | Decided and implemented (3.16, 0.0.84): a free function name is already a function value (no `&`, and `&f` is an error); overloaded names need a target type; generic function names cannot be used as values; `u.f` and `extern` functions are values; **methods are not values** |
@@ -3087,7 +3179,7 @@ switch v {
 | 125 | Single-task `para` (`s = para f()`) | **Decided: not provided.** In a stackful model the call itself is the suspension, so "start then immediately join" is pure overhead; use the library task group when the join must be deferred |
 | 126 | Unit-level initialization and cleanup | **Implemented (9.1, 0.0.102).** Runtime initializers are allowed; the order is a DFS post-order over `use` edges from the entry unit (declaration order inside `use` lists), cleanup is its exact reverse, declaration order inside a unit. **The same sequence orders compile-time constant evaluation and `#if` selection (decided 2026-11-17, 9.2).** Only `use` dependencies are tracked; indirect dependencies (function pointer, interface dispatch, `extern` C symbol, a later variable reached through a function body) are undefined. An exception escaping an initializer aborts without cleanup; `atexit` makes `exit()` clean up. Lifted the three "no exit-time destruction" restrictions (3.3 `String`, 3.4 reference fields, 3.4 user destructors). Deferred: lazy first-use initialization, explicit `init(N)` priorities, debug-mode lifecycle assertions, link-time sequencing for split compilation |
 | 127 | `export` and the binary export surface | **Decided and implemented (0.0.103).** `export` is a top-level declaration modifier that implies `public` and marks the declaration as part of the binary export surface; it cannot be combined with `private`/`extern`/`use` or used inside a type body (export the type, which exports its public methods and class metadata). `--exports=export` (default) keeps only `export` declarations externally visible, `--exports=public` keeps every `public` declaration; `--export <name>` still adds individual names. In an executable everything outside the surface is internalized and dead-code-eliminated; library targets keep the surface visible (toolchain plan §11) |
-| 127 | Member promotion (Go-style embedding) / mixin | **Decided (2026-11-14): explicitly not done.** No `mixin`/`embed` member form: a method call never falls back to a field's type. Rationale: (a) it cannot satisfy an interface without an offset thunk, and after such a thunk `this` is the embedded subobject, so identity comparisons and stored `this` silently change meaning; (b) the set of callable names would depend on another type's evolution across units — adding a method to the embedded type silently turns a remote compile error into legal code, and can silently change overload resolution (violates the "information must be locally expressible" criterion); (c) it saves a few lines of forwarding while adding a resolution hop at every call site, whose verification cost is the expensive one. Reuse instead: `struct S : I` with explicit forwarding methods (3.10, 3.15.7), or field composition. Reopen conditions and rejected variants: `agents/design-backlog.md` U40 |
+| 127 | Member promotion (Go-style embedding) / mixin | **Revised 2026-11-20**: field method promotion is provided in the explicit, method-only form `promote field;` / `promote field(f, g);` inside a type body — only the field's **public methods** are forwarded, only one level, after the type's own/base/interface methods, never participating in `override` or satisfying an interface, with conflicts reported at the type declaration (3.19). The general `mixin`/`embed` member form (which also promotes fields and falls back for every call) remains **not done**: it cannot satisfy an interface without an offset thunk (identity and `this` change meaning), and the callable set would depend on another type's evolution across units, violating the "information must be locally expressible" criterion. Reuse for other cases: `struct S : I` with explicit forwarding methods (3.10, 3.15.7) or field composition. Background: `agents/design-backlog.md` U40 |
 | 128 | Signed or unsigned index / length type | **Decided (2026-11-16): `isize`.** `length()`, subscripts, `for i, x` ordinals, `find` offsets, `sizeof`/`alignof`/`offsetof` and the `alloc`/`realloc` byte counts are all `isize`; `usize` is kept for unsigned arithmetic and for C-facing sizes (`cstd.*`, `c_size`), where an explicit `as` is required. Rationale: `length() - 1` on an empty sequence must not wrap to `2^64-1`, descending loops need a signed counter, `find` already returns `-1`, and the emitted bounds check (`icmp uge` on the 64-bit index) catches a negative index with no extra instruction |
 | 129 | `const` redesign (C++ model) | **Decided 2026-11-17** (for `const class` refined 2026-11-18 — see 132): cv is part of the type at every level; top-level const is ignored in signatures (and a top-level `const` return type is accepted but ignored), low-level const participates in overloads and mangling; `const` fields and `const` methods; `const struct` / `const class` is a declaration modifier without cv on the type name (content fixed after construction; copy/move allowed; whole-variable reassignment allowed); `T* const` is supported; `T** → const T**` has no implicit conversion (`as` can force it, as in C++); a const object is deeply read-only; `const_cast` is replaced by `as`; no `constexpr`/`consteval`/`constinit`, no `mutable`/`volatile` (3.7) |
 | 130 | `move` is `&&` | **Decided 2026-11-17**: `move T` is a non-const rvalue reference; `const` and `move` cannot qualify the same parameter; `move` on a const object is an error (no silent copy); used in move construction and transfer positions (3.4, 3.8, 4.4) |
@@ -3096,6 +3188,11 @@ switch v {
 | 133 | Construction prologue: base call, delegation, field initializers | **Decided 2026-11-18**: one place for every construction step — the initializer list after the parameter list. An item is `Base(args)` (base constructor), `CtorName(args)` (delegating constructor) or `field(value)`; execution order is fixed as **delegate → base → members → field initializers in declaration order → body**, independent of the order the items are written in. `super(...)` as a constructor call is **removed** (it was a body statement that had to be hoisted to the prologue anyway, which forced a "must be the first statement" rule and made "base constructor with arguments + own `const` field" unwritable); `super.m(...)` stays as the qualified base-method call. Delegation cannot also name the base or a field, cannot target itself, and chains must not cycle (3.12) |
 | 134 | Null references: local initialization and the null check | **Decided 2026-11-19**: (a) a class/interface local must be initialized (4) — the type *is* the handle (3.8), so `Dog d;` must not read like a stack construction that builds nothing; (b) dereferencing a null handle (method call, field read, field write) throws `std.exception.NullReferenceError`, and `--null-check=off` drops the check, making the access UB (8.2); `null` itself stays a legal value. Rejected: leaving an uninitialized handle silently null (the declaration looked like construction and the failure moved to an unrelated line), and leaving the dereference purely UB with no diagnostic (a segfault instead of a catchable error) |
 | 135 | C-style `for (init; cond; step)` | **Decided 2026-11-19: implemented** (6.3.1), superseding the earlier "no C-style `for`" decision — an index loop is the common case and `while` + a manual step reads poorly. Semantics are C's: every clause is optional (`for (;;)`), `cond` must be `bool`, and **`continue` runs the step clause**. `init` is a declaration or one expression statement; since the language has no comma operator, `for (a = 1, b = 1; ...)` is rejected — declare both in `init` instead. `do-while` remains not part of the language |
+| 136 | Declaration split: `type` / `variant` / `extend` | **Decided 2026-11-20**: `type` = transparent alias only (4.5); tagged unions = `variant` (10.1.1); interface extension = `extend I with J;` (3.18). Old `type V = A \| B;` and `type T += I;` are rejected with migration diagnostics |
+| 137 | `match` (first version) | **Decided 2026-11-20, not implemented**: `match` dispatches a `variant`; expression and statement forms; one-level patterns `Alt(x, y)`, value/`ref`/`const ref`/`match move` bindings, guards, mandatory exhaustiveness with an optional last `else`. Type patterns, nested patterns, or-patterns and public-contract branches are later phases (10.1.3) |
+| 138 | `switch` domain | **Decided 2026-11-20**: integers and enums only; a `variant` scrutinee is a compile error pointing at `match`. Whether integer/enum dispatch eventually folds into `match` stays open and is re-evaluated after `match` ships |
+| 139 | Interface extension `extend I with J;` | **Decided 2026-11-20, not implemented**: `J : I`, default methods only; applies to implementors of `I` in units that can see the extension; conflicts are ambiguity errors; it is not a subtype relation (3.18). The concrete-type `extend T with I;` form is planned |
+| 140 | Field method promotion `promote` | **Decided 2026-11-20, not implemented**: only public methods, one level, fixed precedence (own → base → interface → promoted), conflicts at the type declaration, no `override`/interface satisfaction, generic resolution per instantiation (3.19) |
 
 ---
 
@@ -3135,7 +3232,7 @@ See [`examples/example.mu`](../examples/example.mu) and [`examples/math.mu`](../
 - Unit-level variables are zero-initialized by the loader/startup code; unit-level initialization and
   cleanup (9.1) are a compiler-generated call sequence, not a `.init_array`/linker decision.
 - `auto` only takes the expression type directly in the front end; multiple declarators require identical inference results; no runtime overhead.
-- Dynamic typing is not in phase one; in the future, implement a library-level Variant first, then evaluate sum types + `match`; `dynamic` acts as a separate runtime layer rather than a core type.
+- Dynamic typing is not in phase one; heterogeneous value tagging uses the language's `variant` + `match`; `dynamic` acts as a separate runtime layer rather than a core type.
 - **Concurrency** (3.17): design settled, not implemented. Order: (0) RC memory ordering (release decrement
   + acquire fence before destruction) and the weak-registry lock ordering; (1) runtime primitives (threads,
   mutex/condvar, monotonic clock); (2) `para` / `para for` with one OS thread per section first, plus the

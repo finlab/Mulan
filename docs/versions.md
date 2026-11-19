@@ -42,6 +42,12 @@ being silently ignored.
 Cases `exception_subscript` (struct and class `operator[]`), `exception_member_op` (member `+` and
 unary `-`) and `exception_implicit_ctor`.
 
+Documentation (no build bump): SPEC now records the 2026-11-20 syntax decisions — `type` is alias-only,
+tagged unions are declared with `variant` and dispatched with `match` (first version: variant-only,
+one level, bindings/guards/exhaustiveness), `switch` keeps integers/enums, interface extension is
+`extend I with J;` (3.18) and field method promotion is `promote` for public methods only (3.19). The
+surface is decided but not implemented yet; implementation entries will follow.
+
 #### build 256 — 2026-11-20
 
 **A user copy constructor runs at every copying position, and a by-value struct argument is handed to the callee.**
