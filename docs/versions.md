@@ -27,6 +27,14 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 237 — 2026-11-19
+
+**Split `codegen_para.cpp` out of `codegen_stmt.cpp`.**
+
+`codegen_para.cpp` owns the `para` / `para for` lowering and `runtimeFn`; `codegen_stmt.cpp` keeps
+ordinary statement dispatch (725 lines). Pure move: emitted IR is identical for the same 30 cases
+(ignoring the `mulan.build` flag).
+
 #### build 236 — 2026-11-19
 
 **Split `parser_type.cpp` out of `parser_expr.cpp` (1185 lines).**
