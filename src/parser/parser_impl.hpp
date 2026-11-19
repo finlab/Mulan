@@ -290,6 +290,8 @@ private:
 
     // ------------------------------------------------------ types
 
+    // primitive type keywords (matches `mtypes.PRIM_NAMES`; `string` is the core.Str struct)
+    static const std::unordered_set<std::string>& prims();
     bool is_type_start(const Token& t) const;
     bool is_module_prefix(const std::string& s) const;
     TypeSpecPtr parse_type();

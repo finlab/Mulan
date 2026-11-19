@@ -67,6 +67,7 @@ add_executable(muc
   src/parser/parser_type_decl.cpp
   src/parser/parser_stmt.cpp
   src/parser/parser_expr.cpp
+  src/parser/parser_type.cpp
   src/parser/parser_directive.cpp
   src/sema/sema.cpp
   src/sema/sema_run.cpp

@@ -27,6 +27,14 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 236 — 2026-11-19
+
+**Split `parser_type.cpp` out of `parser_expr.cpp` (1185 lines).**
+
+`parser_type.cpp` owns the type syntax (`parse_type` and its parts, `prims()`, `clone_spec`,
+`make_named_spec`); `parser_expr.cpp` keeps the expression parser (781 lines). Pure move: emitted IR
+is identical for the same 30 cases (ignoring the `mulan.build` flag).
+
 #### build 235 — 2026-11-19
 
 **Split `codegen_cleanup.cpp` out of `codegen_runtime.cpp` (1273 lines).**
