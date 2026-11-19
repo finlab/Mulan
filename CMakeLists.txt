@@ -82,6 +82,7 @@ add_executable(muc
   src/sema/sema_iface.cpp
   src/sema/sema_stmt.cpp
   src/sema/sema_class2.cpp
+  src/sema/sema_for.cpp
   src/sema/sema_const.cpp
   src/sema/sema_expr.cpp
   src/sema/sema_member.cpp

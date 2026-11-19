@@ -27,6 +27,15 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 238 — 2026-11-19
+
+**Split `sema_for.cpp` out of `sema_class2.cpp` (1121 lines).**
+
+`sema_for.cpp` owns `check_for` and the two sequence-shape recognizers (`resolve_cursor_shape`,
+`resolve_index_shape`); `sema_class2.cpp` keeps the rest of the statement checks (897 lines) and its
+header now describes what it actually holds. Pure move: emitted IR is identical for the same 30 cases
+(ignoring the `mulan.build` flag).
+
 #### build 237 — 2026-11-19
 
 **Split `codegen_para.cpp` out of `codegen_stmt.cpp`.**
