@@ -2940,7 +2940,13 @@ Value d = Value.None;        // a unit alternative is a plain value
   `if o == Some(3)`, `if Some(3) == o`). A user function with the same name wins at a call site that has
   no such target, so existing code is unaffected (0.0.119; argument and comparison positions restored
   2026-11-19).
-- **Testing and extracting without a full `switch`**: `is` takes a pattern —
+- **`is` is an ordinary boolean expression unless it binds**: `o is Some`, `o is None` and
+  `a is Cat` are `bool` values, so they compose with `and` / `or` / `not`, sit in any condition
+  position (`if`, `while`, the condition of a C-style `for`, the `?:` selector) and may be stored.
+  The binding form (`o is Some(v)`) is the one exception: the bound name exists only inside that
+  branch, so the `is` must be the **whole** condition (`if o is Some and flag` is fine,
+  `if o is Some(v) and v > 0` must be nested).
+- **Testing and extracting without a full `match`**: `is` takes a pattern —
   `if o is Some { ... }` (tag only) or `if o is Some(v) { ... }` (binds the payload; the name is a
   local of that branch only; binding is allowed only when the `is` is the **whole** condition, so
   `if o is Some and flag` composes but `if o is Some(v) and v > 0` must be nested). `is` also tests a

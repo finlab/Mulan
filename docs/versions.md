@@ -42,7 +42,13 @@ headers state it, so the next variant helper is added with the same test.
 
 `option_basic` and `result_basic` now use `is Some` / `is Ok`.
 
-Full suite: **928/928 on Windows** (with `MUC_VERIFY_MEM=1`).
+Follow-up (tests and specification only, no build bump): `is` **without** a binding is an ordinary
+`bool`, so it composes with `and` / `or` / `not` and works in every condition position — that was
+already the behaviour, but nothing pinned it. Case `variant_is_logic` covers `and` / `or` / `not`, a
+stored `bool`, the `?:` selector, `while`, the condition of a C-style `for`, and a class-handle `is`
+with no binding; SPEC 10.1.1 now states the rule next to the binding exception.
+
+Full suite: **929/929 on Windows** (with `MUC_VERIFY_MEM=1`).
 
 #### build 263 — 2026-11-20
 
