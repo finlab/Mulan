@@ -1,5 +1,5 @@
-// option_basic — `std.option.Option<T>` (SPEC 10.1.1 variant + SPEC 3.15.3 generics): construction,
-// `match`, the helpers, a `string` payload (the value owns one reference) and a class payload.
+// option_basic — `std.option.Option<T>`: construction, the `is` presence test, the helpers, a `string`
+// payload (the value owns one reference) and `match`.
 unit option_basic;
 
 use std.option;
@@ -16,12 +16,14 @@ int inc(int x) { return x + 1; }
 int main() {
     Option<int> a = Some(3);
     Option<int> b = None;
-    printf("%d %d %d %d\n", is_some(a), is_some(b), std.option.unwrap_or(a, -1), std.option.unwrap_or(b, -1));
+    printf("%d %d %d %d\n", a is Some, b is Some, std.option.unwrap_or(a, -1),
+           std.option.unwrap_or(b, -1));
 
     // map / and_then keep `None` as `None`
-    printf("%d %d\n", std.option.unwrap_or(map(a, inc), 0), std.option.unwrap_or(and_then(a, half), 0));
+    printf("%d %d\n", std.option.unwrap_or(map(a, inc), 0),
+           std.option.unwrap_or(and_then(a, half), 0));
     Option<int> odd = Some(5);
-    printf("%d\n", is_none(and_then(odd, half)));
+    printf("%d\n", and_then(odd, half) is None);
 
     // a reference payload is owned by the option and released with it
     {

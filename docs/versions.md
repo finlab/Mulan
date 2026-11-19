@@ -27,6 +27,23 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 264 — 2026-11-20
+
+**`is_some` / `is_ok` are gone: presence is the language's `is` test.**
+
+Build 263 shipped `is_some` / `is_none` / `is_ok` / `is_err` next to `variant` + `match`. They were a
+second spelling of `o is Some` / `r is Ok` — and `is` is a `bool` usable anywhere a condition is
+(`while o is Some`, `printf("%d", a is Some)`, inside a generic body), so the helpers added no
+capability at all. They are removed: `std.option` now exposes `unwrap_or`, `expect`, `map`,
+`and_then`, and `std.result` exposes `unwrap_or`, `expect_ok`, `expect_err`, `map_ok`, `map_err`.
+
+The rule this settles: **presence is the operator, extraction/mapping is the library.** The unit
+headers state it, so the next variant helper is added with the same test.
+
+`option_basic` and `result_basic` now use `is Some` / `is Ok`.
+
+Full suite: **928/928 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 263 — 2026-11-20
 
 **`std.option` and `std.result`: `Option<T>` / `Result<T,E>` as the first library variants.**

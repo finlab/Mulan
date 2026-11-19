@@ -5,6 +5,7 @@
 // an operation failed, and `Option` when absence is the whole outcome.
 //
 // A `Result` is a value: it copies by value, and a reference payload is retained/released with it.
+// Presence is the language's test: `r is Ok` / `r is Err`; there is no `is_ok()` helper.
 //
 // Bridging to `std.option.Option` is a `match` (`Ok(v): Some(v); Err(e): None;`), not a helper: `ok` /
 // `err` are exactly the short names a user variable takes, and a helper that shadows one is worse
@@ -22,20 +23,6 @@ public class ResultError : Exception {
 public variant Result<T, E> {
     Ok T;
     Err E;
-}
-
-public bool is_ok<T, E>(Result<T, E> r) {
-    return match r {
-        Ok(v): true;
-        Err(e): false;
-    };
-}
-
-public bool is_err<T, E>(Result<T, E> r) {
-    return match r {
-        Ok(v): false;
-        Err(e): true;
-    };
 }
 
 // The success value, or `fallback` when the result failed.

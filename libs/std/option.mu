@@ -4,9 +4,10 @@
 // lifetime is the type system's job (a reference payload is retained and released with the value),
 // and one definition serves every `T`. `None` carries no payload, so no sentinel is ever needed.
 //
-// Dispatch with `match`; the helpers below cover the common cases. Every helper takes the option by
-// value, so a reference payload is copied (one retain/release pair), not borrowed: pass values, not
-// containers meant to be observed in place.
+// Presence is the language's own test: `o is Some` / `o is None` (a `bool`, usable anywhere a
+// condition is). There is deliberately no `is_some()` helper — that would be a second spelling of the
+// operator. Dispatch with `match`; the helpers below cover value extraction and mapping. Every helper
+// takes the option by value, so a reference payload is copied (one retain/release pair), not borrowed.
 
 public unit std.option;
 
@@ -18,20 +19,6 @@ public class OptionError : Exception {
 public variant Option<T> {
     Some T;
     None;
-}
-
-public bool is_some<T>(Option<T> o) {
-    return match o {
-        Some(v): true;
-        None: false;
-    };
-}
-
-public bool is_none<T>(Option<T> o) {
-    return match o {
-        Some(v): false;
-        None: true;
-    };
 }
 
 // The payload, or `fallback` when the option is `None`. Both branches have type `T`, so this is the

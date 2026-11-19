@@ -1,5 +1,5 @@
 // result_basic — `std.result.Result<T,E>`: an error payload instead of `None`, the helpers, and the
-// `Option` bridge written with `match`. Direct reads use `match` too.
+// `Option` bridge written with `match`. Presence is the language's `is` test, not a helper.
 unit result_basic;
 
 use std.result;
@@ -17,7 +17,7 @@ int main() {
     Result<int, int> good = divide(10, 2);
     Result<int, int> bad = divide(10, 0);
 
-    printf("%d %d %d %d\n", is_ok(good), is_err(bad), std.result.unwrap_or(good, 0),
+    printf("%d %d %d %d\n", good is Ok, bad is Err, std.result.unwrap_or(good, 0),
            std.result.unwrap_or(bad, 0));
 
     // the error value is data, not just a flag
