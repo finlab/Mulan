@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 261 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 262 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -1259,6 +1259,9 @@ Box<int> b = new Box<int>(7);    // generic class construction
 
 - **A free function call may omit the type arguments**; they are then inferred from the argument types
   (build 251). An explicit list is always used as written and is never checked by inference.
+- **A generic function can be qualified with its unit** (`std.option.unwrap_or(o, d)`), with or without
+  an explicit list (`std.option.unwrap_or<int>(o, 0)`), exactly like an ordinary function; two visible
+  templates of one name make the unqualified call ambiguous, and qualifying picks one (build 262).
 - **Inference is structural and argument-driven**: every argument type is matched against its declared
   parameter *pattern*, top-down, and each type parameter is bound at its first occurrence:
   - a bare parameter `T` binds the argument type itself; a `const` argument binds the same `T` (the

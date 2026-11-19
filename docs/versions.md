@@ -27,6 +27,24 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 262 — 2026-11-20
+
+**A generic function can be called through its unit name.**
+
+`std.option.unwrap_or(o, d)` failed with "unit `std.option` has no function `unwrap_or`": a template
+lives in the template table, not in the unit's overload list, and the qualified call path only looked
+at the latter — so the "qualify it with a unit name" diagnostic pointed at a spelling that did not
+resolve. Two standard-library units exporting the same helper (`unwrap_or` for `Option` and for
+`Result`) hit this immediately.
+
+The qualified path now falls back to the template table and instantiates like the unqualified one
+(inferred or explicit type arguments). The parser also accepts an explicit list on a qualified callee
+(`unit.f<int>(x)`): `<` after a member chain is tried as type arguments only when a call follows, so
+`a.b < c` stays a comparison. Case `generic_qualified` (two units exporting `pick<T>`, called
+qualified, inferred and explicit).
+
+Full suite: **926/926 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 261 — 2026-11-20
 
 **`extend I with J;` gives `I`'s implementors `J`'s default methods (SPEC 3.18).**

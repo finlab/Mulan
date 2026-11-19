@@ -413,20 +413,25 @@ ExprPtr Parser::parse_postfix_tail(ExprPtr e) {
     for (;;) {
         const Token t = peek();
         // Count only an actual link, so a chain of exactly `kMaxChainLinks` links is accepted (#105).
+        // `f<int>(...)`, and a qualified call `unit.f<int>(...)`: the unit prefix parses as a Name, so
+        // the whole callee is a Member whose `<` must be tried as type arguments too.
+        const bool type_arg_candidate = dynamic_cast<Name*>(e.get()) || dynamic_cast<Member*>(e.get());
         const bool starts_link =
             t.is_op("(") || t.is_op("[") || t.is_op("->") || t.is_op(".") || t.is_kw("as") ||
-            (t.is_op("<") && pending_type_args.empty() && dynamic_cast<Name*>(e.get()));
+            (t.is_op("<") && pending_type_args.empty() && type_arg_candidate);
         if (!starts_link) break;
         note_link(links, "expression");
         // generic call: `name<...>(`. If the trial parse fails, fall back to a comparison expression.
-        if (t.is_op("<") && pending_type_args.empty() && dynamic_cast<Name*>(e.get())) {
+        if (t.is_op("<") && pending_type_args.empty() && type_arg_candidate) {
             const std::size_t save = pos_;
             bool ok = false;
             try {
                 std::vector<TypeSpecPtr> args = parse_type_args();
                 // `f<int>(...)` or a generic sum alternative `Option<int>.Some(...)` / `Option<int>.None`:
-                // the type arguments belong to the call or the member access.
-                if (at_op("(") || (at_op(".") && peek(1).kind == TokKind::Ident)) {
+                // the type arguments belong to the call or the member access. A qualified callee
+                // (`unit.f<int>(...)`) only takes the call form: `a.b < c` must stay a comparison.
+                const bool member_callee = dynamic_cast<Member*>(e.get()) != nullptr;
+                if (at_op("(") || (!member_callee && at_op(".") && peek(1).kind == TokKind::Ident)) {
                     pending_type_args = std::move(args);
                     ok = true;
                 }

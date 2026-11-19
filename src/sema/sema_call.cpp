@@ -523,13 +523,36 @@ namespace muc_detail {
 
             UnitInfo& ui = infos_.at(uname);
             auto f = ui.funcs.find(m->name);
+            FuncDecl* chosen = nullptr;
             if (f == ui.funcs.end() || f->second.empty()) {
-                err("unit `" + uname + "` has no function `" + m->name + "`", c);
-            }
-            FuncDecl* chosen = choose_overload(f->second, raw_args(c->args),
-                                               "function `" + uname + "." + m->name + "`", c);
-            if (!chosen->is_public) {
-                err("function `" + uname + "." + m->name + "` is not declared public", c);
+                // A generic function's template is not an overload entry: it lives in the template
+                // table. Qualified calls must reach it, otherwise the "qualify it with a unit name"
+                // diagnostic points at a spelling that does not resolve (two stdlib units may both
+                // export `unwrap_or`, say).
+                auto* gf = dynamic_cast<FuncDecl*>(find_generic_template(uname + "." + m->name, cur_));
+                if (!gf) err("unit `" + uname + "` has no function `" + m->name + "`", c);
+                if (!gf->is_public) {
+                    err("function `" + uname + "." + m->name + "` is not declared public", c);
+                }
+                std::vector<TypeSpecPtr> targs;
+                for (const auto& ta : c->type_args) targs.push_back(clone_type_spec(*ta));
+                if (targs.empty()) {
+                    std::string where;
+                    auto iu = infos_.find(uname);
+                    where = ((iu != infos_.end() && iu->second.unit) ? iu->second.unit->filename
+                                                                     : uname) +
+                            ":" + std::to_string(gf->line) + ":" + std::to_string(gf->col);
+                    targs = infer_func_type_args(
+                        c, gf, uname + "." + m->name,
+                        "\n  note: the template is declared at " + where);
+                }
+                chosen = instantiate_func(c, uname + "." + m->name, cur_, targs);
+            } else {
+                chosen = choose_overload(f->second, raw_args(c->args),
+                                         "function `" + uname + "." + m->name + "`", c);
+                if (!chosen->is_public) {
+                    err("function `" + uname + "." + m->name + "` is not declared public", c);
+                }
             }
             auto nm = dynamic_cast<Name*>(obj);
             nm->kind = "unit";
