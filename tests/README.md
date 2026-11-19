@@ -114,9 +114,9 @@ Notes per kind:
   are stripped before comparison:
   - `@exit <code>` — the run must end with this exit code (default `0`; a case whose documented
     behaviour is abnormal termination writes `@exit 3`, the status `muc`-generated code exits with);
-  - `@stderr-contains <text>` — the run's stderr must contain this substring; stderr is not compared
-    line by line, so a case that pins a runtime message (the uncaught-exception report, a bounds
-    message) names only what it needs;
+  - `@stderr-contains <text>` — the run's stderr must contain this substring; only the named part is
+    asserted (stdout is what the body of the file compares), so a case that pins a runtime message
+    (the uncaught-exception report, a bounds message) names just what it needs;
   - `@ <args>` — extra options appended to the `muc build` command (for example `@ --bounds=off`).
 - **C ABI (`tests/abi/`)**: both sides are really different compilers' object files, which is what
   checks the C ABI of `extern` / `export` aggregates (byval / sret) — something no single-language

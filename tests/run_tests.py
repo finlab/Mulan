@@ -369,15 +369,18 @@ def abnormal_exit(rc: int) -> bool:
 def stderr_needles(path: Path) -> list[str]:
     """`@stderr-contains <text>` marker lines: substrings the run's stderr must contain.
 
-    stderr is not compared line by line (the compiler writes its status lines there), so a case that
-    pins a runtime message — the uncaught-exception report, a bounds message — lists what it expects.
+    stdout is what the body of the file compares; stderr is only searched, because it carries the
+    compiler's own lines as well. A case that pins a runtime message — the uncaught-exception report,
+    a bounds message — lists just the part it needs.
     """
     needles: list[str] = []
     with open(path, "r", encoding="utf-8", newline="") as f:
         for raw in f.read().splitlines():
             line = raw.strip()
             if line.startswith("@stderr-contains"):
-                needles.append(line[len("@stderr-contains"):].strip())
+                text = line[len("@stderr-contains"):].strip()
+                if text:  # an empty needle would match anything
+                    needles.append(text)
     return needles
 
 
