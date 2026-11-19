@@ -27,6 +27,34 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 266 — 2026-11-20
+
+**`std.mem`: element-wise `copy` / `fill` / `compare` / `align_up`.**
+
+The first L2 unit that works on the elements of a managed sequence rather than on bytes. Element
+assignment goes through the language, so a reference element is retained/released exactly as a
+hand-written `dst[i] = src[i]` would do; a raw byte copy remains `T[].ptr()` plus `cstd.string.memcpy`
+and is only valid for a trivial element type.
+
+- `copy<T>(dst, src)` copies `src.length()` elements into `dst` from index 0. A shorter destination
+  throws the loop's own `BoundsError`, so there is no separate check and no second diagnostic.
+  Overlapping ranges are not supported (the copy runs front to back, it is not `memmove`).
+- `fill<T>(dst, value)` assigns one value to every element.
+- `compare<T: IOrder>(a, b)` is lexicographic: -1 / 0 / 1, with a prefix sorting before the longer
+  sequence. The constraint is what build 265 fixed: `IOrder` lives in `std.interfaces`, which `std.mem`
+  imports but its callers need not.
+- `align_up(n, alignment)` rounds up and throws `MemError` for a non-power-of-two alignment instead of
+  returning a silently misaligned value.
+
+`zero(dst)` is **not** provided: a type parameter has no zero value (`T()` is not defined for every
+`T`), and `new T[n]` already yields a zeroed array. Offset copies are deferred until a container needs
+them.
+
+Case `mem_basic` (scalars, a `string` element type, the short-destination error, the prefix rule and
+both `align_up` paths).
+
+Full suite: **931/931 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 265 — 2026-11-20
 
 **A generic bound is resolved in the unit that declares it, not at the call site.**
