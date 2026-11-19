@@ -27,6 +27,15 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 242 — 2026-11-19
+
+**Split `target.cpp` / `target.hpp` out of `main.cpp` (1006 lines).**
+
+The target/platform layer moves out of the driver: `TargetInfo`, triple parsing and normalization,
+host detection, the cross-target checks and the post-link checks (output format, ELF interpreter, ABI)
+now live in `target.hpp` / `target.cpp`; `main.cpp` keeps the CLI and the build driver (704 lines).
+Pure move, no behaviour change: the CLI checks (`tests/cli/*.py`, 9/9) and the full suite pass.
+
 #### build 241 — 2026-11-19
 
 **Split `type_traits.cpp` out of `types.cpp` (1032 lines).**

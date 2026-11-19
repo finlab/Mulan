@@ -55,6 +55,7 @@ message(STATUS "muc: LLVM ${LLVM_PACKAGE_VERSION} (${LLVM_INSTALL_PREFIX})")
 
 add_executable(muc
   src/main.cpp
+  src/target.cpp
   src/loader.cpp
   src/directive.cpp
   src/ast/ast_clone.cpp
