@@ -979,8 +979,9 @@ class Button : Widget, IFocusable { ... }     // the first is a class, the rest 
     requires it on every interface method.
   - Two unrelated interfaces providing defaults with the same signature must be resolved explicitly, exactly as for a
     class; a default on a derived interface refines the base interface's default and wins.
-  - Methods whose signature mentions `Self` are never materialized: a value type cannot spell itself in that position,
-    so such a method must be implemented explicitly.
+  - A default is materialized when its body reads `this` **or** its signature mentions `Self`: neither
+    form has an itable slot (object safety, 3.15.6), so materialization is the only way to reach its body.
+    The clone's `Self` slots are substituted with `S` (build 248).
 - `for-in` does not depend on interfaces for the **static** path: a container with `iterator()` and a struct cursor
   is iterated with static dispatch and zero allocation (6.4.2). A cursor that is an **interface value**
   (`IIterator<T>`, the shape `IIterable<T>` returns) is iterated through the itable — same loop, dynamic dispatch,
@@ -1357,7 +1358,8 @@ type `Money` does not satisfy `IAdd` for type parameter `T`: no `operator+` acce
 - As a dynamic interface type, a method containing `Self` **does not enter the itable** (object safety):
   its parameter/return types differ per implementor, so it has no slot in the global signature-keyed
   table. The same holds for an interface default whose **body reads `this`** (the receiver is used as
-  `Self`): it is materialized per implementor instead. Calling such a member through an interface value
+  `Self`). Both forms are **materialized per implementor** instead — a struct gets an ordinary method,
+  a class gets one too (it takes no itable slot). Calling such a member through an interface value
   is a compile error that points at the concrete type; the other members of the same interface remain
   dispatchable, so the interface itself stays usable as a value type for them.
 - `Self` may only be used bare (`Self x`); nesting is not supported yet (`Self[]`).

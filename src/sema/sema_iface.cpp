@@ -120,7 +120,9 @@ namespace muc_detail {
         std::vector<MethodSig> done;
         for (const auto& chain : chains) {
             for (const auto& req : chain->methods) {
-                if (req.is_operator || !req.body_self) continue;
+                // A default that reads `this`, or whose signature mentions `Self`, has no itable slot
+                // (SPEC 3.15.6), so the dynamic form cannot reach its body: materialize it per implementor.
+                if (req.is_operator || !(req.body_self || mentions_self(req))) continue;
                 bool dup = false;
                 for (const auto& d : done) dup = dup || same_sig(d, req);
                 if (dup) continue;
@@ -199,15 +201,10 @@ namespace muc_detail {
                 // (a class keeps it mandatory — it says "this overrides the base chain").
                 continue;
             }
-            // `Self` denotes the implementor type; a value type cannot spell itself in that position
-            // (no interface value exists for a struct), so such a signature still needs an explicit
-            // implementation — and a default returning `this` would not typecheck anyway.
-            if (mentions_self(*req)) {
-                err("struct `" + sd->name + "` must implement `" + sig_text(want) + "` of interface `" +
-                        itf_name + "`",
-                    sd);
-                continue;
-            }
+            // Both kinds of default are materialized here: a `Self` in the signature is substituted with
+            // this struct (`impl_sig`), and a body that reads `this` already has the right receiver.
+            // Neither form has an itable slot (SPEC 3.15.6), so materialization is the only way to reach
+            // the default body.
             // One provider per chain, most derived first; a chain whose default refines another chain's
             // replaces it (same rule as for classes). Two unrelated providers must be resolved
             // explicitly: picking one silently would make the program depend on declaration order.

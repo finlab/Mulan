@@ -77,6 +77,21 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   get one diagnostic that says the C-style form requires the parentheses. Must-fail case
   `for_paren_required`; SPEC 6.4 states it explicitly.
 
+#### build 248 — 2026-11-19
+
+**An interface default whose signature mentions `Self` is materialized per implementor.**
+
+`Self self_val() { return this; }` / `bool same_core(Self o) { … }` in an interface used to be ignored
+for the implementor: the struct path bailed out with "must implement", so every implementor had to
+repeat the body, and the diagnostic looked as if the default had never been written (`#120`). A default
+in that shape has no itable slot (object safety), exactly like a default whose body reads `this` — both
+are now materialized: the struct gets an ordinary method, and the class path materializes the signature
+form too (previously it only handled `body_self`). `impl_sig` substitutes `Self` with the implementor in
+the return type and in every parameter, so the clone is an ordinary method that the normal passes check
+and emit. Run case `iface_default_self` (struct and class; `Self` as return type, as a parameter and in
+both positions; a struct with a `string` field, so the returned copy owns its value). SPEC 3.10/3.15.6
+updated.
+
 #### build 247 — 2026-11-19
 
 **`?:` copies a borrowed branch through the user copy constructor.**

@@ -1,0 +1,7 @@
+struct 3 s
+same 1
+diff 0
+dup 4
+class 7
+class same 1
+class dup 7
