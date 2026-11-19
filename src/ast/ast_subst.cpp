@@ -63,6 +63,15 @@ void subst_expr(Expr& e, const TypeBindings& b) {
         subst_expr(*p->operand, b);
         return;
     }
+    if (auto p = dynamic_cast<MoveExpr*>(&e)) {
+        subst_expr(*p->operand, b);
+        return;
+    }
+    if (auto p = dynamic_cast<SwapExpr*>(&e)) {
+        subst_expr(*p->a, b);
+        subst_expr(*p->b, b);
+        return;
+    }
     if (auto p = dynamic_cast<Binary*>(&e)) {
         subst_expr(*p->left, b);
         subst_expr(*p->right, b);

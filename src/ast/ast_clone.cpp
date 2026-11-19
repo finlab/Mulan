@@ -211,7 +211,9 @@ ExprPtr clone_expr(const Expr& e) {
         auto r = mk<MoveExpr>(e);
         r->operand = clone_expr(*p->operand);
         // `moved` names the source local of the *original* body; the instantiated body binds its own
-        // parameters and locals, so sema fills this in again when it checks the clone.
+        // parameters and locals. sema re-resolves the operand when it checks the clone, but the field
+        // is cleared here so a stale template-local pointer can never reach codegen.
+        r->moved = nullptr;
         return r;
     }
     if (auto p = dynamic_cast<const SwapExpr*>(&e)) {

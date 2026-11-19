@@ -27,6 +27,20 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 231 — 2026-11-19
+
+**Completed the `move` / `swap` instantiation fix (build 230 follow-up).**
+
+- `MoveExpr::moved` is explicitly cleared when the node is cloned, so a stale template-local pointer
+  can never reach codegen even if a clone is ever used without being re-checked; sema still re-resolves
+  it while checking the instantiated body (the clone comment now says exactly that).
+- `ast_subst` descends into `MoveExpr` / `SwapExpr` operands like every other node. A type spec under
+  them is unreachable with today's grammar (`move` takes a whole name, `swap` takes lvalues), so this
+  closes the hole rather than fixing an observable bug.
+- Run case `generic_move_expr` grew: `swap` inside a class generic's *method* body, and a move-only
+  element type (`nocopy struct` with a move constructor) crossing the generic boundary.
+- Full suite: **865/865 on Windows**, **863/863 on Linux**.
+
 #### build 230 — 2026-11-19
 
 **Split `parser_unit.cpp` (1273 lines) into unit-level parsing and type declarations.**
@@ -44,6 +58,8 @@ a generic whose body contains either used to abort with "AST node kind not handl
 instantiator" (`MoveExpr` had no clone case, `SwapExpr` neither). The move clone drops `moved`: it names
 a local of the original body, and the instantiated body binds its own parameters and locals, so sema
 resolves it again. New run case `generic_move_expr`; full suite **864/864 on Windows**.
+(The fix has its own commit; an earlier `git add -A` swept it into an unrelated parser-split commit,
+which was then rewritten to keep the two changes apart.)
 
 #### build 229 — 2026-11-19
 
