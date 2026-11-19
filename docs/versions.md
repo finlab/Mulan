@@ -77,6 +77,13 @@ meant to demonstrate. Full suite: **873/873 on Windows** (with `MUC_VERIFY_MEM=1
   get one diagnostic that says the C-style form requires the parentheses. Must-fail case
   `for_paren_required`; SPEC 6.4 states it explicitly.
 
+#### build 252 — 2026-11-19
+
+**Dropped the unused signed integer literal parser.** `parse_digits` in `lexer.cpp` had no caller
+since the literal range checks moved to `parse_digits_u64` (build 250); a cold build reported it as
+`-Wunused-function`. Removing it is the only change — no diagnostic and no accepted input differs.
+Full suite: **887/887 on Windows**.
+
 #### build 251 — 2026-11-19
 
 **The type arguments of a free generic function call are inferred from the argument types** (SPEC

@@ -90,25 +90,7 @@ std::string strip_underscores(const std::string& s) {
     return out;
 }
 
-// equivalent to Python's int(digits, base) (overflow wraps at 64 bits; normal source never reaches it)
-long long parse_digits(const std::string& digits, int base) {
-    unsigned long long v = 0;
-    const unsigned long long maxv = 9223372036854775807ULL;  // same as the Python version: limit 2^63-1
-    for (char c : digits) {
-        int d = -1;
-        if (c >= '0' && c <= '9') d = c - '0';
-        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
-        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
-        if (d < 0 || d >= base) continue;
-        if (v > (maxv - static_cast<unsigned long long>(d)) / static_cast<unsigned long long>(base)) {
-            throw std::overflow_error("integer literal out of range");
-        }
-        v = v * static_cast<unsigned long long>(base) + static_cast<unsigned long long>(d);
-    }
-    return static_cast<long long>(v);
-}
-
-// Unsigned 64-bit parse for the `ul` suffix: the same routine with the 2^64-1 ceiling.
+// Unsigned 64-bit parse for the `ul` suffix: ceiling 2^64-1.
 unsigned long long parse_digits_u64(const std::string& digits, int base) {
     unsigned long long v = 0;
     const unsigned long long maxv = 18446744073709551615ULL;
