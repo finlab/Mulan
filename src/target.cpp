@@ -2,6 +2,12 @@
 // Copyright 2026 Zhang Guolong
 
 // Target triples, the host target and target/platform consistency (see target.hpp).
+//
+// owns:      `TargetInfo` and its API: triple parsing and normalization, host detection, the
+//            cross-target checks and the post-link checks (output format, ELF interpreter, ABI)
+// not:       any compiler phase; argument parsing and the build driver live in main.cpp
+// pass:      driver
+// concept:   target, platform
 
 #include "target.hpp"
 
