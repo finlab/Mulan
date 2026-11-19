@@ -852,7 +852,7 @@ namespace muc_detail {
     // set, bindings, guards and exhaustiveness are identical; only the arm body differs.
     void Sema::check_match_common(Expr* scrut, std::vector<std::unique_ptr<MatchArm>>& arms,
                                   bool& has_else, bool& match_ref, bool expression_form, Node* at,
-                                  TypePtr& value_ty) {
+                                  TypePtr& value_ty, const TypePtr& expected) {
         ScopeGuard guard(*this);
         TypePtr st = check_expr(scrut);
         if (!st) err("match is missing the value to dispatch on", at);
@@ -887,7 +887,9 @@ namespace muc_detail {
         }
         std::vector<int> seen(st->sum_names.size(), 0);
         std::vector<int> unguarded_seen(st->sum_names.size(), 0);
-        TypePtr result;
+        // A target-typed `match` (`Option<int> o = match r { ... }`) hands its type to every arm, so a
+        // bare alternative name (`Some(v)`) resolves without spelling the type out (SPEC 10.1.1).
+        TypePtr result = (expected && expected->kind == TypeKind::Sum) ? expected : nullptr;
         bool result_void = false;
         for (auto& arm : arms) {
             if (arm->is_else) {
@@ -896,7 +898,7 @@ namespace muc_detail {
                 has_else = true;
                 push();
                 if (expression_form) {
-                    TypePtr t = check_expr(arm->value.get());
+                    TypePtr t = check_expr(arm->value.get(), result);
                     if (!t) err("the `else` arm has no value", arm.get());
                     if (result && !same_type_sig(result, t)) {
                         err("match arms must have the same type (found `" + result->str() + "` and `" +
@@ -951,7 +953,7 @@ namespace muc_detail {
             }
             if (arm->guard) check_cond(arm->guard.get(), "match guard");
             if (expression_form) {
-                TypePtr t = check_expr(arm->value.get());
+                TypePtr t = check_expr(arm->value.get(), result);
                 if (!t) err("match arm has no value", arm.get());
                 if (is_void(t)) result_void = true;
                 if (result && !same_type_sig(result, t)) {
@@ -982,10 +984,10 @@ namespace muc_detail {
         value_ty = expression_form ? result : t_void();
     }
 
-    TypePtr Sema::check_match(MatchExpr* m) {
+    TypePtr Sema::check_match(MatchExpr* m, const TypePtr& expected) {
         TypePtr ty;
         check_match_common(m->scrut.get(), m->arms, m->has_else, m->match_ref,
-                           /*expression_form=*/true, m, ty);
+                           /*expression_form=*/true, m, ty, expected);
         m->sty = m->scrut->ty;
         return ty;
     }
@@ -993,7 +995,7 @@ namespace muc_detail {
     void Sema::check_match_stmt(MatchStmt* m) {
         TypePtr ty;
         check_match_common(m->scrut.get(), m->arms, m->has_else, m->match_ref,
-                           /*expression_form=*/false, m, ty);
+                           /*expression_form=*/false, m, ty, nullptr);
         m->sty = m->scrut->ty;
     }
 

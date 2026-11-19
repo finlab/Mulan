@@ -9,7 +9,7 @@
 > `agents/stdlib/c-bindings.md`, `agents/stdlib/interfaces.md`, `agents/stdlib/style.md`,
 > `agents/stdlib/task.md`, `agents/stdlib/backlog.md`.
 
-> Status: draft, current through build 145 (2026-11-16). Companion to the language specification:
+> Status: draft, current through build 263 (2026-11-20). Companion to the language specification:
 > `docs/SPEC.md` says what a program *means*; this file says what the library *provides*.
 > **Boundary test**: delete the library, and a program that uses none of it must still be fully
 > specified by `docs/SPEC.md` alone.
@@ -25,7 +25,7 @@ A unit belongs to exactly one layer. The unit-name prefix makes the layer visibl
 | **L0 ABI types** | `std.ctypes` | C-side widths, per platform | implemented |
 | **L1 raw C bindings** | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | a **separate library** (`libs/cstd/`): C semantics — sentinel returns, `errno`, caller-owned buffers, no checks, no exceptions, no ownership | implemented for Windows/UCRT and Linux/glibc |
 | **L1 platform C** | `#if` arms inside the same `cstd.*` unit files | the same C library where the targets disagree; the shared declarations are written once and only the differing ones sit in an arm | Windows and Linux implemented; other targets fail with `#error` |
-| **L2 native API** | `std.string`, `std.fmt`, `std.io`, `std.collections`, `std.fs`, `std.parse`, `std.random`, `std.unicode`, `std.time` | Mulan semantics: exceptions, bounds checks, explicit state, value types where possible | `string` implemented, the rest planned |
+| **L2 native API** | `std.string`, `std.option`, `std.result`, `std.fmt`, `std.io`, `std.collections`, `std.fs`, `std.parse`, `std.random`, `std.unicode`, `std.time` | Mulan semantics: exceptions, bounds checks, explicit state, value types where possible | `string`, `option`, `result` implemented, the rest planned |
 | **L3 runtime contracts** | `std.exception`, `std.interfaces`, `std.task`, `std.thread` | The minimum the compiler and the runtime need; implicitly loaded | implemented |
 
 Rules:

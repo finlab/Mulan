@@ -23,7 +23,7 @@ namespace muc_detail {
     }
 
     TypePtr Sema::check_expr_impl(Expr* e, const TypePtr& expected) {
-        if (auto m = dynamic_cast<MatchExpr*>(e)) return check_match(m);
+        if (auto m = dynamic_cast<MatchExpr*>(e)) return check_match(m, expected);
         if (auto il = dynamic_cast<IntLit*>(e)) {
             // A `2^63` magnitude is only meaningful directly after unary `-`; the parser consumes it
             // there, so one reaching this point is out of range.

@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 262 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 263 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -2987,6 +2987,8 @@ int x = match v {
   variant, and `v` cannot be used afterwards.
 - A guard is evaluated after the bindings; when it fails, matching continues with the next arm. An
   arm with a guard does **not** cover its alternative for exhaustiveness.
+- **A match expression accepts a target type**: in `Option<int> o = match r { Ok(v): Some(v); Err(e): None; };`
+  the declared type is handed to every arm, so bare alternative names resolve (build 263).
 - **Exhaustiveness is mandatory** (unless the match has an `else`): every alternative must be
   covered, and a missing one is a compile error naming it. There is at most one `else`, and it is
   last; an `else` after a fully covered match is unreachable and warns.

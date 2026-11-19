@@ -27,6 +27,33 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 263 — 2026-11-20
+
+**`std.option` and `std.result`: `Option<T>` / `Result<T,E>` as the first library variants.**
+
+Two L2 units built on `variant` + `match` (SPEC 10.1.1), each an explicit `use` (they are not
+implicitly loaded):
+
+- `std.option`: `variant Option<T> { Some T; None; }`, `is_some`, `is_none`, `unwrap_or`, `expect`
+  (throws `OptionError`), `map`, `and_then`.
+- `std.result`: `variant Result<T,E> { Ok T; Err E; }`, `is_ok`, `is_err`, `unwrap_or`, `expect_ok` /
+  `expect_err` (throw `ResultError`), `map_ok`, `map_err`.
+
+Design notes: both are values, so a reference payload is owned by the envelope and released with it;
+`unwrap_or` is the only helper that works without a default value, and `expect*` is for failures that
+are programming errors. No `ok()`/`err()` conversion helpers: `ok`/`err` are exactly the short names a
+user variable takes, so the bridge is written as a three-line `match` instead of adding a name that
+shadows. Two visible units both exporting `unwrap_or` is legal but calls must then be qualified
+(`std.option.unwrap_or`), which build 262 made possible.
+
+Also in this build: a **match expression accepts its target type**, so
+`Option<int> o = match r { Ok(v): Some(v); Err(e): None; };` resolves the bare alternative names.
+
+Cases `option_basic` (helpers, a `string` payload, `match`) and `result_basic` (error payload,
+`map_ok`/`map_err`, `expect_ok`, a `match` bridge to `Option`).
+
+Full suite: **928/928 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 262 — 2026-11-20
 
 **A generic function can be called through its unit name.**
