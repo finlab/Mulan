@@ -241,8 +241,18 @@ namespace muc_detail {
             if (!c->type_args.empty()) {
                 // Generic function takes precedence; otherwise it is treated as value construction of a generic struct
                 Decl* tdecl = find_generic_template(nm->ident, cur_);
-                if (dynamic_cast<FuncDecl*>(tdecl)) {
-                    target = instantiate_func(c, nm->ident, cur_, c->type_args);
+                if (auto* gf = dynamic_cast<FuncDecl*>(tdecl)) {
+                    if (c->type_args.size() < gf->type_params.size()) {
+                        // `f<int>(...)`: the leading explicit arguments are fixed; the rest are
+                        // inferred from the ordinary argument types (SPEC 3.15.3).
+                        std::vector<TypePtr> prebound;
+                        for (auto& ta : c->type_args) prebound.push_back(resolve_type(ta.get(), cur_));
+                        std::vector<TypeSpecPtr> inferred = infer_func_type_args(
+                            c, gf, nm->ident, std::string(), prebound);
+                        target = instantiate_func(c, nm->ident, cur_, inferred);
+                    } else {
+                        target = instantiate_func(c, nm->ident, cur_, c->type_args);
+                    }
                     nm->kind = "func";
                     nm->sym = target;
                 } else {

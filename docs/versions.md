@@ -27,6 +27,17 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 283 — 2026-11-21
+
+**Partial explicit type arguments: `f<int>(...)` infers the remaining ones.**
+
+- `infer_func_type_args` accepts a list of pre-bound leading types. The explicit positions are treated
+  as concrete: inference neither rebinds them nor reports them as inferred, and a disagreement is the
+  ordinary argument error after instantiation.
+- New cases: `generic_partial_infer` (run) and `generic_partial_uninferable` (must-fail). SPEC 3.15.3
+  documents the prefix form.
+- Full suite: 937/937 with `MUC_VERIFY_MEM=1`.
+
 #### build 282 — 2026-11-21
 
 **`std.cursor`: build an ad-hoc cursor from two closures.**

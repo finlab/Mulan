@@ -106,7 +106,8 @@ bool instance_matches(const std::string& spec_name, const TypePtr& at,
 }  // namespace
 
 std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, const std::string& name,
-                                                    const std::string& note) {
+                                                    const std::string& note,
+                                                    const std::vector<TypePtr>& prebound) {
     const std::vector<TypeParam>& tps = tmpl->type_params;
     if (!c->named.empty()) {
         err("function calls do not support named arguments (only struct construction does)", c);
@@ -122,6 +123,13 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
     }
 
     std::vector<TypePtr> bound(tps.size());
+    std::vector<bool> fixed(tps.size(), false);  // supplied explicitly by `f<int>(...)`
+    for (size_t k = 0; k < prebound.size() && k < bound.size(); ++k) {
+        if (prebound[k]) {
+            bound[k] = prebound[k];
+            fixed[k] = true;
+        }
+    }
     std::vector<size_t> bound_at(tps.size(), 0);  // which argument bound it (for the conflict message)
     const TypeSpec* bad_pat = nullptr;
     int conflict_param = -1;
@@ -151,6 +159,9 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
                         return Match::Shape;
                     }
                     const size_t ki = static_cast<size_t>(k);
+                    // An explicit argument is a concrete type here: the ordinary argument check
+                    // reports a disagreement after instantiation, with the parameter name.
+                    if (fixed[ki]) return Match::Ok;
                     if (!bound[ki]) {
                         bound[ki] = without_top_const(at);
                         bound_at[ki] = current_arg;
@@ -327,6 +338,8 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
     for (size_t k = 0; k < tps.size(); ++k) {
         const TypeParam& tp = tps[k];
         if (tp.bounds.empty()) continue;
+        // Explicit arguments are checked by the instantiation path; do not report them as "inferred".
+        if (fixed[k]) continue;
         std::string why;
         if (tp.op == TypeParam::Op::Or) {
             bool any = false;

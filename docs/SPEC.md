@@ -1229,7 +1229,11 @@ Box<int> b = new Box<int>(7);    // generic class construction
 ```
 
 - **A free function call may omit the type arguments**; they are then inferred from the argument types
-  (build 251). An explicit list is always used as written and is never checked by inference.
+  (build 251). **It may also write only a prefix** (`max2<int>(...)`): the leading arguments are fixed
+  as written and the rest are inferred from the argument types (build 283). The explicit positions
+  are treated as concrete types — inference neither rebinds them nor reports them as inferred; a
+  disagreement is the ordinary argument error after instantiation. A full explicit list is always
+  used as written.
 - **A generic function can be qualified with its unit** (`std.option.unwrap_or(o, d)`), with or without
   an explicit list (`std.option.unwrap_or<int>(o, 0)`), exactly like an ordinary function; two visible
   templates of one name make the unqualified call ambiguous, and qualifying picks one (build 262).
