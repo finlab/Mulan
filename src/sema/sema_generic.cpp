@@ -419,14 +419,14 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
                                "` infinitely large (store a pointer or a class handle instead)",
                            spec);
                 }
-                // A payload may own a resource as long as it can be moved: construction transfers it
-                // with `Some(move v)`, a match binding moves it out, and the tag-aware destructor only
-                // destroys the active alternative. Only an immovable type (a `nomove` struct) cannot be
-                // stored by value.
-                if (!ft->movable()) {
+                // A payload may own a resource as long as it can be copied or moved: a copyable value
+                // is copied into the variant (and the variant is then copyable), a move-only value is
+                // transferred with `Some(move v)` and moved out by `match move`. Only a value that is
+                // neither (both `nocopy` and `nomove`) cannot be stored by value.
+                if (!ft->copyable() && !ft->movable()) {
                     err_ts("payload of alternative `" + alt.name + "` is `" + ft->str() +
-                               "`, which is not movable and cannot be stored by value in a variant "
-                               "(store a pointer or a class handle instead)",
+                               "`, which is neither copyable nor movable and cannot be stored by value "
+                               "in a variant (store a pointer or a class handle instead)",
                            spec);
                 }
                 fts.push_back(ft);

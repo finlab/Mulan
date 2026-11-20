@@ -27,6 +27,17 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 285 — 2026-11-21
+
+**Variant payload rule refined: copyable or movable.**
+
+- A `nomove` but copyable payload is accepted; the variant is then copyable but not movable, and
+  construction/matching copy it. Only a value that is neither (`nocopy nomove`) is rejected. This
+  fixes the over-strict "must be movable" rule from build 284.
+- New cases: `option_nomove` (run), `option_nomove_move` / `sum_immovable_payload` (must-fail);
+  `sum_array_payload` now expects "neither copyable nor movable". SPEC 10.1.1 updated.
+- Full suite: 943/943 with `MUC_VERIFY_MEM=1`.
+
 #### build 284 — 2026-11-21
 
 **Variants accept move-only payloads; `Option` moves its payload out.**

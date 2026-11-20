@@ -68,12 +68,12 @@ namespace muc_detail {
                             "` infinitely large (store a pointer or a class handle instead)",
                         sd);
                 }
-                // A payload may own a resource as long as it can be moved (see the generic instantiation
-                // path). A `nomove` type is the only value that cannot be stored.
-                if (!ft->movable()) {
+                // A payload may own a resource as long as it can be copied or moved (see the generic
+                // instantiation path). Only a value that is neither (`nocopy nomove`) cannot be stored.
+                if (!ft->copyable() && !ft->movable()) {
                     err("payload of alternative `" + alt.name + "` is `" + ft->str() +
-                            "`, which is not movable and cannot be stored by value in a variant "
-                            "(store a pointer or a class handle instead)",
+                            "`, which is neither copyable nor movable and cannot be stored by value in a "
+                            "variant (store a pointer or a class handle instead)",
                         sd);
                 }
                 fts.push_back(ft);

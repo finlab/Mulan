@@ -2897,12 +2897,14 @@ Value d = Value.None;        // a unit alternative is a plain value
   retained, overwriting or leaving scope releases it. A payload whose type needs cleanup
   (class/interface handle, `String`, slice, struct with reference fields) is therefore safe to store:
   the variant owns one reference.
-- **Payloads must be movable, not copyable** (build 284). A move-only payload (`nocopy`, a user
-  destructor) is accepted: construct it with `Some(move v)` (an owned prvalue such as `Some(V())` also
-  works), move it out with `match move o { Some(v): ... }` (or bind by reference: `Some(ref v)`), and
-  the variant's tag-aware destruction only destroys the active alternative. The variant itself is
-  **copyable only when every payload is copyable**; otherwise copying it is a compile error, while
-  moving it (`b = move a`, returning it, passing it by value) is fine. A `nomove` payload is rejected.
+- **Payloads must be copyable or movable** (build 285). A copyable payload is copied into the variant
+  and the variant is then copyable; a move-only payload (`nocopy`, a user destructor) is constructed
+  with `Some(move v)` (an owned prvalue such as `Some(V())` also works) and moved out with
+  `match move o { Some(v): ... }` (or bound by reference: `Some(ref v)`), making the variant
+  move-only. The tag-aware destruction only destroys the active alternative. A copyable-but-`nomove`
+  payload is allowed: the variant is copyable but not movable, and matching copies it. A value that is
+  **neither** (`nocopy nomove`) is rejected. The variant itself is copyable only when every payload
+  is; a move-only variant rejects copying and a non-movable variant rejects `move`.
 - **The zero value is the first alternative** (the tag is zero). An uninitialized variant local is
   zero-initialized like a struct, so for `variant Option<T> { None; Some T; }` the default is `None`.
 - **Construction**: `Type.Alt(values...)` for a payload alternative, `Type.Alt` (no parentheses) for a
