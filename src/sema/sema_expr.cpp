@@ -764,6 +764,9 @@ namespace muc_detail {
             return implements_interface(src, dst);  // upcast only; downcast is deferred
         }
         if (is_interface_type(src) && is_class_type(dst)) return true;
+        // class -> interface: an explicit upcast is the same relation implicit assignment uses; without
+        // this branch `c as I` was rejected while `I i = c;` worked (#147).
+        if (is_class_type(src) && is_interface_type(dst)) return implements_interface(src, dst);
         if (src->kind == TypeKind::Ptr && dst->kind == TypeKind::Ptr) return true;
         if (src->kind == TypeKind::Slice && dst->kind == TypeKind::Slice) {
             return src->rank == dst->rank && same_type(src->elem, dst->elem);

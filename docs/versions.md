@@ -27,6 +27,23 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 296 — 2026-11-21
+
+**Lexical, literal and small-semantics QC fixes.**
+
+- A leading UTF-8 BOM is skipped (#139). `_` is accepted only between two digits of the literal's base
+  in decimal/hex/binary/float literals; `0x_`, `1_`, `0b_` are errors (#140).
+- Enum values handle a 2^63 magnitude: `-9223372036854775808` is LLONG_MIN and a bare positive 2^63
+  is an error; a value outside the `int` underlying range is diagnosed instead of silently becoming 0
+  (#141). Constant negation of a signed minimum is an overflow error instead of host UB (#164).
+- A character literal prefers `char` in overload ranking (`f('a')` picks `f(char)` over `f(int)`, #160).
+  An explicit class-to-interface `as` upcast is allowed, matching implicit assignment (#147).
+- Command-line usage errors (unknown option/command, missing option value, missing entry) exit 2
+  uniformly; compile errors remain 1 (#167).
+- New tests: `utf8_bom`, `numeric_literals`, `numeric_separator`, `enum_int_range`,
+  `const_neg_overflow`, `overload_char`, `cast_class_interface`. Full: Windows **994/994**, Linux
+  **992/992** with `MUC_VERIFY_MEM=1`.
+
 #### build 295 — 2026-11-21
 
 **Signature identity and mangling.**

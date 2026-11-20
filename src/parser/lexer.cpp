@@ -85,6 +85,25 @@ std::string quote_char(int ch) {
     return buf;
 }
 
+// `_` is a digit separator only between two digits of the literal's base (`1_000`, `0x1_ff`,
+// `0b10_01`). A leading/trailing/adjacent separator or one next to `.`/`e` is a lexical error, not a
+// silently dropped character (`0x_` used to become 0).
+static void check_digit_separators(const std::string& s, int base, int line, int col,
+                                   const std::string& filename) {
+    auto digit = [base](char c) {
+        if (base == 16) return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        if (base == 2) return c == '0' || c == '1';
+        return c >= '0' && c <= '9';
+    };
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != '_') continue;
+        if (i == 0 || i + 1 >= s.size() || !digit(s[i - 1]) || !digit(s[i + 1])) {
+            throw MuError("invalid `_` separator in a numeric literal: it must sit between two digits",
+                          line, col, filename);
+        }
+    }
+}
+
 std::string strip_underscores(const std::string& s) {
     std::string out;
     out.reserve(s.size());
@@ -363,6 +382,7 @@ private:
             while (i_ < n_ && in_set(peek(), "0123456789abcdefABCDEF_")) adv();
             std::string raw = src_.substr(ds, i_ - ds);
             if (raw.empty()) throw err("hexadecimal literal has no digits", line, col);
+            check_digit_separators(raw, 16, line, col, filename_);
             tok.isuffix = read_int_suffix();
             tok.kind = TokKind::Int;
             tok.ival = int_digits(raw, 16, line, col, tok.isuffix, /*allow_min_mag=*/tok.isuffix != 1,
@@ -376,6 +396,7 @@ private:
             while (i_ < n_ && in_set(peek(), "01_")) adv();
             std::string raw = src_.substr(ds, i_ - ds);
             if (raw.empty()) throw err("binary literal has no digits", line, col);
+            check_digit_separators(raw, 2, line, col, filename_);
             tok.isuffix = read_int_suffix();
             tok.kind = TokKind::Int;
             tok.ival = int_digits(raw, 2, line, col, tok.isuffix, /*allow_min_mag=*/tok.isuffix != 1,
@@ -410,7 +431,9 @@ private:
             }
         }
 
-        std::string text = strip_underscores(src_.substr(digits, i_ - digits));
+        const std::string whole = src_.substr(digits, i_ - digits);
+        check_digit_separators(whole, 10, line, col, filename_);
+        std::string text = strip_underscores(whole);
         if (is_float) {
             if (in_set(peek(), "fF")) {
                 adv();
@@ -605,5 +628,10 @@ std::string Token::describe() const {
 }
 
 std::vector<Token> tokenize(const std::string& src, const std::string& filename) {
+    // A UTF-8 BOM is metadata, not source text; Windows editors write it routinely.
+    if (src.size() >= 3 && static_cast<unsigned char>(src[0]) == 0xEF &&
+        static_cast<unsigned char>(src[1]) == 0xBB && static_cast<unsigned char>(src[2]) == 0xBF) {
+        return Lexer(src.substr(3), filename).tokens();
+    }
     return Lexer(src, filename).tokens();
 }

@@ -13,6 +13,8 @@
 
 #include "parser_impl.hpp"
 
+#include <limits>
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -240,7 +242,13 @@ std::unique_ptr<Decl> Parser::parse_enum() {
             const Token t = peek();
             if (t.kind != TokKind::Int) throw err("enum value must be an integer literal");
             advance();
-            val = sign * t.ival;
+            if (t.int_min_mag) {
+                // The lexer keeps 2^63 unsignable; only a directly applied `-` makes it LLONG_MIN.
+                if (sign > 0) throw err("integer literal is too large (maximum 2^63-1)");
+                val = std::numeric_limits<long long>::min();
+            } else {
+                val = sign * t.ival;
+            }
         }
         decl->members.emplace_back(std::move(member), val);
         if (at_op(",")) {

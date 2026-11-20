@@ -31,6 +31,12 @@ namespace muc_detail {
             if (p->kind == TypeKind::Prim && (p->name == "float" || p->name == "double")) return 1;
             return implicit_rank();
         }
+        if (dynamic_cast<CharLit*>(e)) {
+            // A character literal prefers `char` over the integer promotions (`f(char)` vs `f(int)`).
+            if (p->kind == TypeKind::Prim && p->name == "char") return 0;
+            if (is_numeric(p)) return 1;
+            return implicit_rank();
+        }
         if (dynamic_cast<NullLit*>(e)) {
             if (p->kind == TypeKind::Ptr || p->kind == TypeKind::Slice ||
                 p->kind == TypeKind::Class || p->kind == TypeKind::Interface) {

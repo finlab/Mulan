@@ -391,6 +391,12 @@ static void dump(const Node* n, int ind) {
 }
 
 // ---------------------------------------------------------------- commands
+// A usage error (bad command line) is distinct from a compile failure: main maps it to exit 2 so a
+// script can tell "I invoked the compiler wrong" from "the program is invalid".
+struct UsageError : MuError {
+    using MuError::MuError;
+};
+
 struct BuildArgs {
     std::string entry;
     std::string out;
@@ -431,7 +437,7 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
     while (i < args.size()) {
         const std::string& a = args[i];
         auto need = [&](const char* what) {
-            if (i + 1 >= args.size()) throw MuError(std::string("missing argument for ") + what);
+            if (i + 1 >= args.size()) throw UsageError(std::string("missing argument for ") + what);
             return args[++i];
         };
         if (a == "-o") b.out = need("-o");
@@ -456,10 +462,10 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         else if (a == "--single-thread") b.single_thread = true;
         else if (a == "--strict") b.strict = true;
         else if (!a.empty() && a[0] != '-') set_entry(a);
-        else throw MuError("unknown option `" + a + "`");
+        else throw UsageError("unknown option `" + a + "`");
         ++i;
     }
-    if (b.entry.empty()) throw MuError("missing entry file");
+    if (b.entry.empty()) throw UsageError("missing entry file");
     return b;
 }
 
@@ -501,7 +507,7 @@ static int cmd_dump_config(const std::vector<std::string>& args) {
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
         auto need = [&](const char* what) {
-            if (i + 1 >= args.size()) throw MuError(std::string("missing argument for ") + what);
+            if (i + 1 >= args.size()) throw UsageError(std::string("missing argument for ") + what);
             return args[++i];
         };
         if (a == "--os") os = need("--os");
@@ -513,10 +519,10 @@ static int cmd_dump_config(const std::vector<std::string>& args) {
         else if (a == "--null-check=on") null_check = true;
         else if (a == "--null-check=off") null_check = false;
         else if (a == "--single-thread") single_thread = true;
-        else throw MuError("unknown option `" + a + "`");
+        else throw UsageError("unknown option `" + a + "`");
     }
     if (!os.empty() && !platform.empty()) {
-        throw MuError("`--os` and `--platform` select the same thing; use one of them");
+        throw UsageError("`--os` and `--platform` select the same thing; use one of them");
     }
     if (!target_triple.empty()) check_explicit_target(target_triple);
     const TargetInfo work = target_triple.empty() ? host_target() : parse_triple(target_triple);
@@ -537,7 +543,7 @@ static int cmd_check(const std::vector<std::string>& args) {
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
         auto need = [&](const char* what) {
-            if (i + 1 >= args.size()) throw MuError(std::string("missing argument for ") + what);
+            if (i + 1 >= args.size()) throw UsageError(std::string("missing argument for ") + what);
             return args[++i];
         };
         if (a == "-I") dirs.push_back(need("-I"));
@@ -546,13 +552,13 @@ static int cmd_check(const std::vector<std::string>& args) {
         else if (a == "-v" || a == "--verbose") verbose = true;
         else if (a == "--single-thread") single_thread = true;
         else if (a == "--strict") strict = true;
-        else if (!a.empty() && a[0] == '-') throw MuError("unknown option `" + a + "`");
+        else if (!a.empty() && a[0] == '-') throw UsageError("unknown option `" + a + "`");
         else if (entry.empty()) entry = a;
-        else throw MuError("unexpected argument `" + a + "`");
+        else throw UsageError("unexpected argument `" + a + "`");
     }
     if (entry.empty()) { std::fputs(USAGE, stderr); return 2; }
     if (!os.empty() && !platform.empty()) {
-        throw MuError("`--os` and `--platform` select the same thing; use one of them");
+        throw UsageError("`--os` and `--platform` select the same thing; use one of them");
     }
     std::string entry_name;
     init_build_config(platform.empty() ? os : platform, host_target(), false, true, true, single_thread);
@@ -574,7 +580,7 @@ static int cmd_dump(const std::vector<std::string>& args) {
 static int cmd_build(const std::vector<std::string>& args) {
     BuildArgs ba = parse_build_args(args);
     if (!ba.os.empty() && !ba.platform.empty()) {
-        throw MuError("`--os` and `--platform` select the same thing; use one of them");
+        throw UsageError("`--os` and `--platform` select the same thing; use one of them");
     }
     const std::string target_spec = ba.platform.empty() ? ba.os : ba.platform;
     const std::string option = ba.platform.empty() ? "--os" : "--platform";
@@ -702,6 +708,9 @@ int main(int argc, char** argv) {
     } catch (const MuErrorList& e) {
         for (const auto& m : e.messages) std::cerr << m << "\n";
         return 1;
+    } catch (const UsageError& e) {
+        std::cerr << e.what() << "\n";
+        return 2;
     } catch (const MuError& e) {
         std::cerr << e.what() << "\n";
         return 1;

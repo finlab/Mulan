@@ -13,6 +13,7 @@
 #include <sstream>
 
 #include <cmath>
+#include <limits>
 
 namespace muc_detail {
 
@@ -828,6 +829,20 @@ namespace muc_detail {
                 if (v.is_float) {
                     out.f = -v.f;
                 } else {
+                    // Constant negation of a signed minimum is not representable in that width (host
+                    // `-v.i` would be UB and silently yield the same minimum; #164).
+                    if (v.ty->is_signed()) {
+                        const int bits = v.ty->bits();
+                        const long long minv =
+                            bits >= 64 ? std::numeric_limits<long long>::min()
+                                       : (bits > 0 ? -(1LL << (bits - 1))
+                                                   : std::numeric_limits<long long>::min());
+                        if (v.i == minv) {
+                            err("constant expression overflows: negating the minimum value of `" +
+                                    v.ty->str() + "`",
+                                e);
+                        }
+                    }
                     out.i = normalize_int(-v.i, v.ty);
                     // A negated literal is still a literal: `const int MIN = -2147483648;` spells its
                     // magnitude through 2147483648, which only the target type can place (SPEC 3.4).
