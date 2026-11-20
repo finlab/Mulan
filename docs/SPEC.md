@@ -1253,14 +1253,22 @@ Box<int> b = new Box<int>(7);    // generic class construction
   - `ref T` / `const ref T` bind the referent, i.e. the argument's own type;
   - `(T) => R` and `delegate (T1) => R` match the parameter and return types the same way (a delegate
     pattern also accepts a plain function value, which converts to a delegate).
+- **An argument that needs its parameter type** (a bare alternative `Some(3)`, an overloaded function
+  name used as a value) is typed **after instantiation** against the concrete parameter, not during
+  inference. If its parameter type depends on a type parameter that is still unbound, the argument is
+  deferred; a later argument or the target type may bind it. `null`, a `void` value and a range carry
+  no type of their own and are deferred the same way when the parameter is not yet fixed. If a type
+  parameter stays unbound, the diagnostic includes the deferred argument's own reason.
 - **The expected type of the call participates** (build 287). A type parameter that no argument
   determines is matched through the declared return type against the expected type: with
   `Box<T> make<T>()`, `Box<int> b = make();` infers `T = int`; the same holds for an assignment, a
-  `return`, a call argument and a ternary arm. A target that does not structurally match the return
-  type is ignored (a base class, an interface or a convertible type must not choose the instance),
-  and a target that disagrees with an argument-derived binding is a compile error naming both. A call
-  in a position with no expected type (an expression statement) still needs its arguments or an
-  explicit list: `T empty<T>()` there must be called as `empty<int>()`.
+  `return`, a call argument, a ternary arm, an aggregate field, a variant payload and a slice element.
+  A target that does not structurally match the return type is ignored (a base class, an interface or
+  a convertible type must not choose the instance). **Arguments take precedence**: the target only
+  fills parameters no argument determined, so `long y = identity(1)` stays `identity<int>` and lets
+  the assignment widen; a target that gives the return pattern's own parameter two different types is
+  an error. A call in a position with no expected type (an expression statement) still needs its
+  arguments or an explicit list: `T empty<T>()` there must be called as `empty<int>()`.
 - **A failed inference is a compile error with the reason**: two arguments giving different types for one
   parameter (`max2(1, 2L)`), an argument whose shape does not match the pattern (a `Thing` value for a
   `T*` parameter, or `null` / a `void` / a range argument, none of which has a type of its own), or a
@@ -1268,7 +1276,8 @@ Box<int> b = new Box<int>(7);    // generic class construction
   (`T: I`): `max2(p, q)` with a `Point` that has no `operator<` reports that the *inferred* `T = Point`
   does not satisfy `IOrder` and that an explicit list can choose another type. An argument that cannot
   be typed before its parameter type is known (`Some(3)` without a target variant type, an overloaded
-  function name used as a value) is reported with that reason plus the hint to write the list.
+  function name used as a value) is typed after instantiation; if the call cannot be instantiated
+  because another type parameter is undetermined, the deferred reason is part of the diagnostic.
 - **Two visible templates of the same name are ambiguous** for a bare call exactly as they are for an
   explicit list: qualify with a unit name.
 - **Scope**: only **free functions** infer. Method-level generics, constructors and a type in type
@@ -1392,12 +1401,12 @@ type `Money` does not satisfy `IAdd` for type parameter `T`: no `operator+` acce
 - `Self` may only be used bare (`Self x`); nesting is not supported yet (`Self[]`).
 - `auto` is not used as a substitute: `auto` is a deduction placeholder and `Self` is a dependent type; the semantics of the two are orthogonal.
 
-#### 3.15.7 Current limitations (updated 2026-11-19, build 251)
+#### 3.15.7 Current limitations (updated 2026-11-21, build 288)
 
 | Limitation | Description |
 |---|---|
-| ~~A generic struct/class does not support `const` members~~ | **Lifted 2026-11-17**: `const` fields in a generic type are ordinary per-instance fields (type-level constants are gone) |
-| Not supported | Method-level generics, associated types, specialization, generic `extern`, generic type aliases. Type-argument inference covers free function calls only (3.15.3) |
+| ~~A generic struct/class does not support `const` members~~ | **Lifted (implemented build 288)**: a `const` member of a generic type is substituted and resolved per instance like any other member |
+| Not supported | Method-level generics, associated types, specialization, generic `extern`, generic type aliases, generic interface extensions (`extend I<T> with J<T>`). Type-argument inference covers free function calls only (3.15.3) |
 
 Lifted since 0.0.72 (kept here so the old table's rows are not misread as current): a generic interface is
 a **usable value type** (`IIterator<int>` as a local/field/return type, dispatch through the itable,
@@ -1834,6 +1843,8 @@ public extend I with J;     // J : I
 - `J` must derive from `I` (`interface J : I`). It may add **default methods only**: every abstract
   member of `J` must already be declared by `I`, and an extension cannot add fields (interfaces have
   none) or access fields.
+- **Generic interface extensions are not supported yet**: `extend I<T> with J<T>;` is a compile error
+  naming that limitation; only concrete interface names are accepted.
 - Effect: every type that **names `I` in its `:` list** (directly, or through a base class or a parent
   interface) gains `J`'s default methods. An extension is active where its declaring unit is used
   (`use`), not everywhere the interface is visible.

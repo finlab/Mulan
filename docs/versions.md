@@ -27,6 +27,29 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 288 — 2026-11-21
+
+**Generic inference completed; generic struct interfaces/const members and generic unions fixed.**
+
+- Inference: an argument that needs its parameter type (`Some(3)`, an overloaded function name) is
+  deferred and typed after instantiation against the concrete parameter; later arguments or the target
+  may bind the parameter. `null` / `void` / a range are deferred the same way. Arguments take
+  precedence over the target (no false conflicts; `long y = identity(1)` widens), and target inference
+  now covers assignment, `return`, call arguments, ternary arms, aggregate fields, variant payloads and
+  slice elements. Constraint diagnostics for target-bound parameters point at the call, not at an
+  out-of-range argument slot.
+- Generic structs support interfaces (including materialized defaults and cross-unit contracts) and
+  const members; generic classes support const members. Generic unions reject members that need
+  reference counting and empty unions, like the non-generic path.
+- Method-level generics, generic type aliases and generic interface extensions remain unsupported and
+  now have clear parser diagnostics instead of "expected `(`/`;`".
+- New tests: `generic_arg_target`, `generic_infer_deep`, `generic_target_more`, `generic_struct_iface`,
+  `generic_const_member`, `generic_system_matrix` (run); `generic_arg_no_target`,
+  `generic_target_bound`, `generic_target_shape`, `generic_struct_iface_missing`,
+  `generic_struct_class_base`, `generic_union_rc`, `generic_alias_unsupported`,
+  `generic_extend_unsupported`, `generic_method_unsupported` (must-fail). Full suite: 960/960 with
+  `MUC_VERIFY_MEM=1`.
+
 #### build 287 — 2026-11-21
 
 **Target-directed generic inference: the expected type of the call fills unbound type parameters.**

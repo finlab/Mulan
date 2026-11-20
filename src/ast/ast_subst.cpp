@@ -311,6 +311,9 @@ void subst_const_members(std::vector<std::unique_ptr<ConstMember>>& list, const 
 
 void subst_decl(Decl& d, const TypeBindings& b) {
     if (auto p = dynamic_cast<StructDecl*>(&d)) {
+        for (auto& bs : p->base_specs) {
+            if (bs) subst_type_spec(*bs, b);
+        }
         for (auto& f : p->fields) {
             if (f.second) subst_type_spec(*f.second, b);
         }

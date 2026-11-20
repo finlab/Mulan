@@ -1,3 +1,0 @@
-cannot be typed on its own (undefined function `Some`)
-write `unwrap<...>(...)` to give it its parameter type
-note: the template is declared at

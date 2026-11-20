@@ -347,13 +347,10 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         // Generic interface inheritance (`interface IList<T> : ISeq<T>`) is resolved from the
         // substituted base specs below, like any other instantiated interface.
     } else if (sd_tmpl) {
-        if (!sd_tmpl->const_members.empty() || !sd_tmpl->bases.empty()) {
-            err_ts("generic struct `" + base + "` does not support const members or interfaces yet", spec);
-        }
+        // Generic structs support const members and interfaces like any other struct; the clone is
+        // substituted and resolved below.
     } else if (cd_tmpl) {
-        if (!cd_tmpl->const_members.empty()) {
-            err_ts("generic class `" + base + "` does not support const members yet", spec);
-        }
+        // Generic classes support const members; see below.
     }
     // generic sum types have no extra restrictions: the alternatives are plain payload types
 
@@ -606,6 +603,27 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     // Bases: at most one class (which must come first) plus any number of interfaces. A base may be an
     // instantiated generic (`class Src<T> : IEnumerable<T>`), so every entry goes through
     // `resolve_type` — the display-name string cannot produce `IEnumerable<int>`.
+    if (is_struct && !sd->base_specs.empty()) {
+        // A struct lists interfaces only (static satisfaction, SPEC 3.15.7). The substituted specs
+        // (`IIterator<T>` became `IIterator<int>`) resolve like any type; the required members are
+        // checked and defaults materialized after the method table is built.
+        for (size_t i = 0; i < sd->base_specs.size(); ++i) {
+            if (!sd->base_specs[i]) continue;
+            TypePtr bt = resolve_type(sd->base_specs[i].get(), tmpl_unit_ptr);
+            const std::string spelled = i < sd->bases.size() ? sd->bases[i] : (bt ? bt->str() : "?");
+            if (!bt || bt->kind != TypeKind::Interface) {
+                err_ts("`" + spelled + "`: only interfaces are allowed after `:` on a struct", spec);
+            }
+            for (auto& prev : ty->interfaces) {
+                if (same_type(prev, bt)) {
+                    err_ts("struct `" + display + "` implements interface `" + bt->str() +
+                               "` more than once",
+                           spec);
+                }
+            }
+            ty->interfaces.push_back(bt);
+        }
+    }
     if (!is_struct && !cd->base_specs.empty()) {
         for (size_t i = 0; i < cd->base_specs.size(); ++i) {
             if (!cd->base_specs[i]) continue;
@@ -648,12 +666,23 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             err_ts("`weak` field must be a class reference (interfaces do not support `weak` yet)",
                    f.second.get());
         }
+        // A union has no tag: releasing it cannot know which member is active, so no member may own
+        // a resource (SPEC 3.3.2). The non-generic path checks this too; the instantiation resolves a
+        // concrete field type, so the check belongs here.
+        if (sd && sd->is_union && ft->needs_cleanup()) {
+            err_ts("field `" + f.first + "` of union `" + display + "` cannot be `" + ft->str() +
+                       "`: union members cannot hold values that need reference counting",
+                   spec);
+        }
         Field fld;
         fld.name = f.first;
         fld.type = ft;
         fld.weak = f.second->weak;
         fld.is_public = pub;
         ty->fields.push_back(std::move(fld));
+    }
+    if (sd && sd->is_union && ty->fields.empty()) {
+        err_ts("union `" + display + "` must have at least one member", spec);
     }
 
     // `promote` is resolved against the instantiated field table (the field index is the same as in
@@ -663,6 +692,11 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     } else {
         if (!cd->promotes.empty()) resolve_promotes(cd->promotes, ty, cd, &cd->fields);
     }
+
+    // Type-level constants (`const int K = 3;` inside the body): the substituted specs resolve against
+    // the instance's concrete type arguments, exactly like the non-generic path.
+    resolve_const_members(is_struct ? sd->const_members : cd->const_members, ty, tmpl_unit_ptr,
+                          is_struct ? (sd->is_union ? "union" : "struct") : "class", display);
 
     // Method / constructor / destructor signatures
     const auto& methods = is_struct ? sd->methods : cd->methods;
@@ -750,13 +784,16 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     DtorDecl* dtor = is_struct ? sd->dtor.get() : cd->dtor.get();
     ty->has_dtor = dtor != nullptr;
     if (dtor) dtor->cname = dtor_cname(tmpl_unit, display);
-    cur_ = saved_cur;
-
     if (is_struct) {
         sd->ty = ty;
+        // Interface satisfaction and default materialization, in the template unit (the substituted
+        // base specs may name types only that unit imports). A missing member is reported here, at
+        // the instantiation, like the non-generic path.
+        apply_struct_iface_defaults(sd);
     } else {
         cd->ty = ty;
     }
+    cur_ = saved_cur;
     generic_insts_[key] = ty;
     if (is_struct) {
         infos_[tmpl_unit].structs[display] = sd;

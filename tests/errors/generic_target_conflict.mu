@@ -1,8 +1,7 @@
 unit generic_target_conflict;
 struct Pair<T, U> { T a; U b; }
-Pair<T, int> pack<T>(T x) {
-    Pair<T, int> p = {};
-    p.a = x;
+Pair<T, T> make2<T>() {
+    Pair<T, T> p = {};
     return p;
 }
-int main() { Pair<string, int> p = pack(1); return 0; }
+int main() { Pair<int, long> p = make2(); return 0; }

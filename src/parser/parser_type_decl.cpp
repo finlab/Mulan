@@ -132,6 +132,10 @@ std::unique_ptr<Decl> Parser::parse_struct(bool is_union) {
             continue;
         }
         const Token name_tok = expect_ident("field or method name");
+        if (at_op("<")) {
+            throw err_at("method-level generics are not supported yet; write a free generic function instead",
+                         name_tok);
+        }
         if (at_op("(")) {
             if (is_union) throw err("union `" + name + "` cannot have methods");
             cur_members_->methods.push_back(parse_method(std::move(spec), ret_ref, name_tok));
@@ -697,6 +701,10 @@ std::unique_ptr<Decl> Parser::parse_interface() {
             continue;
         }
         const Token name_tok = expect_ident("method name");
+        if (at_op("<")) {
+            throw err_at("method-level generics are not supported yet; write a free generic function instead",
+                         name_tok);
+        }
         cur_members_->methods.push_back(parse_method(std::move(spec), ret_ref, name_tok));
     }
     expect_op("}");

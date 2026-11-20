@@ -252,32 +252,48 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
         return Match::Shape;
     };
 
+    // An argument that cannot be typed before its parameter type is known (`Some(3)`, an overloaded
+    // function name) is deferred: the ordinary argument check runs again once the instance exists and
+    // types it against the concrete parameter (or reports the real error). `deferred` keeps the first
+    // reason for the case where a type parameter stays unbound.
+    std::vector<std::pair<size_t, std::string>> deferred;
     for (size_t i = 0; i < c->args.size(); ++i) {
         Expr* a = c->args[i].get();
         current_arg = i;
         bad_pat = nullptr;
-        // The argument is typed on its own: no parameter type is known before the parameters are bound,
-        // and the ordinary argument check runs again once the instance exists. An expression that needs
-        // a target type to be meaningful (`Some(3)` before the sum type is known, an overloaded function
-        // name used as a value) therefore cannot be typed here even though the call is fine with an
-        // explicit list: keep the original reason and name the way out.
+        const Param* p = i < tmpl->params.size() ? tmpl->params[i].get() : nullptr;
+        if (!p) continue;  // `...`: extra arguments carry no parameter type
+        std::vector<int> mentioned;
+        collect_params(p->spec.get(), tps, mentioned);
+        bool all_bound = true;
+        for (int k : mentioned) {
+            if (!bound[static_cast<size_t>(k)]) {
+                all_bound = false;
+                break;
+            }
+        }
         TypePtr at;
         try {
             at = check_expr(a);
         } catch (const MuError& e) {
-            err("`" + name + "`: cannot infer the type arguments: argument " + std::to_string(i + 1) +
-                    " cannot be typed on its own (" + e.msg + "); write `" + name +
-                    "<...>(...)` to give it its parameter type" + note,
-                a);
+            // A concrete (or already fixed) parameter is typed by the post-instantiation check; a
+            // still-undetermined one cannot bind from this argument. Keep the reason: if a type
+            // parameter stays unbound, it is the useful part of the diagnostic.
+            deferred.push_back({i, e.msg});
+            continue;
         }
-        const Param* p = i < tmpl->params.size() ? tmpl->params[i].get() : nullptr;
-        if (!p) continue;  // `...`: extra arguments carry no parameter type
         if (!at || is_void(at)) {
-            std::string what = at ? std::string("`void`") : std::string("no type");
-            err("`" + name + "`: cannot infer the type arguments from argument " +
-                    std::to_string(i + 1) + ": it has " + what +
-                    ", which matches no parameter type" + note,
-                a);
+            if (all_bound) continue;
+            deferred.push_back({i, at ? std::string("it has `void`") : std::string("it has no type")});
+            continue;
+        }
+        if (at->kind == TypeKind::Null || at->kind == TypeKind::Range ||
+            at->kind == TypeKind::Module) {
+            // `null` / a range / a unit name says nothing about a type parameter. A bound parameter is
+            // checked by the ordinary argument check (a `null` may be legal there).
+            if (all_bound) continue;
+            deferred.push_back({i, "it has no type of its own"});
+            continue;
         }
         const Match m = match(*p->spec, at);
         if (m == Match::Conflict) {
@@ -299,10 +315,9 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
             }
         }
         if (m == Match::Shape) {
-            std::vector<int> mentioned;
-            collect_params(p->spec.get(), tps, mentioned);
-            // A pattern with no type parameter is a plain type mismatch: the ordinary argument check
-            // reports it, with the parameter name and the declared type.
+            // A parameter whose type parameters are already fixed is a plain type mismatch: the
+            // ordinary argument check reports it with the parameter name and the declared type.
+            if (all_bound) continue;
             if (mentioned.empty()) continue;
             err("`" + name + "`: cannot infer the type argument" + (mentioned.size() == 1 ? "" : "s") +
                     " " + param_list_text(tps, mentioned) + " from argument " + std::to_string(i + 1) +
@@ -322,39 +337,49 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
     if (expected && tmpl->ret && !is_void(expected) && !is_void(tmpl->rty)) {
         std::vector<TypePtr> saved_bound = bound;
         std::vector<size_t> saved_at = bound_at;
+        std::vector<bool> saved_fixed = fixed;
+        for (size_t k = 0; k < tps.size(); ++k) {
+            // Arguments win: the target only fills parameters no argument determined. A mismatch on a
+            // bound parameter is left to the ordinary argument/assignment check (a conversion may
+            // legally apply, e.g. an integer literal bound to `long`).
+            if (bound[k] && bound_at[k] < c->args.size()) fixed[k] = true;
+        }
         current_arg = c->args.size();  // marks a binding that came from the target type
         bad_pat = nullptr;
         conflict_param = -1;
         conflict_ty = nullptr;
         const Match m = match(*tmpl->ret, without_top_const(expected));
+        // `fixed` is only the explicit-argument marker; the temporary marks above must not leak into
+        // the constraint pre-check (which skips explicit positions but must check inferred ones).
+        fixed = std::move(saved_fixed);
         if (m == Match::Shape) {
             bound = std::move(saved_bound);
             bound_at = std::move(saved_at);
         } else if (m == Match::Conflict && conflict_param >= 0) {
+            // Only the target's own parts can disagree now (argument-bound parameters are fixed):
+            // the return pattern mentions the same parameter twice with different types.
             const size_t k = static_cast<size_t>(conflict_param);
             const std::string first = display_type(bound[k]);
             const std::string second = display_type(conflict_ty ? conflict_ty : expected);
-            if (bound_at[k] == c->args.size()) {
-                err("`" + name + "`: the target type `" + expected->str() +
-                        "` gives two types for the type argument `" + tps[k].name + "` (`" + first +
-                        "` and `" + second + "`); write the type argument explicitly (`" + name +
-                        "<...>(...)`)" + note,
-                    c->callee.get());
-            }
-            err("`" + name + "`: the type argument `" + tps[k].name + "` is inferred as `" + first +
-                    "` from argument " + std::to_string(bound_at[k] + 1) +
-                    ", but the target type `" + expected->str() + "` requires `" + second +
-                    "`; write the type argument explicitly (`" + name + "<...>(...)`)" + note,
+            err("`" + name + "`: the target type `" + expected->str() +
+                    "` gives two types for the type argument `" + tps[k].name + "` (`" + first +
+                    "` and `" + second + "`); write the type argument explicitly (`" + name +
+                    "<...>(...)`)" + note,
                 c->callee.get());
         }
     }
 
     // A parameter no argument and no target type could determine: only an explicit type argument can
-    // supply it.
+    // supply it. When an argument could not be typed on its own, that reason is the useful part.
     for (size_t k = 0; k < tps.size(); ++k) {
         if (bound[k]) continue;
+        std::string extra;
+        if (!deferred.empty()) {
+            extra = " (argument " + std::to_string(deferred.front().first + 1) +
+                    " cannot be typed on its own: " + deferred.front().second + ")";
+        }
         err("`" + name + "`: cannot infer the type argument `" + tps[k].name + "` from the arguments" +
-                (expected ? " or the target type" : " (there is no target type here)") +
+                (expected ? " or the target type" : " (there is no target type here)") + extra +
                 "; write `" + name + "<...>(...)`" + note,
             c->callee.get());
     }
@@ -367,6 +392,14 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
         if (tp.bounds.empty()) continue;
         // Explicit arguments are checked by the instantiation path; do not report them as "inferred".
         if (fixed[k]) continue;
+        // A target-bound parameter has no argument to point at (`bound_at` is the sentinel); report
+        // the call itself and say the type came from the target.
+        const bool from_target = bound_at[k] >= c->args.size();
+        const Node* at_node = from_target ? static_cast<const Node*>(c->callee.get())
+                                          : c->args[bound_at[k]].get();
+        const std::string where =
+            from_target ? std::string(" inferred from the target type")
+                        : " inferred from argument " + std::to_string(bound_at[k] + 1);
         std::string why;
         if (tp.op == TypeParam::Op::Or) {
             bool any = false;
@@ -377,21 +410,21 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
                 }
             }
             if (!any) {
-                err("`" + name + "`: the type argument `" + tp.name + "` inferred from argument " +
-                        std::to_string(bound_at[k] + 1) + " is `" + display_type(bound[k]) +
+                err("`" + name + "`: the type argument `" + tp.name + "`" + where + " is `" +
+                        display_type(bound[k]) +
                         "`, which does not satisfy any alternative bound of the constraint; write `" +
                         name + "<...>(...)` to choose the type explicitly" + note,
-                    c->args[bound_at[k]].get());
+                    at_node);
             }
             continue;
         }
         for (const auto& b : tp.bounds) {
             if (satisfies_one(bound[k], b.get(), cur_, &why)) continue;
-            err("`" + name + "`: the type argument `" + tp.name + "` inferred from argument " +
-                    std::to_string(bound_at[k] + 1) + " is `" + display_type(bound[k]) +
+            err("`" + name + "`: the type argument `" + tp.name + "`" + where + " is `" +
+                    display_type(bound[k]) +
                     "`, which does not satisfy the constraint `" + canon_spec(*b) + "`: " + why +
                     "; write `" + name + "<...>(...)` to choose the type explicitly" + note,
-                c->args[bound_at[k]].get());
+                at_node);
         }
     }
 

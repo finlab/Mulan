@@ -293,6 +293,10 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         // `extend I with J;` (SPEC 3.18): interface extension. `extend` is a contextual keyword here
         // only, so it stays usable as an identifier elsewhere.
         if (peek().kind == TokKind::Ident && peek().text == "extend" &&
+            peek(1).kind == TokKind::Ident && peek(2).kind == TokKind::Op && peek(2).text == "<") {
+            throw err_at("generic interface extensions are not supported yet", peek(2));
+        }
+        if (peek().kind == TokKind::Ident && peek().text == "extend" &&
             peek(1).kind == TokKind::Ident && peek(2).kind == TokKind::Ident && peek(2).text == "with") {
             if (has_layout) {
                 throw err_at("`extend` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
@@ -304,6 +308,9 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             ed->target = expect_ident("extended interface name").text;
             advance();  // `with`
             ed->with = expect_ident("extension interface name").text;
+            if (peek().kind == TokKind::Op && peek().text == "<") {
+                throw err_at("generic interface extensions are not supported yet", peek());
+            }
             semicolon();
             ed->is_public = is_pub;
             push_decl(std::move(ed));
