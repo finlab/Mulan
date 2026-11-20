@@ -6,12 +6,162 @@
 //
 // string is a value-type struct: assignment and argument passing copy the three
 // fields (p/n/owner); owner is an RC byte array that keeps the backing buffer alive.
+//
+// The model is UTF-8 bytes: `length()`, `s[i]`, `sub` and `find` are byte-based. Code point
+// operations are explicit (`chars`, `char_count`, `char_at`, `codepoints`); Unicode tables live
+// in `std.unicode`, which extends `IString` and must be loaded explicitly.
 
 public unit std.string;
 
 use std.exception;
 
-public struct String {
+// The extension hook for `std.unicode`: a String can be read as a byte sequence through these two
+// members. The extension mechanism (SPEC 3.18) can only add default methods that call interface
+// members, so the hook is a pair of ordinary const accessors, not the subscript operator.
+public interface IString {
+    isize length() const;
+    byte at(isize i) const;
+}
+
+// ---------------------------------------------------------------- UTF-8 primitives
+//
+// `utf8_decode` returns the code point in the low 21 bits and the sequence length in bits 24-26.
+// Invalid input yields U+FFFD with length 1 (the lossy policy: each bad byte is one replacement).
+// These are low-level entry points shared by std.unicode; they are public only because a default
+// method in another unit cannot reach a private member of String.
+
+public isize utf8_len(isize bits) {
+    return (bits >> 24) & 7;
+}
+
+public int utf8_cp(isize bits) {
+    return (bits & 0x1FFFFF) as int;
+}
+
+public isize utf8_decode<T: IString>(T s, isize off) {
+    isize n = s.length();
+    int b0 = s.at(off) as int;
+    if b0 < 0x80 {
+        return (1 << 24) | b0;
+    }
+    if (b0 & 0xE0) == 0xC0 {
+        if off + 1 >= n {
+            return (1 << 24) | 0xFFFD;
+        }
+        int b1 = s.at(off + 1) as int;
+        if (b1 & 0xC0) != 0x80 {
+            return (1 << 24) | 0xFFFD;
+        }
+        int cp = ((b0 & 0x1F) << 6) | (b1 & 0x3F);
+        if cp < 0x80 {
+            return (1 << 24) | 0xFFFD;
+        }
+        return (2 << 24) | cp;
+    }
+    if (b0 & 0xF0) == 0xE0 {
+        if off + 2 >= n {
+            return (1 << 24) | 0xFFFD;
+        }
+        int b1 = s.at(off + 1) as int;
+        int b2 = s.at(off + 2) as int;
+        if (b1 & 0xC0) != 0x80 or (b2 & 0xC0) != 0x80 {
+            return (1 << 24) | 0xFFFD;
+        }
+        int cp = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+        if cp < 0x800 or (cp >= 0xD800 and cp <= 0xDFFF) {
+            return (1 << 24) | 0xFFFD;
+        }
+        return (3 << 24) | cp;
+    }
+    if (b0 & 0xF8) == 0xF0 {
+        if off + 3 >= n {
+            return (1 << 24) | 0xFFFD;
+        }
+        int b1 = s.at(off + 1) as int;
+        int b2 = s.at(off + 2) as int;
+        int b3 = s.at(off + 3) as int;
+        if (b1 & 0xC0) != 0x80 or (b2 & 0xC0) != 0x80 or (b3 & 0xC0) != 0x80 {
+            return (1 << 24) | 0xFFFD;
+        }
+        int cp = ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
+        if cp < 0x10000 or cp > 0x10FFFF {
+            return (1 << 24) | 0xFFFD;
+        }
+        return (4 << 24) | cp;
+    }
+    return (1 << 24) | 0xFFFD;
+}
+
+public isize utf8_cp_len(int cp) {
+    if cp < 0 {
+        return 3;
+    }
+    if cp < 0x80 {
+        return 1;
+    }
+    if cp < 0x800 {
+        return 2;
+    }
+    if cp < 0x10000 {
+        return 3;
+    }
+    if cp <= 0x10FFFF {
+        return 4;
+    }
+    return 3;
+}
+
+public isize utf8_put(byte[] buf, isize at, int cp) {
+    if cp < 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF) {
+        cp = 0xFFFD;
+    }
+    if cp < 0x80 {
+        buf[at] = cp as byte;
+        return 1;
+    }
+    if cp < 0x800 {
+        buf[at] = (0xC0 | (cp >> 6)) as byte;
+        buf[at + 1] = (0x80 | (cp & 0x3F)) as byte;
+        return 2;
+    }
+    if cp < 0x10000 {
+        buf[at] = (0xE0 | (cp >> 12)) as byte;
+        buf[at + 1] = (0x80 | ((cp >> 6) & 0x3F)) as byte;
+        buf[at + 2] = (0x80 | (cp & 0x3F)) as byte;
+        return 3;
+    }
+    buf[at] = (0xF0 | (cp >> 18)) as byte;
+    buf[at + 1] = (0x80 | ((cp >> 12) & 0x3F)) as byte;
+    buf[at + 2] = (0x80 | ((cp >> 6) & 0x3F)) as byte;
+    buf[at + 3] = (0x80 | (cp & 0x3F)) as byte;
+    return 4;
+}
+
+// ---------------------------------------------------------------- ASCII predicates
+
+private bool ascii_space(byte c) {
+    return c == ' ' or c == '\t' or c == '\n' or c == '\r' or c == '\v' or c == '\f';
+}
+
+private bool ascii_digit(byte c) {
+    return c >= '0' and c <= '9';
+}
+
+private bool ascii_upper(byte c) {
+    return c >= 'A' and c <= 'Z';
+}
+
+private bool ascii_lower(byte c) {
+    return c >= 'a' and c <= 'z';
+}
+
+private bool ascii_alpha(byte c) {
+    return ascii_upper(c) or ascii_lower(c);
+}
+
+// ---------------------------------------------------------------- the String type
+
+public struct String : IString {
 private:
     byte* p;
     isize n;
@@ -22,10 +172,8 @@ public:
     // `new string[n]` construct elements with (SPEC 3.3, agents/value-semantics.md §7).
     String() {}
 
-    // construct from a NUL-terminated C string (copies it, does not hold c).
-    // `implicit`: `string s = "literal";` and `string s = cstr;` (3.6)
-    // A null `c` is the empty string: C APIs such as `getenv` return null, and dereferencing it
-    // here would crash where `cstr()` already treats null as `""` (the two directions agree).
+    // Construct from a NUL-terminated C string (copies it, does not hold c).
+    // A null `c` is the empty string: C APIs such as `getenv` return null.
     implicit String(const char* c) {
         if c == null {
             return;
@@ -46,22 +194,65 @@ public:
         owner = buf;
     }
 
+    // Copy a byte array and append NUL. Validity is not checked here (`is_valid_utf8` does that).
+    String(byte[] bytes) {
+        isize count = bytes.length();
+        byte[] buf = new byte[count + 1];
+        isize i = 0;
+        while i < count {
+            buf[i] = bytes[i];
+            i += 1;
+        }
+        buf[count] = 0;
+        p = &buf[0];
+        n = count;
+        owner = buf;
+    }
+
+    // Take ownership of `buf` without copying. The caller guarantees `buf[len] == 0` and keeps one
+    // reference while this String lives. Low-level: used by builders and the Unicode extension.
+    String(byte[] buf, isize size) {
+        if size <= 0 {
+            return;
+        }
+        p = &buf[0];
+        n = size;
+        owner = buf;
+    }
+
+    // Encode code points as UTF-8. An invalid code point (negative, beyond U+10FFFF, or a surrogate)
+    // becomes U+FFFD.
+    String(int[] cps) {
+        isize total = 0;
+        isize i = 0;
+        while i < cps.length() {
+            total += utf8_cp_len(cps[i]);
+            i += 1;
+        }
+        byte[] buf = new byte[total + 1];
+        isize dst = 0;
+        i = 0;
+        while i < cps.length() {
+            dst += utf8_put(buf, dst, cps[i]);
+            i += 1;
+        }
+        buf[total] = 0;
+        p = &buf[0];
+        n = total;
+        owner = buf;
+    }
+
     // ---------------------------------------------------------------- basic info
 
     isize length() const {
         return n;
     }
 
-    bool empty() const {
-        return n == 0;
-    }
-
     bool is_empty() const {
         return n == 0;
     }
 
-    // Out of range returns 0. `at` is the clamping accessor; the subscript below stays unchecked
-    // (C-shaped raw access), so this one has to reject negatives explicitly now that the index is signed.
+    // Out of range returns 0 (the clamping accessor). `operator[]` below is the checked one.
     byte at(isize i) const {
         if i < 0 or i >= n {
             return 0;
@@ -70,8 +261,7 @@ public:
     }
 
     // NUL-terminated view of the logical value. The zero value (p == null) is the empty string;
-    // every other representation ends its buffer with a 0 at n: the constructor, `concat` and `sub`
-    // each allocate their own buffer, so the view cannot expose bytes beyond the value (#32).
+    // every representation ends its buffer with a 0 at n.
     const char* cstr() const {
         if p == null {
             return "";
@@ -79,17 +269,173 @@ public:
         return p as const char*;
     }
 
-    // ---------------------------------------------------------------- element access and comparison
-
-    // `s[i]`: byte access, bounds-checked like `T[]` (SPEC 3.7: indexing is bounds-checked). The
-    // check is written in the library rather than emitted by the compiler, so `--bounds=off` does
-    // not remove it: a byte past the buffer is a heap read, not a value worth exposing.
+    // `s[i]`: byte access, bounds-checked. The check is written in the library rather than emitted
+    // by the compiler, so `--bounds=off` does not remove it.
     byte operator[](isize i) const {
         if i < 0 or i >= n {
             throw new BoundsError(i, n, 0);
         }
         return p[i];
     }
+
+    // ---------------------------------------------------------------- UTF-8 structure
+
+    // Strict validation: overlong forms, surrogates and values above U+10FFFF are rejected.
+    bool is_valid_utf8() const {
+        isize off = 0;
+        while off < n {
+            int b0 = p[off] as int;
+            if b0 < 0x80 {
+                off += 1;
+            } else if (b0 & 0xE0) == 0xC0 {
+                if off + 1 >= n {
+                    return false;
+                }
+                int b1 = p[off + 1] as int;
+                if (b1 & 0xC0) != 0x80 {
+                    return false;
+                }
+                int cp = ((b0 & 0x1F) << 6) | (b1 & 0x3F);
+                if cp < 0x80 {
+                    return false;
+                }
+                off += 2;
+            } else if (b0 & 0xF0) == 0xE0 {
+                if off + 2 >= n {
+                    return false;
+                }
+                int b1 = p[off + 1] as int;
+                int b2 = p[off + 2] as int;
+                if (b1 & 0xC0) != 0x80 or (b2 & 0xC0) != 0x80 {
+                    return false;
+                }
+                int cp = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+                if cp < 0x800 or (cp >= 0xD800 and cp <= 0xDFFF) {
+                    return false;
+                }
+                off += 3;
+            } else if (b0 & 0xF8) == 0xF0 {
+                if off + 3 >= n {
+                    return false;
+                }
+                int b1 = p[off + 1] as int;
+                int b2 = p[off + 2] as int;
+                int b3 = p[off + 3] as int;
+                if (b1 & 0xC0) != 0x80 or (b2 & 0xC0) != 0x80 or (b3 & 0xC0) != 0x80 {
+                    return false;
+                }
+                int cp = ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
+                if cp < 0x10000 or cp > 0x10FFFF {
+                    return false;
+                }
+                off += 4;
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Number of code points; each invalid byte counts as one U+FFFD (the lossy policy).
+    isize char_count() const {
+        isize count = 0;
+        isize off = 0;
+        while off < n {
+            isize bits = utf8_decode(this, off);
+            off += utf8_len(bits);
+            count += 1;
+        }
+        return count;
+    }
+
+    // The code point at a code point index (O(n)). Throws BoundsError when out of range.
+    int char_at(isize index) const {
+        if index < 0 {
+            throw new BoundsError(index, char_count(), 0);
+        }
+        isize off = 0;
+        isize k = 0;
+        while off < n {
+            isize bits = utf8_decode(this, off);
+            if k == index {
+                return utf8_cp(bits);
+            }
+            off += utf8_len(bits);
+            k += 1;
+        }
+        throw new BoundsError(index, k, 0);
+    }
+
+    bool is_char_boundary(isize off) const {
+        if off < 0 or off > n {
+            return false;
+        }
+        if off == 0 or off == n {
+            return true;
+        }
+        return ((p[off] as int) & 0xC0) != 0x80;
+    }
+
+    // Byte offset of a code point index (O(n)). Throws BoundsError when out of range.
+    isize byte_offset(isize char_index) const {
+        if char_index < 0 {
+            throw new BoundsError(char_index, char_count(), 0);
+        }
+        isize off = 0;
+        isize k = 0;
+        while off < n {
+            if k == char_index {
+                return off;
+            }
+            isize bits = utf8_decode(this, off);
+            off += utf8_len(bits);
+            k += 1;
+        }
+        if k == char_index {
+            return n;
+        }
+        throw new BoundsError(char_index, k, 0);
+    }
+
+    // Code point index of a byte offset; the offset must be a boundary.
+    isize char_index(isize off) const {
+        if not is_char_boundary(off) {
+            throw new BoundsError(off, n, 0);
+        }
+        isize k = 0;
+        isize at_off = 0;
+        while at_off < off {
+            isize bits = utf8_decode(this, at_off);
+            at_off += utf8_len(bits);
+            k += 1;
+        }
+        return k;
+    }
+
+    // All code points, lossy on invalid input.
+    int[] codepoints() const {
+        isize count = char_count();
+        int[] out = new int[count];
+        isize off = 0;
+        isize k = 0;
+        while off < n {
+            isize bits = utf8_decode(this, off);
+            out[k] = utf8_cp(bits);
+            k += 1;
+            off += utf8_len(bits);
+        }
+        return out;
+    }
+
+    CharCursor chars() const {
+        return CharCursor(this);
+    }
+
+    ByteCursor bytes() const {
+        return ByteCursor(this);
+    }
+
+    // ---------------------------------------------------------------- comparison and concatenation
 
     bool operator==(String o) const {
         if n != o.n {
@@ -105,7 +451,7 @@ public:
         return true;
     }
 
-    // compare with a NUL-terminated C string (literals): `s == "abc"`
+    // Compare with a NUL-terminated C string (literals): `s == "abc"`.
     bool operator==(const char* c) const {
         isize i = 0;
         while i < n {
@@ -117,8 +463,6 @@ public:
         return c[i] == 0;
     }
 
-    // `s + "literal"`: the literal is a `const char*` (3.6 implicit conversion is not used inside
-    // expressions, so the overload is explicit here)
     String operator+(const char* c) const {
         return concat(String(c));
     }
@@ -127,11 +471,33 @@ public:
         return concat(o);
     }
 
-    // ---------------------------------------------------------------- slicing and concatenation
+    String concat(String other) const {
+        isize total = n + other.n;
+        byte[] buf = new byte[total + 1];
+        isize i = 0;
+        while i < n {
+            buf[i] = p[i];
+            i += 1;
+        }
+        isize j = 0;
+        while j < other.n {
+            buf[n + j] = other.p[j];
+            j += 1;
+        }
+        buf[total] = 0;
+        String r = {};
+        r.p = &buf[0];
+        r.n = total;
+        r.owner = buf;
+        return r;
+    }
 
-    // A substring copies into its own NUL-terminated buffer. A view into the source would share
-    // the trailing bytes after the range, so `cstr()` could expose them (#32); out-of-range
-    // arguments are clamped to the source length instead of producing a read past the buffer (#33).
+    // ---------------------------------------------------------------- slicing
+
+    // A byte slice; it copies into its own NUL-terminated buffer. Out-of-range arguments are
+    // clamped. The offsets are NOT required to be character boundaries: `sub` is a byte operation,
+    // so slicing in the middle of a code point produces an invalid-UTF-8 String (use `char_slice`
+    // for code point semantics).
     String sub(isize start, isize count) const {
         if start < 0 {
             start = 0;
@@ -159,18 +525,44 @@ public:
         return r;
     }
 
-    String concat(String other) const {
-        isize total = n + other.n;
-        byte[] buf = new byte[total + 1];
-        isize i = 0;
-        while i < n {
-            buf[i] = p[i];
-            i += 1;
+    // Code point slice: `start` and `count` are code point indices. O(n), and the result is always
+    // on code point boundaries (so it stays valid when the source is valid).
+    String char_slice(isize start, isize count) const {
+        isize total = char_count();
+        if start < 0 {
+            start = 0;
         }
-        isize j = 0;
-        while j < other.n {
-            buf[n + j] = other.p[j];
-            j += 1;
+        if count < 0 {
+            count = 0;
+        }
+        if start > total {
+            start = total;
+        }
+        if count > total - start {
+            count = total - start;
+        }
+        isize from = byte_offset(start);
+        isize to = byte_offset(start + count);
+        return sub(from, to - from);
+    }
+
+    String repeat(isize times) const {
+        if times <= 0 or n == 0 {
+            String e = {};
+            return e;
+        }
+        isize total = n * times;
+        byte[] buf = new byte[total + 1];
+        isize dst = 0;
+        isize t = 0;
+        while t < times {
+            isize i = 0;
+            while i < n {
+                buf[dst] = p[i];
+                dst += 1;
+                i += 1;
+            }
+            t += 1;
         }
         buf[total] = 0;
         String r = {};
@@ -180,19 +572,504 @@ public:
         return r;
     }
 
-    // ---------------------------------------------------------------- search and match
+    String removeprefix(String prefix) const {
+        if startswith(prefix) {
+            return sub(prefix.n, n - prefix.n);
+        }
+        return sub(0, n);
+    }
 
-    // returns the byte offset of the first occurrence, or -1 if not found.
-    // `long` represents every offset on the supported 64-bit targets; `int` could turn a match
-    // beyond 2^31-1 into a negative value indistinguishable from "not found" (#34).
+    String removesuffix(String suffix) const {
+        if endswith(suffix) {
+            return sub(0, n - suffix.n);
+        }
+        return sub(0, n);
+    }
+
+    // ---------------------------------------------------------------- search
+
+    // Byte offset of the first occurrence, or -1. Empty needle returns 0 (Python `find`).
     isize find(String needle) const {
+        return find_from(needle, 0);
+    }
+
+    // Byte offset of the last occurrence, or -1. Empty needle returns n.
+    isize rfind(String needle) const {
         if needle.n == 0 {
-            return 0;
+            return n;
         }
         if needle.n > n {
             return -1;
         }
+        isize i = n - needle.n;
+        while i >= 0 {
+            isize j = 0;
+            bool same = true;
+            while j < needle.n {
+                if p[i + j] != needle.p[j] {
+                    same = false;
+                    break;
+                }
+                j += 1;
+            }
+            if same {
+                return i;
+            }
+            i -= 1;
+        }
+        return -1;
+    }
+
+    // Non-overlapping occurrences. Empty needle returns 0.
+    isize count(String needle) const {
+        if needle.n == 0 {
+            return 0;
+        }
+        isize c = 0;
+        isize start = 0;
+        while true {
+            isize pos = find_from(needle, start);
+            if pos < 0 {
+                break;
+            }
+            c += 1;
+            start = pos + needle.n;
+        }
+        return c;
+    }
+
+    bool contains(String needle) const {
+        return find(needle) >= 0;
+    }
+
+    bool startswith(String prefix) const {
+        if prefix.n > n {
+            return false;
+        }
         isize i = 0;
+        while i < prefix.n {
+            if p[i] != prefix.p[i] {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    bool endswith(String suffix) const {
+        if suffix.n > n {
+            return false;
+        }
+        isize off = n - suffix.n;
+        isize i = 0;
+        while i < suffix.n {
+            if p[off + i] != suffix.p[i] {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    // ---------------------------------------------------------------- replace / split / join
+
+    // Replace every non-overlapping occurrence. An empty `old` returns a copy (Python inserts at
+    // every position; that spelling is not provided in the byte API).
+    String replace(String old, String neu) const {
+        if old.n == 0 {
+            return sub(0, n);
+        }
+        isize cnt = 0;
+        isize start = 0;
+        while true {
+            isize pos = find_from(old, start);
+            if pos < 0 {
+                break;
+            }
+            cnt += 1;
+            start = pos + old.n;
+        }
+        if cnt == 0 {
+            return sub(0, n);
+        }
+        isize total = n - cnt * old.n + cnt * neu.n;
+        byte[] buf = new byte[total + 1];
+        isize src = 0;
+        isize dst = 0;
+        start = 0;
+        while true {
+            isize pos = find_from(old, start);
+            if pos < 0 {
+                break;
+            }
+            while src < pos {
+                buf[dst] = p[src];
+                dst += 1;
+                src += 1;
+            }
+            isize k = 0;
+            while k < neu.n {
+                buf[dst] = neu.p[k];
+                dst += 1;
+                k += 1;
+            }
+            src = pos + old.n;
+            start = src;
+        }
+        while src < n {
+            buf[dst] = p[src];
+            dst += 1;
+            src += 1;
+        }
+        buf[total] = 0;
+        String r = {};
+        r.p = &buf[0];
+        r.n = total;
+        r.owner = buf;
+        return r;
+    }
+
+    // Split on an exact separator; trailing empty pieces are kept (Python `split(sep)`). An empty
+    // separator is an error (Python raises ValueError too).
+    String[] split(String sep) const {
+        if sep.n == 0 {
+            throw new Exception("split: empty separator");
+        }
+        isize cnt = 0;
+        isize start = 0;
+        while true {
+            isize pos = find_from(sep, start);
+            if pos < 0 {
+                break;
+            }
+            cnt += 1;
+            start = pos + sep.n;
+        }
+        String[] parts = new String[cnt + 1];
+        start = 0;
+        isize k = 0;
+        while true {
+            isize pos = find_from(sep, start);
+            if pos < 0 {
+                break;
+            }
+            parts[k] = sub(start, pos - start);
+            k += 1;
+            start = pos + sep.n;
+        }
+        parts[k] = sub(start, n - start);
+        return parts;
+    }
+
+    // Whitespace split with ASCII whitespace only (Python's no-argument `split` is Unicode-aware;
+    // it lives in std.unicode). Runs of whitespace are one separator; no empty pieces.
+    String[] split_ascii_whitespace() const {
+        isize cnt = 0;
+        isize i = 0;
+        while i < n {
+            while i < n and ascii_space(p[i]) {
+                i += 1;
+            }
+            if i >= n {
+                break;
+            }
+            cnt += 1;
+            while i < n and not ascii_space(p[i]) {
+                i += 1;
+            }
+        }
+        String[] parts = new String[cnt];
+        isize k = 0;
+        i = 0;
+        while i < n {
+            while i < n and ascii_space(p[i]) {
+                i += 1;
+            }
+            if i >= n {
+                break;
+            }
+            isize start = i;
+            while i < n and not ascii_space(p[i]) {
+                i += 1;
+            }
+            parts[k] = sub(start, i - start);
+            k += 1;
+        }
+        return parts;
+    }
+
+    // Split on ASCII line endings (\n, \r, \r\n). A trailing line break does not add an empty line,
+    // matching Python `splitlines` (Unicode line separators live in std.unicode).
+    String[] splitlines_ascii() const {
+        isize cnt = 0;
+        isize i = 0;
+        isize line_start = 0;
+        while i < n {
+            byte c = p[i];
+            if c == '\n' or c == '\r' {
+                cnt += 1;
+                if c == '\r' and i + 1 < n and p[i + 1] == '\n' {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                line_start = i;
+            } else {
+                i += 1;
+            }
+        }
+        if line_start < n {
+            cnt += 1;
+        }
+        String[] parts = new String[cnt];
+        isize k = 0;
+        i = 0;
+        line_start = 0;
+        while i < n {
+            byte c = p[i];
+            if c == '\n' or c == '\r' {
+                parts[k] = sub(line_start, i - line_start);
+                k += 1;
+                if c == '\r' and i + 1 < n and p[i + 1] == '\n' {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                line_start = i;
+            } else {
+                i += 1;
+            }
+        }
+        if line_start < n {
+            parts[k] = sub(line_start, n - line_start);
+        }
+        return parts;
+    }
+
+    // Join parts with this String as the separator (Python `sep.join(parts)`).
+    String join(String[] parts) const {
+        isize count = parts.length();
+        isize total = 0;
+        isize i = 0;
+        while i < count {
+            total += parts[i].n;
+            i += 1;
+        }
+        if count > 1 {
+            total += n * (count - 1);
+        }
+        byte[] buf = new byte[total + 1];
+        isize dst = 0;
+        i = 0;
+        while i < count {
+            if i > 0 {
+                isize k = 0;
+                while k < n {
+                    buf[dst] = p[k];
+                    dst += 1;
+                    k += 1;
+                }
+            }
+            String part = parts[i];
+            isize k = 0;
+            while k < part.n {
+                buf[dst] = part.p[k];
+                dst += 1;
+                k += 1;
+            }
+            i += 1;
+        }
+        buf[total] = 0;
+        String r = {};
+        r.p = &buf[0];
+        r.n = total;
+        r.owner = buf;
+        return r;
+    }
+
+    // ---------------------------------------------------------------- ASCII transformations
+
+    String strip_ascii() const {
+        isize start = 0;
+        while start < n and ascii_space(p[start]) {
+            start += 1;
+        }
+        isize stop = n;
+        while stop > start and ascii_space(p[stop - 1]) {
+            stop -= 1;
+        }
+        return sub(start, stop - start);
+    }
+
+    String lstrip_ascii() const {
+        isize start = 0;
+        while start < n and ascii_space(p[start]) {
+            start += 1;
+        }
+        return sub(start, n - start);
+    }
+
+    String rstrip_ascii() const {
+        isize stop = n;
+        while stop > 0 and ascii_space(p[stop - 1]) {
+            stop -= 1;
+        }
+        return sub(0, stop);
+    }
+
+    String lower_ascii() const {
+        byte[] buf = new byte[n + 1];
+        isize i = 0;
+        while i < n {
+            byte c = p[i];
+            if ascii_upper(c) {
+                buf[i] = ((c as int) + 32) as byte;
+            } else {
+                buf[i] = c;
+            }
+            i += 1;
+        }
+        buf[n] = 0;
+        String r = {};
+        r.p = &buf[0];
+        r.n = n;
+        r.owner = buf;
+        return r;
+    }
+
+    String upper_ascii() const {
+        byte[] buf = new byte[n + 1];
+        isize i = 0;
+        while i < n {
+            byte c = p[i];
+            if ascii_lower(c) {
+                buf[i] = ((c as int) - 32) as byte;
+            } else {
+                buf[i] = c;
+            }
+            i += 1;
+        }
+        buf[n] = 0;
+        String r = {};
+        r.p = &buf[0];
+        r.n = n;
+        r.owner = buf;
+        return r;
+    }
+
+    bool is_ascii() const {
+        isize i = 0;
+        while i < n {
+            if (p[i] as int) >= 0x80 {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    // Python's `isalpha` etc. are false for the empty string; the `_ascii` versions keep that rule
+    // and use the ASCII definitions only.
+    bool is_alpha_ascii() const {
+        if n == 0 {
+            return false;
+        }
+        isize i = 0;
+        while i < n {
+            if not ascii_alpha(p[i]) {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    bool is_digit_ascii() const {
+        if n == 0 {
+            return false;
+        }
+        isize i = 0;
+        while i < n {
+            if not ascii_digit(p[i]) {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    bool is_alnum_ascii() const {
+        if n == 0 {
+            return false;
+        }
+        isize i = 0;
+        while i < n {
+            if not ascii_alpha(p[i]) and not ascii_digit(p[i]) {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    bool is_space_ascii() const {
+        if n == 0 {
+            return false;
+        }
+        isize i = 0;
+        while i < n {
+            if not ascii_space(p[i]) {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    bool is_upper_ascii() const {
+        bool has_cased = false;
+        isize i = 0;
+        while i < n {
+            byte c = p[i];
+            if ascii_lower(c) {
+                return false;
+            }
+            if ascii_upper(c) {
+                has_cased = true;
+            }
+            i += 1;
+        }
+        return has_cased;
+    }
+
+    bool is_lower_ascii() const {
+        bool has_cased = false;
+        isize i = 0;
+        while i < n {
+            byte c = p[i];
+            if ascii_upper(c) {
+                return false;
+            }
+            if ascii_lower(c) {
+                has_cased = true;
+            }
+            i += 1;
+        }
+        return has_cased;
+    }
+
+private:
+    isize find_from(String needle, isize start) const {
+        if needle.n == 0 {
+            return start;
+        }
+        if start < 0 {
+            start = 0;
+        }
+        if needle.n > n or start > n - needle.n {
+            return -1;
+        }
+        isize i = start;
         while i + needle.n <= n {
             isize j = 0;
             bool same = true;
@@ -210,53 +1087,71 @@ public:
         }
         return -1;
     }
+}
 
-    bool starts_with(String prefix) const {
-        if prefix.n > n {
-            return false;
-        }
-        isize i = 0;
-        while i < prefix.n {
-            if p[i] != prefix.p[i] {
-                return false;
-            }
-            i += 1;
-        }
-        return true;
-    }
+// ---------------------------------------------------------------- cursors
 
-    bool ends_with(String suffix) const {
-        if suffix.n > n {
-            return false;
-        }
-        isize off = n - suffix.n;
-        isize i = 0;
-        while i < suffix.n {
-            if p[off + i] != suffix.p[i] {
-                return false;
-            }
-            i += 1;
-        }
-        return true;
-    }
-
-    // ---------------------------------------------------------------- trimming
-
-    String trim() const {
-        isize start = 0;
-        while start < n and is_space_byte(p[start]) {
-            start += 1;
-        }
-        isize stop = n;
-        while stop > start and is_space_byte(p[stop - 1]) {
-            stop -= 1;
-        }
-        return sub(start, stop - start);
-    }
-
+// Code point cursor (lossy: an invalid byte yields U+FFFD and advances one byte).
+public struct CharCursor {
 private:
-    bool is_space_byte(byte c) const {
-        return c == ' ' or c == '\t' or c == '\n' or c == '\r';
+    String s;
+    isize i;
+    int cp;
+    isize adv;
+
+public:
+    CharCursor(String str) {
+        s = str;
+        i = 0;
+        cp = 0;
+        adv = 1;
+    }
+
+    bool next() {
+        if i >= s.length() {
+            return false;
+        }
+        isize bits = utf8_decode(s, i);
+        cp = utf8_cp(bits);
+        adv = utf8_len(bits);
+        i += adv;
+        return true;
+    }
+
+    int current() const {
+        return cp;
+    }
+
+    CharCursor iterator() {
+        return this;
+    }
+}
+
+public struct ByteCursor {
+private:
+    String s;
+    isize i;
+
+public:
+    ByteCursor(String str) {
+        s = str;
+        i = 0;
+    }
+
+    bool next() {
+        if i >= s.length() {
+            return false;
+        }
+        i += 1;
+        return true;
+    }
+
+    byte current() const {
+        return s.at(i - 1);
+    }
+
+    ByteCursor iterator() {
+        return this;
     }
 }
 

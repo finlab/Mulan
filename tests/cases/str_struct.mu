@@ -34,8 +34,8 @@ int main() {
     // zero value / methods
     string z = {};
     if z.length() != 0 { return 8; }
-    if not z.empty() { return 9; }
-    if s.empty() { return 10; }
+    if not z.is_empty() { return 9; }
+    if s.is_empty() { return 10; }
     if s.length() != 3 { return 11; }
     if s.at(1) != 'b' { return 12; }
 

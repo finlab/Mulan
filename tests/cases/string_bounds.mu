@@ -33,7 +33,7 @@ int main() {
 
     // trimming still produces a NUL-terminated value
     string padded = "  hi  ";
-    string trimmed = padded.trim();
+    string trimmed = padded.strip_ascii();
     if trimmed != "hi" or trimmed.cstr()[2] != 0 { return 11; }
 
     puts("string bounds ok");

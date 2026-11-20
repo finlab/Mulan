@@ -3,14 +3,14 @@ extern int puts(const char* s);
 
 int main() {
     string s = "  hello world  ";
-    string t = s.trim();
+    string t = s.strip_ascii();
     if t != "hello world" { puts("trim fail"); return 1; }
     if t.length() != 11 { return 2; }
     if t.find("world") != 6 { return 3; }
     if t.find("xyz") != -1 { return 4; }
-    if not t.starts_with("hello") { return 5; }
-    if not t.ends_with("world") { return 6; }
-    if t.starts_with("world") { return 7; }
+    if not t.startswith("hello") { return 5; }
+    if not t.endswith("world") { return 6; }
+    if t.startswith("world") { return 7; }
     if t.is_empty() { return 8; }
 
     string e = {};

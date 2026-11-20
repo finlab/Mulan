@@ -27,6 +27,33 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 280 — 2026-11-20
+
+**`std.string` gains the Python-style byte API, explicit UTF-8 structure helpers, and an opt-in
+`std.unicode` extension.**
+
+- The byte-oriented surface now follows Python names: `startswith`, `endswith`, `split`,
+  `replace`, `join`, `count`, `rfind`, `contains`, `strip_ascii` (and `lstrip_ascii`/`rstrip_ascii`),
+  `lower_ascii`/`upper_ascii`, `is_alpha_ascii`/`is_digit_ascii`/`is_alnum_ascii`/`is_space_ascii`/
+  `is_upper_ascii`/`is_lower_ascii`, `repeat`, `removeprefix`/`removesuffix`, and
+  `split_ascii_whitespace`/`splitlines_ascii`. Operations whose Unicode and ASCII meanings differ
+  carry the `_ascii` suffix. This renames `starts_with`/`ends_with`/`trim` and removes `empty`
+  (use `is_empty`).
+- Code-point structure without Unicode tables: `is_valid_utf8`, `char_count`, `char_at`,
+  `char_slice`, `is_char_boundary`, `byte_offset`/`char_index`, `codepoints`, the `chars()`/
+  `bytes()` cursors, and `String(int[])` / `String(byte[])` constructors. The decode policy is
+  lossy (each invalid byte becomes U+FFFD).
+- `std.unicode` is a separate, explicitly loaded unit (`use std.unicode;`) that activates an
+  interface extension adding `lower`, `upper`, `strip`, `lstrip`, `rstrip`, `isalpha`, `isdigit`,
+  `isalnum`, `isspace`, `isupper`, `islower` to `String`. Properties and simple one-to-one case
+  mappings are generated from Unicode 15.0.0 by `tools/gen-unicode-tables.py`; normalization,
+  grapheme/word/line segmentation and collation are not included yet.
+- New cases: `string_python_api`, `unicode_extension`, and the must-fail `unicode_requires_use`
+  (the Unicode method names are a compile error without the `use`).
+
+**Tests**: 934/934 (363 run + 516 must-fail + 42 check + 1 warning + 9 ir + 3 c abi), with
+`MUC_VERIFY_MEM=1`.
+
 #### build 279 — 2026-11-20
 
 **Aggregate initialization releases what it already built when an element constructor throws.**
