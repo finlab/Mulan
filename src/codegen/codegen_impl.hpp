@@ -556,8 +556,9 @@ struct Emitter {
     // `dst = value` for a type with a user destructor: synthesized copy-and-swap / move-and-swap.
     void emitAssignSwap(Value* dst, Expr* e, const TypePtr& ty);
 
-    // The member-initialization step of a class constructor (C++ order: base, members, body).
-    void emitMemberInits(Value* self, const TypePtr& cls,
+    // The member-initialization step of a class constructor (C++ order: base, members, body). `ctor`
+    // supplies the explicit field initializers; a field it does not name is default-constructed.
+    void emitMemberInits(Value* self, const TypePtr& cls, CtorDecl* ctor,
                          const std::function<void()>& onThrow = {});
 
     void releaseLocal(const LocalVar* lv);
@@ -817,7 +818,9 @@ struct Emitter {
 
     void emitCtor(ClassDecl* c, CtorDecl* ctor);
     // `C(...) : x(v), y(w) { }`: store the member initializer list before the body runs.
-    void emitCtorInitList(Value* self, const TypePtr& ty, CtorDecl* ctor);
+    // Construct field `idx` from the constructor's initializer (or its default constructor); see
+    // emitCtor for the declaration-order rule. Returns true when the field was constructed here.
+    bool emitFieldInit(Value* self, const TypePtr& ty, CtorDecl* ctor, size_t idx);
 
     void emitReleaseValue(Value* addr, const TypePtr& ty, bool unaligned = false);
 

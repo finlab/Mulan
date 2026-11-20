@@ -586,6 +586,22 @@ namespace muc_detail {
                 }
             }
         }
+        // `return x;` for a local or parameter of a movable-but-uncopyable type is a **move**: the name
+        // dies with the frame, so transferring it cannot alias anything the caller can observe. Requiring
+        // the user to write `move x` there is pure syntax (C++ moves implicitly in this position too).
+        // A copyable type keeps the copy path: moving it would silently change copy counts.
+        if (auto nm = dynamic_cast<Name*>(s->value.get())) {
+            LocalVar* lv = nm->sym.index() == 0 ? nullptr : std::get<LocalVar*>(nm->sym);
+            if (!lv) lv = lookup_local(nm->ident);
+            if (lv && !lv->by_ref && lv->rty && lv->rty->kind == TypeKind::Struct &&
+                !lv->rty->copyable() && lv->rty->movable()) {
+                auto mv = std::make_unique<MoveExpr>();
+                mv->operand = std::move(s->value);
+                mv->line = mv->operand->line;
+                mv->col = mv->operand->col;
+                s->value = std::move(mv);
+            }
+        }
         check_assign(s->value.get(), rt, "return value");
         in_return_ = false;
     }

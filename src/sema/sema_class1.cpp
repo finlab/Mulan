@@ -450,8 +450,42 @@ namespace muc_detail {
             if (!inited.insert(item.name).second) {
                 err("field `" + item.name + "` is initialized twice", &item);
             }
-            check_assign(item.args[0].get(), ty->fields[static_cast<size_t>(idx)].type,
-                         "constructor initializer for `" + item.name + "`");
+            // `: field(x)` is **direct initialization** (C++ 15.6.2): when the field's type has a
+            // constructor, `x` is the constructor's argument, not a value to be converted into the
+            // field type. `E(x)` and `E`'(x)' then mean the same thing, and `implicit` is not needed.
+            TypePtr ft = ty->fields[static_cast<size_t>(idx)].type;
+            Expr* arg = item.args[0].get();
+            // The initializer item is a direct-initialization context, so `: a(E(1))` is allowed even
+            // for a type with a destructor, exactly like a declaration initializer.
+            Expr* saved_direct = direct_init_expr_;
+            direct_init_expr_ = arg;
+            if (ft && ft->kind == TypeKind::Struct && !ft->ctors.empty()) {
+                TypePtr et = check_expr(arg);
+                if (et && !same_type_sig(et, ft)) {
+                    auto call = std::make_unique<Call>();
+                    call->line = arg->line;
+                    call->col = arg->col;
+                    call->ctor = ft;
+                    call->args.push_back(std::move(item.args[0]));
+                    const auto* chosen = choose_ctor(
+                        ft->ctors, raw_args(call->args),
+                        "struct `" + ft->str() + "` (direct initialization of field `" +
+                            item.name + "`)",
+                        &item);
+                    for (size_t k = 0; k < call->args.size() && k < chosen->size(); ++k) {
+                        check_assign(call->args[k].get(), (*chosen)[k],
+                                     "constructor argument of field `" + item.name + "`");
+                    }
+                    call->ctor_pty = chosen;
+                    call->callee_kind = "struct_ctor";
+                    call->ty = ft;
+                    item.args[0] = std::move(call);
+                    direct_init_expr_ = saved_direct;
+                    continue;
+                }
+            }
+            check_assign(arg, ft, "constructor initializer for `" + item.name + "`");
+            direct_init_expr_ = saved_direct;
         }
         // A const field has no other way to be initialized (it cannot be written in the body).
         // A `builtin` constant (the `comptime` unit, 9.3) is compiler-provided and is exempt.

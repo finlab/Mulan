@@ -1,0 +1,4 @@
+10 11 2
+pair destroyed 2
+once 7 1
+throw caught 1 destroyed 1

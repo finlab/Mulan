@@ -124,7 +124,7 @@ namespace muc_detail {
                                 "write `[this]`",
                                 e);
                         }
-                        if (!borrowable_type(vt)) {
+                        if (!ref_capturable_type(vt)) {
                             err("`[ref this]`: struct `" + vt->str() +
                                     "` cannot be captured by reference (it has reference-counted fields or "
                                     "a destructor)",
@@ -175,7 +175,7 @@ namespace muc_detail {
                         e);
                 }
                 if (cap.by_ref) {
-                    if (!borrowable_type(vt)) {
+                    if (!ref_capturable_type(vt)) {
                         err("`[ref " + cap.name + "]`: `" + vt->str() +
                                 "` cannot be captured by reference (only scalars, enums, pointers and "
                                 "value structs; a borrow cannot hold reference-counted fields)",

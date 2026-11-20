@@ -722,6 +722,20 @@ namespace muc_detail {
         return Type::make_ptr(t->elem);
     }
 
+    // A `[ref x]` capture stores the address in a delegate environment that outlives the frame, so it
+    // is an **escaping** borrow: only types whose lifetime needs no bookkeeping may be captured that
+    // way (the same family as `&x`). A `ref` parameter is scoped and uses `borrowable_type` instead.
+    bool Sema::ref_capturable_type(const TypePtr& t) {
+        if (!t) return false;
+        switch (t->kind) {
+            case TypeKind::Prim:
+            case TypeKind::Enum:
+            case TypeKind::Ptr: return true;
+            case TypeKind::Struct: return !t->is_union && !t->has_dtor && !has_ref_fields(t);
+            default: return false;
+        }
+    }
+
     bool Sema::borrowable_type(const TypePtr& t) {
         if (!t) return false;
         switch (t->kind) {
@@ -729,7 +743,11 @@ namespace muc_detail {
             case TypeKind::Enum:
             case TypeKind::Ptr: return true;
             case TypeKind::Struct:
-                return !t->is_union && !t->has_dtor && !has_ref_fields(t);
+                // A borrow is scoped (`ref` cannot be stored or rebound), so every non-union value type
+                // can be borrowed, including one that owns a resource or holds reference fields: the
+                // callee can only reach it through the language's own rules, which keep the counting
+                // right. `&` stays refused for such a type — a raw pointer outlives the borrow.
+                return !t->is_union;
             default: return false;  // void / string / slice / class / interface / module / null / range / ref
         }
     }

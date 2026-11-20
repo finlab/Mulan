@@ -27,6 +27,40 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 267 — 2026-11-20
+
+**Value types: three false rejections lifted, and two construction bugs they exposed.**
+
+The audit (`Mulan-Agents:agents/value-type-audit-2026-11-20.md`) found ordinary code being refused.
+All three are sema-level and were verified with counting cases:
+
+- **`return x;` moves** when `x` is a local or parameter of a movable-but-uncopyable type. The name dies
+  with the frame, so the transfer is safe; requiring `return move x` was syntax for a fact the compiler
+  already knew. A copyable type keeps the copy path (moving it would change copy counts silently).
+- **A `ref` parameter may borrow any non-union value type**, including one that owns a resource or holds
+  reference-counted fields. The old rule was inherited from `&` (where a raw pointer outlives the
+  borrow); a `ref` cannot be stored or rebound, so the callee only reaches the object through the
+  language rules. `&` stays refused for such types, and `[ref x]` **capture** — which does escape the
+  frame — keeps the narrower rule, now as its own predicate (`ref_capturable_type`).
+- **`field(x)` in a constructor initializer list is direct initialization**: `: a(1)` calls `E(int)`
+  (no `implicit` needed) and `: a(E(1))` means the same. This was also the only way to construct a
+  destructor-bearing value into a field at all — the expression form was rejected outright.
+
+Lifting the third exposed two codegen bugs in the member step, both fixed here:
+
+- **A throw during the member list destroyed never-constructed fields** with their *full*
+  destructor. The sequence now advances per field, so the finished fields get their destructor and the
+  one under construction only its partial destructor (case `ctor_member_init`: a field that throws is
+  never destroyed).
+- **A field with a default constructor and an explicit initializer was constructed twice** (default
+  construction, then the initializer). Members are now constructed once, in declaration order.
+
+Cases: `return_move`, `ref_param_value`, `ref_param_rc_generic` (was a must-fail, now a 200-iteration
+run case asserting exact counting), `ctor_member_init`. `struct_dtor_return` and `ref_param_rc_struct`
+were must-fail cases for the old rules and are gone.
+
+Full suite: **932/932 on Windows** (with `MUC_VERIFY_MEM=1`), build 267.
+
 #### build 266 — 2026-11-20
 
 **`std.mem`: element-wise `copy` / `fill` / `compare` / `align_up`.**

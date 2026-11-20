@@ -957,6 +957,8 @@ private:
 
     // Whether a type can be the referent of a borrow (`ref`): not reference counted, not void, not class/interface/string/slice.
     static bool borrowable_type(const TypePtr& t);
+    // `[ref x]` capture: the borrow escapes the frame, so only bookkeeping-free types qualify.
+    static bool ref_capturable_type(const TypePtr& t);
     // C99 6.7.5.3p7: a parameter declared as an array of T is adjusted to a pointer to T (the bound
     // is not part of the type, so `sizeof` inside the callee yields the pointer size). Only the
     // outermost dimension decays: `int[2][3] rows` becomes a pointer to `int[3]`. Arrays whose

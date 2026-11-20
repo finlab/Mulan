@@ -401,18 +401,32 @@ namespace muc_detail {
     // allocation (class) or default-constructed by the member step (struct), so the store follows the
     // same ownership rules as a field assignment: a borrowed source is retained, an owned one is
     // transferred (a raw store left class-handle fields unretained).
-    void Emitter::emitCtorInitList(Value* self, const TypePtr& ty, CtorDecl* ctor) {
-        if (!self || !ty || !ctor || ctor->init_list.empty()) return;
-        for (size_t i = 0; i < ty->fields.size(); ++i) {
-            const Field& f = ty->fields[i];
-            for (auto& item : ctor->init_list) {
-                if (item.kind != CtorInit::Kind::Field || item.name != f.name) continue;
-                if (item.args.empty()) break;
-                Value* dst = fieldAddr(self, ty, static_cast<int>(i));
-                initFromExpr(dst, f.type, item.args[0].get(), ty->is_packed);
-                break;
-            }
+    // The explicit initializer of field `name`, or null when the constructor does not name it.
+    static Expr* find_field_item(CtorDecl* ctor, const std::string& name) {
+        if (!ctor) return nullptr;
+        for (auto& item : ctor->init_list) {
+            if (item.kind != CtorInit::Kind::Field || item.name != name) continue;
+            if (item.args.empty()) return nullptr;
+            return item.args[0].get();
         }
+        return nullptr;
+    }
+
+    // Construct one field in declaration order (C++ 15.6.2): from the constructor's initializer when it
+    // names the field, otherwise from the field's own default constructor. Returns true when the field
+    // was constructed here (so the caller advances its construction sequence).
+    bool Emitter::emitFieldInit(Value* self, const TypePtr& ty, CtorDecl* ctor, size_t idx) {
+        if (!self || !ty || idx >= ty->fields.size()) return false;
+        const Field& f = ty->fields[idx];
+        if (f.weak || !f.type) return false;
+        Value* dst = fieldAddr(self, ty, static_cast<int>(idx));
+        if (Expr* item = find_field_item(ctor, f.name)) {
+            initFromExpr(dst, f.type, item, ty->is_packed);
+            return true;
+        }
+        if (!f.type->needs_ctor()) return false;
+        emitCtorGlue(dst, f.type, ty->is_packed);
+        return true;
     }
 
     void Emitter::emitCtor(ClassDecl* c, CtorDecl* ctor) {
@@ -518,8 +532,7 @@ namespace muc_detail {
         if (base && base->kind == TypeKind::Class) baseCount = base->fields.size();
         const size_t progressMark = ctorProgress.size();
         pushCtorProgress(b.CreateLoad(ptrTy(), thisSlot), c->ty, baseCount, false);
-        emitMemberInits(b.CreateLoad(ptrTy(), thisSlot), c->ty);
-        emitCtorInitList(b.CreateLoad(ptrTy(), thisSlot), c->ty, ctor);
+        emitMemberInits(b.CreateLoad(ptrTy(), thisSlot), c->ty, ctor);
         block(ctor->body.get());
         ctorProgress.resize(progressMark);
         popRefScope();
@@ -534,7 +547,7 @@ namespace muc_detail {
     // finished are destroyed by it, and the member that threw only gets its partial destructor, because
     // its constructor never returned (#24). An explicit `super(...)` runs this step from inside the body,
     // hence the lookup instead of a fresh sequence.
-    void Emitter::emitMemberInits(Value* self, const TypePtr& cls,
+    void Emitter::emitMemberInits(Value* self, const TypePtr& cls, CtorDecl* ctor,
                                   const std::function<void()>& onThrow) {
         if (!self || !cls || cls->kind != TypeKind::Class) return;
         size_t total = cls->fields.size();
@@ -548,9 +561,15 @@ namespace muc_detail {
         }
         for (size_t i = baseCount; i < total; ++i) {
             const Field& f = cls->fields[i];
-            if (f.weak || !f.type || !f.type->needs_ctor()) continue;
+            if (f.weak || !f.type) continue;
+            Expr* item = find_field_item(ctor, f.name);
+            if (!item && !f.type->needs_ctor()) continue;
             setCtorProgressNext(own, i);
-            emitCtorGlue(fieldAddr(self, cls, static_cast<int>(i)), f.type, false, onThrow);
+            if (item) {
+                initFromExpr(fieldAddr(self, cls, static_cast<int>(i)), f.type, item, false);
+            } else {
+                emitCtorGlue(fieldAddr(self, cls, static_cast<int>(i)), f.type, false, onThrow);
+            }
         }
         // Every own member is complete once the step returns, so the body starts with a fully built level.
         markCtorProgressBody(own);
@@ -680,13 +699,13 @@ namespace muc_detail {
             Value* self = b.CreateLoad(ptrTy(), thisSlot);
             for (size_t i = 0; i < sd->ty->fields.size(); ++i) {
                 const Field& f = sd->ty->fields[i];
-                if (f.weak || !f.type || !f.type->needs_ctor()) continue;
+                if (f.weak || !f.type) continue;
+                if (!find_field_item(ctor, f.name) && !f.type->needs_ctor()) continue;
                 setCtorProgressNext(progress, i);
-                emitCtorGlue(fieldAddr(self, sd->ty, static_cast<int>(i)), f.type);
+                emitFieldInit(self, sd->ty, ctor, i);
             }
         }
         markCtorProgressBody(progress);
-        emitCtorInitList(b.CreateLoad(ptrTy(), thisSlot), sd->ty, ctor);
         block(ctor->body.get());
         ctorProgress.resize(progressMark);
         popRefScope();

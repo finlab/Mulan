@@ -336,7 +336,7 @@ using ArgPack = Emitter::ArgPack;
             // This class declares no constructor of its own, so the member step has no constructor body to
             // hang off: run it here, after the inherited default construction and the descriptor restore.
             // A member constructor that throws must release the object: nothing owns it yet at this point.
-            emitMemberInits(p, cls, [&] { emitPartialDestroyCall(p, cls); });
+            emitMemberInits(p, cls, nullptr, [&] { emitPartialDestroyCall(p, cls); });
         }
         return p;
     }

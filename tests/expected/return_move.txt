@@ -1,0 +1,5 @@
+7 1
+7 3
+freed 1
+copy 5
+copied 1
