@@ -39,8 +39,9 @@
 - New: `generic_iface_self` (generic class/struct and a non-generic class with a `Self` return;
   concrete calls only), `generic_export`, `generic_export_fn` (must-fail), and `generic_abstract_promote`
   / `generic_abstract_new` (a generic abstract base, a promoted method of a generic field; `new` on the
-  abstract instance is rejected). Full suite: Windows **972/972**, Linux **970/970**, both with
-  `MUC_VERIFY_MEM=1`.
+  abstract instance is rejected), and `generic_recursive` (self handle, self pointer, mutually recursive
+  generic structs, a recursive generic variant). Full suite: Windows **973/973**, Linux **971/971**,
+  both with `MUC_VERIFY_MEM=1`.
 
 #### build 290 — 2026-11-21
 
