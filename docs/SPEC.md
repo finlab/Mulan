@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 268 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 269 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -2376,6 +2376,15 @@ int add(int a, int b) {
 - An empty parameter list is written `()`, meaning no parameters; the `(void)` compatibility form is not supported yet (pending).
 - `void` functions use `return;`; `return expr;` is not allowed; the result of a void function call has no value and cannot be used in an expression that needs a value (it may be an expression statement).
 - A non-`void` function must guarantee a return value on all paths; falling off the end is a **compile error** (settled). `main` is the exception: falling off is equivalent to `return 0;`.
+- **Definite initialization** (build 269): a **scalar** local (`int`/`enum`/pointer) declared without an
+  initializer is uninitialized, and reading it before every path to that read assigns it is a compile
+  error. The rule is flow-sensitive: `if`/`switch`/`try` keep a local uninitialized if *any* path leaves
+  it so, and an assignment inside a loop body does not escape the loop (the body may run zero times).
+  A mutable `ref` argument counts as initialization (the callee may write an out-parameter at once).
+  Aggregates are not tracked yet: a field or element write is not a whole-value initialization, so
+  `P p; p.a = 1; use(p.a)` stays legal and undiagnosed. A *moved-from* name is a separate state (3.4)
+  and is reported on its own.
+
 - Parameter form `T name`; `const T* p` means read-only through p.
 - **An array parameter is a pointer** (C99 6.7.5.3p7, 0.0.106): `int[5] xs` is `int* xs` — the bound is
   not part of the type, `sizeof(xs)` is the pointer size, and writes reach the caller's array. Only the

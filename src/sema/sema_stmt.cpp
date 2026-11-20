@@ -59,6 +59,7 @@ namespace muc_detail {
             // A `move` inside either arm leaves the variable moved on that path only; after the `if` the
             // variable counts as moved if *any* arm moved it (may-move analysis).
             const auto movedAtEntry = moved_locals_;
+            const auto uninitAtEntry = maybe_uninit_;
             push();
             if (ise && !ise->binds.empty()) {
                 for (size_t k = 0; k < ise->binds.size(); ++k) {
@@ -75,7 +76,9 @@ namespace muc_detail {
             check_block(iff->then.get());
             pop();
             const auto afterThen = moved_locals_;
+            const auto uninitAfterThen = maybe_uninit_;
             moved_locals_ = movedAtEntry;
+            maybe_uninit_ = uninitAtEntry;
             if (iff->els) {
                 if (auto b = dynamic_cast<Block*>(iff->els.get())) {
                     check_block(b);
@@ -85,13 +88,18 @@ namespace muc_detail {
             }
             for (LocalVar* lv : afterThen) moved_locals_.insert(lv);
             for (LocalVar* lv : movedAtEntry) moved_locals_.insert(lv);
+            // Definite initialization: a scalar stays uninitialized if *either* path left it so.
+            for (const LocalVar* lv : uninitAfterThen) maybe_uninit_.insert(lv);
         } else if (auto ws = dynamic_cast<WhileStmt*>(s)) {
             check_cond(ws->cond.get(), "while condition");
+            const auto uninitAtEntry = maybe_uninit_;
             ++loop_depth_;
             ++move_loop_count_;
             check_block(ws->body.get());
             --move_loop_count_;
             --loop_depth_;
+            // The body may not run at all, so an assignment inside it does not outlive the loop.
+            maybe_uninit_ = uninitAtEntry;
         } else if (auto fs = dynamic_cast<ForInStmt*>(s)) {
             ++move_loop_count_;
             check_for(fs);
@@ -130,7 +138,9 @@ namespace muc_detail {
                     ts);
             }
         } else if (auto tr = dynamic_cast<TryStmt*>(s)) {
+            const auto uninitAtEntry = maybe_uninit_;
             check_block(tr->body.get());
+            auto uninitAfterBody = maybe_uninit_;
             TypePtr ex = exception_type();
             if (!ex) err("std.exception.Exception is not available", tr);
             for (auto& c : tr->catches) {
@@ -150,9 +160,12 @@ namespace muc_detail {
                 c->var = std::move(lv);
                 push();
                 declare_local(c->var.get());
+                maybe_uninit_ = uninitAtEntry;  // a catch runs instead of the body
                 check_block(c->body.get());
                 pop();
+                for (const LocalVar* lv : maybe_uninit_) uninitAfterBody.insert(lv);
             }
+            maybe_uninit_ = uninitAfterBody;
             if (tr->finally_body) {
                 const bool saved = in_finally_;
                 in_finally_ = true;
@@ -334,6 +347,13 @@ namespace muc_detail {
 
         declare_local(lv);
         if (lv->init) check_decl_init(lv->zero, lv->rty, lv->init.get(), "initialization", lv);
+        // Definite initialization (SPEC 4): a scalar local with no initializer starts uninitialized.
+        // Aggregates are not tracked (a field or element write is not a whole-value initialization).
+        if (!lv->init && !lv->by_ref && lv->rty && (lv->rty->kind == TypeKind::Prim ||
+                                                    lv->rty->kind == TypeKind::Enum ||
+                                                    lv->rty->kind == TypeKind::Ptr)) {
+            maybe_uninit_.insert(lv);
+        }
     }
 
     void Sema::check_decl_init(bool& zero_flag, const TypePtr& ty, Init* init, const std::string& what,

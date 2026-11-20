@@ -27,6 +27,34 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 269 — 2026-11-20
+
+**Definite initialization: a scalar local cannot be read before it is assigned.**
+
+The last audit item that was a real safety hole rather than a limitation — `int x; return x;` compiled
+and read whatever was on the stack. The check is deliberately scoped to **scalars** (`int`/enum/pointer):
+
+- a local declared without an initializer is uninitialized; reading it before every path to the read
+  assigns it is a compile error naming the variable;
+- the analysis is flow-sensitive across branches and loops: `if`/`switch`-style merges keep a variable
+  uninitialized when *any* path leaves it so (the merge is a union), and an assignment inside a loop
+  body does not escape the loop, because the body may run zero times (the rule Go and C# use);
+- a **mutable `ref` argument** counts as initialization — `int m; fill(m);` is the out-parameter idiom
+  the previous build introduced, and the callee may write it;
+- `&&`-style short circuit and `?:` are unaffected: both are expressions, and the read check fires on
+  the operand wherever it is typed.
+
+Aggregates are explicitly **not** tracked: a field or element write is not a whole-value
+initialization, and tracking that needs per-field and per-element state (`P p; p.a = 1; use(p.a)` stays
+legal and undiagnosed). An earlier attempt covered struct fields; it produced false positives on
+`digits[i] = v;` (an element write on an uninitialized array) and on `ref` arguments, which is why the
+rule starts narrow — the reasons are recorded in the audit.
+
+Cases: `uninit_flow` (assignment, both branches, out-parameter, loop-guarded initial value) and the
+must-fail `uninit_read`, `uninit_branch`, `uninit_loop`.
+
+Full suite: **937/937 on Windows** (with `MUC_VERIFY_MEM=1`), build 269.
+
 #### build 268 — 2026-11-20
 
 **`move` works on a `ref` parameter, and a `ref` parameter accepts a whole-value assignment.**

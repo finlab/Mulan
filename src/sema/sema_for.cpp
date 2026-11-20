@@ -113,6 +113,7 @@ namespace muc_detail {
 
     void Sema::check_for(ForInStmt* s) {
         ScopeGuard guard(*this);
+        const auto uninitAtEntry = maybe_uninit_;  // the body may run zero times
 
         if (auto r = dynamic_cast<RangeExpr*>(s->seq.get())) {
             TypePtr lt = check_expr(r->lo.get());
@@ -239,6 +240,7 @@ namespace muc_detail {
         in_para_for_body_ = saved_pf_body;
         para_for_body_depth_ = saved_pf_depth;
         --loop_depth_;
+        maybe_uninit_ = uninitAtEntry;
     }
 
     // C-style `for (init; cond; step)`: init, cond and step share one scope with the body (C semantics),
@@ -249,11 +251,13 @@ namespace muc_detail {
         ScopeGuard guard(*this);  // pops the scope and restores the loop/move counters on a throw
         for (auto& st : s->init) check_stmt(st.get());
         if (s->cond) check_cond(s->cond.get(), "for condition");
+        const auto uninitBeforeBody = maybe_uninit_;  // init runs once; the body may not run
         ++loop_depth_;
         ++move_loop_count_;
         if (s->step) check_stmt(s->step.get());
         check_block(s->body.get());
         --move_loop_count_;
         --loop_depth_;
+        maybe_uninit_ = uninitBeforeBody;
     }
 }  // namespace muc_detail

@@ -101,7 +101,54 @@ namespace muc_detail {
         return true;
     }
 
+    // Wrapper: arguments are typed while the callee is still unknown, so a read of a maybe
+    // uninitialized scalar is recorded and settled here — a mutable `ref` parameter turns it into a
+    // write (an out-parameter), every other parameter makes it a read.
     TypePtr Sema::check_call(Call* c, const TypePtr& expected) {
+        const size_t mark = deferred_uninit_.size();
+        const bool saved_arg_ctx = arg_ctx_;
+        arg_ctx_ = true;
+        TypePtr result;
+        try {
+            result = check_call_impl(c, expected);
+        } catch (...) {
+            arg_ctx_ = saved_arg_ctx;
+            deferred_uninit_.resize(mark);
+            throw;
+        }
+        arg_ctx_ = saved_arg_ctx;
+        flush_deferred_uninit(mark, c);
+        return result;
+    }
+
+    // Settle the reads recorded while typing this call's arguments.
+    void Sema::flush_deferred_uninit(size_t mark, Call* c) {
+        for (size_t i = mark; i < deferred_uninit_.size(); ++i) {
+            const DeferredUninit& d = deferred_uninit_[i];
+            size_t param = static_cast<size_t>(-1);
+            for (size_t k = 0; k < c->args.size(); ++k) {
+                if (c->args[k].get() == d.at) {
+                    param = k;
+                    break;
+                }
+            }
+            const FuncDecl* f =
+                (c->callee_kind == "func" && c->func) ? c->func : nullptr;
+            const bool mutable_ref =
+                f && param < f->pty_ref.size() && f->pty_ref[param] &&
+                !(param < f->pty_cref.size() && f->pty_cref[param]);
+            if (mutable_ref) {
+                maybe_uninit_.erase(d.lv);   // the callee may write through the borrow
+            } else {
+                err("`" + d.lv->name + "` is read before it is initialized; assign it first "
+                        "(`" + d.lv->name + " = ...`) or give it an initializer at the declaration",
+                    d.at);
+            }
+        }
+        deferred_uninit_.resize(mark);
+    }
+
+    TypePtr Sema::check_call_impl(Call* c, const TypePtr& expected) {
         Expr* callee = c->callee.get();
         if (!callee) err("call is missing a callee", c);
 
@@ -666,7 +713,15 @@ namespace muc_detail {
             const bool is_ref = i < target->pty_ref.size() && target->pty_ref[i];
             if (is_ref) {
                 Expr* a = c->args[i].get();
-                TypePtr at = check_expr(a);
+                // A mutable `ref` argument may be written by the callee (an out-parameter), so it is a
+                // write context: `int x; fill(x);` does not read `x`. A `const ref` argument is a read.
+                TypePtr at;
+                if (i < target->pty_cref.size() && target->pty_cref[i]) {
+                    at = check_expr(a);
+                } else {
+                    WriteGuard writing(write_ctx_);
+                    at = check_expr(a);
+                }
                 if (roots_at_outer_value_local(a)) {
                     err("cannot pass an enclosing local by `ref` inside a `para` section", a);
                 }
@@ -680,6 +735,15 @@ namespace muc_detail {
                             params[i]->str() + "` (found `" + at->str() +
                             "`): `ref` parameters do not convert",
                         a);
+                }
+                // A mutable `ref` argument may be written by the callee (an out-parameter), so the
+                // variable counts as initialized afterwards; the analysis cannot see through the call.
+                if (!(i < target->pty_cref.size() && target->pty_cref[i])) {
+                    if (auto* n = dynamic_cast<Name*>(a); n && n->kind == "local") {
+                        if (auto lvp = std::get_if<LocalVar*>(&n->sym); lvp && *lvp) {
+                            maybe_uninit_.erase(*lvp);
+                        }
+                    }
                 }
                 const bool is_cref = i < target->pty_cref.size() && target->pty_cref[i];
                 if (!is_cref) {

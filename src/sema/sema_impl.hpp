@@ -337,6 +337,31 @@ private:
     void note_assigned_local(const std::string& name);
     // `swap(a, b)`: two writable places of the same type.
     TypePtr check_swap(SwapExpr* sw);
+    // ------------------------------------------------------------ definite initialization (SPEC 4)
+    //
+    // A **scalar** local declared without an initializer (`int x;`) is maybe-uninitialized until an
+    // assignment, a `ref` argument (the callee may write through the borrow) or an initializer settles
+    // it; reading it before that is a compile error. Aggregates are out of scope for now: an element or
+    // field write is not a whole-value initialization, and tracking that correctly needs per-field and
+    // per-element state (see Mulan-Agents:agents/value-type-audit-2026-11-20.md).
+    std::unordered_set<const LocalVar*> maybe_uninit_;
+    // While a call's arguments are being typed the callee is not resolved yet, so a read of a maybe
+    // uninitialized scalar is only *recorded*; after resolution a mutable `ref` parameter turns it
+    // into a write (an out-parameter) and anything else reports the read.
+    struct DeferredUninit {
+        Expr* at;
+        const LocalVar* lv;
+    };
+    std::vector<DeferredUninit> deferred_uninit_;
+    bool arg_ctx_ = false;
+    void flush_deferred_uninit(size_t mark, Call* c);
+    // True while an assignment target is being checked: writing a place is not reading it.
+    bool write_ctx_ = false;
+    struct WriteGuard {
+        bool& f;
+        explicit WriteGuard(bool& x) : f(x) { f = true; }
+        ~WriteGuard() { f = false; }
+    };
     // Reset the per-body state when a function/method/constructor/destructor body starts.
     void begin_move_scope() {
         moved_locals_.clear();
@@ -948,6 +973,8 @@ private:
     bool can_cast(const TypePtr& src, const TypePtr& dst);
     // ------------------------------------------------------------ calls
     TypePtr check_call(Call* c, const TypePtr& expected = nullptr);
+    // The call check itself (see check_call for the definite-initialization wrapper).
+    TypePtr check_call_impl(Call* c, const TypePtr& expected);
 
     int rank_arg(Expr* e, const TypePtr& aty, const TypePtr& p);
 

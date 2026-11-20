@@ -430,7 +430,11 @@ namespace muc_detail {
             }
         }
 
-        TypePtr tt = check_expr(s->target.get());
+        TypePtr tt;
+        {
+            WriteGuard writing(write_ctx_);   // `x = 1` writes; it must not count as a read
+            tt = check_expr(s->target.get());
+        }
         if (roots_at_outer_value_local(s->target.get())) {
             err("cannot assign to an enclosing local inside a `para` section: pass the result through a "
                 "shared object (a class field or a channel)",
@@ -448,6 +452,9 @@ namespace muc_detail {
         check_writable(s->target.get());
         if (s->op == "=") {
             check_assign(s->value.get(), tt, "assignment");
+            if (auto n = dynamic_cast<Name*>(s->target.get()); n && n->kind == "local") {
+                if (auto lvp = std::get_if<LocalVar*>(&n->sym); lvp && *lvp) maybe_uninit_.erase(*lvp);
+            }
             return;
         }
         if (is_enum_t(tt)) {

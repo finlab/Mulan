@@ -29,6 +29,17 @@ namespace muc_detail {
                 e);
         }
         if (LocalVar* lv = lookup_local(e->ident)) {
+            // Reading a scalar local that has not been definitely initialized is an error; writing to
+            // it is not a read (the assignment target is checked under `write_ctx_`).
+            if (!write_ctx_ && maybe_uninit_.count(lv)) {
+                if (arg_ctx_) {
+                    deferred_uninit_.push_back({e, lv});
+                } else {
+                    err("`" + e->ident + "` is read before it is initialized; assign it first "
+                            "(`" + lv->name + " = ...`) or give it an initializer at the declaration",
+                        e);
+                }
+            }
             // A moved value cannot be touched again until it is reassigned
             // (agents/value-semantics.md §8.4).
             if (moved_locals_.count(lv)) {
