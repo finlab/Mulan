@@ -27,6 +27,16 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 286 — 2026-11-21
+
+**Diagnostic fix: a generic variant payload rejection points at the instantiation site.**
+
+- `Option<nocopy nomove T>` used to report `libs/std/option.mu:<line>` because the payload check runs
+  with the template's unit as `cur_` while resolving the payload types; the line/column were already
+  the use site. It now reports the `Option<...>` use site (the instantiation note stays).
+- New must-fail case `option_immovable`.
+- Full suite: 944/944 with `MUC_VERIFY_MEM=1`.
+
 #### build 285 — 2026-11-21
 
 **Variant payload rule refined: copyable or movable.**

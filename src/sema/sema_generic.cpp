@@ -424,6 +424,10 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
                 // transferred with `Some(move v)` and moved out by `match move`. Only a value that is
                 // neither (both `nocopy` and `nomove`) cannot be stored by value.
                 if (!ft->copyable() && !ft->movable()) {
+                    // This is a property of the instantiation (the type argument), not of the
+                    // template declaration: report it at the use site, not in the library file
+                    // (`cur_` is the template unit here, for resolving the payload types).
+                    cur_ = u;
                     err_ts("payload of alternative `" + alt.name + "` is `" + ft->str() +
                                "`, which is neither copyable nor movable and cannot be stored by value "
                                "in a variant (store a pointer or a class handle instead)",
