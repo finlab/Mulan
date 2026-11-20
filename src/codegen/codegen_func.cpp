@@ -499,9 +499,12 @@ namespace muc_detail {
             PB.registerFunctionAnalyses(FAM);
             PB.registerLoopAnalyses(LAM);
             PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-            ModulePassManager MPM =
-                PB.buildPerModuleDefaultPipeline(std::getenv("MUC_NO_OPT") ? llvm::OptimizationLevel::O0
-                                                                          : llvm::OptimizationLevel::O2);
+            const char* no_opt = std::getenv("MUC_NO_OPT");
+            const bool disable_opt =
+                no_opt && *no_opt && std::strcmp(no_opt, "0") != 0 && std::strcmp(no_opt, "false") != 0 &&
+                std::strcmp(no_opt, "off") != 0;
+            ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(
+                disable_opt ? llvm::OptimizationLevel::O0 : llvm::OptimizationLevel::O2);
             MPM.run(*mod, MAM);
         }
     }

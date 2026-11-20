@@ -240,7 +240,7 @@ namespace muc_detail {
             // Candidates: current unit + directly `use`d units (public only) + std.string (implicit)
             if (!c->type_args.empty()) {
                 // Generic function takes precedence; otherwise it is treated as value construction of a generic struct
-                Decl* tdecl = find_generic_template(nm->ident, cur_);
+                Decl* tdecl = find_generic_template(nm->ident, cur_, c->type_args.size());
                 if (auto* gf = dynamic_cast<FuncDecl*>(tdecl)) {
                     Unit* tu = unit_of_template(gf);
                     const std::string qname = tu ? tu->name + "." + nm->ident : nm->ident;
@@ -330,6 +330,13 @@ namespace muc_detail {
                                    for (const auto& kv : generic_templates_) {
                                        split_qualified(kv.first, tu, tn);
                                        if (tn != nm->ident) continue;
+                                       // A template with fewer type parameters than the written list
+                                       // can never accept it; dropping it here lets the list itself
+                                       // disambiguate (`unwrap_or<int,int>` vs a one-parameter overload).
+                                       if (auto* cand = dynamic_cast<FuncDecl*>(kv.second);
+                                           cand && c->type_args.size() > cand->type_params.size()) {
+                                           continue;
+                                       }
                                        if (d) {
                                            err("generic function `" + nm->ident +
                                                    "` is ambiguous; qualify it with a unit name",

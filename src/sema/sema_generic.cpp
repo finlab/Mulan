@@ -220,21 +220,33 @@ TypePtr Sema::instantiate_generic_named(const std::string& name,
     return instantiate_generic(&tmp, u);
 }
 
-Decl* Sema::find_generic_template(const std::string& full, Unit* u) {
+Decl* Sema::find_generic_template(const std::string& full, Unit* u, size_t min_type_args) {
     std::string want_unit, name;
     split_qualified(full, want_unit, name);
+    // A written list can only fit a template with at least that many type parameters. Filtering here
+    // lets `unwrap_or<int,int>` skip the one-parameter overload instead of reporting its arity or an
+    // ambiguity (#249).
+    auto fits = [&](Decl* d) { return d && d->type_params.size() >= min_type_args; };
     if (!want_unit.empty()) {
         auto it = generic_templates_.find(want_unit + "." + name);
         return it == generic_templates_.end() ? nullptr : it->second;
     }
+    Decl* fallback = nullptr;
     auto own = generic_templates_.find(u->name + "." + name);
-    if (own != generic_templates_.end()) return own->second;
+    if (own != generic_templates_.end()) {
+        if (fits(own->second)) return own->second;
+        fallback = own->second;
+    }
     for (const auto& kv : generic_templates_) {
         std::string tu, tn;
         split_qualified(kv.first, tu, tn);
-        if (tn == name) return kv.second;  // same name across units: take the first one (M2d simplification)
+        if (tn != name) continue;
+        if (fits(kv.second)) return kv.second;  // same name across units: first fitting match
+        if (!fallback) fallback = kv.second;
     }
-    return nullptr;
+    // Nothing can take the written list: return a match anyway so the arity diagnostic names the
+    // template instead of falling through to "not a generic type".
+    return fallback;
 }
 
 TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {

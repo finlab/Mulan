@@ -716,7 +716,9 @@ ExprPtr Parser::parse_primary() {
     if (t.kind == TokKind::Float) {
         advance();
         auto node = std::make_unique<FloatLit>();
-        node->value = t.fval;
+        // Normalize an `f` literal to f32 once, so constant evaluation and runtime materialization
+        // see the same double (`0.1f` used to differ between them, #247).
+        node->value = t.f32 ? static_cast<double>(static_cast<float>(t.fval)) : t.fval;
         node->is_float32 = t.f32;
         node->line = t.line;
         node->col = t.col;

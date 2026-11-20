@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 301 — 2026-11-21
+
+**Union constants, f32 literal normalization, arity disambiguation.**
+
+- A global union's named aggregate initializer writes the selected member through the LLVM carrier
+  instead of indexing the carrier as if it were the model field list (#246).
+- An `f` literal is rounded to f32 once in the parser, so constant evaluation and runtime
+  materialization see the same double (#247).
+- An explicit type-argument list filters same-name templates by arity before the ambiguity check
+  (`unwrap_or<int,int>` skips the one-parameter overload); if no template can take the list, the
+  original arity diagnostic is preserved (#249).
+- `MUC_NO_OPT=0` / `false` / `off` no longer disables optimization; only a true value does (#250).
+- New cases `union_global_init`, `float32_literal`, `generic_arity_disambig`. Full: Windows
+  **1008/1008**, Linux **1006/1006** with `MUC_VERIFY_MEM=1`.
+
 #### build 300 — 2026-11-21
 
 **Driver and target fixes.**

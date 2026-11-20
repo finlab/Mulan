@@ -9,6 +9,7 @@
 // concept:   codegen-layout, codegen-support
 
 #include "codegen_impl.hpp"
+#include <llvm/IR/Constants.h>
 
 namespace muc_detail {
 
@@ -599,6 +600,49 @@ bool is_zero_literal(Init* init) {
         if (is_zero_literal(init)) return zeroConst(ct, ty);
         if (auto ia = dynamic_cast<InitAggregate*>(init)) {
             if (ia->items.empty() && zeroable(ty)) return zeroConst(ct, ty);
+            if (ty->kind == TypeKind::Struct && ty->is_union) {
+                // A union's LLVM form is one carrier (+ pad), not one element per model field. The
+                // generic struct branch indexed it with model indices and wrote out of bounds (#246).
+                auto* st = cast<LStruct>(ct);
+                std::vector<Constant*> out(st->getNumElements(), nullptr);
+                const Init* chosen_init = nullptr;
+                TypePtr chosen_ty;
+                if (!ia->items.empty()) {
+                    const auto& item = ia->items[0];
+                    const int idx = item.first.empty() ? 0 : ty->field_index(item.first);
+                    if (idx >= 0 && idx < static_cast<int>(ty->fields.size())) {
+                        chosen_ty = ty->fields[static_cast<size_t>(idx)].type;
+                        chosen_init = item.second.get();
+                    }
+                }
+                if (chosen_ty && chosen_init) {
+                    Constant* c = constValue(chosen_ty, const_cast<Init*>(chosen_init));
+                    LType* carrier = st->getElementType(0);
+                    if (c && c->getType() != carrier) {
+                        if (c->getType()->isIntegerTy() && carrier->isIntegerTy()) {
+                            const unsigned cb = carrier->getIntegerBitWidth();
+                            if (auto* ci = dyn_cast<ConstantInt>(c)) {
+                                c = ConstantInt::get(cast<IntegerType>(carrier), ci->getValue().zextOrTrunc(cb));
+                            } else {
+                                c = Constant::getNullValue(carrier);
+                            }
+                        } else if (c->getType()->isPointerTy() && carrier->isIntegerTy()) {
+                            c = llvm::ConstantExpr::getPtrToInt(c, carrier);
+                        } else if (c->getType()->isFloatingPointTy() && carrier->isIntegerTy() &&
+                                   c->getType()->getPrimitiveSizeInBits() ==
+                                       carrier->getIntegerBitWidth()) {
+                            c = llvm::ConstantExpr::getBitCast(c, carrier);
+                        } else {
+                            c = Constant::getNullValue(carrier);
+                        }
+                    }
+                    out[0] = c;
+                }
+                for (size_t i = 0; i < out.size(); ++i) {
+                    if (!out[i]) out[i] = Constant::getNullValue(st->getElementType(i));
+                }
+                return ConstantStruct::get(st, out);
+            }
             if (ty->kind == TypeKind::Struct) {
                 std::vector<Constant*> vals(ty->fields.size(), nullptr);
                 bool named = false;
