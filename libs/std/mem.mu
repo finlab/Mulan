@@ -55,6 +55,23 @@ public isize compare<T: IOrder>(T[] a, T[] b) {
     return 0;
 }
 
+// Move the value out of `slot` and leave the type's zero value behind. `move` on a `ref` parameter
+// transfers the *referent*, so the caller's slot becomes a destructible empty shell — the same state
+// `move x` leaves. Nothing is copied and no destructor runs for the value that leaves.
+public T take<T>(ref T slot) {
+    return move slot;
+}
+
+// Move `value` into `slot` and return what `slot` held. The old value leaves by bits, so no
+// constructor, destructor or reference-count operation runs for it; the new value is moved in.
+// This is the pair a container needs for `insert` / `remove`: `swap` exchanges two elements,
+// `take`/`replace` hand one out.
+public T replace<T>(ref T slot, T value) {
+    T old = move slot;
+    slot = move value;
+    return old;
+}
+
 // Round `n` up to the next multiple of `alignment`. `alignment` must be a positive power of two (the
 // same precondition `align(N)` has); anything else throws `MemError` rather than returning a value
 // that silently misaligns.

@@ -370,6 +370,7 @@ namespace muc_detail {
                 for (auto& a : delegate_item->args) raw.push_back(a.get());
                 const auto* sig = choose_ctor(ty->ctors, raw, "delegating constructor", delegate_item);
                 for (size_t i = 0; i < delegate_item->args.size(); ++i) {
+                    ArgGuard ag(call_arg_depth_);
                     check_assign(delegate_item->args[i].get(), (*sig)[i], "delegating constructor argument");
                 }
                 if (same_param_sig(*sig, ctor->pty)) {
@@ -398,6 +399,7 @@ namespace muc_detail {
                     for (auto& a : base_item->args) raw.push_back(a.get());
                     const auto* sig = choose_ctor(base_ctors, raw, "base class", base_item);
                     for (size_t i = 0; i < base_item->args.size(); ++i) {
+                        ArgGuard ag(call_arg_depth_);
                         check_assign(base_item->args[i].get(), (*sig)[i], "base constructor argument");
                     }
                     ctor->base_pty = *sig;

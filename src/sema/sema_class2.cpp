@@ -290,16 +290,10 @@ namespace muc_detail {
     void Sema::check_writable(Expr* t) {
         if (auto n = dynamic_cast<Name*>(t)) {
             if (n->ident == "this") err("cannot assign to `this`", t);
-            if (auto lv = std::get_if<LocalVar*>(&n->sym); lv && *lv && (*lv)->is_ref_param) {
-                // Scalar/enum/pointer borrow: assignment writes through to the caller's variable (struct borrows still use field assignment, see SPEC "no rebinding")
-                TypePtr rt = (*lv)->rty;
-                const bool scalar = rt && (rt->kind == TypeKind::Prim ||
-                                           rt->kind == TypeKind::Enum ||
-                                           rt->kind == TypeKind::Ptr);
-                if (!scalar) {
-                    err("cannot rebind a `ref` parameter: it borrows the caller's variable", t);
-                }
-            }
+            // A `ref` parameter is a binding to the caller's variable, so assigning to it writes that
+            // variable — for every value type, not only scalars. (It cannot "rebind": the language has no
+            // references. The old struct carve-out made an out-parameter impossible to write, which is
+            // what `std.mem.replace` needs.) The const rules below still apply.
             if (root_is_const(t)) err("`" + n->ident + "` is a `const` binding and cannot be assigned", t);
             if (auto lv = std::get_if<LocalVar*>(&n->sym); lv && *lv && (*lv)->ref_const) {
                 err("cannot assign through a `const ref` binding", t);

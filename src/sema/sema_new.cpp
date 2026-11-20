@@ -168,6 +168,7 @@ namespace muc_detail {
                 err("constructor is not declared public and cannot be invoked with `new` from another unit", ne);
             }
             for (size_t i = 0; i < ne->args.size(); ++i) {
+                ArgGuard ag(call_arg_depth_);
                 check_assign(ne->args[i].get(), (*chosen)[i], "constructor argument");
             }
             ne->ctor_pty = *chosen;

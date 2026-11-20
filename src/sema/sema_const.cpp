@@ -111,7 +111,7 @@ namespace muc_detail {
 
     TypePtr Sema::check_assign(Expr* e, const TypePtr& dst, const std::string& what) {
         // `move x` is the sanctioned way to produce an uncopyable value: `check_move` already verified
-        // that the type is movable.
+        // that the type is movable (and empties the source).
         if (noncopyable_struct(dst) && !dynamic_cast<MoveExpr*>(e)) {
             // A prvalue of the same type is moved, not copied: a construction (`Token(5)`) and a call
             // whose result is the value itself (`a = f();` — the callee's return slot is handed over).

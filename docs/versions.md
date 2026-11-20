@@ -27,6 +27,31 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 268 — 2026-11-20
+
+**`move` works on a `ref` parameter, and a `ref` parameter accepts a whole-value assignment.**
+
+Two language mechanisms the container layer needs, both narrow:
+
+- **`move p` where `p` is a `ref` parameter** transfers the *referent*: the caller's slot is left as the
+  type's zero value, the same destructible empty shell `move x` leaves on a local. A `for ref` loop
+  variable stays immovable (the element belongs to the container). This is the mechanism behind an
+  out-parameter; `std.mem.take` / `replace` are ordinary library functions on top of it, so "how the
+  new value comes in" is the language's own assignment rule instead of a second code path.
+- **Assigning to a `ref` parameter writes the caller's variable for every value type.** The old rule
+  allowed it only for scalars and pointers and refused a struct ("cannot rebind"); but a `ref` cannot be
+  rebound — the language has no references — so a whole-value assignment can only mean a write through
+  the borrow. Without this an out-parameter could not be written at all.
+- A destructor-bearing value may now be **constructed in an argument position** (`f(B(2))`): the callee
+  takes ownership of the argument, exactly like a declaration initializer or an assignment right-hand
+  side. `std.mem.replace(a, Buf(2))` needs it.
+
+Cases `mem_take` (`take` / `replace` on a local, an element and a `string`, with allocation counts),
+`ref_param_write` (out-parameters for a plain struct and a destructor-bearing one). The
+`ref_param_rebind` must-fail case encoded the old rule and is gone.
+
+Full suite: **933/933 on Windows** (with `MUC_VERIFY_MEM=1`).
+
 #### build 267 — 2026-11-20
 
 **Value types: three false rejections lifted, and two construction bugs they exposed.**

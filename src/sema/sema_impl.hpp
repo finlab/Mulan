@@ -267,6 +267,14 @@ private:
     int const_depth_ = 0;  // constant evaluation recursion depth (see DepthGuard)
     std::unordered_map<int, TypePtr> auto_groups_;  // inference result shared by auto in one declaration
     Expr* direct_init_expr_ = nullptr;  // direct-initialization expression currently under check (in-place constructor construction)
+    // > 0 while a call's arguments are being checked. An argument is consumed by the call, so a
+    // destructor-bearing value may be constructed there (`f(B(1))`), not only in a declaration.
+    int call_arg_depth_ = 0;
+    struct ArgGuard {
+        int& d;
+        explicit ArgGuard(int& x) : d(x) { ++d; }
+        ~ArgGuard() { --d; }
+    };
     // The right-hand side of the assignment under check: a struct construction there is an in-place
     // move-assign (`a = T(args);`), not a copy of an existing value.
     Expr* assign_rhs_expr_ = nullptr;
@@ -328,7 +336,8 @@ private:
     TypePtr check_move(MoveExpr* mv);    // `x = ...` makes a moved variable usable again.
     void note_assigned_local(const std::string& name);
     // `swap(a, b)`: two writable places of the same type.
-    TypePtr check_swap(SwapExpr* sw);    // Reset the per-body state when a function/method/constructor/destructor body starts.
+    TypePtr check_swap(SwapExpr* sw);
+    // Reset the per-body state when a function/method/constructor/destructor body starts.
     void begin_move_scope() {
         moved_locals_.clear();
         local_loop_level_.clear();

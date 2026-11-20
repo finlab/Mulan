@@ -178,6 +178,7 @@ namespace muc_detail {
             }
             if (cands.size() == 1 && cands[0]->pty.size() == args.size()) {
                 for (size_t i = 0; i < args.size(); ++i) {
+                    ArgGuard ag(call_arg_depth_);
                     check_assign(args[i], cands[0]->pty[i], what + " argument");
                 }
             }

@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 267 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 268 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -426,6 +426,10 @@ struct Point {
   - `move` accepts a **plain variable name only**: partial moves (`move o.field`, `move a[i]`) are
     rejected, so a moved-from slot is never left behind (a container that wants to hand an element out
     provides its own operation).
+  - A **`ref` parameter is a name too**: `move p` transfers the *referent* and leaves the caller's slot
+    as the type's zero value — the destructible empty shell a moved-from local is left in. That is the
+    mechanism behind an out-parameter and `std.mem.take` / `replace`; a `for ref` loop variable stays
+    immovable (the element belongs to the container).
   - The move constructor receives its source **by pointer** (like `ref`), so the body steals without the
     parameter retaining anything; the compiler zeroes the source afterwards and stops destroying it.
   - **A moved value is out of reach**: any later read, write, borrow, pass or return of that variable is a
@@ -1983,7 +1987,7 @@ class Box<T> {
 - **Parameters are owning local variables** (since 0.0.47, consistent with 3.8): parameter values are retained on entry and released on exit;
   this applies to class/interface/`string`/slice parameters and to struct parameters that contain reference fields. A parameter may be freely rebound inside the function body,
   without affecting the caller; assigning an owned value (`new`/a call result) to a parameter does not leak. Arguments at the call site are still passed by value.
-- `ref T` parameters (**0.0.62; scalars supported since 0.0.63**): borrow the caller's variable by reference; the callee may write, but cannot rebind or store;
+- `ref T` parameters (**0.0.62; scalars supported since 0.0.63**): borrow the caller's variable by reference; the callee may write (a whole-value assignment writes the caller's variable, for every value type), cannot rebind (there are no references to rebind) or store;
   every non-union value type may be borrowed — a borrow is scoped (it cannot be stored or rebound), so the
   callee reaches the object only through the language rules and the reference counting stays exact, even when
   the value owns a resource or holds reference-counted fields. `&` remains refused for such a type, because a

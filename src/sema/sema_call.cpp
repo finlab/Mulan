@@ -26,6 +26,7 @@ namespace muc_detail {
                 c);
         }
         for (size_t i = 0; i < ft->fparams.size() && i < c->args.size(); ++i) {
+            ArgGuard ag(call_arg_depth_);
             check_assign(c->args[i].get(), ft->fparams[i], "argument of a call through a function value");
         }
         c->callee_kind = ft->kind == TypeKind::Delegate ? "delegate" : "fnptr";
@@ -599,8 +600,10 @@ namespace muc_detail {
                     }
                     reorder_named_args(c->args, c->named, struct_ty->ctor_param_names[hit]);
                 }
-                if (struct_ty->has_dtor && c != direct_init_expr_ && c != assign_rhs_expr_) {
-                    err("a struct with a destructor can only be constructed in a declaration initializer",
+                if (struct_ty->has_dtor && c != direct_init_expr_ && c != assign_rhs_expr_ &&
+                    call_arg_depth_ == 0) {
+                    err("a struct with a destructor can only be constructed in a declaration "
+                        "initializer, an assignment, or a call argument",
                         c);
                 }
                 const auto* chosen = choose_ctor(struct_ty->ctors, raw_args(c->args),
@@ -611,6 +614,7 @@ namespace muc_detail {
                     err("constructor is not declared public and cannot be called from another unit", c);
                 }
                 for (size_t i = 0; i < c->args.size(); ++i) {
+                    ArgGuard ag(call_arg_depth_);
                     check_assign(c->args[i].get(), (*chosen)[i], "constructor argument");
                 }
                 c->callee_kind = "struct_ctor";
@@ -694,6 +698,7 @@ namespace muc_detail {
                 }
                 continue;
             }
+            ArgGuard ag(call_arg_depth_);
             check_assign(c->args[i].get(), params[i], "argument of call to `" + target->name + "`");
         }
         if (target->is_varargs) {
@@ -813,6 +818,7 @@ namespace muc_detail {
                 c);
         }
         for (size_t i = 0; i < c->args.size(); ++i) {
+            ArgGuard ag(call_arg_depth_);
             check_assign(c->args[i].get(), sig->params[i], what + " argument");
         }
     }

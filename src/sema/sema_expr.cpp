@@ -800,8 +800,13 @@ namespace muc_detail {
             err("`move` can only transfer a local variable or a parameter; `" + nm->ident + "` is not one", mv);
         }
         if (lv->is_const) err("cannot move `" + nm->ident + "`: it is a `const` value; copy it instead", mv);
-        if (lv->by_ref) {
-            err("cannot move `" + nm->ident + "`: it is a `ref` borrow, and borrowing never transfers ownership",
+        // A `ref` parameter is a place like any other, so `move p` moves the *referent* out and leaves
+        // the caller's slot zeroed. That is what an out-parameter needs (`std.mem.take` / `replace`):
+        // the operation is spelled at the point that performs it, and the emptied slot is a destructible
+        // zero value, exactly like a moved-from local.
+        if (lv->by_ref && !lv->is_ref_param) {
+            err("cannot move `" + nm->ident +
+                    "`: it is a `for ref` binding during iteration; the element belongs to the container",
                 mv);
         }
         TypePtr t = check_expr(nm);  // reports "was moved and cannot be used" when it already happened
@@ -849,6 +854,10 @@ namespace muc_detail {
         return false;
     }
 
+    // `take(place)`: the value moves out and the place is left zeroed, so the caller's slot stays a
+    // destructible empty shell (`move x` does the same to a name). The place must be a writable, ownable
+    // location: a const place, a `weak` field or a value embedding one would leave a registration
+    // pointing at a slot that no longer holds its target.
     TypePtr Sema::check_swap(SwapExpr* sw) {
         TypePtr ta = check_expr(sw->a.get());
         TypePtr tb = check_expr(sw->b.get());
