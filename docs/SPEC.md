@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 270 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 271 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -3064,7 +3064,7 @@ int x = match v {
 | Local type inference | — | `auto x = expr;`; local only, an initializer is required; multiple declarators must have the same type |
 | Dynamic typing | None at language level (void*/variant) | None in phase one; `dynamic` is reserved only |
 | Unit-level variables | May be declared directly | Declared directly; `private` by default, `public` across units |
-| Zero-value initialization | — | Declarations: aggregates `T x = {}`, scalars `= 0`/`= null`; expressions `T()`; no more `T x()` |
+| Zero-value initialization | — | Declarations: aggregates `T x = {}`, scalars `= 0`/`= null`; expressions `T()` — including a primitive (`int()`, `bool()`, `double()`) and a **type parameter** inside a generic body, where the value depends on the instantiation; no more `T x()` |
 | Brace initialization | Anywhere | Declaration-initializer position only |
 | Loops | `for(;;)`, `while`, `do-while` | `while`, `for-in` |
 | Increment | `++`/`--` | `x++` / `x--` (statement only, no return value) |

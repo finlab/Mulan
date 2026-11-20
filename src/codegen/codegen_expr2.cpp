@@ -466,6 +466,15 @@ using ArgPack = Emitter::ArgPack;
             }
             return b.CreateLoad(lt(st), tmp);
         }
+        if (c->callee_kind == "zero") {
+            // `T()` / `int()`: zero the storage; a type that needs a constructor gets its member step
+            // (the same thing `{}` does), so `T()` and `{}` mean the same value.
+            const TypePtr& t = c->ty;
+            auto* slot = entryAlloca(lt(t), "zero.val", alignOf(t));
+            zeroMem(slot, t);
+            if (t->needs_ctor()) emitCtorGlue(slot, t, false);
+            return loadAt(lt(t), slot, false);
+        }
         if (c->callee_kind == "struct_method") {
             const MethodSig* sig = c->method;
             if (!sig || !sig->owner) fail("LLVM backend: struct method is missing its signature", c->line, c->col);

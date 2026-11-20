@@ -89,6 +89,17 @@ void subst_expr(Expr& e, const TypeBindings& b) {
         return;
     }
     if (auto p = dynamic_cast<Call*>(&e)) {
+        // `T()` with `T` a type parameter is the zero value of the substituted type: a name is not a
+        // TypeSpec, so substitution is the last place that still knows the binding.
+        if (p->args.empty() && p->named.empty() && p->type_args.empty()) {
+            if (auto* n = dynamic_cast<Name*>(p->callee.get())) {
+                auto it = b.find(n->ident);
+                if (it != b.end() && it->second.spec) {
+                    p->zero_spec = clone_type_spec(*it->second.spec);
+                    return;
+                }
+            }
+        }
         subst_expr(*p->callee, b);
         for (auto& a : p->args) subst_expr(*a, b);
         for (auto& n : p->named) subst_expr(*n.second, b);

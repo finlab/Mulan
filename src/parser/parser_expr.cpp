@@ -673,6 +673,28 @@ ExprPtr Parser::parse_lambda() {
 
 ExprPtr Parser::parse_primary() {
     const Token t = peek();
+    // `int()` / `bool()` / `double()`: the zero value of a primitive type (SPEC 4). The type keyword
+    // is not an expression anywhere else, so `T()` is the only spelling this form can be.
+    if (t.kind == TokKind::Kw && is_prim_name(t.text) && peek(1).is_op("(") && peek(2).is_op(")")) {
+        advance();  // type keyword
+        advance();  // (
+        advance();  // )
+        auto spec = std::make_unique<TypeSpec>();
+        spec->kind = TypeSpec::K::Named;
+        spec->name = t.text;
+        spec->line = t.line;
+        spec->col = t.col;
+        auto callee = std::make_unique<Name>();
+        callee->ident = t.text;
+        callee->line = t.line;
+        callee->col = t.col;
+        auto call = std::make_unique<Call>();
+        call->callee = std::move(callee);
+        call->zero_spec = std::move(spec);
+        call->line = t.line;
+        call->col = t.col;
+        return parse_postfix_tail(std::move(call));
+    }
     if (t.kind == TokKind::Kw && (t.text == "this" || t.text == "super")) {
         advance();
         auto node = std::make_unique<Name>();

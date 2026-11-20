@@ -199,6 +199,10 @@ struct Call : Expr {
     std::vector<std::pair<std::string, ExprPtr>> named;
     // the explicit type arguments of a generic call: `f<int>(x)` (empty = a normal call)
     std::vector<TypeSpecPtr> type_args;
+    // `T()` where `T` is a type parameter: this call is the **zero value** of that type. Filled by the
+    // instantiator (substitution knows the binding); a primitive keyword form (`int()`) fills it in the
+    // parser. The type is resolved in the use-site unit, like any substituted type.
+    TypeSpecPtr zero_spec;
     // sema
     std::string callee_kind;  // "func" | "ctor" | "builtin" | "method" | "super" | "fnptr"
     FuncDecl* func = nullptr;

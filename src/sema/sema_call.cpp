@@ -154,6 +154,19 @@ namespace muc_detail {
     }
 
     TypePtr Sema::check_call_impl(Call* c, const TypePtr& expected) {
+        // `T()` / `int()`: the zero value of a type (SPEC 4). The type came from the instantiator or the
+        // parser, so it is already resolved; only zeroable types qualify (no `void`).
+        if (c->zero_spec) {
+            TypePtr t = resolve_type(c->zero_spec.get(), cur_);
+            if (!t || is_void(t)) err("`void()` is not a value", c);
+            c->callee_kind = "zero";
+            c->ty = t;
+            if (auto* n = dynamic_cast<Name*>(c->callee.get())) {
+                n->kind = "type";
+                n->ty = t;
+            }
+            return t;
+        }
         Expr* callee = c->callee.get();
         if (!callee) err("call is missing a callee", c);
 

@@ -27,6 +27,27 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 271 — 2026-11-20
+
+**`T()` works for primitives and for type parameters.**
+
+SPEC said an expression `T()` is the zero value, but only a named struct actually compiled: `int()`
+was a parse error and `T()` inside a generic body was "undefined function `T`". Both now work:
+
+- the parser accepts a primitive type keyword followed by `()` (`int()`, `bool()`, `double()`);
+- the instantiator rewrites a bare `T()` to the zero value of the substituted type (a name is not a
+  `TypeSpec`, so substitution is the last place that still knows the binding);
+- both forms share one lowering: zero the storage, then run the member step when the type needs a
+  constructor — the same value `{}` produces at a declaration.
+
+This is what `std.mem.zero` was blocked on. (The function itself stays out: `fill(dst, 0)` covers the
+scalar case, and a generic `zero(dst)` can now be written in the library whenever it is wanted.)
+
+Case `zero_value` (primitive, struct, class handle, and a type parameter instantiated at `int`,
+`long`, a struct and a class).
+
+Full suite: recorded below.
+
 #### build 270 — 2026-11-20
 
 **A method may take `ref` / `const ref` parameters.**
