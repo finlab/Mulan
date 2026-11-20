@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 274 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 275 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -42,7 +42,7 @@
 | Generics | **Monomorphization** (one copy of the code per combination of type arguments); `<>` syntax; constraints use `interface` + `&`/`\|`; `Self` refers to the implementor; constraints are matched **structurally**, and built-in types satisfy them at zero cost; see 3.15 for details |
 | Tagged unions | Declared with `variant Name { Alt T; Pair T, U; None; }` (decided 2026-11-20; layout and value semantics unchanged from the 0.0.115 sum implementation); dispatched **only** with `match` (10.1) |
 | Declaration split | `type` declares only transparent aliases (4.5); `extend I with J;` extends an interface with another interface's default methods (3.18); `promote field;` forwards a field's **public methods** (3.19) |
-| Dispatch | `match` is the only dispatch construct: constant patterns for integers, `char` and enums; alternative patterns for a `variant` (10.1.2). There is no `switch` (6.6) |
+| Dispatch | `match` is the only dispatch construct: constant patterns for integers, `char`, enums and `bool`; alternative patterns for a `variant` (10.1.2). There is no `switch` (6.6) |
 | Memory | Pointers + `alloc/free/realloc` (raw memory); `class` uses `new` + atomic reference counting (write `x = null` to release early); no GC, no borrow checking |
 | Control flow | `if/else`, `while`, `for-in`, C-style `for` (6.3.1), `break/continue/return`; conditions must be `bool`; braces are mandatory |
 | Conditional expression | `cond ? a : b` (right-associative; the condition must be `bool`; only one branch is evaluated; both sides use the same type / implicit widening / `null` adaptation) |
@@ -2912,7 +2912,8 @@ Value d = Value.None;        // a unit alternative is a plain value
 #### 10.1.2 Dispatching a variant: `match` (implemented in build 258)
 
 `match` is the **only** dispatch construct: a `variant` is matched by alternative patterns, an
-**integer, `char` or enum** by **constant patterns** — the vocabulary `switch` used to provide (6.6).
+**integer, `char`, enum or `bool`** by **constant patterns** — the vocabulary `switch` used to provide
+(6.6).
 
 ```c
 int x = match v {
@@ -2939,13 +2940,16 @@ int x = match v {
 - **Exhaustiveness is mandatory** (unless the match has an `else`): every alternative must be
   covered, and a missing one is a compile error naming it. There is at most one `else`, and it is
   last; an `else` after a fully covered match is unreachable and warns.
-- **Constant patterns** (integer, `char` or enum scrutinee): an arm lists one or more patterns
-  separated by `,`; a pattern is a compile-time constant (literal, enum member, or a constant
+- **Constant patterns** (integer, `char`, enum or `bool` scrutinee): an arm lists one or more
+  patterns separated by `,`; a pattern is a compile-time constant (literal, enum member, or a constant
   expression the same evaluator folds) or a range `a..b` (half-open) / `a..=b` (inclusive).
   Overlapping or duplicate patterns are errors; an enum match must cover every member unless it ends
   with `else`. Guards apply here too, and a failed guard continues with the next arm. In the
   **expression** form every input must produce a value, so an integer match needs `else` (an
   exhaustive enum match needs none). The matched value is evaluated once.
+- **`bool`** patterns are `true` / `false` (or a unit-level `const bool`), never `1` / `0`; ranges do
+  not apply. A bool match has a closed value set, so it must cover both values unless it ends with
+  `else` (an exhaustive bool match needs none in the expression form).
 - The first version supports **one pattern level only**: nested patterns, or-patterns, type
   (class/interface) patterns and public-contract branches are not provided yet (10.1.3).
 - `is` keeps its current rule (a binding only when the `is` is the whole condition, 10.1.1); guarded

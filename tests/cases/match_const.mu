@@ -34,6 +34,23 @@ int char_class(char ch) {
     };
 }
 
+const bool ENABLED = true;
+
+// A bool match has two values, so an exhaustive one needs no `else` (and a constant bool is a pattern).
+int flag_value(bool b) {
+    return match b {
+        true: 1;
+        false: 0;
+    };
+}
+
+int configured(bool b) {
+    return match b {
+        ENABLED: 10;
+        else: 20;
+    };
+}
+
 int main() {
     if classify(0) != 100 { puts("literal"); return 1; }
     if classify(1) != 101 { puts("comma list"); return 2; }
@@ -48,6 +65,9 @@ int main() {
         puts("char ranges");
         return 9;
     }
+
+    if flag_value(true) != 1 or flag_value(false) != 0 { puts("bool"); return 13; }
+    if configured(true) != 10 or configured(false) != 20 { puts("const bool pattern"); return 14; }
 
     // statement form
     int total = 0;

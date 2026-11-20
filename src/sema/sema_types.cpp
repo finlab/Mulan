@@ -791,7 +791,9 @@ std::string builtin_const_type_name(const std::string& name) {
         // missing alternative or member); an integer match without `else` skips unmatched values.
         if (auto m = dynamic_cast<MatchStmt*>(s)) {
             if (m->arms.empty()) return false;
-            if (!m->has_else && !(m->sty && (m->sty->kind == TypeKind::Sum || m->sty->kind == TypeKind::Enum))) {
+            if (!m->has_else &&
+                !(m->sty && (m->sty->kind == TypeKind::Sum || m->sty->kind == TypeKind::Enum ||
+                             m->sty->is_bool()))) {
                 return false;
             }
             for (auto& a : m->arms) {

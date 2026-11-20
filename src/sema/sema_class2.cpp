@@ -661,6 +661,19 @@ namespace muc_detail {
             err("patterns of an enum match must be members of " + st->str(), e);
         }
 
+        if (st->is_bool()) {
+            // `true` / `false`, or a compile-time constant of type bool. An integer literal is not
+            // accepted (`1:` is not `true`), matching the "no implicit integer for an enum" rule.
+            if (auto* bl = dynamic_cast<BoolLit*>(e)) return bl->value ? 1 : 0;
+            if (dynamic_cast<Name*>(e) || dynamic_cast<Member*>(e)) {
+                TypePtr t = check_expr(e);
+                if (!t || !t->is_bool()) err("patterns of a bool match must be `true` or `false`", e);
+                long long folded = 0;
+                if (eval_const_int(e, folded)) return folded != 0 ? 1 : 0;
+            }
+            err("patterns of a bool match must be `true` or `false` (or a unit-level `const bool`)", e);
+        }
+
         if (auto* il = dynamic_cast<IntLit*>(e)) {
             if (il->min_magnitude) {
                 err("integer literal is too large (maximum 2^63-1): a 2^63 magnitude is only valid "
@@ -738,16 +751,17 @@ namespace muc_detail {
         }
     }
 
-    // `match` on an integer or an enum: constant patterns, the rules `switch` used to own (SPEC 6.6,
-    // 10.1.2). The overlap and exhaustiveness rules count only **unguarded** patterns, because a guard
-    // makes an arm's reachability depend on a runtime value.
+    // `match` on an integer, `char`, enum or bool: constant patterns, the rules `switch` used to own
+    // (SPEC 6.6, 10.1.2). The overlap and exhaustiveness rules count only **unguarded** patterns,
+    // because a guard makes an arm's reachability depend on a runtime value.
     void Sema::check_match_constant(Expr* scrut, std::vector<std::unique_ptr<MatchArm>>& arms,
                                     bool& has_else, bool expression_form, Node* at, TypePtr& value_ty,
                                     const TypePtr& expected) {
         TypePtr st = scrut->ty;
         const bool enum_scrut = st->kind == TypeKind::Enum;
-        if (!enum_scrut && !(is_prim(st) && is_integer(st))) {
-            err("match needs a `variant`, an enum or an integer (found " + st->str() +
+        const bool bool_scrut = st->is_bool();
+        if (!enum_scrut && !bool_scrut && !(is_prim(st) && is_integer(st))) {
+            err("match needs a `variant`, an enum, `bool` or an integer (found " + st->str() +
                     "); floating-point, pointer, class and string values are not pattern-matched",
                 scrut);
         }
@@ -770,7 +784,7 @@ namespace muc_detail {
         std::vector<Iv> ivs;
         TypePtr result = nullptr;
         bool result_void = false;
-        bool exhaustive_enum = false;
+        bool exhaustive = false;
         std::string missing;
 
         for (auto& up : arms) {
@@ -798,6 +812,9 @@ namespace muc_detail {
                         err("enum matches do not support ranges (enum members have no numeric order); list "
                             "each member explicitly",
                             p.lo.get());
+                    }
+                    if (bool_scrut) {
+                        err("a bool match does not support ranges; list `true` and `false`", p.lo.get());
                     }
                     p.vhi = pattern_value(p.hi.get(), st);
                     if (p.inclusive) {
@@ -842,8 +859,14 @@ namespace muc_detail {
             }
         }
 
-        if (enum_scrut) {
-            auto members = enum_members_of(st);
+        // An enum or bool match has a closed value set, so it must cover it unless `else` is written.
+        if (enum_scrut || bool_scrut) {
+            std::vector<std::pair<std::string, long long>> members;
+            if (enum_scrut) {
+                members = enum_members_of(st);
+            } else {
+                members = {{"true", 1}, {"false", 0}};
+            }
             for (auto& [name, v] : members) {
                 bool covered = false;
                 for (auto& up : arms) {
@@ -859,19 +882,25 @@ namespace muc_detail {
             }
             if (!has_else) {
                 if (!missing.empty()) {
-                    err("match does not cover all members of enum " + st->str() + " (missing " + missing +
-                            "); add the missing patterns or write `else:`",
+                    if (enum_scrut) {
+                        err("match does not cover all members of enum " + st->str() + " (missing " + missing +
+                                "); add the missing patterns or write `else:`",
+                            at);
+                    }
+                    err("a bool match must cover `true` and `false` (missing " + missing +
+                            "); add the missing pattern or write `else:`",
                         at);
                 }
-                exhaustive_enum = true;
+                exhaustive = true;
             } else if (missing.empty()) {
-                warn("`else` arm is unreachable: all members of enum `" + st->str() +
-                         "` are already covered",
+                warn("`else` arm is unreachable: " + (enum_scrut ? "all members of `" + st->str() + "`" :
+                                                                  std::string("`true` and `false`")) +
+                         " are already covered",
                      at);
             }
         }
         if (expression_form) {
-            if (!has_else && !exhaustive_enum) {
+            if (!has_else && !exhaustive) {
                 err("an expression match must produce a value for every input: add `else:`", at);
             }
             if (!result) err("match has no arms", at);

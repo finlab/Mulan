@@ -1,1 +1,1 @@
-match needs a `variant`, an enum or an integer
+match needs a `variant`, an enum, `bool` or an integer

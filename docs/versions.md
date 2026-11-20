@@ -27,6 +27,20 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 275 — 2026-11-20
+
+**`bool` is a constant-pattern scrutinee.**
+
+`match b { true: 1; false: 0 }` now works. Patterns are `true` / `false` or a unit-level
+`const bool`; `1` / `0` are rejected (the same "no implicit integer" rule an enum has) and ranges do
+not apply. A bool match has a closed value set, so it must cover both values unless it ends with
+`else` — and an exhaustive bool match needs no `else`, even in the expression form.
+
+Cases `match_const` gains the bool arms (exhaustive and `const`-pattern forms); must-fail
+`match_const_bool_range` / `match_const_bool_int` / `match_const_bool_missing`.
+
+Full suite: 922/922 on Windows.
+
 #### build 274 — 2026-11-20
 
 **`switch` removed; `match` is the only dispatch construct.**
