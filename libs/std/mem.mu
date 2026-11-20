@@ -55,9 +55,10 @@ public isize compare<T: IOrder>(T[] a, T[] b) {
     return 0;
 }
 
-// Move the value out of `slot` and leave the type's zero value behind. `move` on a `ref` parameter
-// transfers the *referent*, so the caller's slot becomes a destructible empty shell — the same state
-// `move x` leaves. Nothing is copied and no destructor runs for the value that leaves.
+// Move the value out of `slot`. `move` on a `ref` parameter transfers the *referent*, so the
+// caller's slot ends in whatever state the type's transfer rules leave: a synthesized move zeroes
+// it, a user move constructor defines it (and the slot still gets destroyed at scope exit). Nothing
+// is copied, and no destructor runs for the value that leaves.
 public T take<T>(ref T slot) {
     return move slot;
 }

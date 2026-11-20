@@ -413,11 +413,13 @@ struct Point {
     to be small and self-contained; needing to move a single field out of one is the signal that the object
     should be modelled as a `class` instead (heap entity, reference semantics, shareable). `const` objects
     and `ref` borrows cannot be moved.
-  - **Every value type is movable by default** (decided 2026-11-18). A type without a user move
-    constructor is transferred by the compiler: copy the bytes, **empty the source, and do not destroy
-    the source** — which is the correct ownership transfer for a raw pointer, a reference-counted handle
-    and a nested destructor-bearing field alike (the destination owns what it received; the emptied
-    source owns nothing to release).
+  - **Every value type is movable by default** (decided 2026-11-18), and so is a **`class` handle**
+    (decided 2026-11-20): `move h` transfers the reference — the source handle becomes `null` and the
+    object keeps its count, so this is `std::move` on a shared handle, not a copy. A value type
+    without a user move constructor is transferred by the compiler: copy the bytes and **zero the
+    source**. The source stays a live object whose destructor then runs on zeros — the correct
+    ownership transfer for a raw pointer, a reference-counted handle and a nested destructor-bearing
+    field alike (the destination owns what it received; the emptied source owns nothing to release).
   - `nocopy` forbids **copying** only; the value is still movable. `nomove` is the explicit opt-out
     (see below). A user-declared `T(move T other)` takes over the transfer rules: it must leave the
     source in a valid, destructible state, and **the source's destructor runs normally** (C++ model) —
@@ -426,12 +428,16 @@ struct Point {
   - `move` accepts a **plain variable name only**: partial moves (`move o.field`, `move a[i]`) are
     rejected, so a moved-from slot is never left behind (a container that wants to hand an element out
     provides its own operation).
-  - A **`ref` parameter is a name too**: `move p` transfers the *referent* and leaves the caller's slot
-    as the type's zero value — the destructible empty shell a moved-from local is left in. That is the
-    mechanism behind an out-parameter and `std.mem.take` / `replace`; a `for ref` loop variable stays
-    immovable (the element belongs to the container).
-  - The move constructor receives its source **by pointer** (like `ref`), so the body steals without the
-    parameter retaining anything; the compiler zeroes the source afterwards and stops destroying it.
+  - A **`ref` parameter is a name too**: `move p` transfers the *referent*. Its final state is
+    whatever the type's transfer rules leave — a synthesized move zeroes it, a user move constructor
+    defines it. That is the mechanism behind an out-parameter and `std.mem.take` / `replace`; a
+    `for ref` loop variable stays immovable (the element belongs to the container).
+  - The move constructor receives its source **by pointer** (like `ref`), so the body steals without
+    the parameter retaining anything. **The source's final state belongs to the constructor**: the
+    compiler does not zero a user-moved source afterwards, and the source's destructor still runs at
+    scope exit (C++ model — a constructor that forgets to empty a field double-frees loudly rather
+    than leaking silently). A synthesized move is the compiler's own rule: bytes copied, source
+    zeroed.
   - **A moved value is out of reach**: any later read, write, borrow, pass or return of that variable is a
     compile error until a new assignment re-arms it. `if`/`else` merge the two arms; `move` may not target a
     variable declared outside the enclosing loop; nothing is tracked across functions (a moved value cannot
@@ -802,12 +808,18 @@ class Cat {
   must not have their address taken, and must not outlive the expression that produced them.
 - `ref T` parameters (0.0.62; scalars supported since 0.0.63): `void f(ref Point p)` / `void inc(ref int x)` borrow the caller's variable;
   the callee may write to it; it cannot be rebound.
-  - Borrowable types: primitive types, enums, pointers, and structs that contain **no reference-counted fields, have no destructor, and are not a union**.
-    A type parameter is checked when it is substituted, i.e. at **instantiation** — `void f<T>(ref T c)`
-    instantiated with a type that owns a block is an error, not a run-time surprise.
+  - Borrowable types: any **non-union value type** — primitives, enums, pointers, and structs (including
+    ones with reference-counted fields and a destructor; decided 2026-11-20, relaxing the earlier
+    restriction). A `class`/interface handle is not borrowable: a handle is the reference, and a borrow
+    that could rebind the caller's handle would need retain/release bookkeeping at the `ref` level.
+    A type parameter is checked when it is substituted, i.e. at **instantiation**.
   - The argument must be an **addressable lvalue**; `ref` parameters perform no conversion (they do not accept temporaries).
-  - Assignment to a struct borrow is still a "rebinding" error (as in 0.0.62); assignment to a scalar/enum/pointer borrow **writes through** to the caller's variable.
-  - Method/constructor parameters do not support `ref` yet; operator parameters do (see 3.11); `extern` does not.
+  - Assignment to a borrow **writes through** to the caller's variable for every value type (decided
+    2026-11-20; the old "a struct borrow cannot be reassigned" rule was incorrect — the language has no
+    references to rebind, so the only meaning of the write is the caller's storage).
+  - **Methods** support `ref` / `const ref` parameters too (decided 2026-11-20): the borrow is part of the
+    method signature and of its symbol, so `m(int)` and `m(ref int)` are different methods. Constructors
+    take `ref` only as the copy constructor; interface members and `extern` do not.
 - `const ref T p` (read-only borrow, 0.0.62): symmetric with the `const` rules of `for ref`; the callee can neither
   rebind the parameter itself nor write fields/elements through the borrow; the argument must be an **addressable lvalue** (temporaries are not accepted).
   Difference from a by-value `const T p`: the latter protects the **copy** inside the function body, whereas the former restricts **writes to the caller's object**.
@@ -1498,9 +1510,10 @@ type Op = delegate (int, int) => int;
     reference-counted value (`String`, slice, `class` handle, nested `delegate`) is retained by the
     environment, so the delegate keeps it alive.
   - `[ref x]` stores the **address** of the variable, so writes from the body reach it — the
-    out-parameter pattern. Only borrowable types qualify (scalars, enums, pointers, value structs
-    without reference fields or a destructor), mirroring `ref` parameters; the caller owns the
-    variable's lifetime, and a delegate that outlives it is UB like any other dangling raw pointer.
+    out-parameter pattern. This is an **escaping** borrow, so the narrower rule applies: scalars,
+    enums, pointers and value structs without reference fields or a destructor (a `ref` *parameter*
+    is scoped and accepts any non-union value type, 3.8). The caller owns the variable's lifetime,
+    and a delegate that outlives it is UB like any other dangling raw pointer.
   - `[this]` captures the receiver of the enclosing method: a **class** contributes its handle (the
     environment retains it, so the object stays alive), a **struct** contributes a copy (value
     semantics — later changes to the original are invisible). `[ref this]` on a **struct** stores the
