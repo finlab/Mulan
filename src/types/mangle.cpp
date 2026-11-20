@@ -92,7 +92,7 @@ std::string op_code(const std::string& sym) {
 
 std::string func_code_name(const std::string& name) {
     const std::string prefix = "operator";
-    if (name.rfind(prefix, 0) == 0) return "op_" + op_code(name.substr(prefix.size()));
+    if (name.rfind(prefix, 0) == 0) return "O$" + op_code(name.substr(prefix.size()));
     return ident_safe(name);  // `f<int>` → `f_int_` (keeps generic instances unique in symbol names)
 }
 
@@ -134,13 +134,13 @@ std::string method_cname(const std::string& unit, const std::string& owner,
 
 std::string ctor_cname(const std::string& unit, const std::string& owner,
                        const std::vector<TypePtr>& params) {
-    std::string out = "mu$" + unit + "$C" + ident_safe(owner);
+    std::string out = "mu$" + unit + "$C$" + ident_safe(owner);
     for (auto& t : params) out += "$" + type_code(t);
     return out;
 }
 
 std::string dtor_cname(const std::string& unit, const std::string& owner) {
-    return "mu$" + unit + "$D" + ident_safe(owner);
+    return "mu$" + unit + "$D$" + ident_safe(owner);
 }
 
 std::string destroy_cname(const std::string& unit, const std::string& owner) {

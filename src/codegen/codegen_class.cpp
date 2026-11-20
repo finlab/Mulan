@@ -17,8 +17,14 @@ namespace muc_detail {
     // ------------------------------------------------------------ interface table
 
     std::string Emitter::sigKey(const MethodSig& m) {
-        std::string k = m.name + "(";
-        for (auto& p : m.params) k += type_code(p) + ",";
+        // `const` and the ref pattern are part of the slot identity: an interface may declare both
+        // `int f()` and `int f() const`, and they must not share one itable entry (#199).
+        std::string k = m.name + (m.is_const ? "$const(" : "$mut(");
+        for (size_t i = 0; i < m.params.size(); ++i) {
+            if (i < m.params_ref.size() && m.params_ref[i]) k += "R";
+            if (i < m.params_cref.size() && m.params_cref[i]) k += "C";
+            k += type_code(m.params[i]) + ",";
+        }
         // The return type is part of an interface slot: two interfaces may declare the same name and
         // parameters with different return types, and they are different slots (`bool next()` vs
         // `int next()`). Overload resolution inside a class still ignores it (C++ rule), so only the
@@ -159,9 +165,42 @@ namespace muc_detail {
 
     // ------------------------------------------------------------ virtual table
     bool Emitter::same_sig(const MethodSig& a, const MethodSig& b) {
-        if (a.name != b.name || a.params.size() != b.params.size()) return false;
+        if (a.name != b.name) return false;
+        // Keep this in lockstep with Sema::same_sig: `const` and the `ref`/`const ref` pattern are
+        // part of the signature. A loose match put `m(ref int)` into the base's `m(int)` vtable slot
+        // and the thunk then dereferenced an integer (#200).
+        if (a.is_const != b.is_const) return false;
+        auto receiver_at = [](const MethodSig& s) -> int {
+            if (!s.is_operator) return -1;
+            if (s.params_self.size() > s.params.size()) return -2;
+            for (size_t i = 0; i < s.params_self.size(); ++i) {
+                if (s.params_self[i]) return i == 0 ? 0 : -2;
+            }
+            return -1;
+        };
+        const int ra = receiver_at(a);
+        const int rb = receiver_at(b);
+        if (ra == -2 || rb == -2) return false;
+        const bool drop_a = ra == 0 && rb < 0 && b.params.size() + 1 == a.params.size();
+        const bool drop_b = rb == 0 && ra < 0 && a.params.size() + 1 == b.params.size();
+        std::vector<const TypePtr*> av, bv;
+        std::vector<bool> ar, br, ac, bc;
         for (size_t i = 0; i < a.params.size(); ++i) {
-            if (!same_type(a.params[i], b.params[i])) return false;
+            if (drop_a && i == 0) continue;
+            av.push_back(&a.params[i]);
+            ar.push_back(i < a.params_ref.size() && a.params_ref[i]);
+            ac.push_back(i < a.params_cref.size() && a.params_cref[i]);
+        }
+        for (size_t i = 0; i < b.params.size(); ++i) {
+            if (drop_b && i == 0) continue;
+            bv.push_back(&b.params[i]);
+            br.push_back(i < b.params_ref.size() && b.params_ref[i]);
+            bc.push_back(i < b.params_cref.size() && b.params_cref[i]);
+        }
+        if (av.size() != bv.size()) return false;
+        if (ar != br || ac != bc) return false;
+        for (size_t i = 0; i < av.size(); ++i) {
+            if (!same_type(*av[i], *bv[i])) return false;
         }
         return true;
     }

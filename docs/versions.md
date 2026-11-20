@@ -27,6 +27,22 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 295 — 2026-11-21
+
+**Signature identity and mangling.**
+
+- Codegen `same_sig` now mirrors `Sema::same_sig` (const, `ref`/`const ref`, operator receiver):
+  a derived method differing only in ref-ness no longer takes a base vtable slot (#200).
+- `sigKey` includes const and the ref pattern, so `int f()` and `int f() const` are distinct interface
+  slots instead of one silently winning (#199).
+- An interface const default's definition symbol includes `is_const` (#198); materialized default
+  signatures carry `is_const`, `params_ref` and `params_cref` (#165).
+- Constructor/destructor/operator symbols use `$` separators (`C$owner`, `D$owner`, `O$add`), so user
+  functions named `Cfoo`/`Dfoo`/`op_add` can no longer collide with generated symbols and crash the
+  compiler (#197).
+- New cases `iface_const_default`, `mangle_user_prefix`, `vtable_ref_sig`. Full: Windows **987/987**,
+  Linux **985/985** with `MUC_VERIFY_MEM=1`.
+
 #### build 294 — 2026-11-21
 
 **Exception boundaries: may-throw coverage and constructor unwind.**

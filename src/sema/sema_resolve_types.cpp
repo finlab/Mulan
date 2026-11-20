@@ -775,7 +775,7 @@ namespace muc_detail {
                 for (auto& p : m->params) sig.params_self.push_back(p->spec && p->spec->is_self);
                 if (m->is_operator) init_interface_operator(m.get(), sig, itf->name);
                 itf->ty->methods.push_back(std::move(sig));
-                m->cname = method_cname(u->name, itf->name, m->name, m->pty);
+                m->cname = method_cname(u->name, itf->name, m->name, m->pty, m->is_const);
             }
             cur_class_ = saved_class;
         }

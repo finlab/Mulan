@@ -92,6 +92,12 @@ namespace muc_detail {
         ms.name = gen->name;
         ms.ret = inst.ret;
         ms.params = inst.params;
+        // The materialized signature must carry the same const/ref pattern as the interface member;
+        // without it a const default is called as a non-const method (wrong symbol / wrong filtering).
+        ms.is_const = inst.is_const;
+        ms.params_ref = inst.params_ref;
+        ms.params_cref = inst.params_cref;
+        ms.params_self = inst.params_self;
         ms.is_override = true;
         ms.is_public = true;
         ms.owner = ty;
