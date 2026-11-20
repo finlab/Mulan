@@ -19,7 +19,7 @@ public:
 }
 
 // Thrown by the bounds check that the compiler emits for a managed sequence subscript
-// (`T[]` / `buffer<T>`); `--bounds=off` removes the check.
+// (`T[]`); `--bounds=off` removes the check.
 public class BoundsError : Exception {
 public:
     isize index;

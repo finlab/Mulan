@@ -2667,8 +2667,12 @@ appear lower in this document (3.3 `String`, 3.4 reference fields, 3.4 user dest
   A unit-level variable whose type needs cleanup (a class/interface handle, `String`, a managed
   sequence, a struct with reference fields or a user destructor) is destroyed at exit.
 - **Dependency edges come only from `use`.** Cyclic `use` is already forbidden (9), so the units form
-  a DAG. Implicitly loaded standard-library units are treated as implicit `use`s of the entry unit and
-  come first.
+  a DAG. Five standard-library units are **loaded** without a `use` — `std.string` and `std.exception`
+  (a string literal needs the type and every error needs its base), plus `std.task`, `std.thread` and
+  `std.interfaces`, which the compiler and the `for-in` lowering reference. Only the first two are
+  also **name-visible**: the other three load so the machinery exists, and naming one of their types
+  still needs an explicit `use` (a name that appears by itself would be an implicit that the reader
+  cannot see at the declaration).
 - **Deterministic order.** Starting at the **entry unit** (the unit that declares `main`), visit `use`
   declarations in source order, depth-first, and append each unit in **post-order** on first visit.
   That sequence initializes the units; cleanup runs the **exact reverse** of the same sequence. The
@@ -3040,7 +3044,9 @@ int x = match v {
   range patterns.
 - Public-contract branches (an arm covering the remaining alternatives whose payload satisfies a
   constraint), with element-wise and interface-view forms.
-- Relaxing `is` so a binding can compose with `and` (currently a binding must be the whole condition).
+- **`is` does not grow.** A binding `is` must stay the whole condition; guards, or-patterns and
+  nesting are the job of `match` (10.1.2). Growing both would give the language two pattern languages,
+  and the one without exhaustiveness would be the easier one to reach for.
 - A POD `variant` crossing the C ABI: still rejected in this phase (10.1.1); any future ABI rule must
   be written into the specification first.
 

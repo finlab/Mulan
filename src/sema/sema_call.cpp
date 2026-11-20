@@ -347,7 +347,7 @@ namespace muc_detail {
             }
         } else if (auto m = dynamic_cast<Member*>(callee)) {
             Expr* obj = m->obj.get();
-            // `.length()` on a built-in managed sequence (`T[]` / `buffer<T>`): the compiler reads the header.
+            // `.length()` on a built-in managed sequence (`T[]`): the compiler reads the header.
             // Static arrays are C storage and have no `length()`.
             if (m->name == "length") {
                 TypePtr ot = check_expr(obj);

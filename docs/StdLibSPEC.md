@@ -9,7 +9,7 @@
 > `agents/stdlib/c-bindings.md`, `agents/stdlib/interfaces.md`, `agents/stdlib/style.md`,
 > `agents/stdlib/task.md`, `agents/stdlib/backlog.md`.
 
-> Status: draft, current through build 266 (2026-11-20). Companion to the language specification:
+> Status: draft, current through build 270 (2026-11-20). Companion to the language specification:
 > `docs/SPEC.md` says what a program *means*; this file says what the library *provides*.
 > **Boundary test**: delete the library, and a program that uses none of it must still be fully
 > specified by `docs/SPEC.md` alone.
