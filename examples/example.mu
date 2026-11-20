@@ -71,15 +71,18 @@ void print_int(int v) {
         putchar('0');
         return;
     }
-    if v < 0 {
+    // A long accumulator: `-INT_MIN` does not fit in int (negating it would wrap and the loop below
+    // would run zero times).
+    long n = v as long;
+    if n < 0 {
         putchar('-');
-        v = -v;
+        n = -n;
     }
     int[20] digits;        // may declare first, assign later; reading an unwritten element is UB
     int i = 0;
-    while v > 0 {
-        digits[i] = v % 10;
-        v /= 10;
+    while n > 0 {
+        digits[i] = (n % 10) as int;
+        n /= 10;
         i += 1;
     }
     while i > 0 {

@@ -9,7 +9,7 @@
 > `agents/stdlib/c-bindings.md`, `agents/stdlib/interfaces.md`, `agents/stdlib/style.md`,
 > `agents/stdlib/task.md`, `agents/stdlib/backlog.md`.
 
-> Status: draft, current through build 270 (2026-11-20). Companion to the language specification:
+> Status: draft, current through build 295 (2026-11-21). Companion to the language specification:
 > `docs/SPEC.md` says what a program *means*; this file says what the library *provides*.
 > **Boundary test**: delete the library, and a program that uses none of it must still be fully
 > specified by `docs/SPEC.md` alone.
@@ -25,7 +25,7 @@ A unit belongs to exactly one layer. The unit-name prefix makes the layer visibl
 | **L0 ABI types** | `std.ctypes` | C-side widths, per platform | implemented |
 | **L1 raw C bindings** | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv` | a **separate library** (`libs/cstd/`): C semantics — sentinel returns, `errno`, caller-owned buffers, no checks, no exceptions, no ownership | implemented for Windows/UCRT and Linux/glibc |
 | **L1 platform C** | `#if` arms inside the same `cstd.*` unit files | the same C library where the targets disagree; the shared declarations are written once and only the differing ones sit in an arm | Windows and Linux implemented; other targets fail with `#error` |
-| **L2 native API** | `std.string`, `std.option`, `std.result`, `std.mem`, `std.fmt`, `std.io`, `std.collections`, `std.fs`, `std.parse`, `std.random`, `std.unicode`, `std.time` | Mulan semantics: exceptions, bounds checks, explicit state, value types where possible | `string`, `option`, `result`, `mem` implemented, the rest planned |
+| **L2 native API** | `std.string`, `std.option`, `std.result`, `std.mem`, `std.fmt`, `std.io`, `std.collections`, `std.fs`, `std.parse`, `std.random`, `std.unicode`, `std.time` | Mulan semantics: exceptions, bounds checks, explicit state, value types where possible | `string`, `option`, `result`, `mem`, `unicode`, `utf8`, `cursor` implemented; `fmt`, `io`, `collections`, `fs`, `parse`, `random`, `time` planned |
 | **L3 runtime contracts** | `std.exception`, `std.interfaces`, `std.task`, `std.thread` | The minimum the compiler and the runtime need; implicitly loaded | implemented |
 
 Rules:
@@ -72,7 +72,7 @@ that matter for the layer model:
 | `std.string` | L2 | **yes** | `String`: `String()` (zero), `String(const char*)` (implicit, copies), `String(byte[])`, `String(int[])` (code points), `length`, `is_empty`, `operator[]`, `==`, `sub`, `char_slice`, `concat`, `repeat`, Python-style byte methods (`find`, `rfind`, `count`, `startswith`, `endswith`, `replace`, `split`, `join`, `strip_ascii`, `lower_ascii`, `upper_ascii`, `is_*_ascii`), UTF-8 structure (`is_valid_utf8`, `char_count`, `char_at`, `chars`, `bytes`, `uchars`), `cstr` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
 | `std.unicode` | L2 | no | `IUnicode` extension on `String`, active only where this unit is used: `lower`, `upper`, `strip`, `lstrip`, `rstrip`, `isalpha`, `isdigit`, `isalnum`, `isspace`, `isupper`, `islower` | §6.3 |
 | `std.cursor` | L2 | no | `Cursor<T>` (`bool next`, `T current`, `iterator`), `cursor<T>(delegate () => bool, delegate () => T)` | §6.6 |
-| `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `bounds_fail`, `NullReferenceError`, `null_fail`, `ArithmeticError`, `div_fail` | §6.1 |
+| `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `NumericEdgeError`, `NullReferenceError`, `ArithmeticError` and their cold paths (`bounds_fail`, `shift_fail`, `cast_fail`, `null_fail`, `div_fail`) | §6.1 |
 | `std.interfaces` | L3 | **yes** | `IIterator<T>`, `IIterable<T>`, `IIndex<T>`, `IEqual`, `IOrder`, `IAdd` … | §6.2 |
 | `std.task` | L3 | **yes** | `muc_para_*` (compiler entry points), `set_max_live_tasks`, `set_task_stack`, `set_carrier_limit`, `live_task_count`, `carrier_count`, `TaskLimitError` | §6.4 |
 | `std.thread` | L3 | **yes** | `Thread`, `thread_start/join/detach`, `thread_sleep`, `monotonic_ms`, `Mutex`, `CondVar`, `WAIT_INFINITE` | §6.5 |
@@ -152,6 +152,13 @@ public:
     isize axis;                      // 0-based; multi-dimensional subscript
 }
 
+public class NumericEdgeError : Exception {
+public:
+    int kind;                        // 0 = shift count out of range, 1 = numeric cast out of range
+    double value;
+    long width;
+}
+
 public class NullReferenceError : Exception {
 public:
     // message names the failed access, e.g. "method call on a null `Dog` reference"
@@ -168,6 +175,8 @@ public:
   user error classes add fields and constructors.
 - `BoundsError` is thrown by the compiler-emitted bounds check; `bounds_fail(index, length, axis)` is
   the cold path the checker calls.
+- `NumericEdgeError` is thrown for a shift count outside the operand width (`shift_fail(count, width)`)
+  and for a numeric `as` whose value does not fit the target width (`cast_fail(value, width)`, SPEC 8.2).
 - `NullReferenceError` is thrown by the compiler-emitted null-reference check (SPEC 3.8, 8.2);
   `null_fail(what)` is the cold path. `--null-check=off` removes the check.
 - `ArithmeticError` is thrown by the compiler-emitted division checks (SPEC 8.2): division/remainder by
