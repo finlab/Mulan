@@ -27,6 +27,20 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 300 — 2026-11-21
+
+**Driver and target fixes.**
+
+- A `--cc` driver path containing spaces is quoted and the whole link command is wrapped for
+  `cmd /c`, so the shell reports the real path instead of splitting at `C:\Program` (#170).
+- Option values cannot swallow the next option (`-o -g` is a usage error, exit 2) (#169). `dump`
+  accepts `-I` and exactly one entry file instead of silently ignoring the rest (#168).
+- A shared `is_windows_target` predicate (windows/msvc/ucrt/mingw/cygwin) drives the C ABI
+  classification and the default `.exe` output suffix (#171; partial for #204).
+- An unknown architecture in `--target` is rejected instead of being treated as 64-bit (#175).
+  `gnuabi64`/`gnueabi`/`gnueabihf` normalize to the GNU ABI for `#if abi` (#182). `#if` checks the
+  right-shift count like the left shift (#173).
+
 #### build 299 — 2026-11-21
 
 **Small semantic and error-recovery fixes.**

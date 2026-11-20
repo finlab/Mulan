@@ -12,6 +12,7 @@
 #include "abi.hpp"
 #include "common.hpp"
 #include "mangle.hpp"
+#include "target.hpp"
 #include "may_throw.hpp"
 
 #include <algorithm>
@@ -414,7 +415,7 @@ struct Emitter {
     // ------------------------------------------------------------ C runtime allocation
     // `_aligned_malloc`/`_aligned_free` exist only on Windows; POSIX uses `posix_memalign` + `free`.
     // Both helpers return null on failure so the caller's existing null check still works.
-    bool isWindowsTarget() const { return targetTriple.find("windows") != std::string::npos; }
+    bool isWindowsTarget() const { return is_windows_target(targetTriple); }
     Value* emitAlignedAlloc(Value* size, Value* alignment);
     void emitAlignedFree(Value* ptr);
 

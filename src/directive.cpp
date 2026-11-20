@@ -15,6 +15,7 @@
 // pass:      shared by parsing and the #if pass
 // concept:   directives, build-config
 #include "directive.hpp"
+#include "target.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -250,6 +251,12 @@ bool eval_binary(const Binary& b, V& out, std::string& why) {
                 return false;
             }
             res = static_cast<long long>(static_cast<unsigned long long>(l.i) << r.i);
+        } else if (op == ">>") {
+            if (r.i < 0 || r.i >= bits) {
+                why = "shift count out of range in a `#if` condition";
+                return false;
+            }
+            res = l.i >> r.i;
         } else res = l.i >> r.i;
         out = vint(wrap_to(res, bits, sgn));
         out.bits = bits;
@@ -463,7 +470,11 @@ bool builtin_const(const std::string& name, long long& value) {
     const BuildConfig& c = g_config;
     if (name == "os") { value = index_of_ci(kOs, c.os); return true; }
     if (name == "arch") { value = index_of_ci(kArch, c.arch); return true; }
-    if (name == "abi") { value = c.abi.empty() ? index_of(kAbi, "None") : index_of_ci(kAbi, c.abi); return true; }
+    if (name == "abi") {
+        const std::string abi = normalize_abi(c.abi);
+        value = abi.empty() ? index_of(kAbi, "None") : index_of_ci(kAbi, abi);
+        return true;
+    }
     if (name == "endian") { value = c.big_endian ? 1 : 0; return true; }
     if (name == "ptr_bits") { value = c.ptr_bits; return true; }
     if (name == "debug") { value = c.debug ? 1 : 0; return true; }

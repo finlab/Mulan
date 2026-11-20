@@ -69,6 +69,12 @@ bool windows_abi(const std::string& abi) {
     return abi == "msvc" || abi == "ucrt" || abi == "gnu";
 }
 
+bool is_windows_target(const std::string& triple) {
+    return triple.find("windows") != std::string::npos || triple.find("mingw") != std::string::npos ||
+           triple.find("cygwin") != std::string::npos || triple.find("msvc") != std::string::npos ||
+           triple.find("ucrt") != std::string::npos;
+}
+
 // Split a `-` separated list (an LLVM triple, a platform spec).
 std::vector<std::string> split_dash(const std::string& s) {
     std::vector<std::string> parts;
@@ -127,7 +133,11 @@ void check_explicit_target(const std::string& triple) {
                       "`)");
     }
     const int bits = arch_ptr_bits(t.arch);
-    if (bits != 0 && bits != 64) {
+    if (bits == 0) {
+        throw MuError("target `" + triple + "` names an architecture this compiler does not know; use "
+                      "`x86_64` or `aarch64`");
+    }
+    if (bits != 64) {
         throw MuError("target `" + triple + "` uses " + std::to_string(bits) +
                       "-bit pointers, but this compiler's layout model is 64-bit; only 64-bit targets "
                       "(`x86_64`, `aarch64`) are supported");

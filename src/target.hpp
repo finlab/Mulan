@@ -35,6 +35,8 @@ int arch_ptr_bits(const std::string& arch);
 std::string normalize_arch(const std::string& arch);
 std::string normalize_abi(const std::string& abi);
 bool windows_abi(const std::string& abi);
+// Whether a triple names a Windows target (windows/msvc/ucrt/mingw/cygwin all use the MS ABI).
+bool is_windows_target(const std::string& triple);
 std::vector<std::string> split_dash(const std::string& s);
 TargetInfo parse_triple(const std::string& triple);
 void check_explicit_target(const std::string& triple);

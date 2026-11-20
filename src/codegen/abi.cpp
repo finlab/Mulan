@@ -27,6 +27,7 @@
 // pass:      queried by codegen while building a signature
 // concept:   c-abi
 #include "abi.hpp"
+#include "target.hpp"
 
 namespace muc_detail {
 
@@ -35,7 +36,7 @@ AbiPass abi_class(const TypePtr& t, bool is_return, const std::string& target) {
     // Only aggregates have a C classification; scalars, pointers and handles stay in registers.
     if (t->kind != TypeKind::Struct) return AbiPass::Direct;
 
-    const bool is_windows = target.find("windows") != std::string::npos;
+    const bool is_windows = is_windows_target(target);
     const size_t sz = type_size(t);
     const size_t al = type_align(t);
 

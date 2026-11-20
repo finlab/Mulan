@@ -438,6 +438,12 @@ static BuildArgs parse_build_args(const std::vector<std::string>& args) {
         const std::string& a = args[i];
         auto need = [&](const char* what) {
             if (i + 1 >= args.size()) throw UsageError(std::string("missing argument for ") + what);
+            const std::string& v = args[i + 1];
+            // `-o -g` used to create a file literally named `-g`; a value that looks like an option is
+            // a missing value, not a filename (#169).
+            if (v.size() > 1 && v[0] == '-') {
+                throw UsageError(std::string("missing value for ") + what + " (got option `" + v + "`)");
+            }
             return args[++i];
         };
         if (a == "-o") b.out = need("-o");
@@ -570,9 +576,23 @@ static int cmd_check(const std::vector<std::string>& args) {
 }
 
 static int cmd_dump(const std::vector<std::string>& args) {
-    if (args.empty()) { std::fputs(USAGE, stderr); return 2; }
+    std::vector<std::string> dirs;
+    std::string entry;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "-I") {
+            if (i + 1 >= args.size()) throw UsageError("missing argument for -I");
+            dirs.push_back(args[++i]);
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            throw UsageError("unknown option `" + args[i] + "`");
+        } else if (entry.empty()) {
+            entry = args[i];
+        } else {
+            throw UsageError("dump takes exactly one entry file (got `" + entry + "` and `" + args[i] + "`)");
+        }
+    }
+    if (entry.empty()) { std::fputs(USAGE, stderr); return 2; }
     std::string entry_name;
-    auto units = load_units(args[0], {}, entry_name);
+    auto units = load_units(entry, dirs, entry_name);
     for (auto& u : units) dump(u.get(), 0);
     return 0;
 }
@@ -616,7 +636,7 @@ static int cmd_build(const std::vector<std::string>& args) {
     fs::path build_dir = fs::current_path() / "build";
     fs::create_directories(build_dir);
     const bool target_windows =
-        ba.target.empty() ? (host_platform_os() == "windows") : (ba.target.find("windows") != std::string::npos);
+        ba.target.empty() ? (host_platform_os() == "windows") : is_windows_target(ba.target);
     fs::path out = ba.out.empty() ? build_dir / (base + (target_windows ? ".exe" : "")) : fs::path(ba.out);
     if (!ba.cc_explicit && !ba.target.empty()) {
         if (ba.target.find("darwin") != std::string::npos) ba.cc = "clang";
@@ -649,7 +669,13 @@ static int cmd_build(const std::vector<std::string>& args) {
         throw MuError("target `" + ba.target + "` is not the host; pass `--cc <cross driver>` to link it "
                       "(the object file and IR are written: " + obj.string() + ")");
     }
-    std::string cmd = ba.cc + " -o " + quote(native_path(out.string())) + " " + quote(native_path(obj.string()));
+    std::string cc = ba.cc;
+    // A driver path with spaces must be one shell token (a nonexistent path still needs quoting so
+    // the shell reports the real failure, #170).
+    if (cc.find(' ') != std::string::npos && (cc.empty() || cc.front() != '"')) {
+        cc = quote(native_path(cc));
+    }
+    std::string cmd = cc + " -o " + quote(native_path(out.string())) + " " + quote(native_path(obj.string()));
     for (const auto& extra : ba.link) cmd += " " + quote(native_path(extra));
     // POSIX keeps the math and thread entry points in separate libraries (`-lm`, `-lpthread`), while
     // the Windows CRTs have both in the default set: without these the link fails on `pow`,
@@ -657,7 +683,13 @@ static int cmd_build(const std::vector<std::string>& args) {
     if (posix_libc_target(ba.target)) cmd += " -lm -lpthread";
     std::cout << "+ " << cmd << "\n";
     std::cout.flush();
+#ifdef _WIN32
+    // cmd /c strips the first quote when the command starts with one; the extra pair keeps a spaced
+    // driver path as one token (#170).
+    int rc = shell_status(std::system(("\"" + cmd + "\"").c_str()));
+#else
     int rc = shell_status(std::system(cmd.c_str()));
+#endif
     if (rc != 0) {
         std::cerr << "error: link failed (object file: " << obj.string()
                   << ", IR: " << ir_path.string() << ")\n";
