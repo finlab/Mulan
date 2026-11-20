@@ -27,6 +27,19 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 293 — 2026-11-21
+
+**Return ownership for variants and delegates; match expression arm values (#151–#154).**
+
+- Returning a local variant now retains its payload into the return slot (tag-aware) instead of
+  handing the caller a dangling tag (#152). Returning a local delegate retains its captured
+  environment (#153). The class-handle return was already correct on this build; `return_lifetime`
+  locks all four forms (#151).
+- A `match` expression's arm value now follows the ternary-arm ownership rules: a borrowed payload
+  binding is retained before the arm scope releases it (#154).
+- New `tests/cases/return_lifetime.mu` (class handle, variant, delegate, match payload; one
+  destruction each). Full: Windows **982/982**, Linux **980/980** with `MUC_VERIFY_MEM=1`.
+
 #### build 292 — 2026-11-21
 
 **QC issue batch: witness results, sibling bounds, duplicate templates, uninitialized allocation.**

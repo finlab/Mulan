@@ -767,7 +767,7 @@ using ArgPack = Emitter::ArgPack;
         const bool voidResult = is_void(e->ty);
         AllocaInst* result = nullptr;
         if (!voidResult) result = entryAlloca(lt(e->ty), "match.res", alignOf(e->ty));
-        emitMatchCommon(e->scrut.get(), e->arms, e->sty, e->match_ref, result);
+        emitMatchCommon(e->scrut.get(), e->arms, e->sty, e->match_ref, result, e->ty);
         if (voidResult) return Constant::getNullValue(i32());
         return loadAt(lt(e->ty), result, unalignedExpr(e));
     }
@@ -776,7 +776,8 @@ using ArgPack = Emitter::ArgPack;
     // A `ref` match works on the scrutinee's own storage (the sema layer requires an addressable
     // place); every other match copies the scrutinee into an owned temporary first.
     void Emitter::emitMatchCommon(Expr* scrut, const std::vector<std::unique_ptr<MatchArm>>& arms,
-                                  const TypePtr& st, bool match_ref, AllocaInst* result) {
+                                  const TypePtr& st, bool match_ref, AllocaInst* result,
+                                  const TypePtr& result_ty) {
         if (!st || st->kind != TypeKind::Sum) {
             emitConstMatch(scrut, arms, st, result);
             return;
@@ -915,8 +916,9 @@ using ArgPack = Emitter::ArgPack;
             if (a->body) {
                 block(a->body.get());
             } else if (result) {
-                Value* v = eval(a->value.get());
-                b.CreateStore(v, result);
+                // The result slot owns one value, exactly like a `?:` arm: a borrowed payload binding
+                // is retained before popRefScope releases it; an owned source transfers ownership.
+                emitTernaryArm(result, a->value.get(), result_ty);
             } else if (a->value) {
                 (void)eval(a->value.get());
             }

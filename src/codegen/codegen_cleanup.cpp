@@ -595,6 +595,22 @@ namespace muc_detail {
             emitRetainValue(tmp, curRetTy);
             return b.CreateLoad(lt(curRetTy), tmp);
         }
+        // A variant result is owned by the caller: a returned local still owns its payload, so the
+        // return slot takes a tag-aware reference and the local's scope cleanup releases its own.
+        // Without this the payload died at `return` and the caller held a dangling tag.
+        if (curRetTy && curRetTy->kind == TypeKind::Sum && !valueOwned(e)) {
+            auto* tmp = entryAlloca(lt(curRetTy), "ret.sum", alignOf(curRetTy));
+            b.CreateStore(v, tmp);
+            emitRetainValue(tmp, curRetTy);
+            return b.CreateLoad(lt(curRetTy), tmp);
+        }
+        // A delegate owns its captured environment; the same transfer rule applies (#153).
+        if (curRetTy && curRetTy->kind == TypeKind::Delegate && !valueOwned(e)) {
+            auto* tmp = entryAlloca(lt(curRetTy), "ret.dlg", alignOf(curRetTy));
+            b.CreateStore(v, tmp);
+            emitRetainValue(tmp, curRetTy);
+            return b.CreateLoad(lt(curRetTy), tmp);
+        }
         return v;
     }
 
