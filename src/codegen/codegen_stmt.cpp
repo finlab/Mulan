@@ -295,10 +295,6 @@ using ArgPack = Emitter::ArgPack;
             emitFor(fs);
             return;
         }
-        if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
-            emitSwitch(sw);
-            return;
-        }
         if (dynamic_cast<BreakStmt*>(s)) {
             if (loops.empty()) fail("LLVM backend: `break` outside of a loop");
             emitFinallyForLoopExit();
@@ -646,69 +642,6 @@ using ArgPack = Emitter::ArgPack;
         Value* cond = b.CreateICmpNE(cast, Constant::getNullValue(ptrTy()));
         if (!e->bind_locals.empty()) b.CreateStore(cast, slotFor(e->bind_locals[0]));
         return cond;
-    }
-
-    // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
-    void Emitter::emitSwitch(SwitchStmt* s) {
-        Value* sv = eval(s->scrut.get());
-        LType* sty = sv->getType();
-        BasicBlock* endBB = BasicBlock::Create(ctx, "switch.end", curFn);
-
-        std::vector<BasicBlock*> bodyBB;
-        bodyBB.reserve(s->arms.size());
-        for (size_t i = 0; i < s->arms.size(); ++i) {
-            bodyBB.push_back(BasicBlock::Create(ctx, "switch.arm", curFn));
-        }
-
-        int elseIdx = -1;
-        std::vector<std::pair<ConstantInt*, BasicBlock*>> cases;
-        std::vector<std::pair<MatchPat*, BasicBlock*>> ranges;
-        for (size_t i = 0; i < s->arms.size(); ++i) {
-            if (s->arms[i]->is_else) elseIdx = static_cast<int>(i);
-            for (auto& p : s->arms[i]->pats) {
-                if (p.is_range) {
-                    ranges.push_back({&p, bodyBB[i]});
-                } else {
-                    cases.push_back({ConstantInt::get(llvm::cast<IntegerType>(sty),
-                                                      static_cast<uint64_t>(p.vlo), true),
-                                     bodyBB[i]});
-                }
-            }
-        }
-
-        BasicBlock* fallback = elseIdx >= 0 ? bodyBB[elseIdx] : endBB;
-        BasicBlock* defBB = BasicBlock::Create(ctx, "switch.default", curFn);
-        if (cases.empty()) {
-            b.CreateBr(defBB);
-        } else {
-            auto* sw = b.CreateSwitch(sv, defBB, static_cast<unsigned>(cases.size()));
-            for (auto& entry : cases) sw->addCase(entry.first, entry.second);
-        }
-
-        // default path: test the range branches in source order, finally falling to else or switch.end
-        b.SetInsertPoint(defBB);
-        const bool unsig = s->sty && !s->sty->is_signed();
-        for (size_t k = 0; k < ranges.size(); ++k) {
-            BasicBlock* next = (k + 1 < ranges.size())
-                                   ? BasicBlock::Create(ctx, "switch.next", curFn)
-                                   : fallback;
-            Value* lo = ConstantInt::get(llvm::cast<IntegerType>(sty),
-                                         static_cast<uint64_t>(ranges[k].first->vlo), true);
-            Value* hi = ConstantInt::get(llvm::cast<IntegerType>(sty),
-                                         static_cast<uint64_t>(ranges[k].first->vhi), true);
-            Value* ge = unsig ? b.CreateICmpUGE(sv, lo) : b.CreateICmpSGE(sv, lo);
-            Value* lt = unsig ? b.CreateICmpULT(sv, hi) : b.CreateICmpSLT(sv, hi);
-            b.CreateCondBr(b.CreateAnd(ge, lt), ranges[k].second, next);
-            if (k + 1 < ranges.size()) b.SetInsertPoint(next);
-        }
-        if (ranges.empty()) b.CreateBr(fallback);
-
-        for (size_t i = 0; i < s->arms.size(); ++i) {
-            b.SetInsertPoint(bodyBB[i]);
-            block(s->arms[i]->body.get());
-            if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
-        }
-        b.SetInsertPoint(endBB);
     }
 
     // Constant-pattern match (integer / enum scrutinee; SPEC 10.1.2). Without guards the value goes

@@ -106,8 +106,6 @@ namespace muc_detail {
             --move_loop_count_;
         } else if (auto cs = dynamic_cast<ForStmt*>(s)) {
             check_for_c(cs);
-        } else if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
-            check_switch(sw);
         } else if (auto m = dynamic_cast<MatchStmt*>(s)) {
             check_match_stmt(m);
         } else if (dynamic_cast<BreakStmt*>(s)) {

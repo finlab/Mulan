@@ -752,9 +752,6 @@ struct Emitter {
     void emitFor(ForInStmt* s);
     void emitForC(ForStmt* s);
 
-    // switch: value branches use an LLVM switch (jump table), range branches use a comparison chain, and else is the fallback.
-    void emitSwitch(SwitchStmt* s);
-
     // `match` (SPEC 10.1.2): the tag dispatch shared by the expression and statement forms.
     // `result` is the slot the expression form stores each arm value into (null for a statement match).
     void emitMatchCommon(Expr* scrut, const std::vector<std::unique_ptr<MatchArm>>& arms,

@@ -27,6 +27,23 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 274 — 2026-11-20
+
+**`switch` removed; `match` is the only dispatch construct.**
+
+The second step of the fold: the integer/enum vocabulary lives in `match` now (build 273), so
+`switch` is gone. The keyword stays reserved and produces a migration diagnostic pointing at `match`.
+
+- removed: `SwitchStmt` / `SwitchArm`, `parse_switch`, `check_switch`, `emitSwitch`, and their walks
+  (clone, substitution, may-throw, return analysis);
+- `guarantees_return` treats an exhaustive enum match like the exhaustive enum switch it replaced;
+- tests: the three `switch_*` run cases are now `match_const_*`, eleven error cases were renamed and
+  reworded, four redundant ones were deleted (their scenarios are covered by the new `match_const_*`
+  errors), and `switch_variant_rejected` became `match_variant_const_pattern` (a variant matched by a
+  constant pattern is the error that now exists).
+
+Full suite: 919/919 on Windows.
+
 #### build 273 — 2026-11-20
 
 **`match` takes integer, `char` and enum scrutinees (constant patterns).**

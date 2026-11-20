@@ -1,7 +1,7 @@
-// switch_const_pattern.mu — a unit-level compile-time constant is a valid switch pattern, like a literal
-// or an enum member (SPEC 3.3.2: `#if`, array lengths, `step`, `align(N)` and switch ranges share one
+// match_const_folding.mu — a unit-level compile-time constant is a valid match pattern, like a literal
+// or an enum member (SPEC 3.3.2: `#if`, array lengths, `step`, `align(N)` and match ranges share one
 // compile-time evaluator).
-unit switch_const_pattern;
+unit match_const_folding;
 
 extern int puts(const char* s);
 
@@ -10,7 +10,7 @@ const int LO = 10;
 const int HI = 20;
 
 int f(int x) {
-    switch x {
+    match x {
         K: { return 1; }
         LO..HI: { return 2; }
         else: { return 0; }

@@ -322,7 +322,6 @@ private:
     bool for_head_is_c_style();
     std::unique_ptr<Stmt> parse_c_for(const Token& tk);
     std::unique_ptr<Stmt> parse_para();
-    std::unique_ptr<Stmt> parse_switch();
     std::unique_ptr<Stmt> parse_try();
     // `match` (SPEC 10.1.2): statement form (block arms) and expression form (expression arms).
     std::unique_ptr<Stmt> parse_match_stmt();

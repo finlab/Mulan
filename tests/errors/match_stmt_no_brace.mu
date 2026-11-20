@@ -1,6 +1,6 @@
-unit switch_no_brace;
+unit match_stmt_no_brace;
 int f(int x) {
-    switch x {
+    match x {
         1: return 1;
         else: return 0;
     }

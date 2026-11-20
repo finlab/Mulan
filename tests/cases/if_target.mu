@@ -3,9 +3,9 @@ use std.comptime;
 
 extern int putchar(int c);
 
-// The `std.target` constants are ordinary values: the switch is checked for coverage.
+// The `std.target` constants are ordinary values: the match is checked for coverage.
 int classify() {
-    switch os {
+    match os {
         Windows: { return 1; }
         Linux: { return 2; }
         MacOS: { return 3; }
@@ -13,7 +13,7 @@ int classify() {
 }
 
 int addr_bits() {
-    switch arch {
+    match arch {
         X86_64: { return 64; }
         AArch64: { return 64; }
     }

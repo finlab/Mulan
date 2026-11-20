@@ -1,7 +1,7 @@
-unit switch_enum_range;
+unit match_const_enum_range;
 enum C { A, B, Cc }
 int f(C c) {
-    switch c {
+    match c {
         A..Cc: { return 1; }
         else: { return 0; }
     }

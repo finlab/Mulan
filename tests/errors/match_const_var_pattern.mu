@@ -1,7 +1,7 @@
-unit switch_var_pattern;
+unit match_const_var_pattern;
 int f(int x) {
     int k = 3;
-    switch x {
+    match x {
         k: { return 1; }
         else: { return 0; }
     }

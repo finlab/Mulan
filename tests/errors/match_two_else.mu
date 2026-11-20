@@ -1,6 +1,6 @@
-unit switch_two_else;
+unit match_two_else;
 int f(int x) {
-    switch x {
+    match x {
         1: { return 1; }
         else: { return 0; }
         else: { return 2; }

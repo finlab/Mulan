@@ -1,1 +1,0 @@
-switch case pattern must be a compile-time constant: `k` is a variable, not a unit-level `const`

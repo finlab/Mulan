@@ -453,28 +453,6 @@ StmtPtr clone_stmt(const Stmt& s) {
         // the captures are a sema field: they are derived again from the cloned loop
         return r;
     }
-    if (auto p = dynamic_cast<const SwitchStmt*>(&s)) {
-        auto r = mk<SwitchStmt>(s);
-        r->scrut = clone_expr(*p->scrut);
-        r->arms.reserve(p->arms.size());
-        for (const auto& a : p->arms) {
-            auto arm = std::make_unique<SwitchArm>();
-            arm->is_else = a->is_else;
-            arm->line = a->line;
-            arm->col = a->col;
-            for (const auto& pat : a->pats) {
-                MatchPat q;
-                q.lo = pat.lo ? clone_expr(*pat.lo) : nullptr;
-                q.hi = pat.hi ? clone_expr(*pat.hi) : nullptr;
-                q.is_range = pat.is_range;
-                q.inclusive = pat.inclusive;
-                arm->pats.push_back(std::move(q));
-            }
-            arm->body = clone_block(*a->body);
-            r->arms.push_back(std::move(arm));
-        }
-        return r;
-    }
     if (auto p = dynamic_cast<const MatchStmt*>(&s)) {
         auto r = mk<MatchStmt>(s);
         r->scrut = clone_expr(*p->scrut);

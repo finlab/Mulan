@@ -1,6 +1,6 @@
-unit switch_dup;
+unit match_const_dup;
 int f(int x) {
-    switch x {
+    match x {
         1: { return 1; }
         1: { return 2; }
         else: { return 0; }

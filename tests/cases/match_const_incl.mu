@@ -1,10 +1,10 @@
-// switch_incl.mu — switch branch ranges support `..=` (inclusive)
-unit switch_incl;
+// match_const_incl.mu — match branch ranges support `..=` (inclusive)
+unit match_const_incl;
 
 extern int puts(const char* s);
 
 int classify(int v) {
-    switch v {
+    match v {
         0..=9: {
             return 1;
         }
@@ -19,7 +19,7 @@ int classify(int v) {
 
 int main() {
     if classify(0) == 1 and classify(9) == 1 and classify(10) == 2 and classify(99) == 2 and classify(100) == 3 {
-        puts("switch inclusive ok");
+        puts("match inclusive ok");
     }
     return 0;
 }

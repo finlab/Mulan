@@ -282,17 +282,6 @@ struct Analysis {
             visitBlock(fs->body.get(), it);
             return;
         }
-        if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
-            visitExpr(sw->scrut.get(), it);
-            for (auto& arm : sw->arms) {
-                for (auto& pat : arm->pats) {
-                    visitExpr(pat.lo.get(), it);
-                    visitExpr(pat.hi.get(), it);
-                }
-                visitBlock(arm->body.get(), it);
-            }
-            return;
-        }
         if (auto ts = dynamic_cast<ThrowStmt*>(s)) {
             it.direct = true;
             visitExpr(ts->value.get(), it);

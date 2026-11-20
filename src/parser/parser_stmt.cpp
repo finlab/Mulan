@@ -259,9 +259,10 @@ std::vector<StmtPtr> Parser::parse_stmt() {
         return out;
     }
     if (at_kw("switch")) {
-        std::vector<StmtPtr> out;
-        out.push_back(parse_switch());
-        return out;
+        // `switch` was folded into `match` (SPEC 10.1.2): one dispatch construct. The keyword stays
+        // reserved so old code gets a migration message instead of a parse error about an identifier.
+        throw err_at("`switch` was folded into `match`: write `match value { pattern: { ... } else: { ... } }`",
+                     peek());
     }
     if (at_kw("match")) {
         std::vector<StmtPtr> out;
@@ -836,60 +837,6 @@ std::unique_ptr<Stmt> Parser::parse_c_for(const Token& tk) {
 }
 
 
-std::unique_ptr<Stmt> Parser::parse_switch() {
-    const Token tk = expect_kw("switch");
-    ExprPtr scrut = parse_expr();
-    forbid_inc_expr();
-    expect_op("{");
-    auto node = std::make_unique<SwitchStmt>();
-    node->scrut = std::move(scrut);
-    node->line = tk.line;
-    node->col = tk.col;
-    bool saw_else = false;
-    while (!at_op("}")) {
-        if (at_eof()) throw err_at("unterminated switch", tk);
-        const Token at = peek();
-        auto arm = std::make_unique<SwitchArm>();
-        arm->line = at.line;
-        arm->col = at.col;
-        if (at_kw("else")) {
-            advance();
-            if (saw_else) throw err_at("switch can only have one `else` branch", at);
-            arm->is_else = true;
-            saw_else = true;
-        } else {
-            if (saw_else) throw err_at("`else:` must be the last branch of the switch", at);
-            for (;;) {
-                MatchPat pat;
-                pat.lo = parse_expr();
-                if (at_op("..") || at_op("..=")) {
-                    pat.is_range = true;
-                    pat.inclusive = at_op("..=");
-                    advance();
-                    pat.hi = parse_expr();
-                }
-                if (peek().kind == TokKind::Ident && peek().text == "step") {
-                    throw err_at("`step` is not allowed in a switch pattern: list the values or use a range", peek());
-                }
-                arm->pats.push_back(std::move(pat));
-                if (!at_op(",")) break;
-                advance();
-            }
-        }
-        if (!at_op(":")) {
-            throw err_at("switch branch must end with `:` (write `:` after the pattern list, the branch body must be `{ }`)",
-                         peek());
-        }
-        advance();  // :
-        arm->body = parse_block();
-        node->arms.push_back(std::move(arm));
-    }
-    expect_op("}");
-    return node;
-}
-
-// `match` (SPEC 10.1.2): `match [move] expr { arms }`. The scrutinee stops at `{`; `move` is parsed
-// as the usual move expression so that sema's moved tracking applies unchanged.
 ExprPtr Parser::parse_match_scrut() {
     if (at_kw("move")) return parse_not();
     return parse_expr();

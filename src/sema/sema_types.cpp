@@ -786,23 +786,12 @@ std::string builtin_const_type_name(const std::string& name) {
             }
             return true;
         }
-        // When the value domain is fully covered, a switch guarantees a return only if all of its arms return
-        if (auto sw = dynamic_cast<SwitchStmt*>(s)) {
-            // an enum scrutinee is exhaustive by construction (check_switch rejects a missing member
-            // without `else`); a `variant` is dispatched by `match`, not `switch`
-            if (!sw->has_else && !sw->enum_exhaustive) return false;
-            if (sw->arms.empty()) return false;
-            for (auto& a : sw->arms) {
-                if (!guarantees_return(a->body.get())) return false;
-            }
-            return true;
-        }
-        // an exhaustive `match` (no `else` needed) guarantees a return when every arm body returns
+        // An exhaustive `match` (no `else` needed) guarantees a return when every arm body returns.
+        // A variant or enum match without `else` is exhaustive by construction (check_match rejects a
+        // missing alternative or member); an integer match without `else` skips unmatched values.
         if (auto m = dynamic_cast<MatchStmt*>(s)) {
             if (m->arms.empty()) return false;
-            if (!m->has_else && m->sty && m->sty->kind == TypeKind::Sum) {
-                // check_match already rejects a non-exhaustive variant match without `else`
-            } else if (!m->has_else) {
+            if (!m->has_else && !(m->sty && (m->sty->kind == TypeKind::Sum || m->sty->kind == TypeKind::Enum))) {
                 return false;
             }
             for (auto& a : m->arms) {

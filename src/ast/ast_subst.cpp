@@ -146,6 +146,10 @@ void subst_expr(Expr& e, const TypeBindings& b) {
     if (auto p = dynamic_cast<MatchExpr*>(&e)) {
         subst_expr(*p->scrut, b);
         for (auto& a : p->arms) {
+            for (auto& pat : a->pats) {
+                if (pat.lo) subst_expr(*pat.lo, b);
+                if (pat.hi) subst_expr(*pat.hi, b);
+            }
             if (a->guard) subst_expr(*a->guard, b);
             if (a->value) subst_expr(*a->value, b);
             if (a->body) subst_block(*a->body, b);
@@ -229,17 +233,6 @@ void subst_stmt(Stmt& s, const TypeBindings& b) {
         if (p->loop) subst_stmt(*p->loop, b);
         return;
     }
-    if (auto p = dynamic_cast<SwitchStmt*>(&s)) {
-        subst_expr(*p->scrut, b);
-        for (auto& a : p->arms) {
-            for (auto& pat : a->pats) {
-                if (pat.lo) subst_expr(*pat.lo, b);
-                if (pat.hi) subst_expr(*pat.hi, b);
-            }
-            subst_block(*a->body, b);
-        }
-        return;
-    }
     if (auto p = dynamic_cast<ReturnStmt*>(&s)) {
         if (p->value) subst_expr(*p->value, b);
         return;
@@ -267,6 +260,10 @@ void subst_stmt(Stmt& s, const TypeBindings& b) {
     if (auto p = dynamic_cast<MatchStmt*>(&s)) {
         subst_expr(*p->scrut, b);
         for (auto& a : p->arms) {
+            for (auto& pat : a->pats) {
+                if (pat.lo) subst_expr(*pat.lo, b);
+                if (pat.hi) subst_expr(*pat.hi, b);
+            }
             if (a->guard) subst_expr(*a->guard, b);
             if (a->value) subst_expr(*a->value, b);
             if (a->body) subst_block(*a->body, b);

@@ -153,8 +153,8 @@ constexpr size_t kMaxEnumMembers = 4096;
 // Non-static data members of one struct/class: C++ [implimits] §1.20 sets 16384 (and 4096 members in a
 // single member-specification, §1.28; Mulan has no out-of-line members, so the smaller fits both).
 constexpr size_t kMaxFields = 4096;
-// Case labels of one switch: C++ [implimits] §1.19 sets 16384.
-constexpr size_t kMaxSwitchLabels = 16384;
+// Patterns of one match: C++ [implimits] §1.19 sets 16384 case labels per switch.
+constexpr size_t kMaxMatchPatterns = 16384;
 
 // ---------------------------------------------------------------- shared signature helpers
 //
@@ -815,8 +815,6 @@ private:
     long long pattern_value(Expr* e, const TypePtr& st);
 
     std::vector<std::pair<std::string, long long>> enum_members_of(const TypePtr& et);
-
-    void check_switch(SwitchStmt* s);
 
     // `promote` fallback: rewrite `obj.m` into `obj.<promoted field>.m` when the type's own/base/
     // interface methods do not provide `m` (SPEC 3.19). Returns true when the AST was rewritten.

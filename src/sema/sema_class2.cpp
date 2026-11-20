@@ -633,7 +633,7 @@ namespace muc_detail {
 
     long long Sema::checked_int_pattern(long long v, const TypePtr& st, Expr* e) {
         if (!promote_int_literal(v, st)) {
-            err("switch case value " + std::to_string(v) + " is out of range for " + st->str(), e);
+            err("match pattern value " + std::to_string(v) + " is out of range for " + st->str(), e);
         }
         return v;
     }
@@ -654,11 +654,11 @@ namespace muc_detail {
                 TypePtr pt = check_expr(e);
                 auto* ec = std::get_if<EnumConst*>(&m->sym);
                 if (!ec || !*ec || !pt || !same_type(pt, st)) {
-                    err("switch case type does not match the value being switched on: expected " + st->str(), e);
+                    err("pattern type does not match the matched value: expected " + st->str(), e);
                 }
                 return (*ec)->value;
             }
-            err("cases of an enum switch must be members of " + st->str(), e);
+            err("patterns of an enum match must be members of " + st->str(), e);
         }
 
         if (auto* il = dynamic_cast<IntLit*>(e)) {
@@ -677,7 +677,7 @@ namespace muc_detail {
             }
         }
         // A unit-level compile-time constant, an arithmetic form or `std.comptime.X` (SPEC 3.3.2: the
-        // same evaluator feeds `#if`, `step`, `align(N)`, switch ranges and array lengths).
+        // same evaluator feeds `#if`, `step`, `align(N)`, match ranges and array lengths).
         long long folded = 0;
         if (eval_const_int(e, folded)) return checked_int_pattern(folded, st, e);
         if (auto* n = dynamic_cast<Name*>(e)) {
@@ -685,11 +685,11 @@ namespace muc_detail {
             if (std::get_if<EnumConst*>(&n->sym)) {
                 err("pattern `" + n->ident + "` is an enum member and cannot match " + st->str(), e);
             }
-            err("switch case pattern must be a compile-time constant: `" + n->ident +
+            err("a match pattern must be a compile-time constant: `" + n->ident +
                     "` is a variable, not a unit-level `const`; use a literal or a compile-time constant",
                 e);
         }
-        err("switch case pattern must be a compile-time constant (a literal, an enum member, or a "
+        err("a match pattern must be a compile-time constant (a literal, an enum member, or a "
             "unit-level `const`)",
             e);
     }
@@ -717,126 +717,6 @@ namespace muc_detail {
             }
         }
         return out;
-    }
-
-    void Sema::check_switch(SwitchStmt* s) {
-        ScopeGuard guard(*this);
-        // Case labels of one switch: C++ [implimits] §1.19 sets 16384 (nested switches are separate).
-        {
-            size_t labels = 0;
-            for (auto& arm : s->arms) labels += arm->pats.size();
-            if (labels > kMaxSwitchLabels) {
-                err("this switch has more than " + std::to_string(kMaxSwitchLabels) +
-                        " case labels; split the value space",
-                    s);
-            }
-        }
-        TypePtr st = check_expr(s->scrut.get());
-        if (!st) err("switch is missing the value to match", s);
-        // SPEC 10.1.2 (decided 2026-11-20): a variant is dispatched with `match`, never with `switch`.
-        if (st->kind == TypeKind::Sum) {
-            err("a `variant` is dispatched with `match`, not `switch` (SPEC 10.1.2)", s->scrut.get());
-        }
-        const bool enum_sw = st->kind == TypeKind::Enum;
-        if (!enum_sw && !(is_prim(st) && is_integer(st))) {
-            err("switch value must be an integer or enum (found " + st->str() + ")", s->scrut.get());
-        }
-        s->sty = st;
-
-        // Overlap detection: merge [lo, hi) intervals, top = covers up to the maximum value of the type
-        struct Iv {
-            long long lo = 0;
-            long long hi = 0;
-            bool top = false;
-            const Node* node = nullptr;
-        };
-        std::vector<Iv> ivs;
-
-        for (auto& up : s->arms) {
-            SwitchArm* arm = up.get();
-            if (arm->is_else) {
-                if (s->has_else) err("switch can have at most one `else` branch", s);
-                s->has_else = true;
-            }
-            if (arm->pats.empty() && !arm->is_else) {
-                err("switch case is missing a pattern", s);
-            }
-            for (auto& p : arm->pats) {
-                p.vlo = pattern_value(p.lo.get(), st);
-                Iv iv;
-                iv.lo = p.vlo;
-                iv.node = p.lo.get();
-                if (p.is_range) {
-                    if (enum_sw) {
-                        err("enum switches do not support range cases (enum members have no numeric order); list each member explicitly",
-                            p.lo.get());
-                    }
-                    p.vhi = pattern_value(p.hi.get(), st);
-                    if (p.inclusive) {
-                        if (p.vhi == LLONG_MAX) {
-                            err("switch range upper bound is too large for an inclusive range (`..=`)", p.hi.get());
-                        }
-                        ++p.vhi;  // normalize to the half-open interval [vlo, vhi)
-                    }
-                    if (p.vlo >= p.vhi) {
-                        err("switch range `" + std::to_string(p.vlo) + (p.inclusive ? "..=" : "..") +
-                                std::to_string(p.inclusive ? p.vhi - 1 : p.vhi) + "` is empty",
-                            p.lo.get());
-                    }
-                    iv.hi = p.vhi;
-                } else {
-                    if (p.vlo == LLONG_MAX) {
-                        iv.hi = p.vlo;
-                        iv.top = true;
-                        p.vhi = p.vlo;  // internal use only; +1 would overflow
-                    } else {
-                        iv.hi = p.vlo + 1;
-                        p.vhi = p.vlo + 1;  // internal use only (p.vlo is the only matching value)
-                    }
-                }
-                ivs.push_back(iv);
-            }
-            check_block(arm->body.get());
-        }
-
-        std::sort(ivs.begin(), ivs.end(),
-                  [](const Iv& a, const Iv& b) { return a.lo < b.lo; });
-        for (size_t i = 1; i < ivs.size(); ++i) {
-            const Iv& prev = ivs[i - 1];
-            const Iv& cur = ivs[i];
-            if (prev.top || cur.lo < prev.hi) {
-                err("overlapping switch cases: value " + std::to_string(cur.lo) +
-                        " is already covered by an earlier case (ranges are half-open; `a..b` excludes b)",
-                    cur.node);
-            }
-        }
-
-        if (enum_sw) {
-            auto members = enum_members_of(st);
-            std::string missing;
-            for (auto& [name, v] : members) {
-                bool covered = false;
-                for (auto& up : s->arms) {
-                    for (auto& p : up->pats) {
-                        if (!p.is_range && p.vlo == v) covered = true;
-                    }
-                }
-                if (!covered) {
-                    if (!missing.empty()) missing += ", ";
-                    missing += name;
-                }
-            }
-            if (!s->has_else) {
-                if (!missing.empty()) {
-                    err("switch does not cover all members of enum " + st->str() + " (missing " + missing +
-                            "); add the missing cases or write `else:`",
-                        s);
-                }
-                s->enum_exhaustive = true;
-            } else if (missing.empty()) {
-                warn("`else` branch is unreachable: all members of enum `" + st->str() + "` are already covered", s);
-            }
-        }
     }
 
     // One arm's result: the value of an expression arm, or the checked block of a statement arm.
@@ -874,8 +754,8 @@ namespace muc_detail {
         {
             size_t patterns = 0;
             for (auto& arm : arms) patterns += arm->pats.size();
-            if (patterns > kMaxSwitchLabels) {
-                err("this match has more than " + std::to_string(kMaxSwitchLabels) +
+            if (patterns > kMaxMatchPatterns) {
+                err("this match has more than " + std::to_string(kMaxMatchPatterns) +
                         " patterns; split the value space",
                     at);
             }
@@ -1066,7 +946,10 @@ namespace muc_detail {
                 pop();
                 continue;
             }
-            if (arm->alt.empty()) err("a match arm needs an alternative name", arm.get());
+            if (arm->alt.empty())
+                err("a variant match arm needs an alternative name (`Alt` or `Alt(x)`); a constant "
+                    "pattern needs an integer, `char` or enum value to match against",
+                    arm.get());
             if (!arm->pats.empty()) err("a variant arm cannot carry constant patterns", arm.get());
             int idx = -1;
             for (size_t k = 0; k < st->sum_names.size(); ++k) {

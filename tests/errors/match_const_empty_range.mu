@@ -1,6 +1,6 @@
-unit switch_empty_range;
+unit match_const_empty_range;
 int f(int x) {
-    switch x {
+    match x {
         5..5: { return 1; }
         else: { return 0; }
     }

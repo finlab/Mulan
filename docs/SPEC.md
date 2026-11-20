@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 273 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 274 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -42,7 +42,7 @@
 | Generics | **Monomorphization** (one copy of the code per combination of type arguments); `<>` syntax; constraints use `interface` + `&`/`\|`; `Self` refers to the implementor; constraints are matched **structurally**, and built-in types satisfy them at zero cost; see 3.15 for details |
 | Tagged unions | Declared with `variant Name { Alt T; Pair T, U; None; }` (decided 2026-11-20; layout and value semantics unchanged from the 0.0.115 sum implementation); dispatched **only** with `match` (10.1) |
 | Declaration split | `type` declares only transparent aliases (4.5); `extend I with J;` extends an interface with another interface's default methods (3.18); `promote field;` forwards a field's **public methods** (3.19) |
-| Dispatch | `switch` is constant dispatch over integers and enums (6.6); `match` dispatches a `variant` (10.1.2). The two domains do not overlap |
+| Dispatch | `match` is the only dispatch construct: constant patterns for integers, `char` and enums; alternative patterns for a `variant` (10.1.2). There is no `switch` (6.6) |
 | Memory | Pointers + `alloc/free/realloc` (raw memory); `class` uses `new` + atomic reference counting (write `x = null` to release early); no GC, no borrow checking |
 | Control flow | `if/else`, `while`, `for-in`, C-style `for` (6.3.1), `break/continue/return`; conditions must be `bool`; braces are mandatory |
 | Conditional expression | `cond ? a : b` (right-associative; the condition must be `bool`; only one branch is evaluated; both sides use the same type / implicit widening / `null` adaptation) |
@@ -575,7 +575,7 @@ enum Color { Red, Green, Blue }
 ```
 
 - Underlying type `int`; increments from 0 by default; explicit assignment `Red = 1` is allowed.
-- Named constants only, not a tagged union (`variant`, 10.1.1); `switch` performs a compile-time exhaustiveness check on enums (see 6.6).
+- Named constants only, not a tagged union (`variant`, 10.1.1); `match` performs a compile-time exhaustiveness check on enums (10.1.2).
 - Member names must be unique within the same enum.
 - **Reference syntax**: members can be used without a prefix (`Red`, both in this unit and in units imported with `use`),
   or with the qualified name `Color.Red`; across units write `unit.Color.Red`. `type.member` holds only for enums;
@@ -706,7 +706,7 @@ now declares an ordinary **`const` field** (3.7), not a storage-free constant.
 ### 3.7.2 Compile-time constant expressions (decided 2026-11-17)
 
 Compile-time constants are the values that can be computed before the program runs. The same evaluator is used
-for **unit-level `const` initializers**, array lengths `T[N]`, `step`, `align(N)`, `switch` case-range
+for **unit-level `const` initializers**, array lengths `T[N]`, `step`, `align(N)`, `match` range
 endpoints, and `#if` conditions (9.2).
 
 - Literals: integer, floating point, character, boolean.
@@ -1268,7 +1268,7 @@ Each type name defines two things:
 | Branch | Type set | Member set |
 |---|---|---|
 | Scalars such as `int` | Single element | Built-in operators |
-| `enum` | Single element | Comparison, `as`, switch |
+| `enum` | Single element | Comparison, `as`, `match` |
 | `struct S` | Single element | Fields + methods |
 | `class C` | `C` and all subclasses (open) | Public fields + methods |
 | `interface I` | All types implementing `I` (open) | The methods of `I` (including default implementations) |
@@ -1914,7 +1914,7 @@ class Box<T> {
     a not-yet-evaluated constant are errors.
   - Runtime-initialized globals: `const string S = "hi";`, `const int x = f();`, and non-`const` globals with
     a call initializer. They are **`const` objects but not compile-time constants**: they cannot be used in
-    `#if`, array lengths, `step`, `align(N)`, or `switch` ranges.
+    `#if`, array lengths, `step`, `align(N)`, or `match` ranges.
   - Aggregate constants are written as literals or aggregate initialization
     (`const int[] G = {10, 20, 30};`).
 - **Local `const`** may be initialized with a runtime expression (`const int x = f();` is legal); it simply cannot be assigned again after initialization.
@@ -2127,8 +2127,8 @@ for (;;) { ... }                  // infinite loop, exited via break / return
 - `init`, `cond`, `step` and the body share one scope: a variable declared in `init` is visible in the
   condition, the step and the body, and is destroyed when the loop exits.
 - A `for (;;)` (or `while true`) whose body has no `break` leaving **that** loop never falls out, so a
-  non-void function does not need a trailing `return` after it. A `break` inside a nested loop or a
-  `switch` belongs to that construct, not to the outer loop.
+  non-void function does not need a trailing `return` after it. A `break` inside a nested loop
+  belongs to that loop, not to the outer one; `match` has no `break` of its own.
 - The parenthesized form is required for this shape; `for x in seq` (no parentheses) stays for-in. The two
   are told apart by the head: a C-style head starts with `;`, a declaration, or an expression, while a
   for-in head starts with `[const] [ref] name [`,` ...] in`.
@@ -2259,50 +2259,20 @@ class List { Iter iterator() { ... } }
 - `return expr;` / `return;` (void).
 - Releasing a reference: `c = null;` (since 0.0.47 `del` has been removed; see 3.8 / 8.3).
 - `do-while` and `goto` are not provided (C-style `for` is, see 6.3.1).
-- `switch` is covered in 6.6: no fallthrough, and branch bodies must use braces.
+- `match` is covered in 10.1.2: no fallthrough, and every arm body is a brace-delimited block
+  (statement form) or an expression (expression form).
 - Exceptions use `try`/`catch`/`throw` (3.14); for fatal errors `abort()` (libc) is still available.
 
-### 6.6 switch (implemented in 0.0.45)
+### 6.6 `switch` (removed 2026-11-20)
 
-```mu
-switch code {
-    0:         { return 0; }
-    1, 2:      { return 1; }
-    3..10:     { return 2; }      // half-open range: [3, 10)
-    Color.Red: { return 3; }
-    else:      { return -1; }
-}
+`switch` was folded into `match` (10.1.2): the constant-pattern form keeps its whole vocabulary —
+comma lists, ranges `a..b` / `a..=b`, `else`, exhaustive enums, no fallthrough and brace-delimited arm
+bodies — and adds the expression form and guards. The keyword stays **reserved**, so old code gets a
+migration diagnostic instead of a confusing parse error:
+
+```text
+`switch` was folded into `match`: write `match value { pattern: { ... } else: { ... } }`
 ```
-
-- Form: `switch expr { cases* }`. Parentheses around `expr` are **optional** (consistent with `if/while/for`; canonical style omits them); no `;` after `}`.
-- Case: `pattern list : { statements* }` or `else : { statements* }`. The case body **must** be a brace-delimited block (consistent with the project's "braces are mandatory"), and each case body is its own block scope.
-- There is at most one `else`, and it must be the last case. An empty case is written `{}`.
-- **No fallthrough**, and no `break` is needed; to match several values in one case just write them separated by `,`.
-- Patterns must be **compile-time constants**: integer literals, character literals, literals with a unary `-`/`+`, enum members. Variables (including runtime-initialized `const`) cannot be patterns.
-- A range `a..b` is **half-open** (includes `a`, excludes `b`); `a..=b` includes the upper bound; the endpoints must be constants of the same type, and an empty range is a compile error.
-  **`step` is not supported** (a case has no notion of iteration, so writing it is an error); the range convention matches for-in (see 6.4).
-- **Enums**:
-  - A case only accepts members of that enum: the prefix may be omitted (`Red`), or written as `Color.Red` / `unit.Color.Red`; no implicit integer conversion (`0` matching `Color` is an error).
-  - Range cases are not supported (enum members have no numeric order).
-  - **Exhaustiveness is mandatory**: all members must be covered, otherwise it is a compile error listing the missing members; writing `else` gives up the exhaustiveness guarantee (in that case, if all members are already covered, `else` is unreachable and a warning is emitted).
-- **Integers / `char` / `byte`**: `else` is optional; unmatched values are simply skipped, which is not an error.
-- The type of the matched value is restricted to **integers and enums** (decided 2026-11-20); `bool`, floating point, pointers, class, interface, `string`, struct, arrays and **`variant`** are all compile errors.
-  **This is a decision, not an implementation limitation**: `switch` will not be extended to other matched types (a `string` case would need hashing or a comparison chain, which is a performance trap). A `variant` is dispatched with `match` (10.1.2), never with `switch`; the diagnostic for a variant scrutinee points at `match`.
-- The matched expression is evaluated only once; cases are matched in source order. Duplicate or overlapping patterns (intersecting ranges, a value intersecting a range) are compile errors, so order does not affect semantics and the backend is free to reorder.
-- `break` / `continue` **do not belong** to `switch`: they always apply to the nearest loop; with no enclosing loop they are errors under the existing rules. `switch` cannot be the target of `break`.
-- When `as` produces an undeclared value for an enum and there is no `else`, falling through is **UB** (consistent with `as` performing no checking); debug builds may trap.
-- Implementation: dense integer/enum values use LLVM `switch` (jump table), range cases use a comparison chain, and `else` becomes the default case.
-- **No pattern extensions (settled)**: `switch` is positioned as C-style **constant dispatch**, kept
-  "small and predictable", and is not dragged by pattern matching. Variant dispatch, guards, bindings
-  and the expression form live in **`match`** (10.1.2); the two constructs have disjoint domains.
-  The following are **explicitly not done in `switch`**:
-  - `switch` expression form (`let x = switch ...`);
-  - guards (an `if` clause on a case);
-  - bindings (`x @ pattern`);
-  - or patterns (`p1 | p2`; for multiple values use a comma list);
-  - runtime type cases (class/interface dispatch uses `as`);
-  - struct / tuple / array destructuring;
-  - C-style `case` labels and fallthrough.
 
 ---
 
@@ -2321,7 +2291,7 @@ int add(int a, int b) {
 - A non-`void` function must guarantee a return value on all paths; falling off the end is a **compile error** (settled). `main` is the exception: falling off is equivalent to `return 0;`.
 - **Definite initialization** (build 269): a **scalar** local (`int`/`enum`/pointer) declared without an
   initializer is uninitialized, and reading it before every path to that read assigns it is a compile
-  error. The rule is flow-sensitive: `if`/`switch`/`try` keep a local uninitialized if *any* path leaves
+  error. The rule is flow-sensitive: `if`/`match`/`try` keep a local uninitialized if *any* path leaves
   it so, and an assignment inside a loop body does not escape the loop (the body may run zero times).
   A mutable `ref` argument counts as initialization (the callee may write an out-parameter at once).
   Aggregates are not tracked yet: a field or element write is not a whole-value initialization, so
@@ -2811,7 +2781,7 @@ hand-written program comes anywhere near 256 levels of nesting or 4096 fields.
 | Parameters of one function | 256 | C 127, C++ §1.11: 256 | `a function cannot declare more than 256 parameters` |
 | Enum members of one enum | 4096 | C++ §1.22: 4096, C 127 | `enum … has more than 4096 members` |
 | Fields of one struct / class | 4096 | C++ §1.20: 16384 (4096 per member-specification) | `… declares more than 4096 fields` |
-| Case labels of one switch | 16384 | C++ §1.19: 16384 | `this switch has more than 16384 case labels` |
+| Patterns of one match | 16384 | C++ §1.19: 16384 case labels per switch | `this match has more than 16384 patterns` |
 | Generic instances per program | 4096 | no minimum (Rust: `recursion_limit` 128 per chain) | `this program needs more than 4096 generic instantiations` |
 | Nested generic instances (one chain) | 256 | C++ §1.9: 1024, Rust 128, GCC 900 | `recursive generic instantiation … does not terminate` |
 | By-value type nesting (a `struct` inside a `struct` …) | 512 | no minimum (Rust `type_length_limit` 1048576) | `… nests more than 512 levels by value` |
@@ -2941,9 +2911,8 @@ Value d = Value.None;        // a unit alternative is a plain value
 
 #### 10.1.2 Dispatching a variant: `match` (implemented in build 258)
 
-`match` is the **only** construct that dispatches a `variant`, and it also dispatches an **integer,
-`char` or enum** through **constant patterns** — the vocabulary `switch` accepts (6.6). `switch`
-remains for constant dispatch and rejects a variant scrutinee.
+`match` is the **only** dispatch construct: a `variant` is matched by alternative patterns, an
+**integer, `char` or enum** by **constant patterns** — the vocabulary `switch` used to provide (6.6).
 
 ```c
 int x = match v {
@@ -2984,7 +2953,8 @@ int x = match v {
 - A `match` over a variant counts as a terminating path for the return-value check when every arm
   returns, so a function over a variant needs no trailing `return`.
 - Implementation: a variant match lowers to the existing tag dispatch; a constant match reuses the
-  `switch` lowering — an LLVM `switch` (jump table) for single values, a comparison chain for ranges,
+  former constant-dispatch lowering — an LLVM `switch` instruction (jump table) for single values, a
+  comparison chain for ranges,
   and an ordered chain when any arm has a guard (a guard makes source order observable).
 
 #### 10.1.3 Later phases for `match`
@@ -3032,7 +3002,7 @@ int x = match v {
 | `not` precedence | Unary, highest tier | Low precedence, only higher than `and`/`or` |
 | Preprocessing | Yes | No |
 | goto | Yes | Not provided |
-| switch | Fallthrough, `case` labels | Yes; no fallthrough, no `case`, `pattern list : { }`, enums must be exhaustive (6.6) |
+| switch | Fallthrough, `case` labels | Replaced by `match`: no fallthrough, no `case`, `pattern list : { }`, enums must be exhaustive (10.1.2) |
 | Struct construction | `(struct S){...}` | Declaration `S s = {x=..., y=...}`; expression `S(...)` |
 | Heap objects | `malloc/free` | `new` + reference counting (no GC); early release is written `x = null` |
 | References | Pointers + `->` | `class` handles, auto-dereferenced; structs use `ref` parameters |
@@ -3056,10 +3026,10 @@ int x = match v {
 | 6 | Whether dynamic arrays are included in phase one | Decided: included. `T[]` / `T[,]` / `T[,,]` are **built-in types** (2026-11-16, superseding the earlier "sugar for `Array<T>`" rule): the compiler owns the representation `{rc,len,data}` (no capacity field — a block never grows, so its addresses stay valid), the built-in members are only `length()` / `operator[]` / `ptr()`, and `new T[n]` zeroes the elements unless written `uninit new T[n]` (trivial element types only). The `buffer<T>` name is removed. A library container (`Array<T>` and friends) wraps a `T[]` and adds methods |
 | 7 | Bounds checking strategy | Managed sequences checked by default (`--bounds=on` / `--bounds=off`), a violation throws `BoundsError`; static arrays and `T*` unchecked |
 | 8 | Signed overflow | Decided (implemented): `+`/`-`/`*` wrap in two's complement (the backend emits no `nsw`/`nuw`); signed division/remainder overflow (`MIN / -1`, `MIN % -1`) is UB like division by zero, a constant expression reports it, and the runtime `--bounds` check throws `ArithmeticError` for a non-constant divisor |
-| 9 | `switch`/`match` | **Superseded 2026-11-20** (rows 137/138): `switch` is constant dispatch over integers/enums (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); `variant` is dispatched with `match` (expression/statement, one-level patterns, bindings, guards, exhaustive with `else`). The old "match is not retained" decision is withdrawn |
+| 9 | `switch`/`match` | **Superseded 2026-11-20** (rows 137/138): `switch` is constant dispatch over integers/enums (no fallthrough, `pattern: { }`, multiple values, half-open ranges, exhaustive enums); `variant` is dispatched with `match` (expression/statement, one-level patterns, bindings, guards, exhaustive with `else`). The old "match is not retained" decision is withdrawn. **2026-11-20 (build 274): the two constructs are one — `switch` was removed and `match` takes constant patterns for integers, `char` and enums (6.6, 10.1.2).** |
 | 10 | `goto`/`typedef`/function pointers/varargs | `goto` is not done (phase one); function pointers and lambdas are implemented in 3.16 (0.0.84); the `typedef` syntax is not done, type aliases are written `type A = B;` (implemented in 0.0.62, see 4.5); varargs are limited to `extern` |
 | 11 | Indexed form of `for-in` / `ref` / default copy | **Decided (the indexed form is implemented)**: value binding by default; `for i, x` provides an `isize` index/ordinal (6.4.4); user types use the iteration forms of 6.4.1/6.4.2; **`for ref` works for user types in the index form when the container's `operator[]` returns a mutable `ref T`** — either spelling of the operator (member or free function, 6.4.1); it is unavailable for ranges, `string`, the cursor form, class/interface elements and `const` sequences (a `const` sequence uses **`for const ref`** for read-only iteration); **multi-dimensional arrays forbid `for-in`** |
-| 12 | `..=` / `step` / reverse order for ranges | Implemented (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`) and must be a non-zero compile-time constant; reverse order relies on an **explicit negative step** (`a..b` does not reverse automatically); switch case ranges support `..=` and **do not support `step`** |
+| 12 | `..=` / `step` / reverse order for ranges | Implemented (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`) and must be a non-zero compile-time constant; reverse order relies on an **explicit negative step** (`a..b` does not reverse automatically); match constant-pattern ranges support `..=` and **do not support `step`** |
 | 13 | Local type inference | Decided: `auto x = expr;`; locals only, an initializer is required; all declarators must have the same type |
 | 14 | Default mutability of parameters | Mutable (C semantics) |
 | 15 | `main` with parameters | **Implemented**: `int main(int argc, char** argv)`, `argv` is null-terminated; other signatures are errors |
@@ -3071,7 +3041,7 @@ int x = match v {
 | 21 | Whether `elif` is syntax sugar | Decided (implemented): supported, equivalent to `else if` |
 | 22 | Storage and lifetime of dynamic array literals | `T[] a = {...}` allocates a new array (RC); borrowed views are not supported |
 | 23 | Signedness and naming of `byte`/`char` | `byte`=u8 (the only unsigned 8-bit name, no alias); `char`=i8 (C-style signed) |
-| 24 | Whether `const` requires a compile-time constant | **Redesigned (2026-11-17)**: local `const` may be a run-time value; a unit-level `const` whose initializer folds is a compile-time constant, otherwise it is a run-time-initialized `const` object (9.1). Only compile-time constants may appear in `#if`, array lengths, `step`, `align(N)` and `switch` ranges. `constexpr` is not introduced |
+| 24 | Whether `const` requires a compile-time constant | **Redesigned (2026-11-17)**: local `const` may be a run-time value; a unit-level `const` whose initializer folds is a compile-time constant, otherwise it is a run-time-initialized `const` object (9.1). Only compile-time constants may appear in `#if`, array lengths, `step`, `align(N)` and `match` ranges. `constexpr` is not introduced |
 | 25 | How to read `const int* p` | **C++ model (2026-11-17)**: `const int x` = a const object (top-level); `const int* p` = pointer to a read-only int (low-level); `int* const p` = read-only pointer (top-level, supported); `const int* const p` = both; `T** → const T**` has no implicit conversion (as in C++, `as` can force it) |
 | 26 | Whether a parameter list allows multiple variables to share a type | Decided: **not allowed**; each parameter writes its own `type name` (`int f(int a, b)` is an error), see 7 for the implementation |
 | 27 | Struct aggregate initialization | Declaration `S s = {x=..., y=...}`; expression `S(...)`; positional and named forms cannot be mixed; all fields must be given |
@@ -3162,7 +3132,7 @@ int x = match v {
 | 112 | Type alias `type A = B;` | Decided (0.0.62), narrowed 2026-11-20: `type` is a **contextual keyword** (it is parsed as an alias only at the start of a declaration, `type Ident =`; elsewhere it is still an identifier, which protects the `type` field of C-interop structs); each declaration declares one alias; aliases are transparent (not newtypes) (see 4.5). `type` **declares only an alias**: a tagged union is a `variant` (10.1.1) and an interface extension is `extend` (3.18); the old `type V = A \| B;` and `type T += I;` forms are rejected with a migration diagnostic |
 | 113 | Range extensions `..=` / `step` / reverse order | Decided (0.0.62): `..=` includes the upper bound; `step` only follows a sequence expression (`0..10 step 2`); reverse order relies on an **explicit negative step**, `a..b` does not reverse automatically; `step 0` is a compile error; the step size is limited to compile-time constants (see 6.4) |
 | 114 | Range expansion in array initialization | Decided (0.0.62): in `int[10] a = {1, 2, 5..9, 10};` the `5..9` expands to 5,6,7,8; the endpoints must be compile-time constants; only `..` is supported inside braces (it does not take `..=`/`step`); after expansion it participates in "zero-pad when short / error when too long" (see 4.1) |
-| 115 | `switch` extensions | **Superseded 2026-11-20** by the `match` decision (row 137): `switch` remains C-style constant dispatch over integers and enums, with no expression form/guards/bindings/or-patterns/type branches/destructuring/`case`/fallthrough; a `variant` scrutinee is rejected and points at `match` (6.6, 10.1.2) |
+| 115 | `switch` extensions | **Superseded 2026-11-20** by the `match` decision (row 137): `switch` remains C-style constant dispatch over integers and enums, with no expression form/guards/bindings/or-patterns/type branches/destructuring/`case`/fallthrough; a `variant` scrutinee is rejected and points at `match` (6.6, 10.1.2). **2026-11-20 (build 274): superseded again — `switch` was removed; its vocabulary lives in `match`'s constant patterns, which do have the expression form and guards.** |
 | 116 | Function type syntax | Decided and implemented (3.16, 0.0.84): `(T1, T2) => R`; a one-word pointer value with no `*` and no declarator nesting; `sizeof` = pointer size; `=>` has lowest precedence and is right-associative; `*`/`[]` bind to the return type; block-/unit-level declarations never begin with an anonymous function type and a return type is never anonymous (use `auto` or a `type` alias), while fields and parameters may |
 | 117 | Lambdas | Decided and implemented (3.16, 0.0.84): `(int a) => expr` or `(int a) => { ... }`; parameter types are always written; the return type is inferred from the body (all `return` types must be identical; no `return expr` means `void`); **no captures**; each lambda is a hidden `private` function (C ABI, no allocation); stateful callbacks use `class` + single-method `interface` |
 | 118 | Free function / method values | Decided and implemented (3.16, 0.0.84): a free function name is already a function value (no `&`, and `&f` is an error); overloaded names need a target type; generic function names cannot be used as values; `u.f` and `extern` functions are values; **methods are not values** |
@@ -3186,7 +3156,7 @@ int x = match v {
 | 135 | C-style `for (init; cond; step)` | **Decided 2026-11-19: implemented** (6.3.1), superseding the earlier "no C-style `for`" decision — an index loop is the common case and `while` + a manual step reads poorly. Semantics are C's: every clause is optional (`for (;;)`), `cond` must be `bool`, and **`continue` runs the step clause**. `init` is a declaration or one expression statement; since the language has no comma operator, `for (a = 1, b = 1; ...)` is rejected — declare both in `init` instead. `do-while` remains not part of the language |
 | 136 | Declaration split: `type` / `variant` / `extend` | **Decided 2026-11-20, implemented in build 258 for `type`/`variant`; `extend` pending**: `type` = transparent alias only (4.5); tagged unions = `variant` (10.1.1); interface extension = `extend I with J;` (3.18). Old `type V = A \| B;` and `type T += I;` are rejected with migration diagnostics |
 | 137 | `match` (first version) | **Decided 2026-11-20, implemented in build 258**: `match` dispatches a `variant`; expression and statement forms; one-level patterns `Alt(x, y)`, value/`ref`/`const ref`/`match move` bindings, guards, mandatory exhaustiveness with an optional last `else`. Type patterns, nested patterns, or-patterns and public-contract branches are later phases (10.1.3) |
-| 138 | `switch` domain | **Decided 2026-11-20, implemented in build 258**: integers and enums only; a `variant` scrutinee is a compile error pointing at `match`. Whether integer/enum dispatch eventually folds into `match` stays open and is re-evaluated after `match` ships |
+| 138 | `switch` domain | **Decided 2026-11-20, implemented in build 258**: integers and enums only; a `variant` scrutinee is a compile error pointing at `match`. Whether integer/enum dispatch eventually folds into `match` stays open and is re-evaluated after `match` ships. **Resolved 2026-11-20 (build 274): it folded into `match`; `switch` was removed.** |
 | 139 | Interface extension `extend I with J;` | **Decided 2026-11-20, implemented in build 261**: `J : I`, default methods only; applies to implementors of `I` in units that can see the extension; conflicts are ambiguity errors; it is not a subtype relation (3.18). The concrete-type `extend T with I;` form is planned |
 | 140 | Field method promotion `promote` | **Decided 2026-11-20, implemented in build 260**: only public methods, one level, fixed precedence (own → base → interface → promoted), conflicts at the type declaration, no `override`/interface satisfaction, generic resolution per instantiation (3.19) |
 

@@ -672,8 +672,7 @@ struct ParaForStmt : Stmt {
     std::vector<LocalVar*> captures;
 };
 
-// One constant pattern of a `switch` / `match` arm: a single value or a half-open range [vlo, vhi)
-// (SPEC 6.6, 10.1.2). The two constructs share the type; only the arm node differs.
+// One constant pattern of a match arm: a single value or a half-open range [vlo, vhi) (SPEC 10.1.2).
 struct MatchPat {
     ExprPtr lo;
     ExprPtr hi;  // the upper bound of the range (non-null when is_range)
@@ -682,23 +681,6 @@ struct MatchPat {
     // sema
     long long vlo = 0;
     long long vhi = 0;
-};
-
-struct SwitchArm : Node {
-    std::vector<MatchPat> pats;
-    bool is_else = false;
-    std::unique_ptr<Block> body;
-    int line = 0;
-    int col = 0;
-};
-
-struct SwitchStmt : Stmt {
-    ExprPtr scrut;
-    std::vector<std::unique_ptr<SwitchArm>> arms;
-    // sema
-    TypePtr sty;
-    bool has_else = false;
-    bool enum_exhaustive = false;  // the enum covers all members (it is exhaustive even without an else)
 };
 
 // ---------------------------------------------------------------- `match` (SPEC 10.1.2)

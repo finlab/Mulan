@@ -1,5 +1,5 @@
-// switch_basic.mu — switch: multiple values, half-open ranges, exhaustive enums, else, nesting and break binding
-unit switch_basic;
+// match_const_basic.mu — match: multiple values, half-open ranges, exhaustive enums, else, nesting and break binding
+unit match_const_basic;
 
 extern int putchar(int c);
 
@@ -30,7 +30,7 @@ void pi(int v) {
 }
 
 int classify(int code) {
-    switch code {
+    match code {
         0: { return 0; }
         1, 2: { return 1; }
         3..10: { return 2; }
@@ -40,7 +40,7 @@ int classify(int code) {
 
 // Exhaustive enum: without an else every member must be covered (a missing one is a compile error)
 int paint(Color c) {
-    switch c {
+    match c {
         Red:   { return 11; }
         Green: { return 22; }
         Blue:  { return 33; }
@@ -55,10 +55,10 @@ int main() {
     pi(paint(Green));
     pi(paint(Blue));
 
-    // nesting: break/continue inside a switch belong to the enclosing loop
+    // nesting: break/continue inside a match belong to the enclosing loop
     int n = 0;
     for i in 0..5 {
-        switch i {
+        match i {
             0: { continue; }
             1: { n += 100; }
             2..4: { n += 10; }
@@ -70,15 +70,15 @@ int main() {
 
     // char range (half-open: 'a'..'{' includes 'z')
     byte ch = 'q';
-    switch ch {
+    match ch {
         'a'..'{': { pi(1); }
         else: { pi(2); }
     }
 
-    // empty switch body / integer switch without else: a non-match is skipped
+    // empty match body / integer match without else: a non-match is skipped
     int k = 7;
-    switch k { }
-    switch k {
+    match k { }
+    match k {
         3: { pi(9); }
     }
 

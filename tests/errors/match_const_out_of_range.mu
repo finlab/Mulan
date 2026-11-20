@@ -1,6 +1,6 @@
-unit switch_out_of_range;
+unit match_const_out_of_range;
 int f(byte b) {
-    switch b {
+    match b {
         300: { return 1; }
         else: { return 0; }
     }

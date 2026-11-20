@@ -1,6 +1,6 @@
-unit switch_no_colon;
+unit match_no_colon;
 int f(int x) {
-    switch x {
+    match x {
         1 { return 1; }
     }
 }

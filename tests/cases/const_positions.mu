@@ -1,4 +1,4 @@
-// const_positions.mu — one compile-time evaluator feeds `step`, `align(N)` and switch ranges, so a
+// const_positions.mu — one compile-time evaluator feeds `step`, `align(N)` and match ranges, so a
 // unit-level `const` (and a `comptime` builtin) is accepted in all of them (SPEC 3.3.2).
 unit const_positions;
 
@@ -23,11 +23,11 @@ int main() {
 
     int v = 3;
     int r = 0;
-    switch v {
+    match v {
         0..MID: { r = 1; }
         else: { r = 2; }
     }
-    if r != 1 { puts("const switch range failed"); return 2; }
+    if r != 1 { puts("const match range failed"); return 2; }
 
     if sizeof(Aligned) != 16 { puts("const align failed"); return 3; }
     #if std.comptime.ptr_bits == 32 or std.comptime.ptr_bits == 64 {
