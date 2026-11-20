@@ -16,12 +16,6 @@ public:
     int get() const { return n; }
 }
 
-const class Holder {
-public:
-    const int code = 3;
-    int code_value() const { return code; }
-}
-
 struct Boxed<T> {
     public const int n = 2;
     public T v;
@@ -37,11 +31,8 @@ int main() {
     NoCtor c = new NoCtor();
     if c.get() != 5 { puts("class default member initializer"); return 3; }
 
-    Holder h = new Holder();
-    if h.code_value() != 3 { puts("const class default member initializer"); return 4; }
-
     Boxed<int> g;
-    if g.n != 2 { puts("generic instance default member initializer"); return 5; }
+    if g.n != 2 { puts("generic instance default member initializer"); return 4; }
 
     puts("default ctor ok");
     return 0;

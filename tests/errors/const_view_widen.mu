@@ -1,5 +1,5 @@
-// A read-only view never widens to a mutable one implicitly: a `const` handle and any expression of a
-// `const class` both need `as` (SPEC 3.6, 3.7).
+// A read-only view never widens to a mutable one implicitly: a `const` handle needs `as`
+// (SPEC 3.6, 3.7).
 unit const_view_widen;
 
 class Base {
@@ -8,12 +8,8 @@ class Base {
     void poke() { v = v + 1; }
 }
 
-const class Leaf : Base {
-    Leaf() : Base(1) { }
-}
-
 int main() {
-    Leaf l = new Leaf();
-    Base b = l;          // read-only view -> mutable base handle
+    const Base cb = new Base(1);
+    Base b = cb;          // read-only view -> mutable handle
     return 0;
 }

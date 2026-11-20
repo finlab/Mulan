@@ -1,5 +1,5 @@
-// `const class D : Base` is legal only with a mutable base; a base list cannot carry a `const` qualifier
-// — the constness of a class is a property of its declaration, not of a view (SPEC 3.7).
+// A base list cannot carry a `const` qualifier: cv belongs to a view of an object, not to its
+// inheritance (SPEC 3.7).
 unit base_const_qualifier;
 
 class Base {
@@ -7,8 +7,8 @@ class Base {
     Base(int x) { v = x; }
 }
 
-const class Leaf : const Base {
-    Leaf() : const(1) { }
+class Leaf : const Base {
+    Leaf() : Base(1) { }
 }
 
 int main() { return 0; }

@@ -504,13 +504,9 @@ namespace muc_detail {
                         if (try_promote_method(m, ot, c)) return check_call(c, expected);
                         err("type `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
-                    filter_methods_for_receiver(ms, (ot && (ot->is_const || ot->decl_const)) || root_is_const(obj));
+                    filter_methods_for_receiver(ms, (ot && ot->is_const) || root_is_const(obj));
                     if (ms.empty())
-                        err(ot && ot->decl_const
-                                ? "a non-`const` method `" + m->name +
-                                      "` of a `const class` can only be called from its constructors or destructor"
-                                : "cannot call a non-const method `" + m->name + "` on a `const` object",
-                            c);
+                        err("cannot call a non-const method `" + m->name + "` on a `const` object", c);
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);
                     // `Self` in an interface member denotes the implementor (SPEC 3.15.6); a call through
                     // an interface value has no implementor type, so such a member has no itable slot and
@@ -552,7 +548,7 @@ namespace muc_detail {
                         if (try_promote_method(m, ot, c)) return check_call(c, expected);
                         err("struct `" + ot->str() + "` has no method `" + m->name + "`", c);
                     }
-                    filter_methods_for_receiver(ms, (ot && (ot->is_const || ot->decl_const)) || root_is_const(obj));
+                    filter_methods_for_receiver(ms, (ot && ot->is_const) || root_is_const(obj));
                     if (ms.empty())
                         err("cannot call a non-const method `" + m->name + "` on a `const` object", c);
                     auto sig = choose_method(ms, raw_args(c->args), "method `" + m->name + "`", c);

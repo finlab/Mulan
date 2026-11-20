@@ -539,7 +539,6 @@ std::unique_ptr<MethodDecl> clone_method(const MethodDecl& m) {
     r->ret = m.ret ? clone_type_spec(*m.ret) : nullptr;
     r->ret_ref = m.ret_ref;
     r->is_const = m.is_const;
-    r->const_written = m.const_written;
     r->is_operator = m.is_operator;    r->params = clone_params(m.params);
     r->body = m.body ? clone_block(*m.body) : nullptr;
     r->is_override = m.is_override;
@@ -646,7 +645,6 @@ std::unique_ptr<Decl> clone_decl(const Decl& d) {
         r->type_params = clone_type_params(p->type_params);
         r->is_public = p->is_public;
         r->is_template = p->is_template;
-        r->is_const_decl = p->is_const_decl;
         return r;
     }
     if (auto p = dynamic_cast<const InterfaceDecl*>(&d)) {

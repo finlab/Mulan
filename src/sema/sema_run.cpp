@@ -48,16 +48,6 @@ Program Sema::run() {
     // any body is checked, exactly like the interface defaults above (and after them, so a type's own
     // or interface-provided method keeps precedence).
     apply_interface_extensions();
-    // A `const class` marks its methods `const`; an override of a **mutating** virtual of the base has to
-    // carry the slot's signature instead. Resolve that before any body is checked, so calls anywhere see
-    // the final signatures (SPEC 3.7).
-    for (auto& u : units_) {
-        for (auto& d : u->decls) {
-            if (auto cd = dynamic_cast<ClassDecl*>(d.get()); cd && cd->is_const_decl) {
-                recover([&] { fix_const_class_slots(cd); });
-            }
-        }
-    }
     for (auto& u : units_) check_unit(u.get());
     // A constrained generic body is checked at its definition (build 156), after every unit's own
     // bodies: the constraint types must be fully resolved by then.

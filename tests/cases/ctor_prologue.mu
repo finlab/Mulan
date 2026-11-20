@@ -12,9 +12,9 @@ class Base {
     int base_value() const { return v; }
 }
 
-const class Derived : Base {
+class Derived : Base {
 public:
-    int w;
+    const int w;
     // The list is spelled field-first on purpose: the base still runs first and the fields are
     // initialized in declaration order.
     Derived(int x) : w(x * 2), Base(x) { }

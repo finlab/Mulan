@@ -179,13 +179,14 @@ private:
     // loop detects an arm boundary by comparing the size of `groups_` with the value it recorded on
     // entry, so a `}` closing a nested block is never mistaken for one.
     bool at_directive() const { return peek().is_op("#"); }
-    // Whether a `struct` / `class` / `union` declaration starts at `from`, after any intervening
-    // declaration modifiers (`nocopy`, `packed`, `align(N)`). `const` is a declaration modifier only in
-    // that case (`const nocopy struct S` is not a `const` variable).
+    // Whether a type declaration starts at `from`, after any intervening modifiers (`nocopy`, `packed`,
+    // `align(N)`). Used to tell a removed `const struct` / `const class` from a `const` variable.
     bool type_decl_after_modifiers(std::size_t from) const {
         for (std::size_t i = from;;) {
             const std::string& t = peek(i).text;
-            if (t == "struct" || t == "class" || t == "union") return true;
+            if (t == "struct" || t == "union" || t == "class" || t == "enum" || t == "interface" ||
+                t == "variant" || t == "extend")
+                return true;
             if (t == "nocopy" || t == "packed") {
                 ++i;
                 continue;

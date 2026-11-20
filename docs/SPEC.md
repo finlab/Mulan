@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 271 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 272 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -599,9 +599,8 @@ enum Color { Red, Green, Blue }
   - signed small type → wider signed.
   - `T*` → `void*`; `T*` → `const T*`; `T* const` → `T*` (top-level const is dropped on copy).
   - `T[]` → `const T[]`; the reverse (removing const) requires an explicit `as`.
-  - A read-only **class or interface handle** (`const Base base`, or any expression whose type is a
-    `const class`) → the mutable handle requires an explicit `as` (3.7); the same holds for `ref` to such a
-    view.
+  - A read-only **class or interface handle** (`const Base base`) → the mutable handle requires an explicit
+    `as` (3.7); the same holds for `ref` to such a view.
   - **Const may be added only at the outermost pointer level that is being viewed** (C++ rule):
     `T** → const T**` has **no implicit conversion** — adding const to an inner level would let a mutable
     pointer observe a const object. As in C++, `as` can force it (it is `const_cast`-equivalent; writing
@@ -677,75 +676,17 @@ C++ model, with the deliberate omissions listed at the end of this section.
   synthesized constructor keep working, and a `const` field may still use `field(value)` in an
   initializer list.
 - **Reassignment.** A top-level `const` variable cannot be reassigned (`const int x = 0; x = 1;` is an error).
-  A `const struct` / `const class` variable has no top-level const (the immutability is a property of the
-  type, not of the variable), so it may be reassigned as a whole — see the `const struct` item below.
 - **`const` methods.** `T f() const` declares a read-only method: `this` is `const Self`, fields cannot be
   written, and `f()` / `f() const` may coexist as overloads. A const object can only call const methods.
   Constructors and destructors cannot be `const` (3.11).
-- **`const struct` / `const class` and interfaces.** A `const class` implements an interface when the
-  interface declares those members `const` (`interface Sized { int size() const; }`): the class's methods
-  are implicitly `const`, which satisfies a read-only contract exactly. A mutating interface member
-  cannot be satisfied by it, and the diagnostic says which direction the mismatch is — declare the member
-  `const` in the interface, or drop `const` from the class. A class left with an unimplemented member is
-  abstract, and `new` names the missing members. A mutating interface reached through a mutable **base** class
-  (`class Base : IMut`, `const class D : Base`) is a mutable view, so `IMut i = d;` needs `as` (below).
-- **`const struct` / `const class`.** A declaration modifier (decided 2026-11-17): every field **it declares** is
-  implicitly `const`. The object's content is fixed once constructed: no field can be written, and it can be
-  **copied and moved** (a new object is constructed). The **type name itself does not carry cv**, so
-  `S(move S other)` is legal. A variable of such a type may be **reassigned as a whole** — semantically the
-  old value is replaced by a newly constructed one (the implementation may use copy-and-swap); it never writes
-  the old object's fields. A `const S` variable (top-level const) cannot be reassigned. For a class, "fixed"
-  has to hold for every view that can reach the shared object — see the next item.
-- **`const class`: a leaf type whose content is fixed, reached only through read-only views** (decided
-  2026-11-18). A class is a shared handle, so the guarantee has to hold through every view, not just for the
-  class's own fields:
-  - *Leaf.* A `const class` cannot be a base class: neither `class E : D` nor `const class D : const Base` is
-    legal (reuse through composition — `const class D { Base b; }` — or through interfaces).
-  - *Mutable base allowed, writable only while constructing.* `const class D : Base` is legal when `Base` is
-    mutable. The base constructor initialises that subobject (`: Base(x)`), and the constructors
-    and the destructor of `D` may also write it and call its non-`const` methods. **Constructing and destroying
-    are the only writable phases**: once a constructor returns, nothing writes the object — not from outside,
-    and not from the class's own method bodies either.
-  - *Every expression of the type is a read-only view.* `D`, a parameter or a return value of type `D` all
-    denote a read-only view (a class handle is already a shared reference: `ref` applies to structs and
-    scalars, so there is no second reference form here). Outside code also cannot name a non-`const`
-    method of the class (below).
-  - *No implicit widening.* Converting that view to a **mutable** view — a base handle `Base` or an
-    interface handle `I` — is an error, exactly like `const T → T` (3.6): write `as`. Writing through the
-    view obtained by `as` is UB (4.3), the same rule as any other const removal. (An interface whose every
-    member is `const` is itself a read-only contract, so such a view still converts implicitly; an operator
-    member with a mutable receiver does not count as `const`.)
-  - *Writes are refused everywhere.* A field write (`d.v = 1`, inherited fields included), a compound
-    assignment, an element write through the object (`d.inner[0] = 1`), and binding any of them to a
-    mutable `ref` parameter are all errors: a read-only view grants no write access through any of them.
-    A pointer or dynamic-array **field** is an exception of the usual kind — the header is part of the
-    fixed content, the block it points at is a separate object (`d.bytes[0] = 1` writes that block, exactly
-    as a `T* const` field would). Declare the field `const T[]` to make those elements read-only too.
-  - *Methods.* Methods are implicitly `const`, so the read-only view can call them. A method may be declared
-    non-`const` **only to override a non-`const` virtual of the base**: it occupies the vtable slot, its body is
-    read-only like every other method body, it is not part of the class's public surface (`private` by default,
-    invisible across units), and it cannot be called by name from outside the class. Only the class's own
-    constructors and destructor may call it (the writable phase).
-  - *Consequence: an inherited non-`const` virtual has no caller left.* External code sees only the read-only
-    view, the class's method bodies cannot mutate, and a call made inside the base's own constructor dispatches
-    to the base (virtual dispatch does not reach a derived override while the base is being constructed, 3.11).
-    Such a virtual is therefore reachable only through an `as` escape (UB), or as a virtual call from `D`'s own
-    constructor/destructor bodies. Its override still earns its place: it keeps the vtable complete and turns
-    a write that would otherwise reach the base's mutating implementation into a no-op. A `const class` that
-    must inherit from a base with mutating virtuals is therefore usable — declare those overrides and they
-    become inert.
-  - *Consequence: the type really is immutable.* After construction (and outside the destructor) there is no
-    in-language write path at all, so a `const class` and a `const struct` make the same promise;
-    `mutable` is still not provided.
 - **Address-of and iteration.** `&const_local` / `&s.const_field` / `&const_slice[i]` yield `const T*`.
   `for const ref x in s` is read-only iteration; `for x in s` copies (a copy of a const element is mutable).
 - **No backdoors.** `const_cast` is not provided — use `as` (explicit and unsafe, 4.3); `mutable` is not
-  provided (a `const class` base subobject is writable only while constructing/destructing — that is a phase,
-  not a per-field modifier); `volatile` is not provided. `constexpr` / `consteval` / `constinit` are **not**
-  introduced.
+  provided; `volatile` is not provided. `constexpr` / `consteval` / `constinit` are **not** introduced.
 - `const` does not change layout/ABI and is **not an optimization promise**. A unit-level `const` whose
   initializer is a compile-time constant may be placed in read-only storage; writing it after `as` is UB.
-- **Not allowed:** on `union` (members are always public fields) and on an anonymous function type
+- **Not allowed:** as a type-declaration modifier (a `const struct` / `const class` body was removed on
+  2026-11-20 — write `const` on each field and each method) and on an anonymous function type
   (`(int) => int`). A **top-level `const` return type is accepted but ignored** (`const int f()` is treated
   as `int f()`, as in C++); `const char* f()` is a low-level const pointer and keeps its const.
 - `weak const T` / `const weak T` are errors (a read-only weak reference has no use).
@@ -1216,8 +1157,7 @@ void g() {
 ### 3.15 Generics (implemented in 0.0.64–0.0.72)
 
 A member may be declared `const` (`interface Sized { int size() const; }`): it is a read-only contract,
-satisfied only by a `const` implementation and reachable through a `const I` view. This is how an
-immutable (`const class`) implementation participates (3.7).
+satisfied only by a `const` implementation and reachable through a `const I` view (3.7).
 
 #### 3.15.1 Implementation strategy: monomorphization
 
@@ -1907,8 +1847,7 @@ class Box<T> {
 - `this` inside the promoted method is the field object, not the wrapper. Dynamic dispatch follows
   the field type's normal rules (a class field dispatches through its handle; a struct field is
   static).
-- `const` rules are unchanged: a `const` receiver may call only the field's `const` methods; a
-  `const class` view keeps its existing read-only rules.
+- `const` rules are unchanged: a `const` receiver may call only the field's `const` methods.
 - Inside a generic type the promoted set is resolved per instantiation (the public methods of the
   instantiated field type); diagnostics name the instantiated type.
 - The promoted method must be visible from the caller's unit (the field type and the method must be
@@ -3196,7 +3135,7 @@ int x = match v {
 | 95 | Generics roadmap | Decided + implemented (0.0.64–0.0.72): monomorphization, `<>` syntax, structural constraints, `Self`; see 3.15 for details |
 | 96 | Reserved words | Decided: see 2.5 |
 | 97 | Exception unwinding ABI | Resolved by B2 (0.0.81): no platform unwinding ABI; a thread-local pending slot + call-site checks; no `.eh_frame`/`.pdata`/personality dependency |
-| 98 | `const` class views / `const` methods | **Redesigned (2026-11-17)**: `const` methods are provided (`ret f() const`, `this` is `const Self`, `f()` / `f() const` overload); a `const` object is deeply read-only (only const methods may be called, fields cannot be written); `const struct` / `const class` makes every field/method implicitly const without putting cv on the type name — the object's content is fixed once constructed, it can be copied and moved, and a variable of such a type can be reassigned as a whole (destroy-and-construct). `const_cast`/`mutable` are not provided (use `as` for an explicit const removal). **Refined 2026-11-18 for `const class` — see 132** |
+| 98 | `const` class views / `const` methods | **Redesigned (2026-11-17)**: `const` methods are provided (`ret f() const`, `this` is `const Self`, `f()` / `f() const` overload); a `const` object is deeply read-only (only const methods may be called, fields cannot be written); `const struct` / `const class` makes every field/method implicitly const without putting cv on the type name — the object's content is fixed once constructed, it can be copied and moved, and a variable of such a type can be reassigned as a whole (destroy-and-construct). `const_cast`/`mutable` are not provided (use `as` for an explicit const removal). **Refined 2026-11-18 for `const class` — see 132.** **2026-11-20: the `const struct` / `const class` modifier was removed (3.7); `const` methods and `const` fields are unchanged.** |
 | 99 | `ref` parameters / return values | Implemented (0.0.62 for parameters; extended in 0.0.63): `ref` is a binding mode rather than a storable type — `ref T p` / `const ref T p` / `ref T f()`, and no `T&` is introduced; every non-union value type can be borrowed (build 267; `[ref x]` capture keeps the narrower rule); a returned borrow must originate from a `ref` parameter, `this`, a global, or pointer/slice storage, and the result is not storable (it can only be written through on the spot / passed as a borrow / used with `for ref`); borrowing a local, a by-value parameter, or a temporary is a compile error; methods support it (build 270) as part of the signature, constructors only as the copy/move form, interface members and `extern` do not (see 3.8) |
 | 100 | Downcast from an `interface` to a derived `interface` | Decided: not supported in phase one (only upcasts are allowed; `as` is an error) |
 | 101 | Non-ASCII character literals | Decided: not supported in phase one (a literal is a single-byte `byte`; use `'\xNN'` or `string`) |
@@ -3228,10 +3167,10 @@ int x = match v {
 | 127 | `export` and the binary export surface | **Decided and implemented (0.0.103).** `export` is a top-level declaration modifier that implies `public` and marks the declaration as part of the binary export surface; it cannot be combined with `private`/`extern`/`use` or used inside a type body (export the type, which exports its public methods and class metadata). `--exports=export` (default) keeps only `export` declarations externally visible, `--exports=public` keeps every `public` declaration; `--export <name>` still adds individual names. In an executable everything outside the surface is internalized and dead-code-eliminated; library targets keep the surface visible (toolchain plan §11) |
 | 127 | Member promotion (Go-style embedding) / mixin | **Revised 2026-11-20**: field method promotion is provided in the explicit, method-only form `promote field;` / `promote field(f, g);` inside a type body — only the field's **public methods** are forwarded, only one level, after the type's own/base/interface methods, never participating in `override` or satisfying an interface, with conflicts reported at the type declaration (3.19). The general `mixin`/`embed` member form (which also promotes fields and falls back for every call) remains **not done**: it cannot satisfy an interface without an offset thunk (identity and `this` change meaning), and the callable set would depend on another type's evolution across units, violating the "information must be locally expressible" criterion. Reuse for other cases: `struct S : I` with explicit forwarding methods (3.10, 3.15.7) or field composition. Background: `agents/design-backlog.md` U40 |
 | 128 | Signed or unsigned index / length type | **Decided (2026-11-16): `isize`.** `length()`, subscripts, `for i, x` ordinals, `find` offsets, `sizeof`/`alignof`/`offsetof` and the `alloc`/`realloc` byte counts are all `isize`; `usize` is kept for unsigned arithmetic and for C-facing sizes (`cstd.*`, `c_size`), where an explicit `as` is required. Rationale: `length() - 1` on an empty sequence must not wrap to `2^64-1`, descending loops need a signed counter, `find` already returns `-1`, and the emitted bounds check (`icmp uge` on the 64-bit index) catches a negative index with no extra instruction |
-| 129 | `const` redesign (C++ model) | **Decided 2026-11-17** (for `const class` refined 2026-11-18 — see 132): cv is part of the type at every level; top-level const is ignored in signatures (and a top-level `const` return type is accepted but ignored), low-level const participates in overloads and mangling; `const` fields and `const` methods; `const struct` / `const class` is a declaration modifier without cv on the type name (content fixed after construction; copy/move allowed; whole-variable reassignment allowed); `T* const` is supported; `T** → const T**` has no implicit conversion (`as` can force it, as in C++); a const object is deeply read-only; `const_cast` is replaced by `as`; no `constexpr`/`consteval`/`constinit`, no `mutable`/`volatile` (3.7) |
+| 129 | `const` redesign (C++ model) | **Decided 2026-11-17** (for `const class` refined 2026-11-18 — see 132): cv is part of the type at every level; top-level const is ignored in signatures (and a top-level `const` return type is accepted but ignored), low-level const participates in overloads and mangling; `const` fields and `const` methods; `const struct` / `const class` is a declaration modifier without cv on the type name (content fixed after construction; copy/move allowed; whole-variable reassignment allowed); `T* const` is supported; `T** → const T**` has no implicit conversion (`as` can force it, as in C++); a const object is deeply read-only; `const_cast` is replaced by `as`; no `constexpr`/`consteval`/`constinit`, no `mutable`/`volatile` (3.7). **2026-11-20: the `const struct` / `const class` declaration modifier was removed; everything else in this decision stands.** |
 | 130 | `move` is `&&` | **Decided 2026-11-17**: `move T` is a non-const rvalue reference; `const` and `move` cannot qualify the same parameter; `move` on a const object is an error (no silent copy); used in move construction and transfer positions (3.4, 3.8, 4.4) |
 | 131 | `std.comptime` unit / `builtin` | **Decided 2026-11-17, unit renamed to `std.comptime` 2026-11-18**: an ordinary unit shipped with the toolchain; `builtin` declares compiler-provided constants/functions with no initializer and no body; any unit may declare one, but only names in the compiler's built-in table are accepted and a name may be declared once; explicit `use std.comptime` (no implicit visibility); replaces `std.target` (9.3) |
-| 132 | `const class` inheritance and views | **Decided 2026-11-18**: a `const class` is a **leaf type whose content is fixed**, reached only through read-only views. It can never be a base class (`class E : D` and `const class D : const Base` are both errors), but it **may** derive from a mutable class base (`const class D : Base`); that subobject is written by the base constructor and by `D`'s own constructors/destructor — **construction is the only writable phase** (after a constructor returns, neither outside code nor the class's methods write). Every expression of the type is a read-only view (a class handle is already a shared reference), and converting it to any mutable view (base handle, interface handle, `ref`) needs `as` (writing through it is UB). Methods are implicitly `const`; a non-`const` method exists **only as an override slot** for a non-`const` virtual of the base — read-only body, not part of the public surface (`private` by default), not callable by name from outside, only from `D`'s constructors/destructor. Consequence accepted: an inherited non-`const` virtual then has **no caller** (external code holds only read-only views, method bodies cannot mutate, and a base constructor's own virtual call does not reach a derived override) — the override still keeps the vtable complete and turns a would-be write into a no-op, which is what makes inheriting a base with mutating virtuals usable at all. Rejected: banning class bases outright (loses implementation reuse for no extra safety), `const class D : const Base` (an extra constness-agreement rule for a case composition covers), and letting internal method bodies keep a mutable `this` (that makes the type only *outward* read-only — a second, weaker promise than `const struct`). Related: 3.7 |
+| 132 | `const class` inheritance and views | **Superseded 2026-11-20: `const class` was removed (3.7); this row records the model as it stood.** **Decided 2026-11-18**: a `const class` is a **leaf type whose content is fixed**, reached only through read-only views. It can never be a base class (`class E : D` and `const class D : const Base` are both errors), but it **may** derive from a mutable class base (`const class D : Base`); that subobject is written by the base constructor and by `D`'s own constructors/destructor — **construction is the only writable phase** (after a constructor returns, neither outside code nor the class's methods write). Every expression of the type is a read-only view (a class handle is already a shared reference), and converting it to any mutable view (base handle, interface handle, `ref`) needs `as` (writing through it is UB). Methods are implicitly `const`; a non-`const` method exists **only as an override slot** for a non-`const` virtual of the base — read-only body, not part of the public surface (`private` by default), not callable by name from outside, only from `D`'s constructors/destructor. Consequence accepted: an inherited non-`const` virtual then has **no caller** (external code holds only read-only views, method bodies cannot mutate, and a base constructor's own virtual call does not reach a derived override) — the override still keeps the vtable complete and turns a would-be write into a no-op, which is what makes inheriting a base with mutating virtuals usable at all. Rejected: banning class bases outright (loses implementation reuse for no extra safety), `const class D : const Base` (an extra constness-agreement rule for a case composition covers), and letting internal method bodies keep a mutable `this` (that makes the type only *outward* read-only — a second, weaker promise than `const struct`). Related: 3.7 |
 | 133 | Construction prologue: base call, delegation, field initializers | **Decided 2026-11-18**: one place for every construction step — the initializer list after the parameter list. An item is `Base(args)` (base constructor), `CtorName(args)` (delegating constructor) or `field(value)`; execution order is fixed as **delegate → base → members → field initializers in declaration order → body**, independent of the order the items are written in. `super(...)` as a constructor call is **removed** (it was a body statement that had to be hoisted to the prologue anyway, which forced a "must be the first statement" rule and made "base constructor with arguments + own `const` field" unwritable); `super.m(...)` stays as the qualified base-method call. Delegation cannot also name the base or a field, cannot target itself, and chains must not cycle (3.12) |
 | 134 | Null references: local initialization and the null check | **Decided 2026-11-19**: (a) a class/interface local must be initialized (4) — the type *is* the handle (3.8), so `Dog d;` must not read like a stack construction that builds nothing; (b) dereferencing a null handle (method call, field read, field write) throws `std.exception.NullReferenceError`, and `--null-check=off` drops the check, making the access UB (8.2); `null` itself stays a legal value. Rejected: leaving an uninitialized handle silently null (the declaration looked like construction and the failure moved to an unrelated line), and leaving the dereference purely UB with no diagnostic (a segfault instead of a catchable error) |
 | 135 | C-style `for (init; cond; step)` | **Decided 2026-11-19: implemented** (6.3.1), superseding the earlier "no C-style `for`" decision — an index loop is the common case and `while` + a manual step reads poorly. Semantics are C's: every clause is optional (`for (;;)`), `cond` must be `bool`, and **`continue` runs the step clause**. `init` is a declaration or one expression statement; since the language has no comma operator, `for (a = 1, b = 1; ...)` is rejected — declare both in `init` instead. `do-while` remains not part of the language |

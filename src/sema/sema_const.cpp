@@ -219,8 +219,7 @@ namespace muc_detail {
         }
         // C model: const may only be relaxed, never tightened (same_type ignores const, so this must be
         // caught first). A read-only view never widens to a mutable one implicitly: `const T*` / `const T[]`,
-        // and for handles a `const` view or any expression of a `const class` (`const Base base`, `IMut i = d`)
-        // — the escape is `as` (SPEC 3.6, 3.7).
+        // and for handles a `const` view (`const Base base`) — the escape is `as` (SPEC 3.6, 3.7).
         if (src && dst) {
             const bool handle_src = src->kind == TypeKind::Class || src->kind == TypeKind::Interface;
             const bool handle_dst = dst->kind == TypeKind::Class || dst->kind == TypeKind::Interface;

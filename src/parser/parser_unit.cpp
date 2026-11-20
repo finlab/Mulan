@@ -27,26 +27,6 @@ void Parser::push_decl(std::unique_ptr<Decl> d) {
     cur_decls_->push_back(std::move(d));
 }
 
-namespace {
-
-// `const struct` / `const class`: every field and method declared in the body is implicitly const,
-// including the members of a conditional arm (the arm is selected later, by the semantic pass).
-// `keep_explicit_nonconst` lets a `const class` keep an explicitly non-const method: it exists as an
-// override slot for a mutating virtual of the base (SPEC 3.7), so the declaration must survive here.
-void mark_body_const(MemberGroup& m, bool keep_explicit_nonconst = false) {
-    for (auto& f : m.fields) {
-        if (f.second) f.second->is_const = true;
-    }
-    for (auto& mm : m.methods) {
-        if (!keep_explicit_nonconst || !mm->const_written) mm->is_const = true;
-    }
-    for (auto& g : m.groups) {
-        for (auto& arm : g.dir->arms) mark_body_const(arm.members, keep_explicit_nonconst);
-    }
-}
-
-}  // namespace
-
 std::unique_ptr<Unit> Parser::parse_unit() {
     const Token t = peek();
     bool unit_public = false;
@@ -84,8 +64,6 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         Token nocopy_tok = tk;
         bool nomove = false;
         Token nomove_tok = tk;
-        bool is_const_decl = false;
-        Token const_tok = tk;
         bool has_builtin_decl = false;
         Token builtin_tok = tk;
         ExprPtr align_expr;
@@ -142,15 +120,14 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 expect_op(")");
                 continue;
             }
-            // `const struct S` / `const class C` is a declaration modifier (decided 2026-11-17): every
-            // field and method is implicitly const. It is distinguished from a `const T` variable
-            // declaration by what follows, which may be other modifiers (`const nocopy struct S`).
+            // `const struct` / `const class` was a declaration modifier (removed 2026-11-20): it made every
+            // field and method implicitly const, which is now written per member. Reject it with a
+            // migration diagnostic rather than letting it parse as a `const` variable of a type named
+            // `struct`.
             if (at_kw("const") && type_decl_after_modifiers(1)) {
-                if (is_const_decl) throw err_at("duplicate modifier `const`", peek());
-                is_const_decl = true;
-                const_tok = peek();
-                advance();
-                continue;
+                throw err_at("`const` cannot modify a type declaration: declare the fields and methods "
+                             "`const` explicitly (`const struct` / `const class` was removed)",
+                             peek());
             }
             // `builtin const T name;` / `builtin T f(...);` (9.3)
             if (at_kw("builtin")) {
@@ -334,7 +311,6 @@ std::unique_ptr<Unit> Parser::parse_unit() {
         }
 
         if (at_kw("variant")) {
-            if (is_const_decl) throw err_at("`const` can only modify a `struct` or `class` declaration", const_tok);
             if (has_layout) {
                 throw err_at("`variant` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
             }
@@ -357,17 +333,12 @@ std::unique_ptr<Unit> Parser::parse_unit() {
                 sd->nocopy = nocopy;
                 sd->nomove = nomove;
                 sd->align_expr = std::move(align_expr);
-                if (is_const_decl) {
-                    if (is_union) throw err_at("`const` cannot modify a `union` (members are always public fields)", const_tok);
-                    mark_body_const(sd->body);
-                }
             }
             push_decl(std::move(d));
             continue;
         }
 
         if (at_kw("enum")) {
-            if (is_const_decl) throw err_at("`const` can only modify a `struct` or `class` declaration", const_tok);
             if (has_layout) {
                 throw err_at("`enum` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
             }
@@ -385,18 +356,11 @@ std::unique_ptr<Unit> Parser::parse_unit() {
             auto d = parse_class();
             d->is_public = is_pub;
             d->is_export = is_export;
-            if (is_const_decl) {
-                if (auto* cd = dynamic_cast<ClassDecl*>(d.get())) {
-                    cd->is_const_decl = true;
-                    mark_body_const(cd->body, /*keep_explicit_nonconst=*/true);
-                }
-            }
             push_decl(std::move(d));
             continue;
         }
 
         if (at_kw("interface")) {
-            if (is_const_decl) throw err_at("`const` can only modify a `struct` or `class` declaration", const_tok);
             if (has_layout) {
                 throw err_at("`interface` does not support layout modifiers (`packed` / `align(N)`)", layout_tok);
             }

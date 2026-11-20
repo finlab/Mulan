@@ -556,7 +556,7 @@ bool same_param_sig(const std::vector<TypePtr>& a, const std::vector<TypePtr>& b
 
 bool read_only_view(const TypePtr& t) {
     if (!t) return false;
-    if (t->is_const || t->decl_const) return true;
+    if (t->is_const) return true;
     if (t->kind != TypeKind::Interface) return false;
     for (const auto& m : t->methods) {
         if (m.is_operator) {
@@ -636,8 +636,7 @@ bool widens_int(const TypePtr& src, const TypePtr& dst) {
 bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
     // C model: const can only be relaxed, never tightened (same_type ignores const, so it must be rejected
     // first). A read-only view never widens to a mutable one implicitly — this covers pointer/slice levels
-    // and, for handles, `const Base` / any expression of a `const class`, base and interface conversions
-    // included (`as` is the escape, SPEC 3.6/3.7).
+    // and, for handles, base and interface conversions (`as` is the escape, SPEC 3.6/3.7).
     if (src && dst) {
         const bool handle_src = src->kind == TypeKind::Class || src->kind == TypeKind::Interface;
         const bool handle_dst = dst->kind == TypeKind::Class || dst->kind == TypeKind::Interface;

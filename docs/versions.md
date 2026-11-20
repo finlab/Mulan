@@ -27,6 +27,30 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 272 — 2026-11-20
+
+**`const struct` / `const class` removed; `const` stays a type and method qualifier.**
+
+The declaration modifier existed to avoid writing `const` on every method of an immutable
+type, but no library or example used it: `libs/` and `examples/` contain zero `const struct` /
+`const class` declarations, and the only `const` methods in the standard library are `string`'s
+17. What it cost: a second meaning of `const` (type qualifier vs. declaration modifier, with
+no cv on the type name), a different assignment path for types with `const` fields, and — for
+classes — a whole model (leaf types, vtable-only override slots, read-only interface views, a
+writable construction phase) whose promise still leaks through `as`.
+
+Removed: the modifier itself (now a parse error with a migration hint), `ClassDecl::is_const_decl`,
+`MethodDecl::const_written`, `Type::decl_const`, `fix_const_class_slots`, the construction /
+destruction write window, and the `decl_const` receiver filtering. Unchanged: cv in the type,
+the top-level / low-level rules, `const` fields, `const` methods, `const ref`, and the read-only
+rules for `const` handles.
+
+Tests: the 37 `const_class_*` / `const_struct_*` cases are gone; six cases that used the
+modifier incidentally now declare a plain `class` / `struct`; `decl_modifier_order` covers
+`nocopy` / `packed` / `align` only; new must-fail `const_type_decl_removed`.
+
+Full suite: 917/917 on Windows.
+
 #### build 271 — 2026-11-20
 
 **`T()` works for primitives and for type parameters.**

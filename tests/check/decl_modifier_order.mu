@@ -1,13 +1,12 @@
-// decl_modifier_order.mu — declaration modifiers compose in any order (`const` / `nocopy` / `packed` /
-// `align(N)`); `const` is a declaration modifier when a type declaration follows, whatever the order.
+// decl_modifier_order.mu — declaration modifiers compose in any order (`nocopy` / `packed` /
+// `align(N)`).
 unit decl_modifier_order;
 
-const nocopy struct A { public const int x; A(int v) : x(v) { } }
-const packed struct B { public int x; }
-const align(8) struct C { public int x; }
-nocopy const struct D { public const int x; D(int v) : x(v) { } }
+nocopy struct A { public const int x; A(int v) : x(v) { } }
+packed struct B { public int x; }
+align(8) struct C { public int x; }
+nocopy packed struct D { public const int x; D(int v) : x(v) { } }
 packed align(8) struct E { public int x; }
-const struct F { public int x; }
 
 int main() {
     A a = A(1);

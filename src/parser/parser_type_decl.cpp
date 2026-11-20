@@ -414,7 +414,6 @@ std::unique_ptr<MethodDecl> Parser::parse_method(TypeSpecPtr ret, bool ret_ref, 
     if (at_kw("const")) {
         advance();
         m->is_const = true;
-        m->const_written = true;
     }
     if (at_kw("override")) {
         advance();
@@ -792,7 +791,6 @@ std::unique_ptr<MethodDecl> Parser::parse_member_operator(TypeSpecPtr ret, bool 
     if (at_kw("const")) {
         advance();
         m->is_const = true;
-        m->const_written = true;
     }
     if (at_op(";")) {
         advance();

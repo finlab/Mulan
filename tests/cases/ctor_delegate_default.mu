@@ -13,7 +13,7 @@ public:
     int get() const { return id * 10 + k; }
 }
 
-const class Frozen {
+class Frozen {
 public:
     const int a = 7;
     const int b;
@@ -26,7 +26,7 @@ int main() {
     Cfg c = new Cfg();
     if c.get() != 52 { puts("class default + delegate"); return 1; }
     Frozen f = new Frozen();
-    if f.sum() != 11 { puts("const class default + delegate"); return 2; }
+    if f.sum() != 11 { puts("class default + delegate"); return 2; }
     puts("ctor delegate default ok");
     return 0;
 }

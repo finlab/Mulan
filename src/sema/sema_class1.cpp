@@ -203,34 +203,11 @@ namespace muc_detail {
         }
     }
 
-    void Sema::fix_const_class_slots(ClassDecl* c) {
-        if (!c || !c->is_const_decl || !c->ty || !c->ty->base) return;
-        for (auto& m : c->methods) {
-            if (!m->is_override || !m->is_const) continue;
-            const MethodSig* slot = find_method(c->ty->base, m->name, m->pty.size());
-            if (!slot || slot->is_const || !slot->is_virtual) continue;
-            if (!same_param_sig(slot->params, m->pty)) continue;
-            m->is_const = false;
-            m->cname = method_cname(c->ty->unit, c->name, m->name,
-                                    method_decl_symbol_params(m.get()), false);
-            for (auto& sig : c->ty->methods) {
-                if (sig.owner.get() != c->ty.get() || sig.name != m->name || !sig.is_const) continue;
-                if (!same_param_sig(sig.params, m->pty)) continue;
-                sig.is_const = false;
-                sig.is_public = false;  // a slot-only method is not part of the public surface
-                break;
-            }
-        }
-    }
-
     void Sema::check_method(ClassDecl* c, MethodDecl* m) {
         if (!m->body) return;  // abstract method
         begin_member(c->ty, m->rty, c->name + "." + m->name, m->line, m->col);
         const bool saved_const = cur_method_const_;
-        // A `const class` fixes its content after construction (SPEC 3.7): every method body is read-only,
-        // including the body of an explicitly non-const override slot. Constructors and the destructor are
-        // the only writable phases (they do not go through here).
-        cur_method_const_ = m->is_const || (c->ty && c->ty->decl_const);
+        cur_method_const_ = m->is_const;
         declare_params(m->param_locals, m->params, m->pty);
         check_block(m->body.get());
         if (!is_void(m->rty) && !guarantees_return(m->body.get())) {
@@ -638,8 +615,6 @@ namespace muc_detail {
                 }
             }
         }
-        // (A `const class`'s override slots were resolved before any body was checked, so the sigs below
-        // already carry the slot's signature — see `fix_const_class_slots`, SPEC 3.7.)
         // A top-level `const` on a parameter is not part of the signature (SPEC 3.7).
         std::vector<MethodDecl*> seen;
         for (auto& m : c->methods) {
@@ -735,8 +710,8 @@ namespace muc_detail {
                 }
             } else if (m->is_override) {
                 // A `const` mismatch is by far the most common way an `override` misses: the method is
-                // `const` (implicitly so in a `const class`) while the interface member is not, or the
-                // other way round. Say which direction it is instead of "does not match anything".
+                // `const` while the interface member is not, or the other way round. Say which direction
+                // it is instead of "does not match anything".
                 const MethodSig* loose = nullptr;
                 if (c->ty->base) loose = find_method(c->ty->base, sig.name, sig.params.size());
                 for (auto& i : c->ty->interfaces) {

@@ -779,10 +779,6 @@ struct MethodDecl : Node {
     bool ret_ref = false;  // `ref T m()`: returns a borrow
     // `f() const`: a read-only method (decided 2026-11-17)
     bool is_const = false;
-    // The `const` suffix was written explicitly. `mark_body_const` (a `const struct` / `const class` body)
-    // makes methods implicitly `const`, but a `const class` may declare a non-`const` override slot for a
-    // mutating virtual of its base, so an explicit declaration must survive that pass.
-    bool const_written = false;
     // an operator signature in an interface: `T operator+(T a, T b);` (no this, the parameter list holds all operands)
     bool is_operator = false;
     std::vector<std::unique_ptr<Param>> params;
@@ -849,9 +845,6 @@ struct DtorDecl : Node {
 
 struct ClassDecl : Decl {
     std::string name;
-    // `const class` (SPEC 3.7): every field/method is implicitly const and the type is a leaf whose
-    // content is fixed after construction. Carried into `ty->decl_const` (the type name has no cv).
-    bool is_const_decl = false;
     std::vector<std::string> bases;  // the first is the base class, the rest are interfaces
     std::vector<TypeSpecPtr> base_specs;  // parallel to bases; a generic base class needs structured type arguments
     std::vector<std::pair<std::string, TypeSpecPtr>> fields;

@@ -29,7 +29,6 @@ namespace muc_detail {
                     e->ty = Type::make_enum(u->name, e->name);
                 } else if (auto c = dynamic_cast<ClassDecl*>(d.get())) {
                     c->ty = Type::make_class(u->name, c->name);
-                    c->ty->decl_const = c->is_const_decl;
                 } else if (auto i = dynamic_cast<InterfaceDecl*>(d.get())) {
                     i->ty = Type::make_interface(u->name, i->name);
                 } else if (auto sm = dynamic_cast<SumDecl*>(d.get())) {
@@ -566,7 +565,6 @@ namespace muc_detail {
             auto c = dynamic_cast<ClassDecl*>(d.get());
             if (!c) continue;
             if (!c->ty) c->ty = Type::make_class(u->name, c->name);
-            c->ty->decl_const = c->is_const_decl;
 
             bool has_base = false;
             TypeSpec where;
@@ -583,12 +581,6 @@ namespace muc_detail {
                 }
                 if (bt->kind == TypeKind::Class) {
                     if (i != 0 || has_base) err("a class may have at most one base class, and it must come first", c);
-                    if (bt->decl_const) {
-                        err("a `const class` cannot be used as a base class (`" + bt->str() +
-                                "` is a `const class`): `const` types are leaves, use composition "
-                                "(`const class D { Base b; }`) or an interface instead",
-                            c);
-                    }
                     if (bt->is_const) err("a base class cannot be `const`", c);
                     has_base = true;
                     c->ty->base = bt;
@@ -641,9 +633,6 @@ namespace muc_detail {
                 // declaration allows that. Everything else needs `virtual` (build 160: static by default).
                 sig.is_virtual = m->is_virtual || m->is_override || !m->body;
                 sig.is_public = m->is_public;
-                // A non-`const` method of a `const class` is an override slot for a mutating virtual of the
-                // base: it is not part of the public surface (SPEC 3.7).
-                if (c->is_const_decl && !m->is_const) sig.is_public = false;
                 sig.owner = c->ty;
                 sig.is_operator = m->is_operator;
                 if (m->is_operator) check_member_operator_sig(m.get(), c->ty);

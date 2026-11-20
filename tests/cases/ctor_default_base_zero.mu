@@ -7,7 +7,7 @@ class Base {
     int get() const { return v; }
 }
 
-const class Leaf : Base {
+class Leaf : Base {
 public:
     const int w = 6;
     int sum() const { return get() + w; }

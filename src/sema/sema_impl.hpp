@@ -752,9 +752,6 @@ private:
     TypePtr unit_level_type(const std::string& name, Unit* u);
 
     void check_class(ClassDecl* c);
-    // `const class`: an override of a mutating virtual of the base takes the slot's (non-const) signature;
-    // runs after every shape is final and before any body is checked (SPEC 3.7).
-    void fix_const_class_slots(ClassDecl* c);
 
     void check_interface(InterfaceDecl* itf);
 
@@ -800,8 +797,6 @@ private:
     bool root_is_const(Expr* e);
     // A mutable `ref` binding hands out write access, so it needs a writable object (SPEC 3.7).
     bool ref_target_is_readonly(Expr* a);
-    // A value subobject of the object being constructed/destroyed (the only writable phase).
-    bool is_this_value(Expr* e);
     bool root_is_this(Expr* e);
 
     void check_writable(Expr* t);

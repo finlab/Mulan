@@ -3,7 +3,7 @@ extern int puts(const char* s);
 int seq = 0;
 int f(int tag) { seq = seq * 10 + tag; return tag; }
 
-const class Cfg {
+class Cfg {
 public:
     const int a = 1;
     const int b;

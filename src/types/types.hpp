@@ -82,10 +82,6 @@ struct Type {
     int rank = 1;               // Slice: rank (1=T[], 2=T[,], ...)
     bool is_const = false;      // cv: this type node is const (top-level; for Ptr/Slice/Ref the pointee
                                 // const is carried by `elem`, so `const T*` is Ptr(elem = const T))
-    // Class: declared `const class` (SPEC 3.7). The type name carries no cv, but every expression of the
-    // type is a read-only view: a mutable view (base handle, interface handle, `ref`) needs `as`, and
-    // only constructors/destructors may write. See agents/const-design.md 3.3.1.
-    bool decl_const = false;
     // The zero-argument constructor was synthesized because the type declares default member initializers
     // but no constructor of its own (SPEC 3.7): construction applies them, aggregate initialization does not
     // apply to the type any more.
@@ -212,9 +208,9 @@ bool same_type_sig(const TypePtr& a, const TypePtr& b);
 // Parameter-list signature comparison (overloads, duplicate methods): same length and every type equal
 // under `same_type_sig`, so a top-level `const` never splits a signature.
 bool same_param_sig(const std::vector<TypePtr>& a, const std::vector<TypePtr>& b);
-// Can a value of this type only ever be read? True for a `const` handle, for every expression of a
-// `const class` (SPEC 3.7: the type name carries no cv), and for an interface whose every member is
-// `const` — such a view can never grant write access, so widening it to a "mutable" handle is safe.
+// Can a value of this type only ever be read? True for a `const` handle and for an interface whose every
+// member is `const` — such a view can never grant write access, so widening it to a "mutable" handle is
+// safe (SPEC 3.7).
 bool read_only_view(const TypePtr& t);
 // Layout (a Struct's packed / align(N) is implemented only here; codegen delegates to it so that the two layouts cannot drift apart)
 size_t type_align(const TypePtr& t);
