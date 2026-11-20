@@ -252,10 +252,15 @@ public:
         if off < 0 or off > n {
             return false;
         }
-        if off == 0 or off == n {
-            return true;
+        // Walk the same lossy decoder as char_count/byte_offset: an invalid byte is its own U+FFFD,
+        // so the leading-byte heuristic (which calls a stray continuation byte "inside" a character)
+        // disagreed with the rest of the API on malformed input (#230).
+        isize pos = 0;
+        while pos < off {
+            isize bits = utf8_decode(this, pos);
+            pos += utf8_len(bits);
         }
-        return ((p[off] as int) & 0xC0) != 0x80;
+        return pos == off;
     }
 
     // Byte offset of a code point index (O(n)). Throws BoundsError when out of range.
@@ -335,6 +340,11 @@ public:
 
     // Compare with a NUL-terminated C string (literals): `s == "abc"`.
     bool operator==(const char* c) const {
+        // C APIs such as getenv return null; the constructor treats null as the empty string, and
+        // comparison must agree instead of dereferencing it (#231).
+        if c == null {
+            return n == 0;
+        }
         isize i = 0;
         while i < n {
             if c[i] == 0 or p[i] != (c[i] as byte) {
@@ -424,6 +434,13 @@ public:
         if times <= 0 or n == 0 {
             String e = {};
             return e;
+        }
+        // `n * times` is a wrapping multiply; a positive overflow would allocate a tiny buffer and
+        // then copy past it (#229). Keep `total + 1` representable too.
+        if times > (9223372036854775807 - 1) / n {
+            NumericEdgeError err = new NumericEdgeError(1, times as double, 64);
+            err.message = "string.repeat: repeated length overflows isize";
+            throw err;
         }
         isize total = n * times;
         byte[] buf = new byte[total + 1];
@@ -985,22 +1002,31 @@ public struct ByteCursor {
 private:
     String s;
     isize i;
+    bool valid;
 
 public:
     ByteCursor(String str) {
         s = str;
         i = 0;
+        valid = false;
     }
 
     bool next() {
         if i >= s.length() {
+            valid = false;
             return false;
         }
         i += 1;
+        valid = true;
         return true;
     }
 
     byte current() const {
+        // current() has a precondition: a successful next(). Returning 0 from at(-1) used to hide
+        // the misuse and is indistinguishable from a real NUL byte (#236).
+        if not valid {
+            throw new BoundsError(i - 1, s.length(), 0);
+        }
         return s.at(i - 1);
     }
 
@@ -1014,7 +1040,7 @@ public type string = String;
 
 // A C string on the left (`"abc" == s`): a free function because a member needs the receiver on the left.
 public bool operator==(const char* c, String s) {
-    return s == c;
+    return s == c;  // the member handles null
 }
 
 public String operator+(const char* c, String s) {

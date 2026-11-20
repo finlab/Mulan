@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 297 — 2026-11-21
+
+**Standard-library boundary checks and null indirection.**
+
+- `String == const char*` treats a null C string as the empty string (#231); `repeat` rejects a
+  repeated length that overflows isize with a `NumericEdgeError` (#229); UTF-8 boundary APIs use the
+  same lossy decode walk as `char_count`/`byte_offset`, so invalid bytes are their own U+FFFD (#230);
+  `unicode_copy_range` bounds-checks `from`/`to` (#234); `ByteCursor.current()` requires a successful
+  `next()` and throws `BoundsError` otherwise (#236).
+- Calling a null delegate (or raw function pointer) raises a catchable `NullReferenceError` (#243);
+  `throw e;` with a null handle prints "throw of a null exception" before aborting instead of exiting
+  silently (#237).
+- New cases: `string_c_str_null`, `string_utf8_boundary`, `string_range_errors`, `delegate_null_call`.
+  Full: Windows **998/998**, Linux **996/996** with `MUC_VERIFY_MEM=1`.
+
 #### build 296 — 2026-11-21
 
 **Lexical, literal and small-semantics QC fixes.**

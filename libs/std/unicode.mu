@@ -251,7 +251,13 @@ public String unicode_rstrip<T: IString>(T s) {
 }
 
 public String unicode_copy_range<T: IString>(T s, isize from, isize to) {
-    if to <= from {
+    isize n = s.length();
+    // The offsets are byte offsets into `s`; a range outside it used to copy silent NUL padding
+    // (at() returns 0 past the end), producing a string whose length and content disagreed (#234).
+    if from < 0 or to < from or to > n {
+        throw new BoundsError(to, n, 0);
+    }
+    if to == from {
         String e = {};
         return e;
     }

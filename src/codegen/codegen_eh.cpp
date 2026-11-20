@@ -202,6 +202,20 @@ namespace muc_detail {
         BasicBlock* bad = BasicBlock::Create(ctx, "throw.null", curFn);
         b.CreateCondBr(b.CreateICmpEQ(obj, Constant::getNullValue(ptrTy())), bad, ok);
         b.SetInsertPoint(bad);
+        // `throw e;` with a null handle is a program error, but exiting with no output made it
+        // indistinguishable from a crash; report it like an uncaught exception (#237).
+        Value* err = nullptr;
+        if (isWindowsTarget()) {
+            err = b.CreateCall(libFn("__acrt_iob_func", ptrTy(), {i32()}),
+                               {ConstantInt::get(i32(), 2)});
+        } else {
+            auto* sg = mod->getOrInsertGlobal("stderr", ptrTy());
+            err = b.CreateLoad(ptrTy(), sg);
+        }
+        Constant* fmt = b.CreateGlobalString("Uncaught exception: throw of a null exception\n");
+        auto* fprintfTy = FunctionType::get(i32(), {ptrTy()}, /*isVarArg=*/true);
+        auto* fprintfFn = cast<Function>(mod->getOrInsertFunction("fprintf", fprintfTy).getCallee());
+        b.CreateCall(fprintfFn, {err, fmt});
         b.CreateCall(abortTrap(), {});
         b.CreateUnreachable();
         b.SetInsertPoint(ok);

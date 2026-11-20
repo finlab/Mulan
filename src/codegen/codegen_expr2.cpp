@@ -589,6 +589,9 @@ using ArgPack = Emitter::ArgPack;
                 Value* dv = eval(c->callee.get());
                 Value* code = b.CreateExtractValue(dv, {0});
                 Value* env = b.CreateExtractValue(dv, {1});
+                // A null delegate entry must raise the catchable null-reference error instead of
+                // jumping to address zero (#243).
+                emitNullCheck(code, "call through a null delegate");
                 std::vector<LType*> ptys{ptrTy()};
                 for (auto& pt : ft->fparams) ptys.push_back(lt(pt));
                 std::vector<Value*> vals{env};
@@ -599,6 +602,7 @@ using ArgPack = Emitter::ArgPack;
                 return r;
             }
             Value* fp = eval(c->callee.get());
+            emitNullCheck(fp, "call through a null function pointer");
             std::vector<LType*> ptys;
             for (auto& pt : ft->fparams) ptys.push_back(lt(pt));
             Value* r = b.CreateCall(FunctionType::get(lt(ft->fret), ptys, false), fp, pack.vals);
