@@ -7,7 +7,7 @@ use std.cstdio;
 
 class Box<T> {
     public T data;
-    Box(move T value) { data = move value; }
+    Box(T value) { data = move value; }
     T get() { return data; }
 }
 

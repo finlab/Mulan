@@ -757,17 +757,43 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         ctor->pty.clear();
         for (auto& p : ctor->params) {
             TypePtr pt = resolve_type(p->spec.get(), tmpl_unit_ptr);
-            // The copy/move constructors are identified by their parameter marker, exactly as the
-            // non-generic path does (sema_decl.cpp): the symbol name differs, and the type records
-            // that it is copyable/movable. Without this the instantiator emitted a plain constructor
-            // that wrote the borrow's pointer into the value slot.
+            // The copy/move constructors are identified by their parameter marker, with the same rules
+            // as the non-generic path (sema_resolve_types.cpp): `move` on a constructor parameter is
+            // the move constructor `T(move T other)` (struct only), and `ref` is allowed only as the
+            // copy constructor `T(const ref T other)`. A `move` parameter of any other shape (the
+            // common "take ownership of the argument" constructor) is an error, exactly as in a
+            // non-generic type.
             if (p->by_move) {
+                if (!is_struct) {
+                    err("`class` is a reference type: it has no move or copy constructor, so `move` "
+                               "parameters are only meaningful on a struct",
+                           p.get());
+                }
+                if (ctor->params.size() != 1 || !same_type(pt, ty)) {
+                    err("the move constructor of struct `" + display + "` must be written `" +
+                               display + "(move " + display + " other)` (one parameter of the struct's "
+                               "own type)",
+                           p.get());
+                }
+                if (ty->has_move_ctor) {
+                    err("struct `" + display + "` already declares a move constructor", p.get());
+                }
                 ctor->is_move = true;
                 ty->has_move_ctor = true;
             }
             if (p->by_ref) {
-                ctor->is_copy = true;
-                ty->has_copy_ctor = true;
+                if (is_struct) {
+                    if (ctor->params.size() != 1 || !same_type(pt, ty)) {
+                        err("a constructor may take a `ref` parameter only as the copy constructor `" +
+                                   display + "(const ref " + display + " other)`",
+                               p.get());
+                    }
+                    if (ty->has_copy_ctor) {
+                        err("struct `" + display + "` already declares a copy constructor", p.get());
+                    }
+                    ctor->is_copy = true;
+                    ty->has_copy_ctor = true;
+                }
             } else {
                 pt = decay_param_type(pt);
             }

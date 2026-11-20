@@ -27,6 +27,23 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 289 — 2026-11-21
+
+**Generic instantiation keeps `move` parameter markers; constructor rules now match the generic and
+non-generic paths.**
+
+- `clone_param` dropped `by_move`, so a generic struct's user move constructor was never recognized
+  (the synthesized bit move ran instead). The marker is copied now, and the instantiated constructor
+  is called.
+- Generic struct/class constructors follow the same rules as concrete ones: `move` is only the move
+  constructor (`T(move T other)`, struct, one parameter of the owner type), `ref` only the copy
+  constructor, and a `class` rejects `move` parameters. A "take ownership of the argument" parameter
+  is written without `move` (the body may still `move` it).
+- New case `generic_rc` (RC/dtor glue for generic types: owned class fields, copy/move constructors,
+  static/dynamic arrays of generic structs, generic class destructor). `generic_move_expr` and
+  `generic_field_typo` constructors updated (they had relied on the lost marker).
+- Full suite: Windows **963/963**, Linux **961/961**, both with `MUC_VERIFY_MEM=1`; cold Windows build with zero warnings.
+
 #### build 288 — 2026-11-21
 
 **Generic inference completed; generic struct interfaces/const members and generic unions fixed.**

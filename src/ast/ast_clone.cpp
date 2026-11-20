@@ -515,6 +515,7 @@ std::unique_ptr<Param> clone_param(const Param& p) {
     r->spec = p.spec ? clone_type_spec(*p.spec) : nullptr;
     r->is_const = p.is_const;
     r->by_ref = p.by_ref;
+    r->by_move = p.by_move;
     return r;
 }
 
