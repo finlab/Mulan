@@ -47,8 +47,12 @@
   `generic_const_member`, `generic_system_matrix` (run); `generic_arg_no_target`,
   `generic_target_bound`, `generic_target_shape`, `generic_struct_iface_missing`,
   `generic_struct_class_base`, `generic_union_rc`, `generic_alias_unsupported`,
-  `generic_extend_unsupported`, `generic_method_unsupported` (must-fail). Full suite: 960/960 with
-  `MUC_VERIFY_MEM=1`.
+  `generic_extend_unsupported`, `generic_method_unsupported` (must-fail).
+- Cross-unit: `generic_infer_xunit` (library declares the templates; the client uses target inference,
+  a deferred argument and partial explicit) and `generic_iface_xunit` (generic interface/struct in a
+  library, a client struct implementing it). Full suite: Windows **962/962**, Linux **960/960**
+  (skips `cstd_windows` / `abi_agg` / `abi_float`), both with `MUC_VERIFY_MEM=1`; cold Windows build
+  with zero warnings.
 
 #### build 287 — 2026-11-21
 
