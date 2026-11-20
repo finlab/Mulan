@@ -143,7 +143,11 @@ using ArgPack = Emitter::ArgPack;
             // alone is not enough: a host whose *field* declares the destructor must use its own copy
             // constructor as well, otherwise the generic path byte-copies the field (two owners).
             if (as->op == "=" && as->target->ty && as->target->ty->kind == TypeKind::Struct &&
-                as->target->ty->needs_ctor_glue()) {
+                (as->target->ty->needs_ctor_glue() || as->target->ty->has_copy_ctor ||
+                 as->target->ty->has_move_ctor)) {
+                // A user copy/move constructor defines what assignment means even when no nested
+                // destructor forced the glue (`needs_ctor_glue` only tracks destructors). A plain
+                // store would bypass the constructor (and any exception it throws) (#241).
                 emitAssignSwap(addr, as->value.get(), as->target->ty);
                 return;
             }

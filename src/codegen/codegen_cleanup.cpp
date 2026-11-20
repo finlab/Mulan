@@ -246,9 +246,10 @@ namespace muc_detail {
     // one under construction only its partial destructor (its constructor never returned). Every released
     // subobject is left zeroed, so the enclosing level's partial release - which cannot know how far this
     // constructor got - destroys an empty value.
-    void Emitter::emitCtorProgressCleanup() {
+    void Emitter::emitCtorProgressCleanup(bool skip_body) {
         for (size_t k = ctorProgress.size(); k > 0; --k) {
             CtorProgress& p = ctorProgress[k - 1];
+            if (skip_body && p.inBody) continue;
             const size_t total = ctorProgressCount(p);
             BasicBlock* skip = BasicBlock::Create(ctx, "ctor.rel.skip", curFn);
             BasicBlock* run = BasicBlock::Create(ctx, "ctor.rel", curFn);

@@ -138,8 +138,11 @@ namespace muc_detail {
         clearPending();
         if (onThrow) onThrow();
         // Every object whose construction this throw interrupted releases what it already built before
-        // the scopes below (and the caller) see the partially constructed level (#24, #26).
-        emitCtorProgressCleanup();
+        // the scopes below (and the caller) see the partially constructed level (#24, #26). A catch in
+        // this frame keeps the object under construction alive, so its own body fields are skipped;
+        // when the exception leaves the frame, the no-match path re-enters with `hasTry` cleared and
+        // the fields are released (#226).
+        emitCtorProgressCleanup(hasTry);
         // Leave every `para for` region this point sits in: its tasks read the producer's slots, so
         // they are joined before the scopes below are released (innermost region first).
         for (size_t i = paraUnwindCleanup.size(); i > 0; --i) paraUnwindCleanup[i - 1]();

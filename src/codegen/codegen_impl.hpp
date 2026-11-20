@@ -247,7 +247,10 @@ struct Emitter {
     // Index of the open sequence building a `ty` object, or kNoCtorProgress.
     size_t findCtorProgress(const TypePtr& ty) const;
     // Emit the release of every open sequence on an unwind path (innermost first).
-    void emitCtorProgressCleanup();
+    // `skip_body`: the pending exception is being dispatched to a catch in this same frame, so the
+    // enclosing constructor's already-built fields must survive (SPEC 8.4); only interrupted nested
+    // construction sequences are released.
+    void emitCtorProgressCleanup(bool skip_body = false);
     Value* ctorProgressSlot(const CtorProgress& p, size_t idx);
     const TypePtr& ctorProgressSub(const CtorProgress& p, size_t idx);
     size_t ctorProgressCount(const CtorProgress& p);

@@ -46,6 +46,34 @@ struct Analysis {
         }
     }
 
+    // A method (or interface default) called from the body: a struct's concrete method has a visible
+    // body; a class/interface dispatch may reach an override the analysis cannot see.
+    void addMethodDep(Item& it, const MethodSig* sig) {
+        if (!sig) return;
+        if (sig->owner && sig->owner->kind == TypeKind::Struct) {
+            addDep(it, method_key(sig));
+        } else {
+            it.unknown = true;
+        }
+    }
+
+    // The analysis-side approximation of "this expression already owns a fresh value"; a borrowed
+    // argument makes the callee run the copy constructor, which can throw.
+    static bool ownedExpr(Expr* e) {
+        if (!e) return false;
+        if (e->conv) return true;
+        if (dynamic_cast<NewExpr*>(e) || dynamic_cast<Lambda*>(e) || dynamic_cast<Ternary*>(e) ||
+            dynamic_cast<MatchExpr*>(e) || dynamic_cast<MoveExpr*>(e)) {
+            return true;
+        }
+        if (auto c = dynamic_cast<Call*>(e)) return !c->by_ref;
+        if (auto b = dynamic_cast<Binary*>(e)) return (b->op_func || b->op_method) && !b->by_ref;
+        if (auto u = dynamic_cast<Unary*>(e)) return u->op_func || u->op_method;
+        if (auto ix = dynamic_cast<Index*>(e)) return ix->get_method && !ix->by_ref;
+        if (auto c = dynamic_cast<Cast*>(e)) return ownedExpr(c->expr.get());
+        return false;
+    }
+
     void visitBlock(Block* b, Item& it) {
         if (!b) return;
         for (auto& s : b->stmts) visitStmt(s.get(), it);
@@ -101,6 +129,24 @@ struct Analysis {
         if (c->callee) visitExpr(c->callee.get(), it);
         for (auto& a : c->args) visitExpr(a.get(), it);
         for (auto& [name, a] : c->named) visitExpr(a.get(), it);
+        // A by-value struct argument runs the user copy constructor when the source is borrowed; that
+        // constructor may throw even though no `Call` node names it (#201).
+        for (size_t i = 0; i < c->args.size(); ++i) {
+            Expr* a = c->args[i].get();
+            if (!a) continue;
+            TypePtr pt = nullptr;
+            if (c->func && i < c->func->pty.size()) pt = c->func->pty[i];
+            else if (c->method && i < c->method->params.size()) pt = c->method->params[i];
+            else if (c->ctor_pty && i < c->ctor_pty->size()) pt = (*c->ctor_pty)[i];
+            if (!pt) continue;
+            if (pt->kind == TypeKind::Struct && pt->has_copy_ctor && !ownedExpr(a)) {
+                addDep(it, copy_ctor_cname(pt->unit, pt->name));
+            }
+            // Copying a variant payload / delegate environment may run a user copy constructor.
+            if ((pt->kind == TypeKind::Sum || pt->kind == TypeKind::Delegate) && pt->needs_cleanup()) {
+                it.direct = true;
+            }
+        }
     }
 
     void visitExpr(Expr* e, Item& it) {
@@ -122,6 +168,9 @@ struct Analysis {
                     // inherited default constructor only covers the base subobject.
                     addMemberStepDeps(it, n->class_ty);
                 }
+            } else if (n->is_array && n->elem_ty) {
+                // `new S[n]` runs the element default constructor n times; it can throw (#238).
+                addValueConstructionDep(it, n->elem_ty);
             }
             for (auto& d : n->dims) visitExpr(d.get(), it);
             for (auto& a : n->args) visitExpr(a.get(), it);
@@ -132,14 +181,17 @@ struct Analysis {
             if (b->op_func) addDep(it, b->op_func->cname);
             // A member operator is a method call just like a free one; missing it silently dropped
             // the exception its body throws.
-            if (b->op_method) addDep(it, method_key(b->op_method));
+            if (b->op_method) addMethodDep(it, b->op_method);
+            // `/`, `%`, shifts and numeric-edge arithmetic fail on a runtime cold path.
+            if (b->op == "/" || b->op == "%" || b->op == "<<" || b->op == ">>") it.direct = true;
             visitExpr(b->left.get(), it);
             visitExpr(b->right.get(), it);
             return;
         }
         if (auto u = dynamic_cast<Unary*>(e)) {
             if (u->op_func) addDep(it, u->op_func->cname);
-            if (u->op_method) addDep(it, method_key(u->op_method));
+            if (u->op_method) addMethodDep(it, u->op_method);
+            if (u->op == "*") it.direct = true;  // a null pointer dereference throws
             visitExpr(u->operand.get(), it);
             return;
         }
@@ -149,7 +201,9 @@ struct Analysis {
         }
         if (auto ix = dynamic_cast<Index*>(e)) {
             // `c[i]` through a user operator is a method call (the built-in subscript has no method).
-            if (ix->get_method) addDep(it, method_key(ix->get_method));
+            if (ix->get_method) addMethodDep(it, ix->get_method);
+            // The built-in subscript is bounds-checked (and a null slice/pointer is checked).
+            it.direct = true;
             visitExpr(ix->base.get(), it);
             for (auto& idx : ix->indices) visitExpr(idx.get(), it);
             return;
@@ -161,10 +215,19 @@ struct Analysis {
             return;
         }
         if (auto c = dynamic_cast<Cast*>(e)) {
+            // A numeric `as` has a range-check cold path (NumericEdgeError).
+            it.direct = true;
             visitExpr(c->expr.get(), it);
             return;
         }
         if (auto m = dynamic_cast<Member*>(e)) {
+            // A field access through a class handle or pointer carries a null check.
+            if (m->obj && m->obj->ty) {
+                const TypeKind k = m->obj->ty->kind;
+                if (k == TypeKind::Class || k == TypeKind::Interface || k == TypeKind::Ptr) {
+                    it.direct = true;
+                }
+            }
             visitExpr(m->obj.get(), it);
             return;
         }
@@ -197,12 +260,22 @@ struct Analysis {
             }
             return;
         }
-        // Leaf kinds (a literal, a name, `sizeof(expr)` whose operand is not evaluated, `move x`) run
-        // no user code. Any other kind is one this walker does not know: stay conservative instead of
+        if (auto mv = dynamic_cast<MoveExpr*>(e)) {
+            // `move x` runs the user move constructor for a struct that declares one; the constructor
+            // body can throw but no `Call` node represents it (#201).
+            if (mv->operand && mv->operand->ty && mv->operand->ty->kind == TypeKind::Struct &&
+                mv->operand->ty->has_move_ctor) {
+                addDep(it, move_ctor_cname(mv->operand->ty->unit, mv->operand->ty->name));
+            }
+            visitExpr(mv->operand.get(), it);
+            return;
+        }
+        // Leaf kinds (a literal, a name, `sizeof(expr)` whose operand is not evaluated) run no user
+        // code. Any other kind is one this walker does not know: stay conservative instead of
         // silently classifying the function as nothrow (a missed exception check is a wrong program).
         if (dynamic_cast<Name*>(e) || dynamic_cast<IntLit*>(e) || dynamic_cast<FloatLit*>(e) ||
             dynamic_cast<CharLit*>(e) || dynamic_cast<StringLit*>(e) || dynamic_cast<BoolLit*>(e) ||
-            dynamic_cast<NullLit*>(e) || dynamic_cast<SizeofExpr*>(e) || dynamic_cast<MoveExpr*>(e)) {
+            dynamic_cast<NullLit*>(e) || dynamic_cast<SizeofExpr*>(e)) {
             return;
         }
         it.unknown = true;
@@ -235,8 +308,17 @@ struct Analysis {
         if (auto lv = dynamic_cast<LocalVar*>(s)) {
             if (lv->init) {
                 visitInit(lv->init.get(), it);
-            } else if (lv->rty && lv->rty->kind == TypeKind::Struct && !lv->rty->ctors.empty()) {
-                addDep(it, ctor_cname(lv->rty->unit, lv->rty->name, {}));
+                // `S y = x;` copies through the user copy constructor, which can throw.
+                if (auto ie = dynamic_cast<InitExpr*>(lv->init.get())) {
+                    if (lv->rty && lv->rty->kind == TypeKind::Struct && lv->rty->has_copy_ctor &&
+                        !ownedExpr(ie->expr.get())) {
+                        addDep(it, copy_ctor_cname(lv->rty->unit, lv->rty->name));
+                    }
+                }
+            } else {
+                // A default-initialized local constructs struct fields / array elements; an element
+                // default constructor that throws must make this function may-throw (#238).
+                addValueConstructionDep(it, lv->rty);
             }
             return;
         }
@@ -246,6 +328,18 @@ struct Analysis {
         }
         if (auto as = dynamic_cast<AssignStmt*>(s)) {
             if (as->set_func) addDep(it, as->set_func->cname);
+            if (as->set_method) addMethodDep(it, as->set_method);
+            // A struct assignment goes through copy-and-swap: the synthesized copy constructor is not
+            // a Call node, so add its dependency from the target type (#241).
+            TypePtr tgt = as->target ? as->target->ty : nullptr;
+            if (tgt && tgt->kind == TypeKind::Struct) {
+                if (tgt->has_copy_ctor) addDep(it, copy_ctor_cname(tgt->unit, tgt->name));
+                if (tgt->has_move_ctor) addDep(it, move_ctor_cname(tgt->unit, tgt->name));
+            }
+            if (tgt && (tgt->kind == TypeKind::Sum || tgt->kind == TypeKind::Delegate) &&
+                tgt->needs_cleanup()) {
+                it.direct = true;  // payload/environment copy can run user code
+            }
             visitExpr(as->target.get(), it);
             visitExpr(as->value.get(), it);
             return;
@@ -271,7 +365,12 @@ struct Analysis {
         if (auto fs = dynamic_cast<ForInStmt*>(s)) {
             visitExpr(fs->seq.get(), it);
             visitExpr(fs->step.get(), it);
-            if (fs->idx_method) addDep(it, method_key(fs->idx_method));
+            if (fs->idx_method) addMethodDep(it, fs->idx_method);
+            // Cursor form: iterator(), next() and current() are user methods whose bodies may throw
+            // (#224); they are not Call nodes in the loop body.
+            addMethodDep(it, fs->iter_sig);
+            addMethodDep(it, fs->next_sig);
+            addMethodDep(it, fs->cur_sig);
             if (fs->len_sig) {
                 if (fs->len_sig->owner && fs->len_sig->owner->kind == TypeKind::Struct) {
                     addDep(it, method_key(fs->len_sig));
@@ -348,6 +447,13 @@ struct Analysis {
 
     void analyzeItem(Item& it) {
         if (it.body) visitBlock(it.body, it);
+        if (it.ctor) {
+            // The constructor prologue evaluates every `: field(expr)` / base / delegate argument;
+            // the expressions are not in the body and can throw (#184).
+            for (auto& item : it.ctor->init_list) {
+                for (auto& a : item.args) visitExpr(a.get(), it);
+            }
+        }
         if (it.ctor && it.ownerClass) {
             // A delegating constructor calls another constructor of the same type, and a constructor whose
             // type has a class base calls it — both from the prologue, not from the body (SPEC 3.12), so the

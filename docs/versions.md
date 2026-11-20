@@ -27,6 +27,23 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 294 — 2026-11-21
+
+**Exception boundaries: may-throw coverage and constructor unwind.**
+
+- `may_throw` now treats built-in indexing, pointer/class member access, `/`, `%`, shifts and numeric
+  casts as possible cold-path throws, and follows the user move/copy constructors synthesized for
+  arguments, assignments, returns and declarations, constructor init lists, array element default
+  construction, and cursor `iterator`/`next`/`current` (#184, #201, #224, #227, #238, #241).
+- Struct assignment goes through copy-and-swap whenever the type declares a user copy/move
+  constructor, not only when a nested destructor forces the glue; a throwing copy constructor is now
+  observed instead of being bypassed by a plain store (#241).
+- A caught exception inside a constructor body no longer releases the fields already built (#226);
+  interrupted nested construction sequences are still released, and an exception leaving the frame
+  still runs the constructor-progress cleanup.
+- New cases `exception_boundaries` and `ctor_catch_fields`. Full suite: Windows **984/984**, Linux
+  **982/982** with `MUC_VERIFY_MEM=1`.
+
 #### build 293 — 2026-11-21
 
 **Return ownership for variants and delegates; match expression arm values (#151–#154).**
