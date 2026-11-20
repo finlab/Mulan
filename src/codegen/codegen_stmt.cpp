@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Zhang Guolong
 
-// This file contains statement code generation (block/statement dispatch, for/switch/try) (Emitter member function definitions).
+// This file contains statement code generation (block/statement dispatch, for/match/try) (Emitter member function definitions).
 //
-// owns:      statement emission (block/if/while/for/switch/try) and the statement-level temporary
+// owns:      statement emission (block/if/while/for/match/try) and the statement-level temporary
 //            and ref scopes
 // not:       `para` / `para for` (codegen_para.cpp), the load/store and initialization primitives
 //            (codegen_mem.cpp), expression evaluation, call lowering, class metadata
