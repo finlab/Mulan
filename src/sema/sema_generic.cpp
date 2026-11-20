@@ -595,10 +595,23 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         ty->is_packed = sd->is_packed;
         ty->is_union = sd->is_union;
         ty->nocopy = sd->nocopy;
+        ty->nomove = sd->nomove;
     }
 
     Unit* saved_cur = cur_;
     cur_ = tmpl_unit_ptr;
+    if (is_struct && sd->align_expr) {
+        // `align(N)` on a generic struct: the substituted expression is a compile-time constant; the
+        // instance carries the requested alignment (the layout walks use `align_req`).
+        long long n = 0;
+        if (!eval_const_int(sd->align_expr.get(), n)) {
+            err("N in `align(N)` must be a compile-time integer constant", sd);
+        }
+        if (!is_pow2(n) || n > 65536) {
+            err("N in `align(N)` must be a power of two (got " + std::to_string(n) + ")", sd);
+        }
+        ty->align_req = static_cast<int>(n);
+    }
 
     // Bases: at most one class (which must come first) plus any number of interfaces. A base may be an
     // instantiated generic (`class Src<T> : IEnumerable<T>`), so every entry goes through
@@ -791,11 +804,28 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
                     if (ty->has_copy_ctor) {
                         err("struct `" + display + "` already declares a copy constructor", p.get());
                     }
+                    if (!p->is_const) {
+                        err("a copy constructor must not modify its source: write `" + display +
+                                "(const ref " + display + " other)`",
+                            p.get());
+                    }
+                    if (sd->nocopy) {
+                        err("struct `" + display + "` is `nocopy`: it cannot declare a copy constructor",
+                            p.get());
+                    }
                     ctor->is_copy = true;
                     ty->has_copy_ctor = true;
                 }
             } else {
                 pt = decay_param_type(pt);
+            }
+            if (is_void(pt)) err("parameter cannot be void", p.get());
+            if (!p->by_ref && !ctor->is_move && noncopyable_struct(pt) && !pt->movable()) {
+                err("struct `" + pt->str() + "` cannot be passed by value: " + noncopyable_reason(pt) +
+                        (borrowable_type(pt) ? "; take it as `const ref " + pt->str() + "`"
+                                             : "; declare `" + pt->str() + "(const ref " + pt->str() +
+                                                   " other)`"),
+                    p.get());
             }
             ctor->pty.push_back(pt);
         }

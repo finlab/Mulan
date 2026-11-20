@@ -592,6 +592,8 @@ std::unique_ptr<Decl> clone_decl(const Decl& d) {
         r->promotes = p->promotes;
         r->is_packed = p->is_packed;
         r->is_union = p->is_union;
+        r->nocopy = p->nocopy;
+        r->nomove = p->nomove;
         r->align_expr = p->align_expr ? clone_expr(*p->align_expr) : nullptr;
         r->type_params = clone_type_params(p->type_params);
         r->is_public = p->is_public;

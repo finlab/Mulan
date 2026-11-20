@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 290 — 2026-11-21
+
+**Generic instances keep their struct modifiers (nocopy / nomove / align(N)) and constructor checks.**
+
+- `clone_decl` dropped `nocopy` and `nomove`, so `nocopy`/`nomove` generic structs became copyable and
+  movable after instantiation; the clone now carries both flags. `align(N)` was cloned but never
+  evaluated for the instance: the generic struct path evaluates the substituted expression and sets
+  `align_req` (with the same power-of-two validation as the non-generic path).
+- Generic struct constructors now apply the full non-generic checks: copy constructors require
+  `const ref` and are rejected on `nocopy` types; a by-value parameter of a non-copyable, non-movable
+  type is rejected; `void` parameters are rejected.
+- New cases: `generic_layout` (align/packed/nocopy/nomove instantiated), `generic_nomove`,
+  `generic_nocopy`, `generic_nocopy_ctor` (must-fail). Full suite: Windows **967/967**, Linux
+  **965/965**, both with `MUC_VERIFY_MEM=1`.
+
 #### build 289 — 2026-11-21
 
 **Generic instantiation keeps `move` parameter markers; constructor rules now match the generic and
