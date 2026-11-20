@@ -360,9 +360,8 @@ std::vector<std::unique_ptr<MatchArm>> clone_match_arms(
     out.reserve(src.size());
     for (const auto& a : src) {
         auto r = std::make_unique<MatchArm>();
-        r->alt = a->alt;
         r->is_else = a->is_else;
-        r->binds = a->binds;
+        r->alts = a->alts;  // name + binds (plain data; semantic indices are re-derived)
         for (const auto& pat : a->pats) {
             MatchPat q;
             q.lo = pat.lo ? clone_expr(*pat.lo) : nullptr;

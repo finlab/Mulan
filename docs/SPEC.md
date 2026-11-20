@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 276 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 277 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -2950,7 +2950,12 @@ int x = match v {
 - **`bool`** patterns are `true` / `false` (or a unit-level `const bool`), never `1` / `0`; ranges do
   not apply. A bool match has a closed value set, so it must cover both values unless it ends with
   `else` (an exhaustive bool match needs none in the expression form).
-- The first version supports **one pattern level only**: nested patterns, or-patterns, type
+- **Or-patterns**: `A(x) | B(x):` matches any of several alternatives with one body. Every
+  alternative must bind the same names in the same order, with the same binding modes and the same
+  types; a repeated alternative in one pattern is an error. Coverage counts each alternative (an
+  unguarded or-pattern covers all of them). Alternatives **without a payload**, and constant
+  patterns, use the comma list (`None, Empty:` / `1, 2:`) — `|` stays the bitwise-or operator there.
+- The first version still supports **one pattern level only**: nested patterns, type
   (class/interface) patterns and public-contract branches are not provided yet (10.1.3).
 - `is` keeps its current rule (a binding only when the `is` is the whole condition, 10.1.1); guarded
   cases are written with `match`, not with `is`.
@@ -2963,8 +2968,7 @@ int x = match v {
 
 #### 10.1.3 Later phases for `match`
 
-- Type patterns (class/interface branches, replacing `is` chains), nested patterns, or-patterns and
-  range patterns.
+- Type patterns (class/interface branches, replacing `is` chains) and nested patterns.
 - Public-contract branches (an arm covering the remaining alternatives whose payload satisfies a
   constraint), with element-wise and interface-view forms.
 - **`is` does not grow.** A binding `is` must stay the whole condition; guards, or-patterns and

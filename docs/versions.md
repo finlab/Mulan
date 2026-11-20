@@ -27,6 +27,27 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 277 — 2026-11-20
+
+**Or-patterns: `A(x) | B(x)` shares one arm.**
+
+- every alternative of an or-pattern must bind the same names, in the same order, with the same
+  binding modes and types; a repeated alternative is an error;
+- coverage counts each alternative; a failed guard falls through to the next arm that covers the
+  alternative that actually matched;
+- codegen gives each (arm, alternative) an entry block that loads that payload into the arm's shared
+  locals;
+- alternatives without a payload use the comma list (`None, Empty:`), and `|` there stays bitwise or
+  -- the parser and sema now say so instead of failing with `expected ':'`;
+- nested patterns get a real diagnostic ("a match payload binds a name, not a nested pattern; nested
+  patterns are not supported yet") instead of `expected ')' but got '('`.
+
+Cases `match_or` (bindings, guard fall-through, comma list over unit alternatives) and must-fail
+`match_or_bind_mismatch` / `match_or_type_mismatch` / `match_or_dup` / `match_or_comma_hint` /
+`match_nested_pattern`.
+
+Full suite: 929/929 on Windows.
+
 #### build 276 — 2026-11-20
 
 **A guarded arm no longer counts as coverage (variant match).**

@@ -864,31 +864,50 @@ void Parser::parse_match_arms(std::vector<std::unique_ptr<MatchArm>>& arms, bool
             // one the arm means is settled in sema, from the scrutinee's type: `None` parses as a bare
             // name pattern here and is reinterpreted as the alternative when the scrutinee is a variant.
             if (peek().kind == TokKind::Ident && peek(1).is_op("(")) {
-                arm->alt = advance().text;
-                advance();  // (
-                if (!at_op(")")) {
-                    for (;;) {
-                        MatchBind b;
-                        b.line = peek().line;
-                        b.col = peek().col;
-                        if (at_kw("const") && peek(1).is_kw("ref")) {
-                            advance();
-                            advance();
-                            b.mode = 2;  // `const ref`
-                        } else if (at_kw("ref")) {
-                            advance();
-                            b.mode = 1;
+                for (;;) {  // `A(x)` or an or-pattern `A(x) | B(y)`
+                    MatchAlt a;
+                    const Token name_tok = advance();
+                    a.name = name_tok.text;
+                    expect_op("(");
+                    if (!at_op(")")) {
+                        for (;;) {
+                            MatchBind b;
+                            b.line = peek().line;
+                            b.col = peek().col;
+                            if (at_kw("const") && peek(1).is_kw("ref")) {
+                                advance();
+                                advance();
+                                b.mode = 2;  // `const ref`
+                            } else if (at_kw("ref")) {
+                                advance();
+                                b.mode = 1;
+                            }
+                            if (peek().kind != TokKind::Ident || peek(1).is_op("(")) {
+                                // A nested pattern (`Some(Some(x))`) or a literal in a payload position.
+                                throw err_at("a match payload binds a name, not a nested pattern "
+                                             "(`Alt(x)`); nested patterns are not supported yet",
+                                             peek());
+                            }
+                            b.name = advance().text;
+                            a.binds.push_back(std::move(b));
+                            if (at_op(",")) {
+                                advance();
+                                continue;
+                            }
+                            break;
                         }
-                        b.name = expect_ident("bound name").text;
-                        arm->binds.push_back(std::move(b));
-                        if (at_op(",")) {
-                            advance();
-                            continue;
-                        }
-                        break;
+                    }
+                    expect_op(")");
+                    arm->alts.push_back(std::move(a));
+                    if (!at_op("|")) break;
+                    advance();
+                    if (!(peek().kind == TokKind::Ident && peek(1).is_op("("))) {
+                        throw err_at("an or-pattern alternative must name an alternative with its "
+                                     "payload (`Alt` or `Alt(...)`); write a bare alternative as a "
+                                     "separate arm",
+                                     peek());
                     }
                 }
-                expect_op(")");
             } else {
                 for (;;) {
                     MatchPat pat;

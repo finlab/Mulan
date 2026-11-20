@@ -789,31 +789,39 @@ using ArgPack = Emitter::ArgPack;
             addr = slot;
         }
         BasicBlock* endBB = BasicBlock::Create(ctx, "match.end", curFn);
-        std::vector<BasicBlock*> armBB;
-        armBB.reserve(arms.size());
+        std::vector<BasicBlock*> bodyBB;
+        bodyBB.reserve(arms.size());
         int elseIdx = -1;
         for (size_t i = 0; i < arms.size(); ++i) {
-            armBB.push_back(BasicBlock::Create(ctx, "match.arm", curFn));
+            bodyBB.push_back(BasicBlock::Create(ctx, "match.body", curFn));
             if (arms[i]->is_else) elseIdx = static_cast<int>(i);
         }
-        BasicBlock* fallback = elseIdx >= 0 ? armBB[static_cast<size_t>(elseIdx)] : endBB;
+        BasicBlock* fallback = elseIdx >= 0 ? bodyBB[static_cast<size_t>(elseIdx)] : endBB;
         Value* pay = fieldAddr(addr, st->sum_layout, 1);
         Value* tag = loadAt(i32(), fieldAddr(addr, st->sum_layout, 0), false);
 
-        // The next arm of the same alternative: a failed guard falls through to it.
-        std::vector<int> next(arms.size(), -1);
+        // One entry block per (arm, alternative): it loads that alternative's payload into the arm's
+        // shared locals, checks the guard, and jumps to the arm body. `A(x) | B(x)` therefore binds
+        // `x` from whichever alternative matched.
+        std::vector<std::vector<std::pair<int, BasicBlock*>>> entries(arms.size());
         for (size_t i = 0; i < arms.size(); ++i) {
-            if (arms[i]->is_else) continue;
-            for (size_t j = i + 1; j < arms.size(); ++j) {
-                if (!arms[j]->is_else && arms[j]->alt_index == arms[i]->alt_index) {
-                    next[i] = static_cast<int>(j);
-                    break;
-                }
+            for (auto& a : arms[i]->alts) {
+                entries[i].push_back({a.index, BasicBlock::Create(ctx, "match.alt", curFn)});
             }
         }
-        auto nextBlockFor = [&](size_t i) -> BasicBlock* {
-            const int n = next[i];
-            return n >= 0 ? armBB[static_cast<size_t>(n)] : fallback;
+        auto entryFor = [&](size_t arm, int alt) -> BasicBlock* {
+            for (auto& e : entries[arm]) {
+                if (e.first == alt) return e.second;
+            }
+            return nullptr;
+        };
+        // The next arm that also covers this alternative: a failed guard falls through to it.
+        auto nextEntryFor = [&](size_t i, int alt) -> BasicBlock* {
+            for (size_t j = i + 1; j < arms.size(); ++j) {
+                if (arms[j]->is_else) continue;
+                if (BasicBlock* bb = entryFor(j, alt)) return bb;
+            }
+            return fallback;
         };
 
         BasicBlock* defBB = BasicBlock::Create(ctx, "match.default", curFn);
@@ -822,54 +830,66 @@ using ArgPack = Emitter::ArgPack;
         auto* sw = b.CreateSwitch(tag, fallback, static_cast<unsigned>(st->sum_names.size()));
         std::vector<char> first(st->sum_names.size(), 0);
         for (size_t i = 0; i < arms.size(); ++i) {
-            const int alt = arms[i]->alt_index;
-            if (arms[i]->is_else || alt < 0 || first[static_cast<size_t>(alt)]) continue;
-            first[static_cast<size_t>(alt)] = 1;
-            sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), alt)), armBB[i]);
+            for (auto& e : entries[i]) {
+                if (first[static_cast<size_t>(e.first)]) continue;
+                first[static_cast<size_t>(e.first)] = 1;
+                sw->addCase(cast<ConstantInt>(ConstantInt::get(i32(), e.first)), e.second);
+            }
         }
 
         for (size_t i = 0; i < arms.size(); ++i) {
-            b.SetInsertPoint(armBB[i]);
-            pushRefScope();  // a value binding is retained for the arm and released when it ends
             MatchArm* a = arms[i].get();
-            if (!a->is_else && a->alt_index >= 0) {
-                const auto& fs = st->sum_fields[static_cast<size_t>(a->alt_index)];
-                for (size_t k = 0; k < a->bind_locals.size() && k < fs.size(); ++k) {
+            pushRefScope();  // value bindings are retained for the arm and released when it ends
+            if (!a->alts.empty()) {
+                // Slots and cleanup registration are per local: every alternative writes the same
+                // locals (sema requires identical names, modes and types across alternatives). The
+                // registration emits the "moved = false" store, so the insert point must already be a
+                // real block — use the first entry.
+                const auto& fs0 = st->sum_fields[static_cast<size_t>(a->alts[0].index)];
+                std::vector<AllocaInst*> slotOf;
+                b.SetInsertPoint(entries[i][0].second);
+                for (size_t k = 0; k < a->bind_locals.size() && k < fs0.size(); ++k) {
                     LocalVar* lv = a->bind_locals[k];
-                    Value* src = pay;
-                    if (fs.size() > 1) {
-                        src = fieldAddr(pay, st->sum_payload[static_cast<size_t>(a->alt_index)],
-                                        static_cast<int>(k));
-                    }
-                    if (lv->by_ref) {
-                        auto* slot = entryAlloca(ptrTy(), sane(lv->name));
-                        b.CreateStore(src, slot);
-                        slots[lv] = slot;
-                    } else {
-                        Value* v = loadAt(lt(fs[k]), src, false);
-                        auto* slot = entryAlloca(lt(fs[k]), sane(lv->name), alignOf(fs[k]));
-                        b.CreateStore(v, slot);
-                        slots[lv] = slot;
-                        if (fs[k]->needs_cleanup()) {
-                            emitRetainValue(slot, fs[k]);
-                            registerLocalCleanup(lv);
+                    AllocaInst* slot = lv->by_ref ? entryAlloca(ptrTy(), sane(lv->name))
+                                                  : entryAlloca(lt(fs0[k]), sane(lv->name), alignOf(fs0[k]));
+                    slots[lv] = slot;
+                    slotOf.push_back(slot);
+                    if (!lv->by_ref && fs0[k]->needs_cleanup()) registerLocalCleanup(lv);
+                }
+                for (auto& [alt, bb] : entries[i]) {
+                    b.SetInsertPoint(bb);
+                    const auto& fs = st->sum_fields[static_cast<size_t>(alt)];
+                    for (size_t k = 0; k < slotOf.size() && k < fs.size(); ++k) {
+                        LocalVar* lv = a->bind_locals[k];
+                        Value* src = pay;
+                        if (fs.size() > 1) src = fieldAddr(pay, st->sum_payload[static_cast<size_t>(alt)],
+                                                           static_cast<int>(k));
+                        if (lv->by_ref) {
+                            b.CreateStore(src, slotOf[k]);
+                        } else {
+                            // Re-arm the moved flag on this path (an alternative other than the first
+                            // did not run the registration store).
+                            if (fs[k]->needs_cleanup()) createMovedFlag(lv);
+                            b.CreateStore(loadAt(lt(fs[k]), src, false), slotOf[k]);
+                            if (fs[k]->needs_cleanup()) emitRetainValue(slotOf[k], fs[k]);
                         }
                     }
+                    if (a->guard) {
+                        Value* g = eval(a->guard.get());
+                        BasicBlock* failBB = BasicBlock::Create(ctx, "match.next", curFn);
+                        b.CreateCondBr(g, bodyBB[i], failBB);
+                        // A failed guard releases this arm's bindings before trying the next arm.
+                        b.SetInsertPoint(failBB);
+                        for (auto it = refScopes.back().rbegin(); it != refScopes.back().rend(); ++it) {
+                            releaseLocal(*it);
+                        }
+                        b.CreateBr(nextEntryFor(i, alt));
+                    } else {
+                        b.CreateBr(bodyBB[i]);
+                    }
                 }
             }
-            if (a->guard) {
-                Value* g = eval(a->guard.get());
-                BasicBlock* bodyBB = BasicBlock::Create(ctx, "match.body", curFn);
-                BasicBlock* failBB = BasicBlock::Create(ctx, "match.next", curFn);
-                b.CreateCondBr(g, bodyBB, failBB);
-                // A failed guard releases this arm's bindings before trying the next arm.
-                b.SetInsertPoint(failBB);
-                for (auto it = refScopes.back().rbegin(); it != refScopes.back().rend(); ++it) {
-                    releaseLocal(*it);
-                }
-                b.CreateBr(nextBlockFor(i));
-                b.SetInsertPoint(bodyBB);
-            }
+            b.SetInsertPoint(bodyBB[i]);
             if (a->body) {
                 block(a->body.get());
             } else if (result) {

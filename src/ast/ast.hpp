@@ -693,25 +693,32 @@ struct MatchBind {
     int col = 0;
 };
 
+// One alternative of an arm: `Alt(x)` / `Alt` / `Alt(ref x)`, or one element of an or-pattern
+// (`A(x) | B(x)`). Every alternative of an arm binds the same names with the same types.
+struct MatchAlt {
+    std::string name;
+    std::vector<MatchBind> binds;
+    // sema
+    int index = -1;  // the alternative's index in the matched variant
+};
+
 // One arm. The body is an expression in expression form (`MatchExpr`) and a block in statement form
 // (`MatchStmt`); a match never mixes the two forms.
 struct MatchArm : Node {
     // One of three kinds, decided by the scrutinee's type in sema:
-    //   * alternative mode: `alt` names the variant alternative (with `binds` for its payload);
-    //   * constant mode: `pats` holds literals / enum members / ranges (an integer, enum or `char`
-    //     scrutinee); a bare alternative name (`None`) arrives here as a single plain `Name` pat and is
-    //     reinterpreted as `alt` when the scrutinee is a variant;
+    //   * alternative mode: `alts` names one or more variant alternatives (`A(x)`, `A(x) | B(x)`);
+    //   * constant mode: `pats` holds literals / enum members / ranges (an integer, enum, `char` or
+    //     bool scrutinee); a bare alternative name (`None`) arrives here as a single plain `Name` pat
+    //     and is reinterpreted as one alternative when the scrutinee is a variant;
     //   * `is_else`: the remaining cases.
-    std::string alt;
+    std::vector<MatchAlt> alts;
     bool is_else = false;         // `else:` covers the remaining alternatives
-    std::vector<MatchBind> binds;
     std::vector<MatchPat> pats;   // constant mode
     ExprPtr guard;                // optional `if cond` after the pattern
     ExprPtr value;                // expression form
     std::unique_ptr<Block> body;  // statement form
     // sema
-    int alt_index = -1;
-    std::vector<LocalVar*> bind_locals;  // one local per bound payload field
+    std::vector<LocalVar*> bind_locals;  // one local per bound position, shared by every alternative
     int line = 0;
     int col = 0;
 };

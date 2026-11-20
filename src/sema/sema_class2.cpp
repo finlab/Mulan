@@ -658,6 +658,11 @@ namespace muc_detail {
                 }
                 return (*ec)->value;
             }
+            if (auto* bin = dynamic_cast<Binary*>(e); bin && bin->op == "|") {
+                err("or-patterns over enum members are written with a comma list (`Red, Green:`); `|` "
+                    "is the bitwise-or operator",
+                    e);
+            }
             err("patterns of an enum match must be members of " + st->str(), e);
         }
 
@@ -796,8 +801,8 @@ namespace muc_detail {
                 pop();
                 continue;
             }
-            if (!arm->alt.empty()) {
-                err("the patterned value is `" + st->str() + "`, so `" + arm->alt +
+            if (!arm->alts.empty()) {
+                err("the patterned value is `" + st->str() + "`, so `" + arm->alts[0].name +
                         "(...)` (a variant pattern) cannot be used here",
                     arm);
             }
@@ -924,20 +929,38 @@ namespace muc_detail {
             check_match_constant(scrut, arms, has_else, expression_form, at, value_ty, expected);
             return;
         }
-        // A variant arm written as a bare alternative (`None`) arrives as a single name pattern; the
-        // parser cannot tell it from an enum member, so the scrutinee's type settles it here.
+        // A variant arm written with bare alternative names (`None`, `A | B`) arrives as name patterns;
+        // the parser cannot tell them from enum members, so the scrutinee's type settles it here.
         for (auto& arm : arms) {
-            if (arm->is_else || !arm->alt.empty()) continue;
-            if (arm->pats.size() == 1 && !arm->pats[0].is_range) {
-                if (auto* n = dynamic_cast<Name*>(arm->pats[0].lo.get())) {
-                    arm->alt = n->ident;
-                    arm->pats.clear();
-                }
+            if (arm->is_else || !arm->alts.empty()) continue;
+            bool all_names = !arm->pats.empty();
+            for (auto& p : arm->pats) {
+                if (p.is_range || !dynamic_cast<Name*>(p.lo.get())) all_names = false;
             }
+            if (!all_names) {
+                // `A | B` parses as a bitwise-or of two names; say how to write it here.
+                for (auto& p : arm->pats) {
+                    if (p.is_range) continue;
+                    if (auto* bin = dynamic_cast<Binary*>(p.lo.get()); bin && bin->op == "|") {
+                        err("or-patterns over alternatives without payloads are written with a comma "
+                            "list (`A, B:`); `|` is the bitwise-or operator",
+                            p.lo.get());
+                    }
+                }
+                continue;
+            }
+            for (auto& p : arm->pats) {
+                MatchAlt a;
+                a.name = static_cast<Name*>(p.lo.get())->ident;
+                arm->alts.push_back(std::move(a));
+            }
+            arm->pats.clear();
         }
         for (auto& arm : arms) {
-            for (auto& b : arm->binds) {
-                if (b.mode != 0) match_ref = true;
+            for (auto& a : arm->alts) {
+                for (auto& b : a.binds) {
+                    if (b.mode != 0) match_ref = true;
+                }
             }
         }
         if (match_ref) {
@@ -949,11 +972,13 @@ namespace muc_detail {
             }
             if (scrut->ty && scrut->ty->is_const) {
                 for (auto& arm : arms) {
-                    for (auto& b : arm->binds) {
-                        if (b.mode == 1) {
-                            err("cannot take a mutable `ref` binding from a `const` value; write "
-                                "`const ref`",
-                                arm.get());
+                    for (auto& a : arm->alts) {
+                        for (auto& b : a.binds) {
+                            if (b.mode == 1) {
+                                err("cannot take a mutable `ref` binding from a `const` value; write "
+                                    "`const ref`",
+                                    arm.get());
+                            }
                         }
                     }
                 }
@@ -975,45 +1000,70 @@ namespace muc_detail {
                 pop();
                 continue;
             }
-            if (arm->alt.empty())
+            if (arm->alts.empty())
                 err("a variant match arm needs an alternative name (`Alt` or `Alt(x)`); a constant "
-                    "pattern needs an integer, `char` or enum value to match against",
+                    "pattern needs an integer, `char`, enum or bool value to match against",
                     arm.get());
             if (!arm->pats.empty()) err("a variant arm cannot carry constant patterns", arm.get());
-            int idx = -1;
-            for (size_t k = 0; k < st->sum_names.size(); ++k) {
-                if (st->sum_names[k] == arm->alt) {
-                    idx = static_cast<int>(k);
-                    break;
+            // Resolve every alternative of the arm; `A(x) | B(x)` covers both with one body.
+            for (auto& a : arm->alts) {
+                a.index = -1;
+                for (size_t k = 0; k < st->sum_names.size(); ++k) {
+                    if (st->sum_names[k] == a.name) {
+                        a.index = static_cast<int>(k);
+                        break;
+                    }
+                }
+                if (a.index < 0) err("variant `" + st->str() + "` has no alternative `" + a.name + "`", arm.get());
+                for (auto& prev : arm->alts) {
+                    if (&prev != &a && prev.index == a.index) {
+                        err("alternative `" + a.name + "` appears twice in one pattern", arm.get());
+                    }
+                }
+                if (!arm->guard && unguarded_seen[static_cast<size_t>(a.index)]) {
+                    err("this arm is unreachable: alternative `" + a.name +
+                            "` is already covered by an earlier arm without a guard",
+                        arm.get());
+                }
+                seen[static_cast<size_t>(a.index)] = 1;
+                if (!arm->guard) unguarded_seen[static_cast<size_t>(a.index)] = 1;
+            }
+            // Every alternative binds the same names, with the same modes and the same types, so one
+            // set of locals serves the shared body.
+            const MatchAlt& first = arm->alts[0];
+            const auto& fs = st->sum_fields[static_cast<size_t>(first.index)];
+            for (auto& a : arm->alts) {
+                const auto& afs = st->sum_fields[static_cast<size_t>(a.index)];
+                if (a.binds.size() != afs.size()) {
+                    err("alternative `" + a.name + "` carries " + std::to_string(afs.size()) +
+                            " value(s), so the pattern must bind " + std::to_string(afs.size()) + " name(s)",
+                        arm.get());
+                }
+                for (size_t k = 0; k < afs.size(); ++k) {
+                    if (a.binds[k].name != first.binds[k].name || a.binds[k].mode != first.binds[k].mode) {
+                        err("every alternative of an or-pattern must bind the same names in the same "
+                            "order with the same binding modes (`" + first.name + "` binds `" +
+                                first.binds[k].name + "`)",
+                            arm.get());
+                    }
+                    if (!same_type(fs[k], afs[k])) {
+                        err("or-pattern alternatives bind `" + first.binds[k].name + "` with different "
+                            "types (`" + first.name + "` gives `" + fs[k]->str() + "`, `" + a.name +
+                                "` gives `" + afs[k]->str() + "`)",
+                            arm.get());
+                    }
                 }
             }
-            if (idx < 0) err("variant `" + st->str() + "` has no alternative `" + arm->alt + "`", arm.get());
-            // Repeated arms are how guards work: `Some(x) if p:` is followed by another `Some(x)`.
-            // An unguarded arm after an unguarded one for the same alternative can never run.
-            if (!arm->guard && unguarded_seen[static_cast<size_t>(idx)]) {
-                err("this arm is unreachable: alternative `" + arm->alt +
-                        "` is already covered by an earlier arm without a guard",
-                    arm.get());
-            }
-            seen[static_cast<size_t>(idx)] = 1;
-            if (!arm->guard) unguarded_seen[static_cast<size_t>(idx)] = 1;
-            const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
-            if (arm->binds.size() != fs.size()) {
-                err("alternative `" + arm->alt + "` carries " + std::to_string(fs.size()) +
-                        " value(s), so the pattern must bind " + std::to_string(fs.size()) + " name(s)",
-                    arm.get());
-            }
-            arm->alt_index = idx;
             push();
             std::vector<LocalVar*> locals;
             for (size_t k = 0; k < fs.size(); ++k) {
                 auto lv = std::make_unique<LocalVar>();
-                lv->name = arm->binds[k].name;
+                lv->name = first.binds[k].name;
                 lv->rty = fs[k];
-                lv->by_ref = arm->binds[k].mode != 0;
-                lv->ref_const = arm->binds[k].mode == 2;
-                lv->line = arm->binds[k].line;
-                lv->col = arm->binds[k].col;
+                lv->by_ref = first.binds[k].mode != 0;
+                lv->ref_const = first.binds[k].mode == 2;
+                lv->line = first.binds[k].line;
+                lv->col = first.binds[k].col;
                 declare_local(lv.get());
                 locals.push_back(lv.get());
                 if (cur_func_) cur_func_->synthetic_locals.push_back(std::move(lv));
