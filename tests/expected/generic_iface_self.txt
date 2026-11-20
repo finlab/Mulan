@@ -1,0 +1,1 @@
+generic iface self ok

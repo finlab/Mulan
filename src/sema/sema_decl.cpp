@@ -256,6 +256,14 @@ bool is_scalar_const_type(const TypeSpec* spec) {
                 }
                 auto& d = u->decls[di];
                 if (!d->type_params.empty()) {
+                    // `export` names a concrete C ABI symbol; a template has none until it is
+                    // instantiated and its mangled name is not a C name. Reject it instead of silently
+                    // ignoring the modifier.
+                    if (d->is_export) {
+                        err("a generic declaration cannot be `export`ed: `export` needs a concrete C ABI "
+                            "symbol; write a non-generic wrapper",
+                            d.get());
+                    }
                     // A generic template: expanded at its own source position (the same constants an
                     // ordinary type sees), then set aside for instantiation. It is indexed right away so
                     // a later declaration in this unit may already instantiate it (`sizeof(Box<int>)`).

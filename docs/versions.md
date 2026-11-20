@@ -27,6 +27,19 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 291 — 2026-11-21
+
+**`Self` in generic interfaces; generic `export` rejected.**
+
+- The class override/return check compared the interface's `Self` slot with the concrete return type
+  without substituting the implementor, so a generic class spelling `C<T> make()` for `Self make()`
+  was rejected (the struct satisfaction path already substituted it). Both use `impl_sig` now.
+- `export` on a generic declaration was silently ignored; a template has no concrete C ABI symbol, so
+  it is now an error that points at the declaration.
+- New: `generic_iface_self` (generic class/struct and a non-generic class with a `Self` return;
+  concrete calls only), `generic_export`, `generic_export_fn` (must-fail). Full suite: Windows
+  **970/970**, Linux **968/968**, both with `MUC_VERIFY_MEM=1`.
+
 #### build 290 — 2026-11-21
 
 **Generic instances keep their struct modifiers (nocopy / nomove / align(N)) and constructor checks.**

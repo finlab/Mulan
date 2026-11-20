@@ -699,13 +699,17 @@ namespace muc_detail {
                 auto ret_ok = [](const TypePtr& want, const TypePtr& got) {
                     return same_type(want, got) || same_type(want, referent_of(got));
                 };
+                // An interface `Self` slot is the implementor (SPEC 3.15.6): substitute it before
+                // comparing returns, exactly as the struct satisfaction path does. Without this a
+                // generic class spelling the concrete type (`C<T> make()` for `Self make()`) was
+                // rejected even though the slot can never be dispatched through the interface.
                 for (auto* ms : matches) {
-                    if (!ret_ok(ms->ret, m->rty)) {
+                    if (!ret_ok(impl_sig(*ms, c->ty).ret, m->rty)) {
                         err("override return type does not match the declaration in `" + ms->owner->str() + "`",
                             m.get());
                     }
                 }
-                if (!ret_ok(base_sig->ret, m->rty)) {
+                if (!ret_ok(impl_sig(*base_sig, c->ty).ret, m->rty)) {
                     err("override has a mismatched return type", m.get());
                 }
             } else if (m->is_override) {
