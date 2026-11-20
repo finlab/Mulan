@@ -48,8 +48,9 @@
   path: a mutable `size()` no longer satisfies `int size() const` (#235). A same-name method with the
   wrong constness is reported as a signature mismatch, not "missing method".
 - Tests: `generic_operator_self_return`, `generic_sibling_bound`, `generic_duplicate`,
-  `generic_uninit_new` (IR), `generic_bound_unit`, `generic_const_contract` (+ a must-fail). Full:
-  Windows **980/980**, Linux **978/978** with `MUC_VERIFY_MEM=1`.
+  `generic_uninit_new` (IR), `generic_bound_unit`, `generic_const_contract` (+ a must-fail), and
+  `generic_issue_regressions` (`for const ref`/`T()`/struct `ref` return). Full: Windows **981/981**,
+  Linux **979/979** with `MUC_VERIFY_MEM=1`.
 
 #### build 291 — 2026-11-21
 
