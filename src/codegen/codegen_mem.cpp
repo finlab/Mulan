@@ -127,6 +127,38 @@ namespace muc_detail {
                 emitCtorGlue(addr, ty, unaligned);
                 return;
             }
+            // A constructor that throws while an element is being built must not leave the aggregate
+            // behind: every part not reached yet is zero (the whole aggregate is zeroed below, a
+            // dynamic array's block comes from `calloc`), so releasing the whole thing is zero-value
+            // safe (agents/value-semantics.md §5 rule 5). Only the outermost aggregate emits the
+            // cleanup — a nested one propagates the pending flag to its host's check, and releasing
+            // that host covers the nested part exactly once.
+            struct AggDepth {
+                int& d;
+                explicit AggDepth(int& x) : d(x) { ++d; }
+                ~AggDepth() { --d; }
+            } aggDepth(aggInitDepth_);
+            const bool outermost = aggInitDepth_ == 1;
+            BasicBlock* aggUnwind = nullptr;
+            auto elementBuilt = [&](const TypePtr& et) {
+                if (!outermost || !et || !et->needs_cleanup()) return;
+                if (!aggUnwind) {
+                    ensureEHSlot();
+                    aggUnwind = BasicBlock::Create(ctx, "agg.unwind", curFn);
+                }
+                BasicBlock* ok = BasicBlock::Create(ctx, "agg.ok", curFn);
+                b.CreateCondBr(b.CreateICmpNE(loadPendingFlag(), ConstantInt::get(i32(), 0)), aggUnwind,
+                               ok);
+                b.SetInsertPoint(ok);
+            };
+            auto finishAggregate = [&]() {
+                if (!aggUnwind) return;
+                BasicBlock* cont = BasicBlock::Create(ctx, "agg.done", curFn);
+                b.CreateBr(cont);
+                b.SetInsertPoint(aggUnwind);
+                emitUnwindCurrent([&] { emitReleaseValue(addr, ty, unaligned); });
+                b.SetInsertPoint(cont);
+            };
             // consistent with C: the parts not covered by the aggregate initialization are zeroed
             zeroMem(addr, ty, unaligned);
             if (ty->kind == TypeKind::Struct) {
@@ -149,8 +181,11 @@ namespace muc_detail {
                 // (`tests/errors` locks the "missing initializers" diagnostic).
                 for (auto& [idx, sub] : slot) {
                     Value* fp = fieldSlot(st, ty, addr, idx);
-                    initInto(fp, ty->fields[idx].type, sub, unaligned || ty->is_packed);
+                    const TypePtr& ft = ty->fields[idx].type;
+                    initInto(fp, ft, sub, unaligned || ty->is_packed);
+                    elementBuilt(ft);
                 }
+                finishAggregate();
                 return;
             }
             if (ty->kind == TypeKind::Array) {
@@ -170,6 +205,7 @@ namespace muc_detail {
                     if (i >= ty->array_size) break;
                     Value* p = gep(lt(ty->elem), inner, ConstantInt::get(i64(), i));
                     initInto(p, ty->elem, it.second.get(), unaligned);
+                    elementBuilt(ty->elem);
                     ++i;
                 }
                 // Elements beyond the initializer are default-initialized.
@@ -177,19 +213,25 @@ namespace muc_detail {
                     if (!ty->elem || !ty->elem->needs_ctor()) break;
                     Value* p = gep(lt(ty->elem), inner, ConstantInt::get(i64(), i));
                     emitCtorGlue(p, ty->elem, unaligned);
+                    elementBuilt(ty->elem);
                 }
+                finishAggregate();
                 return;
             }
             if (ty->kind == TypeKind::Slice) {
                 std::vector<Init*> elems;
                 for (auto& it : ia->items) elems.push_back(it.second.get());
                 Value* h = emitDynArrayAlloc(ConstantInt::get(i64(), elems.size()), ty->elem);
+                // The handle lives in the destination before the elements are built, so the shared
+                // unwind block below can release the header and the constructed prefix.
+                storeAt(h, addr, unaligned);
                 Value* data = sliceDataPtr(h, ty->rank);
                 for (size_t i = 0; i < elems.size(); ++i) {
                     Value* p = b.CreateGEP(lt(ty->elem), data, ConstantInt::get(i64(), i));
                     initInto(p, ty->elem, elems[i], unaligned);
+                    elementBuilt(ty->elem);
                 }
-                storeAt(h, addr, unaligned);
+                finishAggregate();
                 return;
             }
         }

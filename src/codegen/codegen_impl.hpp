@@ -308,6 +308,9 @@ struct Emitter {
     GlobalVariable* ehSlot = nullptr;
     bool curIsEntry = false;   // main: an uncaught exception aborts instead of returning a dummy
     bool inNothrow = false;    // destructors: any pending exception aborts
+    // Nesting depth of aggregate initializers: only the outermost one emits the exception cleanup
+    // that releases the aggregate (a nested one hands the pending flag to its host's check).
+    int aggInitDepth_ = 0;
 
     void ensureEHSlot();
     Value* loadPendingFlag();

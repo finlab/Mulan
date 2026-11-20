@@ -27,6 +27,26 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 279 — 2026-11-20
+
+**Aggregate initialization releases what it already built when an element constructor throws.**
+
+`R[4] a = {R(0), R(1), R(2), R(3)}` with `R(2)` throwing used to construct all four elements (no
+pending check between them) and destroy none: the elements already built leaked, and the
+expressions after the throwing one still ran. A struct aggregate (`{a = ..., b = ...}`) and a slice
+aggregate had the same hole.
+
+- after each element whose type needs cleanup the pending flag is checked; the first check that
+  fires jumps to one shared unwind block that releases the whole aggregate (parts not reached are
+  zero, so this is zero-value safe — value-semantics.md section 5 rule 5) and then unwinds;
+- only the outermost aggregate emits the cleanup: a nested aggregate hands the pending flag to its
+  host's check, which releases the nested part through the host, exactly once;
+- the throwing element's own partial state is already handled by the partial-construction machinery,
+  so it is not released twice (the test counts an RC field of the throwing element);
+- case `agg_init_throw` (array / struct / slice, counters back to zero, plus the no-throw paths).
+
+Full suite: 931/931 on Windows (with MUC_VERIFY_MEM=1).
+
 #### build 278 — 2026-11-20
 
 **A destructor-bearing temporary is allowed as a call argument (again).**
