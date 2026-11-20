@@ -69,8 +69,9 @@ that matter for the layer model:
 |---|---|---|---|---|
 | `std.ctypes` | L0 | no | `c_char` … `c_voidp` | §5, §7 |
 | `cstd.stdio`, `cstd.stdlib`, `cstd.string`, `cstd.ctype`, `cstd.math`, `cstd.time`, `cstd.locale`, `cstd.errno`, `cstd.limits`, `cstd.floats`, `cstd.stdint`, `cstd.inttypes`, `cstd.fenv`, `cstd.streams` | L1 | no | the ISO headers, one unit per header, in the separate `cstd` library; platform differences live in `#if` arms inside the unit (`windows` = MSVC CRT, `linux` = glibc) | §5, §7 |
-| `std.string` | L2 | **yes** | `String`: `String()` (zero), `String(const char*)` (implicit, copies), `String(byte[])`, `String(int[])` (code points), `length`, `is_empty`, `operator[]`, `==`, `sub`, `char_slice`, `concat`, `repeat`, Python-style byte methods (`find`, `rfind`, `count`, `startswith`, `endswith`, `replace`, `split`, `join`, `strip_ascii`, `lower_ascii`, `upper_ascii`, `is_*_ascii`), UTF-8 structure (`is_valid_utf8`, `char_count`, `char_at`, `chars`, `bytes`, `codepoints`), `cstr` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
+| `std.string` | L2 | **yes** | `String`: `String()` (zero), `String(const char*)` (implicit, copies), `String(byte[])`, `String(int[])` (code points), `length`, `is_empty`, `operator[]`, `==`, `sub`, `char_slice`, `concat`, `repeat`, Python-style byte methods (`find`, `rfind`, `count`, `startswith`, `endswith`, `replace`, `split`, `join`, `strip_ascii`, `lower_ascii`, `upper_ascii`, `is_*_ascii`), UTF-8 structure (`is_valid_utf8`, `char_count`, `char_at`, `chars`, `bytes`, `uchars`), `cstr` (plus the lowercase `string` alias) | SPEC §3.3, §6.3 |
 | `std.unicode` | L2 | no | `IUnicode` extension on `String`, active only where this unit is used: `lower`, `upper`, `strip`, `lstrip`, `rstrip`, `isalpha`, `isdigit`, `isalnum`, `isspace`, `isupper`, `islower` | §6.3 |
+| `std.cursor` | L2 | no | `Cursor<T>` (`bool next`, `T current`, `iterator`), `cursor<T>(delegate () => bool, delegate () => T)` | §6.6 |
 | `std.exception` | L3 | **yes** | `Exception`, `BoundsError`, `bounds_fail`, `NullReferenceError`, `null_fail`, `ArithmeticError`, `div_fail` | §6.1 |
 | `std.interfaces` | L3 | **yes** | `IIterator<T>`, `IIterable<T>`, `IIndex<T>`, `IEqual`, `IOrder`, `IAdd` … | §6.2 |
 | `std.task` | L3 | **yes** | `muc_para_*` (compiler entry points), `set_max_live_tasks`, `set_task_stack`, `set_carrier_limit`, `live_task_count`, `carrier_count`, `TaskLimitError` | §6.4 |
@@ -214,9 +215,9 @@ declaration checking the same shape, `class` equality staying identity — is SP
 - **Core surface**: `startswith`, `endswith`, `find`, `rfind`, `count`, `contains`, `replace`,
   `split(sep)`, `split_ascii_whitespace`, `splitlines_ascii`, `join`, `strip_ascii`/`lstrip_ascii`/
   `rstrip_ascii`, `lower_ascii`/`upper_ascii`, `is_alpha_ascii`/`is_digit_ascii`/`is_alnum_ascii`/
-  `is_space_ascii`/`is_upper_ascii`/`is_lower_ascii`, `repeat`, `removeprefix`, `removesuffix`.
+  `is_space_ascii`/`is_upper_ascii`/`is_lower_ascii`, `repeat`, `remove_prefix`, `remove_suffix`.
 - **UTF-8 structure** (no Unicode tables): `is_valid_utf8`, `char_count`, `char_at`, `char_slice`,
-  `is_char_boundary`, `byte_offset`, `char_index`, `codepoints`, `chars()`, `bytes()`. Invalid input
+  `is_char_boundary`, `byte_offset`, `char_index`, `uchars`, `chars()`, `bytes()`. Invalid input
   is decoded lossily: each invalid byte becomes U+FFFD. `String(byte[])` copies with a NUL;
   `String(int[])` encodes UTF-8 and replaces invalid code points with U+FFFD.
 - **`std.unicode`** adds `lower`, `upper`, `strip`, `lstrip`, `rstrip`, `isalpha`, `isdigit`,
@@ -286,6 +287,34 @@ The declarations above show the intended names; the current source still uses `t
 byte blobs (0.0.128): each backend's lock object lives inside the 64-byte storage, and both the Win32
 and the pthread backend accept zeroed memory as a valid unlocked lock, so a lock field still needs no
 init/destroy call. The OS layer is `std.thread.backend`, resolved through the platform search path.
+
+### 6.6 `std.cursor`
+
+A thin wrapper that builds an ad-hoc cursor from two closures, so a source does not need a struct
+declaration:
+
+```mu
+public struct Cursor<T> {
+    // private delegate fields
+    bool next();
+    T current();
+    Cursor<T> iterator();      // for-in uses the cursor form structurally
+}
+
+public Cursor<T> cursor<T>(delegate () => bool next, delegate () => T current);
+```
+
+- This unit is **not** loaded implicitly: `use std.cursor;`.
+- The element type is inferred from the `current` closure's return type.
+- The two closures must share their state. `[ref x]` shares a small local (scalars, enums, pointers,
+  plain structs) and stores its address, so `x` must outlive the cursor; this is the shape for a
+  cursor used inside the function that owns the state. To **return** a cursor from a function,
+  capture a class handle (`[x]`): the delegate environment retains the object and both closures share
+  it. Returning a `[ref local]` cursor is not rejected today (the escape check does not see through
+  the struct); it is a documented rule, tracked as a compiler gap.
+- The calls go through the two-word delegate values (one indirect call per `next`/`current`); a
+  declared struct with concrete closures can be inlined more aggressively. The wrapper trades that
+  for not writing a class each time.
 
 ## 7. Platform units
 

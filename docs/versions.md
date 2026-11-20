@@ -27,6 +27,22 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 282 — 2026-11-21
+
+**`std.cursor`: build an ad-hoc cursor from two closures.**
+
+- New unit `std.cursor` (not implicitly loaded): `Cursor<T>` (struct with `bool next`, `T current`,
+  `iterator`) and `cursor<T>(delegate () => bool, delegate () => T)`. The element type is inferred
+  from the `current` closure.
+- State is shared through captures: `[ref x]` for a small local (the variable must outlive the
+  cursor), `[x]` for a class handle (retained by the delegate environment, so the cursor may be
+  returned from a function).
+- Costs one indirect call per `next`/`current` (two-word delegates); no struct declaration needed.
+- New run case `cursor_wrapper`. Known compiler gap recorded: returning a struct that contains a
+  `[ref local]` delegate is not rejected.
+- Review renames: `codepoints` → `uchars`, `removeprefix`/`removesuffix` → `remove_prefix`/`remove_suffix`.
+- Full suite: 935/935 with `MUC_VERIFY_MEM=1`.
+
 #### build 281 — 2026-11-20
 
 **String implementation cleanup from review.**

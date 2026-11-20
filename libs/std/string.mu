@@ -8,7 +8,7 @@
 // fields (p/n/owner); owner is an RC byte array that keeps the backing buffer alive.
 //
 // The model is UTF-8 bytes: `length()`, `s[i]`, `sub` and `find` are byte-based. Code point
-// operations are explicit (`chars`, `char_count`, `char_at`, `codepoints`); Unicode tables live
+// operations are explicit (`chars`, `char_count`, `char_at`, `uchars`); Unicode tables live
 // in `std.unicode`, which extends `IString` and must be loaded explicitly.
 
 public unit std.string;
@@ -295,7 +295,7 @@ public:
     }
 
     // All code points, lossy on invalid input.
-    int[] codepoints() const {
+    int[] uchars() const {
         isize count = char_count();
         int[] out = new int[count];
         isize off = 0;
@@ -442,14 +442,14 @@ public:
         return String(buf, total);
     }
 
-    String removeprefix(String prefix) const {
+    String remove_prefix(String prefix) const {
         if startswith(prefix) {
             return sub(prefix.n, n - prefix.n);
         }
         return sub(0, n);
     }
 
-    String removesuffix(String suffix) const {
+    String remove_suffix(String suffix) const {
         if endswith(suffix) {
             return sub(0, n - suffix.n);
         }

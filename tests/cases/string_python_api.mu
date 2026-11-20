@@ -18,8 +18,8 @@ int main() {
     int n = 0;
     for c in s.chars() { n += 1; }
     if n != 9 { puts("chars"); return 10; }
-    int[] cps = s.codepoints();
-    if cps.length() != 9 { puts("codepoints"); return 11; }
+    int[] cps = s.uchars();
+    if cps.length() != 9 { puts("uchars"); return 11; }
 
     string t = s.strip_ascii();
     if t != "H\u{00E9}LLO" { puts("strip"); return 12; }
@@ -74,8 +74,8 @@ int main() {
 
     string ab = "ab";
     if ab.repeat(3) != "ababab" { puts("repeat"); return 36; }
-    if ab.removeprefix("a") != "b" { puts("removeprefix"); return 37; }
-    if ab.removesuffix("b") != "a" { puts("removesuffix"); return 38; }
+    if ab.remove_prefix("a") != "b" { puts("remove_prefix"); return 37; }
+    if ab.remove_suffix("b") != "a" { puts("remove_suffix"); return 38; }
 
     puts("string python api ok");
     return 0;
