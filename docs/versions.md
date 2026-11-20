@@ -37,8 +37,10 @@
 - `export` on a generic declaration was silently ignored; a template has no concrete C ABI symbol, so
   it is now an error that points at the declaration.
 - New: `generic_iface_self` (generic class/struct and a non-generic class with a `Self` return;
-  concrete calls only), `generic_export`, `generic_export_fn` (must-fail). Full suite: Windows
-  **970/970**, Linux **968/968**, both with `MUC_VERIFY_MEM=1`.
+  concrete calls only), `generic_export`, `generic_export_fn` (must-fail), and `generic_abstract_promote`
+  / `generic_abstract_new` (a generic abstract base, a promoted method of a generic field; `new` on the
+  abstract instance is rejected). Full suite: Windows **972/972**, Linux **970/970**, both with
+  `MUC_VERIFY_MEM=1`.
 
 #### build 290 — 2026-11-21
 

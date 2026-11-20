@@ -1,0 +1,1 @@
+generic abstract promote ok
