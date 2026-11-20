@@ -27,6 +27,20 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 287 — 2026-11-21
+
+**Target-directed generic inference: the expected type of the call fills unbound type parameters.**
+
+- `Box<T> make<T>()` can be called as `Box<int> b = make();` — initialization, assignment, `return`, a
+  call argument and a ternary arm all provide the expected type. The declared return type is matched
+  structurally against it; a target that does not match the shape is ignored (a base class, interface
+  or convertible type must not choose the instance), and a target that disagrees with an argument
+  binding is an error naming both types. A call with no expected type (an expression statement) still
+  needs the arguments or an explicit list.
+- New cases: `generic_target_infer` (run), `generic_target_conflict` (must-fail);
+  `generic_call_no_type_args` now calls in a no-target statement. SPEC 3.15.3 updated.
+- Full suite: 946/946 with `MUC_VERIFY_MEM=1`.
+
 #### build 286 — 2026-11-21
 
 **Diagnostic fix: a generic variant payload rejection points at the instantiation site.**

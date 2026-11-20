@@ -248,7 +248,7 @@ namespace muc_detail {
                         std::vector<TypePtr> prebound;
                         for (auto& ta : c->type_args) prebound.push_back(resolve_type(ta.get(), cur_));
                         std::vector<TypeSpecPtr> inferred = infer_func_type_args(
-                            c, gf, nm->ident, std::string(), prebound);
+                            c, gf, nm->ident, std::string(), prebound, expected);
                         target = instantiate_func(c, nm->ident, cur_, inferred);
                     } else {
                         target = instantiate_func(c, nm->ident, cur_, c->type_args);
@@ -354,7 +354,8 @@ namespace muc_detail {
                     std::vector<TypeSpecPtr> inferred = infer_func_type_args(
                         c, gf, nm->ident,
                         where.empty() ? std::string()
-                                      : "\n  note: the template is declared at " + where);
+                                      : "\n  note: the template is declared at " + where,
+                        {}, expected);
                     // Qualified with the template's own unit: another unit's same-named generic must
                     // not be instantiated instead of the one that was matched.
                     target = instantiate_func(c,
@@ -616,7 +617,8 @@ namespace muc_detail {
                             ":" + std::to_string(gf->line) + ":" + std::to_string(gf->col);
                     targs = infer_func_type_args(
                         c, gf, uname + "." + m->name,
-                        "\n  note: the template is declared at " + where);
+                        "\n  note: the template is declared at " + where,
+                        {}, expected);
                 }
                 chosen = instantiate_func(c, uname + "." + m->name, cur_, targs);
             } else {

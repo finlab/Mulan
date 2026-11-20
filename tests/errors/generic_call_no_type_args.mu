@@ -1,5 +1,5 @@
-// The type argument appears only in the return type, so no argument can determine it: an explicit
-// list is the only way to call this template (SPEC 3.15.3).
+// The type argument appears only in the return type, and a call statement has no target type to
+// determine it: an explicit list is the only way to call this template (SPEC 3.15.3).
 unit generic_call_no_type_args;
 
 T empty<T>() {
@@ -8,6 +8,6 @@ T empty<T>() {
 }
 
 int main() {
-    int a = empty();
-    return a;
+    empty();
+    return 0;
 }

@@ -521,7 +521,7 @@ namespace muc_detail {
         if (is_void(rt)) err("`void` function or method `" + cur_name_ + "` cannot return a value", s);
         if (is_borrow_type(rt)) {
             TypePtr base = rt->elem;
-            TypePtr vt = check_expr(s->value.get());
+            TypePtr vt = check_expr(s->value.get(), base);
             if (!same_type(vt, base)) {
                 err("return value must be `" + base->str() + "` (found `" +
                         (vt ? vt->str() : "void") + "`) for a `ref` return type",

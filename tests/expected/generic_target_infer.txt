@@ -1,0 +1,1 @@
+generic target infer ok

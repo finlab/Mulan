@@ -577,7 +577,8 @@ private:
     // into the node and leak it into later instances.
     std::vector<TypeSpecPtr> infer_func_type_args(Call* c, FuncDecl* tmpl, const std::string& name,
                                                   const std::string& note,
-                                                  const std::vector<TypePtr>& prebound = {});
+                                                  const std::vector<TypePtr>& prebound = {},
+                                                  const TypePtr& expected = nullptr);
     // Structural constraint check (U34 M3b): whether `t` satisfies every bound of `p` (`&` requires all / `|` requires any)
     void check_bound(const TypePtr& t, const TypeParam& p, Unit* u, const Node* at);
     bool satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::string* why);

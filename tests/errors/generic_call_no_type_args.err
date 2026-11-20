@@ -1,4 +1,1 @@
-cannot infer the type argument `T` from the arguments: no parameter mentions it
-write `empty<...>(...)`
-note: the template is declared at
-!is a generic function: its type arguments cannot be inferred
+cannot infer the type argument `T` from the arguments

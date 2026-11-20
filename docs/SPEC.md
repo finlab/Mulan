@@ -1253,8 +1253,14 @@ Box<int> b = new Box<int>(7);    // generic class construction
   - `ref T` / `const ref T` bind the referent, i.e. the argument's own type;
   - `(T) => R` and `delegate (T1) => R` match the parameter and return types the same way (a delegate
     pattern also accepts a plain function value, which converts to a delegate).
-- **The return type is never used for inference.** A type parameter that no parameter mentions therefore
-  cannot be inferred: `T empty<T>()` must be called as `empty<int>()`.
+- **The expected type of the call participates** (build 287). A type parameter that no argument
+  determines is matched through the declared return type against the expected type: with
+  `Box<T> make<T>()`, `Box<int> b = make();` infers `T = int`; the same holds for an assignment, a
+  `return`, a call argument and a ternary arm. A target that does not structurally match the return
+  type is ignored (a base class, an interface or a convertible type must not choose the instance),
+  and a target that disagrees with an argument-derived binding is a compile error naming both. A call
+  in a position with no expected type (an expression statement) still needs its arguments or an
+  explicit list: `T empty<T>()` there must be called as `empty<int>()`.
 - **A failed inference is a compile error with the reason**: two arguments giving different types for one
   parameter (`max2(1, 2L)`), an argument whose shape does not match the pattern (a `Thing` value for a
   `T*` parameter, or `null` / a `void` / a range argument, none of which has a type of its own), or a

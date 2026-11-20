@@ -107,7 +107,8 @@ bool instance_matches(const std::string& spec_name, const TypePtr& at,
 
 std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, const std::string& name,
                                                     const std::string& note,
-                                                    const std::vector<TypePtr>& prebound) {
+                                                    const std::vector<TypePtr>& prebound,
+                                                    const TypePtr& expected) {
     const std::vector<TypeParam>& tps = tmpl->type_params;
     if (!c->named.empty()) {
         err("function calls do not support named arguments (only struct construction does)", c);
@@ -312,22 +313,48 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
         }
     }
 
-    // A parameter no argument could determine: only an explicit type argument can supply it.
+    // Target-directed inference: parameters that no argument determined can be fixed by the expected
+    // type of the call — `Box<int> b = make();` with `Box<T> make<T>()`. The declared return type is
+    // matched with the same structural rules. A target that does not match the shape is ignored on
+    // purpose: the expected type may be a base class, an interface or a convertible type, and a
+    // conversion must not decide which template instance is built (the ordinary assignment check
+    // reports the real mismatch).
+    if (expected && tmpl->ret && !is_void(expected) && !is_void(tmpl->rty)) {
+        std::vector<TypePtr> saved_bound = bound;
+        std::vector<size_t> saved_at = bound_at;
+        current_arg = c->args.size();  // marks a binding that came from the target type
+        bad_pat = nullptr;
+        conflict_param = -1;
+        conflict_ty = nullptr;
+        const Match m = match(*tmpl->ret, without_top_const(expected));
+        if (m == Match::Shape) {
+            bound = std::move(saved_bound);
+            bound_at = std::move(saved_at);
+        } else if (m == Match::Conflict && conflict_param >= 0) {
+            const size_t k = static_cast<size_t>(conflict_param);
+            const std::string first = display_type(bound[k]);
+            const std::string second = display_type(conflict_ty ? conflict_ty : expected);
+            if (bound_at[k] == c->args.size()) {
+                err("`" + name + "`: the target type `" + expected->str() +
+                        "` gives two types for the type argument `" + tps[k].name + "` (`" + first +
+                        "` and `" + second + "`); write the type argument explicitly (`" + name +
+                        "<...>(...)`)" + note,
+                    c->callee.get());
+            }
+            err("`" + name + "`: the type argument `" + tps[k].name + "` is inferred as `" + first +
+                    "` from argument " + std::to_string(bound_at[k] + 1) +
+                    ", but the target type `" + expected->str() + "` requires `" + second +
+                    "`; write the type argument explicitly (`" + name + "<...>(...)`)" + note,
+                c->callee.get());
+        }
+    }
+
+    // A parameter no argument and no target type could determine: only an explicit type argument can
+    // supply it.
     for (size_t k = 0; k < tps.size(); ++k) {
         if (bound[k]) continue;
-        bool in_params = false;
-        for (const auto& p : tmpl->params) {
-            std::vector<int> mentioned;
-            collect_params(p->spec.get(), tps, mentioned);
-            if (std::find(mentioned.begin(), mentioned.end(), static_cast<int>(k)) != mentioned.end()) {
-                in_params = true;
-                break;
-            }
-        }
-        err("`" + name + "`: cannot infer the type argument `" + tps[k].name + "` from the arguments: " +
-                (in_params ? "no argument determines it"
-                           : "no parameter mentions it, so only the return type could, and the return "
-                             "type is not used for inference") +
+        err("`" + name + "`: cannot infer the type argument `" + tps[k].name + "` from the arguments" +
+                (expected ? " or the target type" : " (there is no target type here)") +
                 "; write `" + name + "<...>(...)`" + note,
             c->callee.get());
     }
