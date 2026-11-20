@@ -242,16 +242,18 @@ namespace muc_detail {
                 // Generic function takes precedence; otherwise it is treated as value construction of a generic struct
                 Decl* tdecl = find_generic_template(nm->ident, cur_);
                 if (auto* gf = dynamic_cast<FuncDecl*>(tdecl)) {
+                    Unit* tu = unit_of_template(gf);
+                    const std::string qname = tu ? tu->name + "." + nm->ident : nm->ident;
                     if (c->type_args.size() < gf->type_params.size()) {
                         // `f<int>(...)`: the leading explicit arguments are fixed; the rest are
                         // inferred from the ordinary argument types (SPEC 3.15.3).
                         std::vector<TypePtr> prebound;
                         for (auto& ta : c->type_args) prebound.push_back(resolve_type(ta.get(), cur_));
                         std::vector<TypeSpecPtr> inferred = infer_func_type_args(
-                            c, gf, nm->ident, std::string(), prebound, expected);
-                        target = instantiate_func(c, nm->ident, cur_, inferred);
+                            c, gf, qname, std::string(), prebound, expected, tu);
+                        target = instantiate_func(c, qname, cur_, inferred);
                     } else {
-                        target = instantiate_func(c, nm->ident, cur_, c->type_args);
+                        target = instantiate_func(c, qname, cur_, c->type_args);
                     }
                     nm->kind = "func";
                     nm->sym = target;
@@ -351,11 +353,14 @@ namespace muc_detail {
                                                                         : tmpl_unit) +
                                 ":" + std::to_string(gf->line) + ":" + std::to_string(gf->col);
                     }
+                    Unit* bare_unit = nullptr;
+                    auto biu = infos_.find(tmpl_unit);
+                    if (biu != infos_.end()) bare_unit = biu->second.unit;
                     std::vector<TypeSpecPtr> inferred = infer_func_type_args(
                         c, gf, nm->ident,
                         where.empty() ? std::string()
                                       : "\n  note: the template is declared at " + where,
-                        {}, expected);
+                        {}, expected, bare_unit);
                     // Qualified with the template's own unit: another unit's same-named generic must
                     // not be instantiated instead of the one that was matched.
                     target = instantiate_func(c,
@@ -615,10 +620,12 @@ namespace muc_detail {
                     where = ((iu != infos_.end() && iu->second.unit) ? iu->second.unit->filename
                                                                      : uname) +
                             ":" + std::to_string(gf->line) + ":" + std::to_string(gf->col);
+                    Unit* qualified_unit = nullptr;
+                    if (iu != infos_.end()) qualified_unit = iu->second.unit;
                     targs = infer_func_type_args(
                         c, gf, uname + "." + m->name,
                         "\n  note: the template is declared at " + where,
-                        {}, expected);
+                        {}, expected, qualified_unit);
                 }
                 chosen = instantiate_func(c, uname + "." + m->name, cur_, targs);
             } else {

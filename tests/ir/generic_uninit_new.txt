@@ -1,0 +1,3 @@
+# The instantiated body allocates uninitialized memory.
+- @calloc
++ @malloc

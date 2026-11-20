@@ -43,12 +43,6 @@ struct Vec<T> {
     T at(isize i) { return data[i]; }
 }
 
-// ---------- Generic free functions ----------
-// One definition; the compiler emits a separate function for every type argument.
-T max<T: IOrdered>(T a, T b) {
-    return a < b ? b : a;
-}
-
 // The parameter type is itself a generic instantiation (`Vec<T>`): nested instantiation works.
 T sum<T: IAddable>(Vec<T> v, T zero) {
     T total = zero;

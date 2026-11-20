@@ -176,6 +176,17 @@ static std::string instance_label(const TypePtr& t, const TypeSpec* fallback, co
 // Registers one template under `<unit>.<name>`. Called as each template is moved out of the unit's
 // declaration list, so an instantiation later in the same unit (`sizeof(Box<int>)` in a constant) can
 // already find it.
+Unit* Sema::unit_of_template(const Decl* d) {
+    for (const auto& [key, decl] : generic_templates_) {
+        if (decl != d) continue;
+        std::string unit_name, name;
+        split_qualified(key, unit_name, name);
+        auto it = infos_.find(unit_name);
+        return it == infos_.end() ? nullptr : it->second.unit;
+    }
+    return nullptr;
+}
+
 void Sema::index_template(Decl* d, const std::string& unit_name) {
     std::string name;
     if (auto s = dynamic_cast<StructDecl*>(d)) {
@@ -191,7 +202,13 @@ void Sema::index_template(Decl* d, const std::string& unit_name) {
     } else {
         return;
     }
-    generic_templates_[unit_name + "." + name] = d;
+    const std::string key = unit_name + "." + name;
+    // The index holds one template per name; a second declaration used to overwrite the first
+    // silently (the later one won). The language has no template overload set, so report it.
+    if (generic_templates_.count(key)) {
+        err("generic declaration `" + name + "` is already defined in unit `" + unit_name + "`", d);
+    }
+    generic_templates_[key] = d;
 }
 
 TypePtr Sema::instantiate_generic_named(const std::string& name,
@@ -360,8 +377,15 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
     if (!tmpl_unit_ptr) tmpl_unit_ptr = u;
 
     // Constraint check (U34 M3b); the argument types were resolved above (for the instance name).
-    for (size_t i = 0; i < tps.size(); ++i) {
-        check_bound(arg_types[i], tps[i], u, nullptr);
+    // A bound may name a sibling type parameter (`T: IIter<U>, U`): bind all parameters to their
+    // resolved arguments so the bound is resolved with the real types, not left unknown.
+    {
+        auto saved_bind = type_bind_;
+        for (size_t i = 0; i < tps.size(); ++i) type_bind_[tps[i].name] = arg_types[i];
+        for (size_t i = 0; i < tps.size(); ++i) {
+            check_bound(arg_types[i], tps[i], u, nullptr);
+        }
+        type_bind_ = std::move(saved_bind);
     }
 
     // Clone + substitute
@@ -951,8 +975,16 @@ FuncDecl* Sema::instantiate_func(Call* c, const std::string& base, Unit* u,
     }
     std::vector<TypePtr> arg_types;
     for (const auto& ta : targs) arg_types.push_back(resolve_type(ta.get(), u));
-    for (size_t i = 0; i < tmpl->type_params.size(); ++i) {
-        check_bound(arg_types[i], tmpl->type_params[i], tmpl_unit_ptr, c);
+    {
+        // Sibling type parameters in a bound (`T: IIter<U>, U`) resolve to the actual arguments.
+        auto saved_bind = type_bind_;
+        for (size_t i = 0; i < tmpl->type_params.size(); ++i) {
+            type_bind_[tmpl->type_params[i].name] = arg_types[i];
+        }
+        for (size_t i = 0; i < tmpl->type_params.size(); ++i) {
+            check_bound(arg_types[i], tmpl->type_params[i], tmpl_unit_ptr, c);
+        }
+        type_bind_ = std::move(saved_bind);
     }
 
     std::string display = name + "<";

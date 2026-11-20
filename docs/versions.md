@@ -27,6 +27,30 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 292 — 2026-11-21
+
+**QC issue batch: witness results, sibling bounds, duplicate templates, uninitialized allocation.**
+
+- A constraint operator returning `Self` yields T in the body; the definition-time witness check
+  rejected `return a + b;` from a function returning `int` ("cannot assign $witness... to int"). A
+  conversion from the synthetic witness is now left to the per-instance check (#240).
+- A bound may name a sibling type parameter (`T: IIter<U>, U`): the definition-time contract check is
+  skipped for such a template (no witness can be built), and both the inference pre-check and the
+  instantiation bind all parameters to their actual types before resolving the bound (#232).
+- Two generic declarations with the same name in a unit used to overwrite each other silently; the
+  later one won. It is now a duplicate-definition error (#176). `examples/generics.mu` had such a
+  duplicate `max` and is fixed.
+- `clone_expr(NewExpr)` dropped `uninit`, so `uninit new T[n]` became a zeroed allocation after
+  instantiation; the flag is copied now (#180, IR test `generic_uninit_new`).
+- A bound is resolved in the template's unit during inference too, not the caller's (#233): `use
+  std.unicode` alone now reaches its generic API (test `generic_bound_unit`).
+- The structural constraint path compares method `const` (and the `ref` pattern) like the declarative
+  path: a mutable `size()` no longer satisfies `int size() const` (#235). A same-name method with the
+  wrong constness is reported as a signature mismatch, not "missing method".
+- Tests: `generic_operator_self_return`, `generic_sibling_bound`, `generic_duplicate`,
+  `generic_uninit_new` (IR), `generic_bound_unit`, `generic_const_contract` (+ a must-fail). Full:
+  Windows **980/980**, Linux **978/978** with `MUC_VERIFY_MEM=1`.
+
 #### build 291 — 2026-11-21
 
 **`Self` in generic interfaces; generic `export` rejected.**

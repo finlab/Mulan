@@ -108,7 +108,8 @@ bool instance_matches(const std::string& spec_name, const TypePtr& at,
 std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, const std::string& name,
                                                     const std::string& note,
                                                     const std::vector<TypePtr>& prebound,
-                                                    const TypePtr& expected) {
+                                                    const TypePtr& expected,
+                                                    Unit* tmpl_unit) {
     const std::vector<TypeParam>& tps = tmpl->type_params;
     if (!c->named.empty()) {
         err("function calls do not support named arguments (only struct construction does)", c);
@@ -387,6 +388,12 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
     // The inferred type must satisfy the template's constraints. This runs before the instantiation so
     // the diagnostic can say the type was *inferred* — the reader did not choose it and must not go
     // looking for a mistake of their own.
+    // A bound may name a sibling parameter (`T: IIter<U>, U`); bind every inferred parameter so the
+    // bound resolves with the real types instead of "unknown type U".
+    auto saved_bound_bind = type_bind_;
+    for (size_t k = 0; k < tps.size(); ++k) {
+        if (bound[k]) type_bind_[tps[k].name] = bound[k];
+    }
     for (size_t k = 0; k < tps.size(); ++k) {
         const TypeParam& tp = tps[k];
         if (tp.bounds.empty()) continue;
@@ -404,7 +411,7 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
         if (tp.op == TypeParam::Op::Or) {
             bool any = false;
             for (const auto& b : tp.bounds) {
-                if (satisfies_one(bound[k], b.get(), cur_, nullptr)) {
+                if (satisfies_one(bound[k], b.get(), tmpl_unit ? tmpl_unit : cur_, nullptr)) {
                     any = true;
                     break;
                 }
@@ -419,7 +426,7 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
             continue;
         }
         for (const auto& b : tp.bounds) {
-            if (satisfies_one(bound[k], b.get(), cur_, &why)) continue;
+            if (satisfies_one(bound[k], b.get(), tmpl_unit ? tmpl_unit : cur_, &why)) continue;
             err("`" + name + "`: the type argument `" + tp.name + "`" + where + " is `" +
                     display_type(bound[k]) +
                     "`, which does not satisfy the constraint `" + canon_spec(*b) + "`: " + why +
@@ -427,6 +434,7 @@ std::vector<TypeSpecPtr> Sema::infer_func_type_args(Call* c, FuncDecl* tmpl, con
                 at_node);
         }
     }
+    type_bind_ = std::move(saved_bound_bind);
 
     // Hand the bindings to the ordinary instantiation path: the instance is built from this list
     // exactly as if the arguments had been written at the call site. They are not stored on the call

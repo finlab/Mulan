@@ -261,6 +261,7 @@ ExprPtr clone_expr(const Expr& e) {
         for (const auto& a : p->args) r->args.push_back(clone_expr(*a));
         for (const auto& n : p->named) r->named.emplace_back(n.first, clone_expr(*n.second));
         r->is_array = p->is_array;
+        r->uninit = p->uninit;
         for (const auto& d : p->dims) r->dims.push_back(clone_expr(*d));
         r->jagged_rank = p->jagged_rank;
         return r;

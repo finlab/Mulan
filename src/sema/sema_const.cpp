@@ -16,6 +16,13 @@
 
 namespace muc_detail {
 
+    // The contract-check witness is a synthetic stand-in for a type parameter (`$witness.<unit>.<template>.<T>`),
+    // not a type a user can name. A conversion involving it cannot be decided at the definition: the
+    // same body is checked again for every instantiation, where T is concrete.
+    static bool is_witness_type(const TypePtr& t) {
+        return t && t->kind == TypeKind::Struct && t->name.rfind("$witness.", 0) == 0;
+    }
+
     bool Sema::contains_reference_type(const TypePtr& t) {
         if (!t) return false;
         if (is_reference_type(t)) return true;
@@ -203,6 +210,11 @@ namespace muc_detail {
             }
         }
         TypePtr src = check_expr(e, dst);
+        // A dependent result (`a + b` under `T: IAdd`, whose operator returns `Self` = T) has the
+        // witness type during the definition-time contract check. Its compatibility with a concrete
+        // target depends on the actual type argument, so leave it to the per-instance check instead
+        // of rejecting the template for every T.
+        if (is_witness_type(src)) return src;
         if (assignable(e, src, dst)) return src;
         if (const ImplicitConv* conv = find_implicit_conv(dst, src)) {
             e->conv = conv;

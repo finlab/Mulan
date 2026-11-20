@@ -49,12 +49,31 @@ bool type_has_method(const TypePtr& t, const MethodSig& sig, const TypePtr& self
     for (const auto& m : t->methods) {
         if (m.name != sig.name) continue;
         if (m.params.size() != sig.params.size()) continue;
+        // A `const` member is a read-only contract: only a `const` implementation satisfies it
+        // (SPEC 3.15). The declarative `: I` path already enforces this; the structural path used to
+        // ignore it, so `probe<T: Sized>(T x)` accepted a mutable `size()`.
+        if (m.is_const != sig.is_const) continue;
         bool ok = true;
         for (size_t i = 0; i < sig.params.size(); ++i) {
-            const TypePtr& want = (i < sig.params_self.size() && sig.params_self[i]) ? self_ty : sig.params[i];
+            const bool self_param = i < sig.params_self.size() && sig.params_self[i];
+            const TypePtr& want = self_param ? self_ty : sig.params[i];
             if (!same_type(m.params[i], want)) {
                 ok = false;
                 break;
+            }
+            // A `ref` / `const ref` pattern must match too: `put(ref int)` is not satisfied by
+            // `put(int)` (the implementation would write a copy and the caller would see nothing).
+            if (!self_param) {
+                if (i < sig.params_ref.size() && i < m.params_ref.size() &&
+                    m.params_ref[i] != sig.params_ref[i]) {
+                    ok = false;
+                    break;
+                }
+                if (i < sig.params_cref.size() && i < m.params_cref.size() &&
+                    m.params_cref[i] != sig.params_cref[i]) {
+                    ok = false;
+                    break;
+                }
             }
         }
         if (!ok) continue;
@@ -101,7 +120,22 @@ bool Sema::satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::
     for (const MethodSig* sig : sigs) {
         if (!sig->is_operator) {
             if (!type_has_method(t, *sig, t)) {
-                if (why) *why = "missing method `" + sig->name + "`";
+                if (why) {
+                    bool named = false;
+                    for (const auto& m : t->methods) {
+                        if (m.name == sig->name) {
+                            named = true;
+                            break;
+                        }
+                    }
+                    if (named) {
+                        *why = "method `" + sig->name + "` does not match the contract";
+                        if (sig->is_const) *why += " (it must be `const`)";
+                        else *why += " (check the parameter `ref`/`const` patterns)";
+                    } else {
+                        *why = "missing method `" + sig->name + "`";
+                    }
+                }
                 return false;
             }
             continue;
@@ -270,6 +304,24 @@ void Sema::check_bound(const TypePtr& t, const TypeParam& p, Unit* u, const Node
     }
 }
 
+// A bound may name a sibling type parameter (`T: IIter<U>, U`). The definition-time witness for T
+// cannot be built from such a bound (U has no witness yet, and the two may refer to each other), so
+// the contract check is skipped for that template; every instantiation re-checks the body and the
+// bounds with the concrete argument types.
+static bool bound_mentions_param(const TypeSpec* spec,
+                                 const std::unordered_set<std::string>& names) {
+    if (!spec) return false;
+    if (spec->kind == TypeSpec::K::Named && names.count(spec->name)) return true;
+    for (const auto& a : spec->args) {
+        if (bound_mentions_param(a.get(), names)) return true;
+    }
+    if (bound_mentions_param(spec->elem.get(), names)) return true;
+    for (const auto& p : spec->params) {
+        if (bound_mentions_param(p.get(), names)) return true;
+    }
+    return bound_mentions_param(spec->ret.get(), names);
+}
+
 // ---------------------------------------------------------------- contract checking (build 156)
 //
 // A generic body is only checked when it is instantiated, i.e. against one concrete type argument at
@@ -393,6 +445,19 @@ void Sema::check_generic_contracts() {
         if (info != infos_.end()) tmpl_unit = info->second.unit;
         if (!tmpl_unit) continue;
 
+        std::unordered_set<std::string> param_names;
+        for (const auto& tp : fn->type_params) param_names.insert(tp.name);
+        bool sibling_bound = false;
+        for (const auto& tp : fn->type_params) {
+            for (const auto& b : tp.bounds) {
+                if (bound_mentions_param(b.get(), param_names)) {
+                    sibling_bound = true;
+                    break;
+                }
+            }
+            if (sibling_bound) break;
+        }
+        if (sibling_bound) continue;  // witnesses are impossible; instantiation re-checks the body
         std::vector<TypePtr> witnesses;
         for (const auto& tp : fn->type_params) {
             TypePtr w = make_contract_witness(tp, tmpl_unit, fn->name);

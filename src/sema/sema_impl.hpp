@@ -561,6 +561,9 @@ private:
                                       const std::vector<TypeSpecPtr>& args, Unit* u);
     // Find a generic template by name (this unit first, then a unique suffix match); returns nullptr when none
     Decl* find_generic_template(const std::string& full, Unit* u);
+    // The unit that declares a template (the `generic_templates_` key carries it); nullptr when the
+    // declaration is not a registered template.
+    Unit* unit_of_template(const Decl* d);
     // Free function monomorphization: `targs` holds the type arguments (written out at the call site,
     // or inferred — see infer_func_type_args); returns the instance function (check_func already run)
     FuncDecl* instantiate_func(Call* c, const std::string& base, Unit* u,
@@ -578,7 +581,8 @@ private:
     std::vector<TypeSpecPtr> infer_func_type_args(Call* c, FuncDecl* tmpl, const std::string& name,
                                                   const std::string& note,
                                                   const std::vector<TypePtr>& prebound = {},
-                                                  const TypePtr& expected = nullptr);
+                                                  const TypePtr& expected = nullptr,
+                                                  Unit* tmpl_unit = nullptr);
     // Structural constraint check (U34 M3b): whether `t` satisfies every bound of `p` (`&` requires all / `|` requires any)
     void check_bound(const TypePtr& t, const TypeParam& p, Unit* u, const Node* at);
     bool satisfies_one(const TypePtr& t, const TypeSpec* bound, Unit* u, std::string* why);
