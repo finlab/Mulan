@@ -1023,13 +1023,21 @@ namespace muc_detail {
             pop();
             arm->bind_locals = std::move(locals);
         }
+        // Coverage counts only **unguarded** arms (SPEC 10.1.2): a failed guard falls through, so a
+        // guarded arm alone leaves the value unmatched — and in the expression form the result slot
+        // would never be written.
         if (!has_else) {
             for (size_t k = 0; k < seen.size(); ++k) {
-                if (!seen[k]) {
-                    err("`match` does not cover alternative `" + st->sum_names[k] +
-                            "`; add that arm or an `else`",
+                if (unguarded_seen[k]) continue;
+                if (seen[k]) {
+                    err("`match` covers alternative `" + st->sum_names[k] +
+                            "` only with a guarded arm; a guard does not count as coverage: add an arm "
+                            "without a guard or an `else`",
                         at);
                 }
+                err("`match` does not cover alternative `" + st->sum_names[k] +
+                        "`; add that arm or an `else`",
+                    at);
             }
         }
         if (expression_form && !result) err("match has no arms", at);

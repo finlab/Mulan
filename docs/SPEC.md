@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 275 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 276 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"

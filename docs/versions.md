@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 276 — 2026-11-20
+
+**A guarded arm no longer counts as coverage (variant match).**
+
+SPEC 10.1.2 says a guard does not cover its alternative, and the constant-pattern path already
+honoured it; the variant path did not. `match v { A(x) if p: 10; B: 20; }` compiled, and with a
+failing guard the expression form never wrote its result slot — the optimiser then folded the load
+to the guarded arm's constant, so the program silently produced a value for an arm that did not
+match (`f(A(-1))` printed the `A(x) if x > 0` arm's value).
+
+- coverage now counts unguarded arms only; a guarded-only alternative is an error naming the
+  alternative and saying that a guard does not count;
+- must-fail `match_guard_not_exhaustive`;
+- full suite 923/923 on Windows.
+
 #### build 275 — 2026-11-20
 
 **`bool` is a constant-pattern scrutinee.**
