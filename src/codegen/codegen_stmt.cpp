@@ -662,7 +662,7 @@ using ArgPack = Emitter::ArgPack;
 
         int elseIdx = -1;
         std::vector<std::pair<ConstantInt*, BasicBlock*>> cases;
-        std::vector<std::pair<SwitchPat*, BasicBlock*>> ranges;
+        std::vector<std::pair<MatchPat*, BasicBlock*>> ranges;
         for (size_t i = 0; i < s->arms.size(); ++i) {
             if (s->arms[i]->is_else) elseIdx = static_cast<int>(i);
             for (auto& p : s->arms[i]->pats) {
@@ -711,6 +711,118 @@ using ArgPack = Emitter::ArgPack;
         b.SetInsertPoint(endBB);
     }
 
+    // Constant-pattern match (integer / enum scrutinee; SPEC 10.1.2). Without guards the value goes
+    // through an LLVM switch (jump table) and the ranges through a comparison chain, exactly as the
+    // former `switch` did. A guard makes source order observable, so the whole dispatch becomes an
+    // ordered chain: test the arm's patterns, evaluate its guard once on the hit path, then branch.
+    void Emitter::emitConstMatch(Expr* scrut, const std::vector<std::unique_ptr<MatchArm>>& arms,
+                                 const TypePtr& st, AllocaInst* result) {
+        Value* sv = eval(scrut);
+        LType* sty = sv->getType();
+        BasicBlock* endBB = BasicBlock::Create(ctx, "match.end", curFn);
+        std::vector<BasicBlock*> bodyBB;
+        bodyBB.reserve(arms.size());
+        for (size_t i = 0; i < arms.size(); ++i) {
+            bodyBB.push_back(BasicBlock::Create(ctx, "match.arm", curFn));
+        }
+        int elseIdx = -1;
+        bool anyGuard = false;
+        for (size_t i = 0; i < arms.size(); ++i) {
+            if (arms[i]->is_else) elseIdx = static_cast<int>(i);
+            if (arms[i]->guard) anyGuard = true;
+        }
+        BasicBlock* fallback = elseIdx >= 0 ? bodyBB[static_cast<size_t>(elseIdx)] : endBB;
+        const bool unsig = st && !st->is_signed();
+
+        auto constOf = [&](long long v) {
+            return ConstantInt::get(llvm::cast<IntegerType>(sty), static_cast<uint64_t>(v), true);
+        };
+        auto patCond = [&](const MatchPat& p) -> Value* {
+            if (!p.is_range) return b.CreateICmpEQ(sv, constOf(p.vlo));
+            Value* ge = unsig ? b.CreateICmpUGE(sv, constOf(p.vlo)) : b.CreateICmpSGE(sv, constOf(p.vlo));
+            Value* lt = unsig ? b.CreateICmpULT(sv, constOf(p.vhi)) : b.CreateICmpSLT(sv, constOf(p.vhi));
+            return b.CreateAnd(ge, lt);
+        };
+
+        if (!anyGuard) {
+            std::vector<std::pair<ConstantInt*, BasicBlock*>> cases;
+            std::vector<std::pair<const MatchPat*, BasicBlock*>> ranges;
+            for (size_t i = 0; i < arms.size(); ++i) {
+                for (auto& p : arms[i]->pats) {
+                    if (p.is_range) {
+                        ranges.push_back({&p, bodyBB[i]});
+                    } else {
+                        cases.push_back({constOf(p.vlo), bodyBB[i]});
+                    }
+                }
+            }
+            BasicBlock* defBB = BasicBlock::Create(ctx, "match.default", curFn);
+            if (cases.empty()) {
+                b.CreateBr(defBB);
+            } else {
+                auto* sw = b.CreateSwitch(sv, defBB, static_cast<unsigned>(cases.size()));
+                for (auto& entry : cases) sw->addCase(entry.first, entry.second);
+            }
+            b.SetInsertPoint(defBB);
+            for (size_t k = 0; k < ranges.size(); ++k) {
+                BasicBlock* next = (k + 1 < ranges.size())
+                                       ? BasicBlock::Create(ctx, "match.next", curFn)
+                                       : fallback;
+                Value* lo = constOf(ranges[k].first->vlo);
+                Value* hi = constOf(ranges[k].first->vhi);
+                Value* ge = unsig ? b.CreateICmpUGE(sv, lo) : b.CreateICmpSGE(sv, lo);
+                Value* lt = unsig ? b.CreateICmpULT(sv, hi) : b.CreateICmpSLT(sv, hi);
+                b.CreateCondBr(b.CreateAnd(ge, lt), ranges[k].second, next);
+                if (k + 1 < ranges.size()) b.SetInsertPoint(next);
+            }
+            if (ranges.empty()) b.CreateBr(fallback);
+        } else {
+            BasicBlock* cur = b.GetInsertBlock();
+            for (size_t i = 0; i < arms.size(); ++i) {
+                MatchArm* a = arms[i].get();
+                b.SetInsertPoint(cur);
+                if (a->is_else) {
+                    b.CreateBr(bodyBB[i]);
+                    cur = nullptr;
+                    continue;
+                }
+                BasicBlock* hit = BasicBlock::Create(ctx, "match.hit", curFn);
+                for (const auto& p : a->pats) {
+                    b.SetInsertPoint(cur);
+                    BasicBlock* next = BasicBlock::Create(ctx, "match.test", curFn);
+                    b.CreateCondBr(patCond(p), hit, next);
+                    cur = next;
+                }
+                b.SetInsertPoint(hit);
+                if (a->guard) {
+                    Value* g = eval(a->guard.get());
+                    BasicBlock* ok = BasicBlock::Create(ctx, "match.guard", curFn);
+                    b.CreateCondBr(g, ok, cur);  // a failed guard falls through to the next arm
+                    b.SetInsertPoint(ok);
+                }
+                b.CreateBr(bodyBB[i]);
+            }
+            if (cur) {
+                b.SetInsertPoint(cur);
+                b.CreateBr(fallback);
+            }
+        }
+
+        for (size_t i = 0; i < arms.size(); ++i) {
+            b.SetInsertPoint(bodyBB[i]);
+            MatchArm* a = arms[i].get();
+            if (a->body) {
+                block(a->body.get());
+            } else if (a->value && result) {
+                b.CreateStore(eval(a->value.get()), result);
+            } else if (a->value) {
+                (void)eval(a->value.get());
+            }
+            if (!hasTerm(b.GetInsertBlock())) b.CreateBr(endBB);
+        }
+        b.SetInsertPoint(endBB);
+    }
+
     void Emitter::emitMatchStmt(MatchStmt* s) {
         emitMatchCommon(s->scrut.get(), s->arms, s->sty, s->match_ref, nullptr);
     }
@@ -729,6 +841,10 @@ using ArgPack = Emitter::ArgPack;
     // place); every other match copies the scrutinee into an owned temporary first.
     void Emitter::emitMatchCommon(Expr* scrut, const std::vector<std::unique_ptr<MatchArm>>& arms,
                                   const TypePtr& st, bool match_ref, AllocaInst* result) {
+        if (!st || st->kind != TypeKind::Sum) {
+            emitConstMatch(scrut, arms, st, result);
+            return;
+        }
         Value* addr = nullptr;
         if (match_ref) {
             addr = addrOf(scrut);

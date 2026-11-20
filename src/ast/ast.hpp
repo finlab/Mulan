@@ -672,8 +672,9 @@ struct ParaForStmt : Stmt {
     std::vector<LocalVar*> captures;
 };
 
-// switch branch pattern: a single value or a half-open range [vlo, vhi)
-struct SwitchPat {
+// One constant pattern of a `switch` / `match` arm: a single value or a half-open range [vlo, vhi)
+// (SPEC 6.6, 10.1.2). The two constructs share the type; only the arm node differs.
+struct MatchPat {
     ExprPtr lo;
     ExprPtr hi;  // the upper bound of the range (non-null when is_range)
     bool is_range = false;
@@ -684,7 +685,7 @@ struct SwitchPat {
 };
 
 struct SwitchArm : Node {
-    std::vector<SwitchPat> pats;
+    std::vector<MatchPat> pats;
     bool is_else = false;
     std::unique_ptr<Block> body;
     int line = 0;
@@ -713,9 +714,16 @@ struct MatchBind {
 // One arm. The body is an expression in expression form (`MatchExpr`) and a block in statement form
 // (`MatchStmt`); a match never mixes the two forms.
 struct MatchArm : Node {
+    // One of three kinds, decided by the scrutinee's type in sema:
+    //   * alternative mode: `alt` names the variant alternative (with `binds` for its payload);
+    //   * constant mode: `pats` holds literals / enum members / ranges (an integer, enum or `char`
+    //     scrutinee); a bare alternative name (`None`) arrives here as a single plain `Name` pat and is
+    //     reinterpreted as `alt` when the scrutinee is a variant;
+    //   * `is_else`: the remaining cases.
     std::string alt;
     bool is_else = false;         // `else:` covers the remaining alternatives
     std::vector<MatchBind> binds;
+    std::vector<MatchPat> pats;   // constant mode
     ExprPtr guard;                // optional `if cond` after the pattern
     ExprPtr value;                // expression form
     std::unique_ptr<Block> body;  // statement form

@@ -839,6 +839,169 @@ namespace muc_detail {
         }
     }
 
+    // One arm's result: the value of an expression arm, or the checked block of a statement arm.
+    // Shared by both scrutinee kinds (variant and constant), so the two forms stay in step.
+    void Sema::check_match_arm_body(MatchArm* arm, bool expression_form, const TypePtr& expected,
+                                    TypePtr& result, bool& result_void) {
+        if (expression_form) {
+            TypePtr t = check_expr(arm->value.get(), result ? result : expected);
+            if (!t) err("match arm has no value", arm);
+            if (is_void(t)) result_void = true;
+            if (result && !same_type_sig(result, t)) {
+                err("match arms must have the same type (found `" + result->str() + "` and `" + t->str() +
+                        "`)",
+                    arm);
+            }
+            if (!result) result = t;
+        } else {
+            check_block(arm->body.get());
+        }
+    }
+
+    // `match` on an integer or an enum: constant patterns, the rules `switch` used to own (SPEC 6.6,
+    // 10.1.2). The overlap and exhaustiveness rules count only **unguarded** patterns, because a guard
+    // makes an arm's reachability depend on a runtime value.
+    void Sema::check_match_constant(Expr* scrut, std::vector<std::unique_ptr<MatchArm>>& arms,
+                                    bool& has_else, bool expression_form, Node* at, TypePtr& value_ty,
+                                    const TypePtr& expected) {
+        TypePtr st = scrut->ty;
+        const bool enum_scrut = st->kind == TypeKind::Enum;
+        if (!enum_scrut && !(is_prim(st) && is_integer(st))) {
+            err("match needs a `variant`, an enum or an integer (found " + st->str() +
+                    "); floating-point, pointer, class and string values are not pattern-matched",
+                scrut);
+        }
+        {
+            size_t patterns = 0;
+            for (auto& arm : arms) patterns += arm->pats.size();
+            if (patterns > kMaxSwitchLabels) {
+                err("this match has more than " + std::to_string(kMaxSwitchLabels) +
+                        " patterns; split the value space",
+                    at);
+            }
+        }
+        // Overlap detection: merge [lo, hi) intervals of the unguarded patterns.
+        struct Iv {
+            long long lo = 0;
+            long long hi = 0;
+            bool top = false;
+            const Node* node = nullptr;
+        };
+        std::vector<Iv> ivs;
+        TypePtr result = nullptr;
+        bool result_void = false;
+        bool exhaustive_enum = false;
+        std::string missing;
+
+        for (auto& up : arms) {
+            MatchArm* arm = up.get();
+            if (arm->is_else) {
+                has_else = true;
+                push();
+                check_match_arm_body(arm, expression_form, expected, result, result_void);
+                pop();
+                continue;
+            }
+            if (!arm->alt.empty()) {
+                err("the patterned value is `" + st->str() + "`, so `" + arm->alt +
+                        "(...)` (a variant pattern) cannot be used here",
+                    arm);
+            }
+            if (arm->pats.empty()) err("match arm is missing a pattern", arm);
+            for (auto& p : arm->pats) {
+                p.vlo = pattern_value(p.lo.get(), st);
+                Iv iv;
+                iv.lo = p.vlo;
+                iv.node = p.lo.get();
+                if (p.is_range) {
+                    if (enum_scrut) {
+                        err("enum matches do not support ranges (enum members have no numeric order); list "
+                            "each member explicitly",
+                            p.lo.get());
+                    }
+                    p.vhi = pattern_value(p.hi.get(), st);
+                    if (p.inclusive) {
+                        if (p.vhi == LLONG_MAX) {
+                            err("match range upper bound is too large for an inclusive range (`..=`)",
+                                p.hi.get());
+                        }
+                        ++p.vhi;  // normalize to the half-open interval [vlo, vhi)
+                    }
+                    if (p.vlo >= p.vhi) {
+                        err("match range `" + std::to_string(p.vlo) + (p.inclusive ? "..=" : "..") +
+                                std::to_string(p.inclusive ? p.vhi - 1 : p.vhi) + "` is empty",
+                            p.lo.get());
+                    }
+                    iv.hi = p.vhi;
+                } else {
+                    if (p.vlo == LLONG_MAX) {
+                        iv.hi = p.vlo;
+                        iv.top = true;
+                        p.vhi = p.vlo;  // internal use only; +1 would overflow
+                    } else {
+                        iv.hi = p.vlo + 1;
+                        p.vhi = p.vlo + 1;  // internal use only (p.vlo is the only matching value)
+                    }
+                }
+                if (!arm->guard) ivs.push_back(iv);
+            }
+            push();
+            if (arm->guard) check_cond(arm->guard.get(), "match guard");
+            check_match_arm_body(arm, expression_form, expected, result, result_void);
+            pop();
+        }
+
+        std::sort(ivs.begin(), ivs.end(), [](const Iv& a, const Iv& b) { return a.lo < b.lo; });
+        for (size_t i = 1; i < ivs.size(); ++i) {
+            const Iv& prev = ivs[i - 1];
+            const Iv& cur = ivs[i];
+            if (prev.top || cur.lo < prev.hi) {
+                err("overlapping match patterns: value " + std::to_string(cur.lo) +
+                        " is already covered by an earlier pattern (ranges are half-open; `a..b` excludes b)",
+                    cur.node);
+            }
+        }
+
+        if (enum_scrut) {
+            auto members = enum_members_of(st);
+            for (auto& [name, v] : members) {
+                bool covered = false;
+                for (auto& up : arms) {
+                    if (up->guard) continue;  // a guard does not cover the member
+                    for (auto& p : up->pats) {
+                        if (!p.is_range && p.vlo == v) covered = true;
+                    }
+                }
+                if (!covered) {
+                    if (!missing.empty()) missing += ", ";
+                    missing += name;
+                }
+            }
+            if (!has_else) {
+                if (!missing.empty()) {
+                    err("match does not cover all members of enum " + st->str() + " (missing " + missing +
+                            "); add the missing patterns or write `else:`",
+                        at);
+                }
+                exhaustive_enum = true;
+            } else if (missing.empty()) {
+                warn("`else` arm is unreachable: all members of enum `" + st->str() +
+                         "` are already covered",
+                     at);
+            }
+        }
+        if (expression_form) {
+            if (!has_else && !exhaustive_enum) {
+                err("an expression match must produce a value for every input: add `else:`", at);
+            }
+            if (!result) err("match has no arms", at);
+            if (result_void && result && !is_void(result)) {
+                err("a `void` match arm cannot be mixed with a value arm", at);
+            }
+        }
+        value_ty = expression_form ? result : t_void();
+    }
+
     // `match` (SPEC 10.1.2, decided 2026-11-20). Shared by MatchExpr and MatchStmt: the alternative
     // set, bindings, guards and exhaustiveness are identical; only the arm body differs.
     void Sema::check_match_common(Expr* scrut, std::vector<std::unique_ptr<MatchArm>>& arms,
@@ -848,9 +1011,20 @@ namespace muc_detail {
         TypePtr st = check_expr(scrut);
         if (!st) err("match is missing the value to dispatch on", at);
         if (st->kind != TypeKind::Sum) {
-            err("match is only implemented for `variant` types (found " + st->str() +
-                    "); type and class patterns are a later phase (SPEC 10.1.3)",
-                scrut);
+            // Integer and enum scrutinees take constant patterns (SPEC 10.1.2, formerly `switch`).
+            check_match_constant(scrut, arms, has_else, expression_form, at, value_ty, expected);
+            return;
+        }
+        // A variant arm written as a bare alternative (`None`) arrives as a single name pattern; the
+        // parser cannot tell it from an enum member, so the scrutinee's type settles it here.
+        for (auto& arm : arms) {
+            if (arm->is_else || !arm->alt.empty()) continue;
+            if (arm->pats.size() == 1 && !arm->pats[0].is_range) {
+                if (auto* n = dynamic_cast<Name*>(arm->pats[0].lo.get())) {
+                    arm->alt = n->ident;
+                    arm->pats.clear();
+                }
+            }
         }
         for (auto& arm : arms) {
             for (auto& b : arm->binds) {
@@ -888,22 +1062,12 @@ namespace muc_detail {
                 // also arrive pre-set from the parser, so it is not an error here
                 has_else = true;
                 push();
-                if (expression_form) {
-                    TypePtr t = check_expr(arm->value.get(), result);
-                    if (!t) err("the `else` arm has no value", arm.get());
-                    if (result && !same_type_sig(result, t)) {
-                        err("match arms must have the same type (found `" + result->str() + "` and `" +
-                                t->str() + "`)",
-                            arm.get());
-                    }
-                    if (!result) result = t;
-                } else {
-                    check_block(arm->body.get());
-                }
+                check_match_arm_body(arm.get(), expression_form, expected, result, result_void);
                 pop();
                 continue;
             }
             if (arm->alt.empty()) err("a match arm needs an alternative name", arm.get());
+            if (!arm->pats.empty()) err("a variant arm cannot carry constant patterns", arm.get());
             int idx = -1;
             for (size_t k = 0; k < st->sum_names.size(); ++k) {
                 if (st->sum_names[k] == arm->alt) {
@@ -943,19 +1107,7 @@ namespace muc_detail {
                 if (cur_func_) cur_func_->synthetic_locals.push_back(std::move(lv));
             }
             if (arm->guard) check_cond(arm->guard.get(), "match guard");
-            if (expression_form) {
-                TypePtr t = check_expr(arm->value.get(), result);
-                if (!t) err("match arm has no value", arm.get());
-                if (is_void(t)) result_void = true;
-                if (result && !same_type_sig(result, t)) {
-                    err("match arms must have the same type (found `" + result->str() + "` and `" +
-                            t->str() + "`)",
-                        arm.get());
-                }
-                if (!result) result = t;
-            } else {
-                check_block(arm->body.get());
-            }
+            check_match_arm_body(arm.get(), expression_form, expected, result, result_void);
             pop();
             arm->bind_locals = std::move(locals);
         }

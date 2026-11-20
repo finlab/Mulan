@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 272 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 273 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -2941,8 +2941,9 @@ Value d = Value.None;        // a unit alternative is a plain value
 
 #### 10.1.2 Dispatching a variant: `match` (implemented in build 258)
 
-`match` is the **only** construct that dispatches a `variant`; `switch` keeps constant dispatch over
-integers and enums and rejects a variant scrutinee (6.6).
+`match` is the **only** construct that dispatches a `variant`, and it also dispatches an **integer,
+`char` or enum** through **constant patterns** — the vocabulary `switch` accepts (6.6). `switch`
+remains for constant dispatch and rejects a variant scrutinee.
 
 ```c
 int x = match v {
@@ -2969,13 +2970,22 @@ int x = match v {
 - **Exhaustiveness is mandatory** (unless the match has an `else`): every alternative must be
   covered, and a missing one is a compile error naming it. There is at most one `else`, and it is
   last; an `else` after a fully covered match is unreachable and warns.
-- The first version supports **one pattern level only**: nested patterns, or-patterns, range patterns,
-  type (class/interface) patterns and public-contract branches are not provided yet (10.1.3).
+- **Constant patterns** (integer, `char` or enum scrutinee): an arm lists one or more patterns
+  separated by `,`; a pattern is a compile-time constant (literal, enum member, or a constant
+  expression the same evaluator folds) or a range `a..b` (half-open) / `a..=b` (inclusive).
+  Overlapping or duplicate patterns are errors; an enum match must cover every member unless it ends
+  with `else`. Guards apply here too, and a failed guard continues with the next arm. In the
+  **expression** form every input must produce a value, so an integer match needs `else` (an
+  exhaustive enum match needs none). The matched value is evaluated once.
+- The first version supports **one pattern level only**: nested patterns, or-patterns, type
+  (class/interface) patterns and public-contract branches are not provided yet (10.1.3).
 - `is` keeps its current rule (a binding only when the `is` is the whole condition, 10.1.1); guarded
   cases are written with `match`, not with `is`.
 - A `match` over a variant counts as a terminating path for the return-value check when every arm
   returns, so a function over a variant needs no trailing `return`.
-- Implementation: `match` lowers to the existing tag dispatch, so no new representation is needed.
+- Implementation: a variant match lowers to the existing tag dispatch; a constant match reuses the
+  `switch` lowering — an LLVM `switch` (jump table) for single values, a comparison chain for ranges,
+  and an ordered chain when any arm has a guard (a guard makes source order observable).
 
 #### 10.1.3 Later phases for `match`
 

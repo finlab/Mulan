@@ -759,6 +759,10 @@ struct Emitter {
     // `result` is the slot the expression form stores each arm value into (null for a statement match).
     void emitMatchCommon(Expr* scrut, const std::vector<std::unique_ptr<MatchArm>>& arms,
                          const TypePtr& sty, bool match_ref, AllocaInst* result);
+    // Constant patterns (integer / enum scrutinee): jump table + range chain, or an ordered chain
+    // when a guard makes source order observable.
+    void emitConstMatch(Expr* scrut, const std::vector<std::unique_ptr<MatchArm>>& arms,
+                        const TypePtr& sty, AllocaInst* result);
     void emitMatchStmt(MatchStmt* s);
     Value* evalMatch(MatchExpr* e);
     Value* evalIs(IsExpr* e);

@@ -363,6 +363,14 @@ std::vector<std::unique_ptr<MatchArm>> clone_match_arms(
         r->alt = a->alt;
         r->is_else = a->is_else;
         r->binds = a->binds;
+        for (const auto& pat : a->pats) {
+            MatchPat q;
+            q.lo = pat.lo ? clone_expr(*pat.lo) : nullptr;
+            q.hi = pat.hi ? clone_expr(*pat.hi) : nullptr;
+            q.is_range = pat.is_range;
+            q.inclusive = pat.inclusive;
+            r->pats.push_back(std::move(q));
+        }
         r->guard = a->guard ? clone_expr(*a->guard) : nullptr;
         r->value = a->value ? clone_expr(*a->value) : nullptr;
         r->body = a->body ? clone_block(*a->body) : nullptr;
@@ -455,7 +463,7 @@ StmtPtr clone_stmt(const Stmt& s) {
             arm->line = a->line;
             arm->col = a->col;
             for (const auto& pat : a->pats) {
-                SwitchPat q;
+                MatchPat q;
                 q.lo = pat.lo ? clone_expr(*pat.lo) : nullptr;
                 q.hi = pat.hi ? clone_expr(*pat.hi) : nullptr;
                 q.is_range = pat.is_range;

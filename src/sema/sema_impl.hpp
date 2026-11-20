@@ -828,6 +828,13 @@ private:
     void check_match_common(Expr* scrut, std::vector<std::unique_ptr<MatchArm>>& arms,
                             bool& has_else, bool& match_ref, bool expression_form, Node* at,
                             TypePtr& value_ty, const TypePtr& expected);
+    // Constant patterns (`match` on an integer or enum; the rules `switch` used to own).
+    void check_match_constant(Expr* scrut, std::vector<std::unique_ptr<MatchArm>>& arms,
+                              bool& has_else, bool expression_form, Node* at, TypePtr& value_ty,
+                              const TypePtr& expected);
+    // One arm's value (expression form) or block (statement form); shared by both scrutinee kinds.
+    void check_match_arm_body(MatchArm* arm, bool expression_form, const TypePtr& expected,
+                              TypePtr& result, bool& result_void);
 
     // Index shape (SPEC 6.4.1): length() -> usize  +  operator[](C, usize) -> T
     void resolve_index_shape(ForInStmt* s, const TypePtr& st);

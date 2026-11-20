@@ -860,7 +860,7 @@ std::unique_ptr<Stmt> Parser::parse_switch() {
         } else {
             if (saw_else) throw err_at("`else:` must be the last branch of the switch", at);
             for (;;) {
-                SwitchPat pat;
+                MatchPat pat;
                 pat.lo = parse_expr();
                 if (at_op("..") || at_op("..=")) {
                     pat.is_range = true;
@@ -913,9 +913,12 @@ void Parser::parse_match_arms(std::vector<std::unique_ptr<MatchArm>>& arms, bool
             arm->is_else = true;
         } else {
             if (saw_else) throw err_at("`else:` must be the last arm of the match", at);
-            arm->alt = expect_ident("alternative name").text;
-            if (at_op("(")) {
-                advance();
+            // `Alt(...)` binds a variant payload; anything else is a list of constant patterns. Which
+            // one the arm means is settled in sema, from the scrutinee's type: `None` parses as a bare
+            // name pattern here and is reinterpreted as the alternative when the scrutinee is a variant.
+            if (peek().kind == TokKind::Ident && peek(1).is_op("(")) {
+                arm->alt = advance().text;
+                advance();  // (
                 if (!at_op(")")) {
                     for (;;) {
                         MatchBind b;
@@ -939,6 +942,24 @@ void Parser::parse_match_arms(std::vector<std::unique_ptr<MatchArm>>& arms, bool
                     }
                 }
                 expect_op(")");
+            } else {
+                for (;;) {
+                    MatchPat pat;
+                    pat.lo = parse_expr();
+                    if (at_op("..") || at_op("..=")) {
+                        pat.is_range = true;
+                        pat.inclusive = at_op("..=");
+                        advance();
+                        pat.hi = parse_expr();
+                    }
+                    if (peek().kind == TokKind::Ident && peek().text == "step") {
+                        throw err_at("`step` is not allowed in a match pattern: list the values or use a range",
+                                     peek());
+                    }
+                    arm->pats.push_back(std::move(pat));
+                    if (!at_op(",")) break;
+                    advance();
+                }
             }
             if (at_kw("if")) {
                 advance();

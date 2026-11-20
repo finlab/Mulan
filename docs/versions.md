@@ -27,6 +27,27 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 273 — 2026-11-20
+
+**`match` takes integer, `char` and enum scrutinees (constant patterns).**
+
+First step of folding `switch` into `match` (SPEC 10.1.2): an arm may list constant patterns —
+literals, enum members, folded constants, and the ranges `a..b` / `a..=b` — separated by `,`, with an
+optional guard. A bare alternative name (`None`) is reinterpreted as the alternative when the
+scrutinee is a variant; `Alt(x)` stays a variant pattern.
+
+- overlapping or duplicate patterns are errors; an enum must be covered unless `else` is written;
+- the expression form requires full coverage, so an integer match needs `else`;
+- lowering: jump table for single values, comparison chain for ranges, and an ordered chain when any
+  arm has a guard (a guard makes source order observable);
+- `switch` is untouched in this build; it is removed in the next one, after its tests are migrated.
+
+Cases `match_const` (literals, comma lists, both range forms, guards, enums, `char`, statement and
+expression forms) and the must-fail `match_const_enum_missing` / `match_const_overlap` /
+`match_const_no_else` / `match_const_variant_pat` / `match_const_type`.
+
+Full suite: 923/923 on Windows.
+
 #### build 272 — 2026-11-20
 
 **`const struct` / `const class` removed; `const` stays a type and method qualifier.**

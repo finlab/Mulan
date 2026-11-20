@@ -13,7 +13,7 @@ Mulan's design goals:
 
 4. Exception handling, generics, concurrency, and other modern language features.
 
-Current version **0.0.0** (build 272), not yet 1.0. The language specification is [`docs/SPEC.md`](docs/SPEC.md)
+Current version **0.0.0** (build 273), not yet 1.0. The language specification is [`docs/SPEC.md`](docs/SPEC.md)
 (draft v0.2, with each rule marked as settled / suggested / open).
 
 ## Design trade-offs
