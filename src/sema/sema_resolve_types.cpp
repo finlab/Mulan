@@ -464,6 +464,10 @@ namespace muc_detail {
                 sig.is_const = m->is_const;
                 sig.ret = m->rty;
                 sig.params = m->pty;
+                for (auto& prm : m->params) {
+                    sig.params_ref.push_back(prm->by_ref);
+                    sig.params_cref.push_back(prm->by_ref && prm->is_const);
+                }
                 sig.is_abstract = false;
                 sig.is_override = m->is_override;
                 sig.is_public = m->is_public;
@@ -471,7 +475,8 @@ namespace muc_detail {
                 sig.is_operator = m->is_operator;
                 if (m->is_operator) check_member_operator_sig(m.get(), sd->ty);
                 sd->ty->methods.push_back(std::move(sig));
-                m->cname = method_cname(u->name, sd->name, m->name, m->pty, m->is_const);
+                m->cname = method_cname(u->name, sd->name, m->name, method_decl_symbol_params(m.get()),
+                                        m->is_const);
             }
             // A type with default member initializers but no constructor of its own gets a synthesized
             // zero-argument constructor, so every construction site applies those initializers instead of
@@ -625,6 +630,10 @@ namespace muc_detail {
                 sig.is_const = m->is_const;
                 sig.ret = m->rty;
                 sig.params = m->pty;
+                for (auto& prm : m->params) {
+                    sig.params_ref.push_back(prm->by_ref);
+                    sig.params_cref.push_back(prm->by_ref && prm->is_const);
+                }
                 sig.is_abstract = !m->body;
                 sig.is_override = m->is_override;
                 // An abstract method has no implementation to name, so it is always virtual; an `override`
@@ -639,7 +648,8 @@ namespace muc_detail {
                 sig.is_operator = m->is_operator;
                 if (m->is_operator) check_member_operator_sig(m.get(), c->ty);
                 c->ty->methods.push_back(std::move(sig));
-                m->cname = method_cname(u->name, c->name, m->name, m->pty, m->is_const);
+                m->cname = method_cname(u->name, c->name, m->name, method_decl_symbol_params(m.get()),
+                                        m->is_const);
                 if (!m->body) c->ty->is_abstract = true;
             }
             // Same synthesized zero-argument constructor as for structs (SPEC 3.7, build 215).
@@ -741,11 +751,31 @@ namespace muc_detail {
                     }
                     m->pty.push_back(pt);
                 }
+                // An interface member is a vtable/itable slot keyed by its value signature; a `ref`
+                // parameter would need the slot key to carry the borrow, and every implementor (and
+                // the dynamic call) to agree on it. Value parameters only for now.
+                // An interface *operator* member is a compile-time contract (`ref Self` receivers and
+                // borrowed operands live there); only a real member needs an itable slot, and that slot
+                // carries the value signature only.
+                if (!m->is_operator) {
+                    for (auto& prm : m->params) {
+                        if (prm && prm->by_ref) {
+                            err("an interface method cannot take a `ref` parameter: the itable slot "
+                                "carries the value signature only; pass a `class` handle or use a "
+                                "struct method",
+                                prm.get());
+                        }
+                    }
+                }
                 MethodSig sig;
                 sig.name = m->name;
                 sig.is_const = m->is_const;
                 sig.ret = m->rty;
                 sig.params = m->pty;
+                for (auto& prm : m->params) {
+                    sig.params_ref.push_back(prm->by_ref);
+                    sig.params_cref.push_back(prm->by_ref && prm->is_const);
+                }
                 sig.is_abstract = !m->body;
                 sig.is_override = false;
                 sig.owner = itf->ty;

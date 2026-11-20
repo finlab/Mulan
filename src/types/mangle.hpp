@@ -25,6 +25,10 @@ std::string mangle_unit(const std::string& unit, const std::string& name);
 std::string func_cname(const std::string& unit, FuncDecl* f);
 
 // Method / constructor / destructor
+// The parameter types as they appear in a method's symbol: a `ref` parameter travels as a pointer, so
+// `m(int)` and `m(ref int)` mangle differently (they are different methods).
+std::vector<TypePtr> method_symbol_params(const std::vector<TypePtr>& params,
+                                          const std::vector<bool>& refs);
 std::string method_cname(const std::string& unit, const std::string& owner,
                          const std::string& name, const std::vector<TypePtr>& params,
                          bool is_const = false);

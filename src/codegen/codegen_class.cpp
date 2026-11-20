@@ -120,7 +120,8 @@ namespace muc_detail {
         for (size_t i = 0; i < slot.params.size(); ++i) ip.push_back(lt(slot.params[i]));
         if (impl.owner->kind == TypeKind::Interface) ip[0] = ifaceTy;
         FunctionCallee target = mod->getOrInsertFunction(
-            method_cname(impl.owner->unit, impl.owner->name, impl.name, impl.params, impl.is_const),
+            method_cname(impl.owner->unit, impl.owner->name, impl.name,
+                         method_symbol_params(impl.params, impl.params_ref), impl.is_const),
             FunctionType::get(lt(impl.ret), ip, false));
         Value* r = hb.CreateCall(target, args);
         if (fn->getReturnType()->isVoidTy()) {
@@ -247,11 +248,18 @@ namespace muc_detail {
         return true;
     }
 
+    // A `ref` parameter travels as a pointer to the referent (SPEC 3.8, extended to methods).
+    LType* Emitter::paramTy(const MethodSig& sig, size_t i) {
+        if (i < sig.params_ref.size() && sig.params_ref[i]) return ptrTy();
+        return lt(sig.params[i]);
+    }
+
     FunctionCallee Emitter::methodFn(const MethodSig* sig) {
         std::vector<LType*> ptys{ptrTy()};
-        for (auto& t : sig->params) ptys.push_back(lt(t));
+        for (size_t i = 0; i < sig->params.size(); ++i) ptys.push_back(paramTy(*sig, i));
         return mod->getOrInsertFunction(
-            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params, sig->is_const),
+            method_cname(sig->owner->unit, sig->owner->name, sig->name,
+                         method_symbol_params(sig->params, sig->params_ref), sig->is_const),
             FunctionType::get(lt(sig->ret), ptys, false));
     }
 
@@ -378,7 +386,10 @@ namespace muc_detail {
         resetDebugScope();
         if (!m->body) return;
         std::vector<LType*> ptys{ptrTy()};
-        for (auto& t : m->pty) ptys.push_back(lt(t));
+        for (size_t i = 0; i < m->pty.size(); ++i) {
+            const bool by_ref = i < m->params.size() && m->params[i] && m->params[i]->by_ref;
+            ptys.push_back(by_ref ? ptrTy() : lt(m->pty[i]));
+        }
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(m->cname, FunctionType::get(lt(m->rty), ptys, false))
                 .getCallee());
@@ -623,7 +634,10 @@ namespace muc_detail {
         resetDebugScope();
         if (!m->body) return;
         std::vector<LType*> ptys{ptrTy()};
-        for (auto& t : m->pty) ptys.push_back(lt(t));
+        for (size_t i = 0; i < m->pty.size(); ++i) {
+            const bool by_ref = i < m->params.size() && m->params[i] && m->params[i]->by_ref;
+            ptys.push_back(by_ref ? ptrTy() : lt(m->pty[i]));
+        }
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(m->cname, FunctionType::get(lt(m->rty), ptys, false))
                 .getCallee());
@@ -770,7 +784,10 @@ namespace muc_detail {
         // not have: it is emitted only as the materialized per-implementor method (MethodDecl::body_self).
         if (m->body_self) return;
         std::vector<LType*> ptys{ifaceTy};
-        for (auto& t : m->pty) ptys.push_back(lt(t));
+        for (size_t i = 0; i < m->pty.size(); ++i) {
+            const bool by_ref = i < m->params.size() && m->params[i] && m->params[i]->by_ref;
+            ptys.push_back(by_ref ? ptrTy() : lt(m->pty[i]));
+        }
         Function* fn = cast<Function>(
             mod->getOrInsertFunction(m->cname, FunctionType::get(lt(m->rty), ptys, false))
                 .getCallee());

@@ -18,7 +18,7 @@ using ArgPack = Emitter::ArgPack;
     Value* Emitter::emitMethodCallVals(const MethodSig* sig, Value* recv, const TypePtr& recvTy,
                                        const std::vector<Value*>& args, Node* at) {
         std::vector<LType*> ptys{ptrTy()};
-        for (auto& t : sig->params) ptys.push_back(lt(t));
+        for (size_t i = 0; i < sig->params.size(); ++i) ptys.push_back(paramTy(*sig, i));
         auto* fnTy = FunctionType::get(lt(sig->ret), ptys, false);
 
         // The receiver is dereferenced (object -> descriptor -> vtable) before the call, so a null
@@ -55,7 +55,7 @@ using ArgPack = Emitter::ArgPack;
             Value* fnp = b.CreateGEP(ptrTy(), itab, ConstantInt::get(i64(), slot));
             Value* fn = b.CreateLoad(ptrTy(), fnp);
             std::vector<LType*> ip{ptrTy(), ptrTy()};
-            for (auto& t : sig->params) ip.push_back(lt(t));
+            for (size_t i = 0; i < sig->params.size(); ++i) ip.push_back(paramTy(*sig, i));
             auto* ifnTy = FunctionType::get(lt(sig->ret), ip, false);
             std::vector<Value*> iargs{obj, dsc};
             iargs.insert(iargs.end(), args.begin(), args.end());
@@ -108,7 +108,7 @@ using ArgPack = Emitter::ArgPack;
 
     Value* Emitter::emitStructMethodCall(const MethodSig* sig, Value* recvAddr,
                                          const std::vector<Expr*>& args) {
-        ArgPack pack = prepareArgs(args, sig->params);
+        ArgPack pack = prepareArgs(args, sig->params, &sig->params_ref);
         FunctionCallee callee = methodFn(sig);
         std::vector<Value*> vals{recvAddr};
         for (auto* v : pack.vals) vals.push_back(v);
@@ -125,7 +125,7 @@ using ArgPack = Emitter::ArgPack;
         if (recv->ty && recv->ty->kind == TypeKind::Class) {
             Value* h = eval(recv);
             const bool owned = ownsReference(recv);
-            ArgPack pack = prepareArgs(args, sig->params);
+            ArgPack pack = prepareArgs(args, sig->params, &sig->params_ref);
             Value* r = emitMethodCallVals(sig, h, recv->ty, pack.vals, recv);
             releaseTemps(pack);
             if (owned) emitReleaseRef(h, recv->ty);
@@ -144,9 +144,10 @@ using ArgPack = Emitter::ArgPack;
             return r;
         }
         std::vector<LType*> pty{ptrTy()};
-        for (const auto& p : sig->params) pty.push_back(lt(p));
+        for (size_t k = 0; k < sig->params.size(); ++k) pty.push_back(paramTy(*sig, k));
         FunctionCallee callee = mod->getOrInsertFunction(
-            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params, sig->is_const),
+            method_cname(sig->owner->unit, sig->owner->name, sig->name,
+                         method_symbol_params(sig->params, sig->params_ref), sig->is_const),
             FunctionType::get(lt(sig->ret), pty, false));
         std::vector<Value*> args{recvAddr};
         for (auto* v : idxVals) args.push_back(v);
@@ -157,7 +158,8 @@ using ArgPack = Emitter::ArgPack;
 
     Value* Emitter::emitMemberIndexSet(const MethodSig* sig, Value* recvAddr, Value* idxVal, Expr* value) {
         FunctionCallee callee = mod->getOrInsertFunction(
-            method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params, sig->is_const),
+            method_cname(sig->owner->unit, sig->owner->name, sig->name,
+                         method_symbol_params(sig->params, sig->params_ref), sig->is_const),
             FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), lt(sig->params[0]), lt(sig->params[1])}, false));
         ArgPack pack;
         Value* v = coerce(value, sig->params[1]);
@@ -475,7 +477,7 @@ using ArgPack = Emitter::ArgPack;
             }
             std::vector<Expr*> rawArgs;
             for (auto& a : c->args) rawArgs.push_back(a.get());
-            ArgPack pack = prepareArgs(rawArgs, sig->params);
+            ArgPack pack = prepareArgs(rawArgs, sig->params, &sig->params_ref);
             FunctionCallee callee = methodFn(sig);
             std::vector<Value*> vals{recv};
             for (auto* v : pack.vals) vals.push_back(v);
@@ -500,7 +502,7 @@ using ArgPack = Emitter::ArgPack;
             }
             std::vector<Expr*> rawArgs;
             for (auto& a : c->args) rawArgs.push_back(a.get());
-            ArgPack pack = prepareArgs(rawArgs, sig->params);
+            ArgPack pack = prepareArgs(rawArgs, sig->params, &sig->params_ref);
             Value* r = emitMethodCallVals(sig, recv, recvTy, pack.vals, c);
             releaseTemps(pack);
             if (recvOwned) emitReleaseRef(recv, recvTy);
@@ -511,13 +513,14 @@ using ArgPack = Emitter::ArgPack;
             if (c->method) {
                 const MethodSig* sig = c->method;
                 std::vector<LType*> ptys{ptrTy()};
-                for (auto& t : sig->params) ptys.push_back(lt(t));
+                for (size_t k = 0; k < sig->params.size(); ++k) ptys.push_back(paramTy(*sig, k));
                 FunctionCallee callee = mod->getOrInsertFunction(
-                    method_cname(sig->owner->unit, sig->owner->name, sig->name, sig->params, sig->is_const),
+                    method_cname(sig->owner->unit, sig->owner->name, sig->name,
+                         method_symbol_params(sig->params, sig->params_ref), sig->is_const),
                     FunctionType::get(lt(sig->ret), ptys, false));
                 std::vector<Expr*> rawArgs;
                 for (auto& a : c->args) rawArgs.push_back(a.get());
-                ArgPack pack = prepareArgs(rawArgs, sig->params);
+                ArgPack pack = prepareArgs(rawArgs, sig->params, &sig->params_ref);
                 std::vector<Value*> vals{b.CreateLoad(ptrTy(), thisSlot)};
                 for (auto* v : pack.vals) vals.push_back(v);
                 Value* r = b.CreateCall(callee, vals);

@@ -112,6 +112,17 @@ std::string func_cname(const std::string& unit, FuncDecl* f) {
     return out;
 }
 
+std::vector<TypePtr> method_symbol_params(const std::vector<TypePtr>& params,
+                                          const std::vector<bool>& refs) {
+    std::vector<TypePtr> out;
+    out.reserve(params.size());
+    for (size_t i = 0; i < params.size(); ++i) {
+        const bool by_ref = i < refs.size() && refs[i];
+        out.push_back(by_ref ? Type::make_ptr(params[i]) : params[i]);
+    }
+    return out;
+}
+
 std::string method_cname(const std::string& unit, const std::string& owner,
                          const std::string& name, const std::vector<TypePtr>& params,
                          bool is_const) {

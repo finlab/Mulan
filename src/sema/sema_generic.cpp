@@ -523,6 +523,10 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             sig.is_const = m->is_const;
             sig.ret = m->rty;
             sig.params = m->pty;
+            for (auto& prm : m->params) {
+                sig.params_ref.push_back(prm->by_ref);
+                sig.params_cref.push_back(prm->by_ref && prm->is_const);
+            }
             sig.is_abstract = !m->body;
             sig.is_override = m->is_override;
             sig.is_public = true;
@@ -532,7 +536,8 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
             for (auto& p : m->params) sig.params_self.push_back(p->spec && p->spec->is_self);
             if (m->is_operator) init_interface_operator(m.get(), sig, display);
             ity->methods.push_back(std::move(sig));
-            m->cname = method_cname(tmpl_unit, display, m->name, m->pty, m->is_const);
+            m->cname = method_cname(tmpl_unit, display, m->name, method_decl_symbol_params(m.get()),
+                                m->is_const);
         }
         cur_class_ = saved_class;
         cur_ = saved_cur;
@@ -665,6 +670,10 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         sig.name = m->name;
         sig.ret = m->rty;
         sig.params = m->pty;
+        for (auto& prm : m->params) {
+            sig.params_ref.push_back(prm->by_ref);
+            sig.params_cref.push_back(prm->by_ref && prm->is_const);
+        }
         sig.is_abstract = !m->body;
         sig.is_override = m->is_override;
         // The non-generic path sets this in sema_decl.cpp; without it a generic class's `virtual`
@@ -677,7 +686,8 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         sig.owner = ty;
         sig.is_operator = m->is_operator;
         ty->methods.push_back(sig);
-        m->cname = method_cname(tmpl_unit, display, m->name, m->pty, m->is_const);
+        m->cname = method_cname(tmpl_unit, display, m->name, method_decl_symbol_params(m.get()),
+                                m->is_const);
         if (!m->body) ty->is_abstract = true;
     }
 

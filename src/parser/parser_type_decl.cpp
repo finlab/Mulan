@@ -410,7 +410,7 @@ std::unique_ptr<MethodDecl> Parser::parse_method(TypeSpecPtr ret, bool ret_ref, 
     m->ret_ref = ret_ref;
     m->line = name_tok.line;
     m->col = name_tok.col;
-    m->params = parse_params();
+    m->params = parse_params(nullptr, /*allow_ref=*/true);
     if (at_kw("const")) {
         advance();
         m->is_const = true;
@@ -788,7 +788,7 @@ std::unique_ptr<MethodDecl> Parser::parse_member_operator(TypeSpecPtr ret, bool 
     m->is_operator = true;
     m->line = tk.line;
     m->col = tk.col;
-    m->params = parse_params();
+    m->params = parse_params(nullptr, /*allow_ref=*/true);
     if (at_kw("const")) {
         advance();
         m->is_const = true;

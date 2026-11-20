@@ -62,6 +62,11 @@ struct MethodSig {
     // either by value or as a borrow; `recv_cref` is true only for the read-only form.
     bool recv_ref = false;
     bool recv_cref = false;
+    // `ref T p` / `const ref T p` parameters (SPEC 3.8, extended to methods in build 270): the borrow
+    // is part of the signature (an overload differing only in ref-ness is a different method), the
+    // callee receives an address, and the argument must be an addressable place of exactly that type.
+    std::vector<bool> params_ref;
+    std::vector<bool> params_cref;
     // `extend I with J;` (SPEC 3.18): the unit declaring the extension that produced this method. It
     // is empty for an ordinary method; a call is allowed only where that unit is visible.
     std::string ext_unit;

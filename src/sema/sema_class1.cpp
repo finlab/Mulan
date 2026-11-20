@@ -92,16 +92,25 @@ namespace muc_detail {
         if (ra == -2 || rb == -2) return false;  // the receiver must be the first operand
         const bool drop_a = ra == 0 && rb < 0 && b.params.size() + 1 == a.params.size();
         const bool drop_b = rb == 0 && ra < 0 && a.params.size() + 1 == b.params.size();
+        // `ref` / `const ref` parameters are part of the signature (`m(int)` and `m(ref int)` are
+        // different methods), and the receiver a member operator takes implicitly is dropped here too,
+        // so the borrow view is built after the same skip.
         std::vector<const TypePtr*> av, bv;
+        std::vector<bool> ar, br, ac, bc;
         for (size_t i = 0; i < a.params.size(); ++i) {
             if (drop_a && i == 0) continue;
             av.push_back(&a.params[i]);
+            ar.push_back(i < a.params_ref.size() && a.params_ref[i]);
+            ac.push_back(i < a.params_cref.size() && a.params_cref[i]);
         }
         for (size_t i = 0; i < b.params.size(); ++i) {
             if (drop_b && i == 0) continue;
             bv.push_back(&b.params[i]);
+            br.push_back(i < b.params_ref.size() && b.params_ref[i]);
+            bc.push_back(i < b.params_cref.size() && b.params_cref[i]);
         }
         if (av.size() != bv.size()) return false;
+        if (ar != br || ac != bc) return false;
         for (size_t i = 0; i < av.size(); ++i) {
             if (!same_type(*av[i], *bv[i])) return false;
         }
@@ -202,7 +211,8 @@ namespace muc_detail {
             if (!slot || slot->is_const || !slot->is_virtual) continue;
             if (!same_param_sig(slot->params, m->pty)) continue;
             m->is_const = false;
-            m->cname = method_cname(c->ty->unit, c->name, m->name, m->pty, false);
+            m->cname = method_cname(c->ty->unit, c->name, m->name,
+                                    method_decl_symbol_params(m.get()), false);
             for (auto& sig : c->ty->methods) {
                 if (sig.owner.get() != c->ty.get() || sig.name != m->name || !sig.is_const) continue;
                 if (!same_param_sig(sig.params, m->pty)) continue;
@@ -656,6 +666,10 @@ namespace muc_detail {
             sig.name = m->name;
             sig.is_const = m->is_const;
             sig.params = m->pty;
+            for (auto& prm : m->params) {
+                sig.params_ref.push_back(prm->by_ref);
+                sig.params_cref.push_back(prm->by_ref && prm->is_const);
+            }
             for (MethodDecl* prev : seen) {
                 if (prev->name != m->name || prev->is_const != m->is_const ||
                     !same_param_sig(prev->pty, m->pty)) {

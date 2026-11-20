@@ -27,6 +27,28 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 270 — 2026-11-20
+
+**A method may take `ref` / `const ref` parameters.**
+
+The last gap of the borrow story (SPEC 3.8): `ref` was limited to free functions, so a value-type API
+that writes an out-parameter (`b.update(ref x)`) had to be a free function. A method's borrow is now
+part of its signature:
+
+- the parameter travels as a pointer and is mangled as one, so `m(int)` and `m(ref int)` are different
+  methods (two overloads, distinct symbols);
+- the argument must be an addressable place of exactly the declared type — no conversion, no temporary
+  — and a mutable borrow never binds a readonly place (the same rules the free-function call checks);
+- a mutable `ref` argument counts as initialized for definite-initialization purposes (an
+  out-parameter);
+- **interface members cannot take `ref`**: the itable slot carries the value signature only, and the
+  dynamic call has no place for a borrow. A constructor takes `ref` only as the copy constructor.
+
+Cases `ref_method` (struct and class, mutable and `const ref`, out-parameter, a field as the place)
+and the must-fail `ref_method_temp`, `ref_method_const`, `ref_iface_param`.
+
+Full suite: **940/940 on Windows** (with `MUC_VERIFY_MEM=1`), build 270.
+
 #### build 269 — 2026-11-20
 
 **Definite initialization: a scalar local cannot be read before it is assigned.**

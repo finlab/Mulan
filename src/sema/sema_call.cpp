@@ -132,11 +132,16 @@ namespace muc_detail {
                     break;
                 }
             }
-            const FuncDecl* f =
-                (c->callee_kind == "func" && c->func) ? c->func : nullptr;
-            const bool mutable_ref =
-                f && param < f->pty_ref.size() && f->pty_ref[param] &&
-                !(param < f->pty_cref.size() && f->pty_cref[param]);
+            bool mutable_ref = false;
+            if (c->callee_kind == "func" && c->func) {
+                const FuncDecl* f = c->func;
+                mutable_ref = param < f->pty_ref.size() && f->pty_ref[param] &&
+                              !(param < f->pty_cref.size() && f->pty_cref[param]);
+            } else if (c->method) {
+                const MethodSig* m = c->method;
+                mutable_ref = param < m->params_ref.size() && m->params_ref[param] &&
+                              !(param < m->params_cref.size() && m->params_cref[param]);
+            }
             if (mutable_ref) {
                 maybe_uninit_.erase(d.lv);   // the callee may write through the borrow
             } else {
@@ -883,7 +888,51 @@ namespace muc_detail {
         }
         for (size_t i = 0; i < c->args.size(); ++i) {
             ArgGuard ag(call_arg_depth_);
-            check_assign(c->args[i].get(), sig->params[i], what + " argument");
+            const bool by_ref = i < sig->params_ref.size() && sig->params_ref[i];
+            if (!by_ref) {
+                check_assign(c->args[i].get(), sig->params[i], what + " argument");
+                continue;
+            }
+            // A `ref` parameter borrows the caller's storage (SPEC 3.8, extended to methods in build
+            // 270): the argument must be an addressable place of exactly the declared type, a mutable
+            // borrow never binds a readonly one, and a mutable borrow may initialize it (out-parameter).
+            const bool cref = i < sig->params_cref.size() && sig->params_cref[i];
+            Expr* a = c->args[i].get();
+            TypePtr at;
+            {
+                if (cref) {
+                    at = check_expr(a);
+                } else {
+                    WriteGuard writing(write_ctx_);
+                    at = check_expr(a);
+                }
+            }
+            if (roots_at_outer_value_local(a)) {
+                err("cannot pass an enclosing local by `ref` inside a `para` section", a);
+            }
+            if (!is_lvalue(a) && !is_borrow_expr(a)) {
+                err(what + " argument " + std::to_string(i + 1) +
+                        " must be an addressable variable: a `ref` parameter borrows the caller's storage",
+                    a);
+            }
+            if (!same_type_sig(at, sig->params[i])) {
+                err(what + " argument " + std::to_string(i + 1) + " must be `" +
+                        sig->params[i]->str() + "` (found `" + at->str() +
+                        "`): `ref` parameters do not convert",
+                    a);
+            }
+            if (!cref) {
+                if (ref_target_is_readonly(a)) {
+                    err("cannot bind a readonly (`const`) variable to a mutable `ref` parameter", a);
+                }
+                bool readonly_borrow = false;
+                if (auto* bc = dynamic_cast<Call*>(a); bc && bc->by_ref && bc->ref_const) readonly_borrow = true;
+                if (auto* bi = dynamic_cast<Index*>(a); bi && bi->by_ref && bi->ref_const) readonly_borrow = true;
+                if (auto* bb = dynamic_cast<Binary*>(a); bb && bb->by_ref && bb->ref_const) readonly_borrow = true;
+                if (readonly_borrow) {
+                    err("cannot bind a readonly (`const ref`) borrow to a mutable `ref` parameter", a);
+                }
+            }
         }
     }
 

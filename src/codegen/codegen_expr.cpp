@@ -694,9 +694,15 @@ static bool is_numeric(const TypePtr& t) {
     }
 
 
-    ArgPack Emitter::prepareArgs(const std::vector<Expr*>& args, const std::vector<TypePtr>& ptys) {
+    ArgPack Emitter::prepareArgs(const std::vector<Expr*>& args, const std::vector<TypePtr>& ptys,
+                                 const std::vector<bool>* refs) {
         ArgPack pack;
         for (size_t i = 0; i < args.size() && i < ptys.size(); ++i) {
+            if (refs && i < refs->size() && (*refs)[i]) {
+                // A `ref` parameter borrows the caller's storage: pass the address, never a copy.
+                pack.vals.push_back(addrOf(args[i]));
+                continue;
+            }
             Value* v = coerceArg(args[i], ptys[i]);
             // A by-value struct parameter is handed over to the callee (ownParams releases it), so the
             // caller never releases it here. Class/interface handles keep the old rule: the callee

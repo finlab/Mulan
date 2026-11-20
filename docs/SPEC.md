@@ -9,7 +9,7 @@
 > **2026-11-20: `type` declares only transparent aliases; tagged unions are declared with `variant` and
 > dispatched with `match` (implemented in build 258); interface extension uses `extend`; a field's public
 > methods are forwarded with `promote` (10.1, 3.18, 3.19); all four are implemented (build 261).**
-> Status: draft, current through build 269 (2026-11-20; the per-build change log is docs/versions.md,
+> Status: draft, current through build 270 (2026-11-20; the per-build change log is docs/versions.md,
 > where versions up to 0.0.144 used a single `major.minor.build` number). The text distinguishes
 > "decided", "recommended", and "undecided"; items that are not frozen can be discussed one by one.
 > Items marked **decided <date>** are frozen by design; when an item also says "not implemented yet"
@@ -1992,7 +1992,11 @@ class Box<T> {
   callee reaches the object only through the language rules and the reference counting stays exact, even when
   the value owns a resource or holds reference-counted fields. `&` remains refused for such a type, because a
   raw pointer outlives the borrow. A `[ref x]` **capture**, which does escape the frame, keeps the narrower
-  rule (scalars, enums, pointers, plain value structs); methods/constructors and `extern` take no `ref`.
+  rule (scalars, enums, pointers, plain value structs); `extern` takes no `ref`; a **method** (struct or
+  class) may take `ref` / `const ref` parameters — the borrow is part of its signature, the callee
+  receives the caller's address, and the argument must be an addressable place of exactly the declared
+  type (build 270). An **interface** member cannot: the itable slot carries the value signature only.
+  A **constructor** takes a `ref` parameter only as the copy constructor `T(const ref T other)`.
 - `ref T` returns (**0.0.63**): the borrow must originate from a `ref` parameter, `this`, global/static storage, or pointer·slice storage; the result cannot be stored,
   it can only be written through on the spot or passed as a borrow argument (see 3.8).
 - `const ref T p` is a **read-only borrow**: it cannot be rebound, and fields/elements cannot be written through the borrow; the argument must be addressable (temporaries are not allowed).
@@ -3187,7 +3191,7 @@ int x = match v {
 | 96 | Reserved words | Decided: see 2.5 |
 | 97 | Exception unwinding ABI | Resolved by B2 (0.0.81): no platform unwinding ABI; a thread-local pending slot + call-site checks; no `.eh_frame`/`.pdata`/personality dependency |
 | 98 | `const` class views / `const` methods | **Redesigned (2026-11-17)**: `const` methods are provided (`ret f() const`, `this` is `const Self`, `f()` / `f() const` overload); a `const` object is deeply read-only (only const methods may be called, fields cannot be written); `const struct` / `const class` makes every field/method implicitly const without putting cv on the type name — the object's content is fixed once constructed, it can be copied and moved, and a variable of such a type can be reassigned as a whole (destroy-and-construct). `const_cast`/`mutable` are not provided (use `as` for an explicit const removal). **Refined 2026-11-18 for `const class` — see 132** |
-| 99 | `ref` parameters / return values | Implemented (0.0.62 for parameters; extended in 0.0.63): `ref` is a binding mode rather than a storable type — `ref T p` / `const ref T p` / `ref T f()`, and no `T&` is introduced; every non-union value type can be borrowed (build 267; `[ref x]` capture keeps the narrower rule); a returned borrow must originate from a `ref` parameter, `this`, a global, or pointer/slice storage, and the result is not storable (it can only be written through on the spot / passed as a borrow / used with `for ref`); borrowing a local, a by-value parameter, or a temporary is a compile error; method/constructor parameters and `extern` do not support it (see 3.8, backlog U8) |
+| 99 | `ref` parameters / return values | Implemented (0.0.62 for parameters; extended in 0.0.63): `ref` is a binding mode rather than a storable type — `ref T p` / `const ref T p` / `ref T f()`, and no `T&` is introduced; every non-union value type can be borrowed (build 267; `[ref x]` capture keeps the narrower rule); a returned borrow must originate from a `ref` parameter, `this`, a global, or pointer/slice storage, and the result is not storable (it can only be written through on the spot / passed as a borrow / used with `for ref`); borrowing a local, a by-value parameter, or a temporary is a compile error; methods support it (build 270) as part of the signature, constructors only as the copy/move form, interface members and `extern` do not (see 3.8) |
 | 100 | Downcast from an `interface` to a derived `interface` | Decided: not supported in phase one (only upcasts are allowed; `as` is an error) |
 | 101 | Non-ASCII character literals | Decided: not supported in phase one (a literal is a single-byte `byte`; use `'\xNN'` or `string`) |
 | 102 | Enum comparison | Decided: only between the same enum; `== != < <= > >=` are supported, the order is the order of the underlying integer values; cross-enum or integer comparisons require `as` (see §3.5) |

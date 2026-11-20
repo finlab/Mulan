@@ -363,6 +363,9 @@ struct Emitter {
 
     LType* primTy(const std::string& n);
 
+    // The LLVM type a method parameter travels as: a `ref` parameter is a pointer to the referent.
+    LType* paramTy(const MethodSig& sig, size_t i);
+
     LStruct* structOf(const TypePtr& t);
 
     // model field index -> LLVM field index (align(N) inserts explicit [k x i8] padding between fields)
@@ -678,7 +681,9 @@ struct Emitter {
     void emitTernaryArm(Value* addr, Expr* src, const TypePtr& ty);
 
 
-    ArgPack prepareArgs(const std::vector<Expr*>& args, const std::vector<TypePtr>& ptys);
+    // `refs` marks parameters that are borrowed: their argument travels as an address, not a copy.
+    ArgPack prepareArgs(const std::vector<Expr*>& args, const std::vector<TypePtr>& ptys,
+                        const std::vector<bool>* refs = nullptr);
 
     // C default argument promotion: integers smaller than int -> int, float -> double, everything else unchanged (required by the C varargs ABI)
     Value* promoteVararg(Value* v, const TypePtr& t);

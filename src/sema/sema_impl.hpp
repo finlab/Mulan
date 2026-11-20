@@ -26,6 +26,14 @@
 
 namespace muc_detail {
 
+// The stored parameter types of a method as they appear in its symbol (a `ref` parameter is a pointer).
+inline std::vector<TypePtr> method_decl_symbol_params(const MethodDecl* m) {
+    std::vector<bool> refs;
+    refs.reserve(m->params.size());
+    for (const auto& p : m->params) refs.push_back(p && p->by_ref);
+    return method_symbol_params(m->pty, refs);
+}
+
 
 // ---------------------------------------------------------------- small helpers
 

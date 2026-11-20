@@ -86,7 +86,8 @@ namespace muc_detail {
         gen->rty = inst.ret;
         gen->ret_ref = is_borrow_type(inst.ret);
         gen->pty = inst.params;
-        gen->cname = method_cname(ty->unit, type_name, gen->name, gen->pty, gen->is_const);
+        gen->cname = method_cname(ty->unit, type_name, gen->name,
+                                  method_decl_symbol_params(gen.get()), gen->is_const);
         MethodSig ms;
         ms.name = gen->name;
         ms.ret = inst.ret;
