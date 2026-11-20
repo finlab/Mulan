@@ -12,6 +12,7 @@
 public unit std.unicode;
 
 use std.string;
+use std.utf8;
 use std.unicode_data;
 
 // The method surface is an interface extension: String names `IString`, and every unit that uses

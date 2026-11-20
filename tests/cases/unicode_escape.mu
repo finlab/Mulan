@@ -1,5 +1,6 @@
 // unicode_escape.mu — `\u{...}` escapes: strings encoded as UTF-8, char literals limited to one byte
 unit unicode_escape;
+use cstd.string;
 
 extern int puts(const char* s);
 extern int putchar(int c);

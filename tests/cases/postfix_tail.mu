@@ -1,4 +1,5 @@
 unit postfix_tail;
+use cstd.string;
 extern int puts(const char* s);
 class C { int v; C(int x){v=x;} ~C(){} int get(){return v;} }
 int main() {

@@ -323,7 +323,7 @@ where  move  typeof  variant  match  extend
     - `==` / `!=` compare by **byte value** (library `operator==`); a string can be compared with a literal
       directly (`s == "abc"`, `"abc" == s`); comparing a struct value with `null` is a compile error.
     - C interop: `s.cstr()` returns the underlying `const char*` (NUL-terminated); the compiler no longer
-      converts a `string` to a pointer implicitly. `strlen(cstr)` gives the byte length of a C string.
+      converts a `string` to a pointer implicitly. `cstd.string.strlen(cstr)` gives the byte length of a C string.
     - Usable as struct/class fields, array elements, parameters, return values; **copyable and destructible**
       (value semantics, copies are independent).
   - Size: `sizeof(string)` is defined by the library (currently 24 bytes: `byte* p; isize n; byte[] owner`);
@@ -334,7 +334,7 @@ where  move  typeof  variant  match  extend
     cannot be used in `#if`/array lengths/`step`. Write `const char* G = "hi";` when a compile-time
     constant is needed.
   - Construction and operations (`string(const char*)`, `length()`, `at`, `sub`, `concat`, `operator[]`,
-    `operator==`, `cstr`, `strlen`, ...) are **library API**, see the library docs; they are not part of the
+    `operator==`, `cstr`, ...) are **library API**, see the library docs; they are not part of the
     language specification. Everything about `string` that used to be compiler magic (`s[i]`, `for-in`,
     `==`, the literal→string conversion) is now ordinary library code (member operators, 3.11).
 - Initializing a fixed-size `char[N]` from a string literal performs a byte copy: copies the content and appends NUL and zeros
@@ -3021,7 +3021,7 @@ int x = match v {
 | Condition parentheses | Required | Optional, omitted in canonical style |
 | Conversions | Many implicit | Only widening that loses no range; otherwise `as` |
 | Arrays | Degenerate to pointers; array objects are not assignable | Same decay and non-assignability (C99, 0.0.106); `T[N]` parameters are `T*`; remaining differences: an array-typed `return` copies, arrays of `class`/`interface` handles are copied element by element, and `T[N]` → `T[]` allocates and copies |
-| Strings | `char*` | a literal is a `const char*`; `string` is a library value type (UTF-8, RC-backed; `.cstr()` for C, `strlen()` for C-string length) |
+| Strings | `char*` | a literal is a `const char*`; `string` is a library value type (UTF-8, RC-backed; `.cstr()` for C, `cstd.string.strlen()` for C-string length) |
 | Type casts | `(T)x` | `x as T` |
 | Function pointers | `int (*f)(int)` declarators | `(int) => int`; one word, no `*`, no declarator nesting; lambdas are non-capturing (3.16) |
 | Logic | `&&` / `\|\|` / `!` | `and` / `or` / `not` |
@@ -3050,7 +3050,7 @@ int x = match v {
 | 1 | Declaration syntax | Decided: C# style, type first, multiple variables share the type |
 | 2 | Whether condition parentheses are mandatory | Decided: optional, omitted in the spec; C style remains legal |
 | 3 | Fixed-width type naming (C names vs `i32`) | Use C names first |
-| 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`, `strlen()`. Unit-level `string` variables are allowed since 9.1; a `const` one is allowed too (runtime-initialized, not a compile-time constant) |
+| 4 | Layout of `string` and conversion to `byte[]` | Decided (0.0.89): `string` is a **pure library type**; the compiler knows neither its layout nor any of its operations (`src/` no longer has a `TypeKind::String`). A literal is a `const char*` (3.3); the library provides `implicit string(const char*)`, `length()`, `operator[]`, `operator==`, `cstr()`. Unit-level `string` variables are allowed since 9.1; a `const` one is allowed too (runtime-initialized, not a compile-time constant) |
 | 5 | Whether arrays implicitly decay to pointers | **Decided (0.0.106): yes, as in C99.** An array in value position decays to a pointer to its first element (initializer, assignment, argument, struct-field access, row of a static multi-dimensional array); `sizeof`/`alignof` do not decay. The array object itself is **not assignable** (`a = b`, `int[N] b = a`, `s.v = a` are errors) and a `T[N]` parameter is `T*` (6.7.5.3p7). Kept as Mu extensions: an array-typed `return` copies, and a prvalue array (function result) can initialize an array. Arrays of class/interface elements keep value semantics (no pointer-to-reference type exists) |
 | 6 | Whether dynamic arrays are included in phase one | Decided: included. `T[]` / `T[,]` / `T[,,]` are **built-in types** (2026-11-16, superseding the earlier "sugar for `Array<T>`" rule): the compiler owns the representation `{rc,len,data}` (no capacity field — a block never grows, so its addresses stay valid), the built-in members are only `length()` / `operator[]` / `ptr()`, and `new T[n]` zeroes the elements unless written `uninit new T[n]` (trivial element types only). The `buffer<T>` name is removed. A library container (`Array<T>` and friends) wraps a `T[]` and adds methods |
 | 7 | Bounds checking strategy | Managed sequences checked by default (`--bounds=on` / `--bounds=off`), a violation throws `BoundsError`; static arrays and `T*` unchecked |

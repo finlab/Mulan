@@ -1,5 +1,6 @@
 // strings.mu — string len/s[i], char[N] copied from a string, puts(&buf[0])
 unit strings;
+use cstd.string;
 
 extern int puts(const char* s);
 extern int putchar(int c);
@@ -42,7 +43,7 @@ int main() {
 
     // ---------- s[i] yields a byte (char, unsigned); string literals may be indexed directly ----------
     int sum = 0;
-    for i in 0..strlen("abc") {
+    for i in 0..(strlen("abc") as isize) {
         sum += "abc"[i];
     }
     print_int(sum); putchar('\n');       // 97 + 98 + 99 = 294

@@ -1,6 +1,7 @@
 // string_library.mu — `string` is a pure library type (0.0.89): a literal is `const char*`,
 // `implicit string(const char*)` builds a string, and every operation is library code
 unit string_library;
+use cstd.string;
 
 extern int putchar(int c);
 extern int puts(const char* s);

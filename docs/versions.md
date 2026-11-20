@@ -27,6 +27,20 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 281 — 2026-11-20
+
+**String implementation cleanup from review.**
+
+- Every builder (`sub`, `concat`, `repeat`, `replace`, `join`, `lower_ascii`, `upper_ascii`) now returns
+  through the ownership constructor (`String(buf, size)`) instead of repeating the three-field fill.
+- The UTF-8 primitives (`utf8_len`, `utf8_cp`, `utf8_decode`, `utf8_cp_len`, `utf8_put`) and the
+  `IString` byte-sequence view moved to a dedicated low-level unit, `std.utf8`; `std.string` no longer
+  exposes them. They stay public there because `private` is unit-scoped and both `std.string` and
+  `std.unicode` need them.
+- Removed the redundant `std.string.strlen`: a C string's length is `cstd.string.strlen` (the C binding)
+  or `String(cstr).length()`. The string tests now use the C binding.
+- Full suite: 934/934 with `MUC_VERIFY_MEM=1`.
+
 #### build 280 — 2026-11-20
 
 **`std.string` gains the Python-style byte API, explicit UTF-8 structure helpers, and an opt-in
