@@ -438,6 +438,14 @@ struct Point {
     scope exit (C++ model — a constructor that forgets to empty a field double-frees loudly rather
     than leaking silently). A synthesized move is the compiler's own rule: bytes copied, source
     zeroed.
+  - **`move` issues no atomic operations.** It does not touch the reference count: it reads the value,
+    stores it in the destination and writes `null` (or zeros) to the source, all with ordinary loads
+    and stores. It is therefore safe only for a variable **private to one thread**; concurrently
+    moving, reading or writing the same variable from two threads is a data race, exactly as for any
+    other non-atomic variable. Handing a moved value to another thread is safe when it goes through an
+    existing synchronization point (`para`, `thread`, a mutex). Do not use `move` as an atomic
+    exchange: two threads moving the same slot can both observe a non-null handle, and the reference
+    count cannot detect the double transfer.
   - **A moved value is out of reach**: any later read, write, borrow, pass or return of that variable is a
     compile error until a new assignment re-arms it. `if`/`else` merge the two arms; `move` may not target a
     variable declared outside the enclosing loop; nothing is tracked across functions (a moved value cannot
