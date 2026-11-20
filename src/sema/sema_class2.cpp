@@ -984,6 +984,20 @@ namespace muc_detail {
                 }
             }
         }
+        // A variant whose payload cannot be copied has to be consumed by the match: the scrutinee is
+        // moved into the match's temporary, and the bindings move out of it. A plain lvalue would be a
+        // copy (and the temporary's destruction would release the payload twice). `ref` bindings work
+        // on the scrutinee's own storage and need no move.
+        if (!match_ref && !st->copyable()) {
+            bool consumed = dynamic_cast<MoveExpr*>(scrut) != nullptr;
+            if (auto c = dynamic_cast<Call*>(scrut); c && !c->by_ref) consumed = true;
+            if (dynamic_cast<MatchExpr*>(scrut) || dynamic_cast<Ternary*>(scrut)) consumed = true;
+            if (!consumed) {
+                err("this variant's payload is not copyable; match a moved value (`match move v`) or "
+                    "bind by reference (`ref`)",
+                    scrut);
+            }
+        }
         std::vector<int> seen(st->sum_names.size(), 0);
         std::vector<int> unguarded_seen(st->sum_names.size(), 0);
         // A target-typed `match` (`Option<int> o = match r { ... }`) hands its type to every arm, so a

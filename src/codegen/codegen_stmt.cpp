@@ -80,8 +80,11 @@ using ArgPack = Emitter::ArgPack;
             } else if (lv->rty && !is_void(lv->rty)) {
                 // Zero first whatever may hold an RC handle or a user destructor: releasing a zero value
                 // is defined to be a no-op, which is what makes every failure path safe
-                // (agents/value-semantics.md §6.3). POD values stay uninitialized, as in C++.
-                const bool zeroed = lv->rty->needs_cleanup();
+                // (agents/value-semantics.md §6.3). POD values stay uninitialized, as in C++ — except a
+                // variant: its tag is never a value to guess, and the zero value is the first
+                // alternative (`None` for `Option<T>`).
+                const bool zeroed =
+                    lv->rty->needs_cleanup() || (lv->rty->kind == TypeKind::Sum);
                 if (zeroed) zeroMem(slot, lv->rty);
                 if (lv->rty->needs_ctor()) {
                     emitCtorGlue(slot, lv->rty);
@@ -870,8 +873,27 @@ using ArgPack = Emitter::ArgPack;
                             // Re-arm the moved flag on this path (an alternative other than the first
                             // did not run the registration store).
                             if (fs[k]->needs_cleanup()) createMovedFlag(lv);
-                            b.CreateStore(loadAt(lt(fs[k]), src, false), slotOf[k]);
-                            if (fs[k]->needs_cleanup()) emitRetainValue(slotOf[k], fs[k]);
+                            if (!fs[k]->copyable()) {
+                                // A move-only payload is moved out of the union: the binding owns it,
+                                // and the source payload is left empty so the scrutinee temporary's
+                                // tag-aware destruction only sees a zeroed value. A user move
+                                // constructor defines the source state itself (C++ model).
+                                if (fs[k]->kind == TypeKind::Struct && fs[k]->has_move_ctor) {
+                                    FunctionCallee ctor = mod->getOrInsertFunction(
+                                        move_ctor_cname(fs[k]->unit, fs[k]->name),
+                                        FunctionType::get(LType::getVoidTy(ctx), {ptrTy(), ptrTy()},
+                                                          false));
+                                    if (fs[k]->needs_cleanup()) zeroMem(slotOf[k], fs[k]);
+                                    b.CreateCall(ctor, {slotOf[k], src});
+                                    emitCheckPending();
+                                } else {
+                                    b.CreateStore(loadAt(lt(fs[k]), src, false), slotOf[k]);
+                                    zeroMem(src, fs[k]);
+                                }
+                            } else {
+                                b.CreateStore(loadAt(lt(fs[k]), src, false), slotOf[k]);
+                                if (fs[k]->needs_cleanup()) emitRetainValue(slotOf[k], fs[k]);
+                            }
                         }
                     }
                     if (a->guard) {

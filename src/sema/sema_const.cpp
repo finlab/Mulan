@@ -9,6 +9,7 @@
 // concept:   constants, assignability
 #include "sema_impl.hpp"
 
+#include <algorithm>
 #include <sstream>
 
 #include <cmath>
@@ -95,12 +96,15 @@ namespace muc_detail {
     bool Sema::noncopyable_struct(const TypePtr& t) {
         if (!t) return false;
         if (t->kind == TypeKind::Array) return noncopyable_struct(t->elem);
-        return t->kind == TypeKind::Struct && !t->copyable();
+        // A sum is a value too: once a variant can carry a move-only payload, `Option<Vec<T>>` must
+        // be rejected wherever a copy is required (params, assignment, returns).
+        return (t->kind == TypeKind::Struct || t->kind == TypeKind::Sum) && !t->copyable();
     }
 
     std::string Sema::noncopyable_reason(const TypePtr& t) const {
         if (!t) return "it is not copyable";
         if (t->kind == TypeKind::Array) return "its element type " + noncopyable_reason(t->elem);
+        if (t->kind == TypeKind::Sum) return "its payload is not copyable";
         if (t->kind == TypeKind::Struct) {
             if (t->nocopy) return "it is declared `nocopy`";
             if (t->has_dtor) return "it declares a destructor, so it owns a resource";
@@ -118,13 +122,30 @@ namespace muc_detail {
             // A call returning a *borrow* (`ref T f()`) is not a prvalue: it must still be copied.
             bool prvalue = false;
             if (auto call = dynamic_cast<Call*>(e); call && !call->by_ref) prvalue = true;
+            // A bare or qualified unit alternative of the target sum (`None`, `Option<T>.None`)
+            // constructs a value; it is not a copy of an existing one.
+            if (dst && dst->kind == TypeKind::Sum) {
+                auto is_alt = [&](const std::string& nm) {
+                    return std::find(dst->sum_names.begin(), dst->sum_names.end(), nm) !=
+                           dst->sum_names.end();
+                };
+                if (auto n = dynamic_cast<Name*>(e); n && is_alt(n->ident)) prvalue = true;
+                if (auto m = dynamic_cast<Member*>(e); m && is_alt(m->name)) prvalue = true;
+            }
             if (prvalue) {
                 TypePtr built = check_expr(e, dst);
                 if (built && same_type(built, dst)) return dst;
             }
-            err(what + ": struct `" + dst->str() + "` cannot be copied by value: " +
-                    noncopyable_reason(dst) + "; declare `" + dst->str() + "(const ref " + dst->str() +
-                    " other)`" + (dst->movable() ? ", or move it with `move`" : "") +
+            const bool sum = dst->kind == TypeKind::Sum;
+            // A variant has no user-declarable constructors, so the struct hint would be impossible;
+            // moving the value (or borrowing it) is the way out.
+            const std::string fix =
+                sum ? (dst->movable() ? "; move it with `move`"
+                                      : "; bind by reference (`ref`)")
+                    : "; declare `" + dst->str() + "(const ref " + dst->str() + " other)`" +
+                          (dst->movable() ? ", or move it with `move`" : "");
+            err(what + ": " + (sum ? std::string("variant") : std::string("struct")) + " `" +
+                    dst->str() + "` cannot be copied by value: " + noncopyable_reason(dst) + fix +
                     (borrowable_type(dst) ? ", or borrow it as `const ref " + dst->str() + "`" : ""),
                 e);
         }

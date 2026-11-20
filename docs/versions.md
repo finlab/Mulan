@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 284 — 2026-11-21
+
+**Variants accept move-only payloads; `Option` moves its payload out.**
+
+- The payload rule is **movability**, not copyability: a `nocopy` or user-destructor payload is accepted;
+  a `nomove` payload is rejected. Construction takes a move (`Some(move v)`) or an owned prvalue;
+  `match move o { Some(v): ... }` moves the payload out of the union, `Some(ref v)` borrows it, and the
+  tag-aware destruction only destroys the active alternative (a moved-out payload is left zeroed).
+- A variant is copyable only when every payload is; copying a move-only variant is a compile error that
+  suggests `move`. `noncopyable_struct` now includes sums (parameters, assignment, returns).
+- Variant locals are zero-initialized. `std.option` declares `None` first, so the zero value of
+  `Option<T>` is `None`; its helpers match with `match move`.
+- New cases: `option_move` (run), `option_move_copy` / `option_move_match_lvalue` (must-fail);
+  `sum_array_payload` now checks a `nomove` payload. Full suite: 940/940 with `MUC_VERIFY_MEM=1`.
+
 #### build 283 — 2026-11-21
 
 **Partial explicit type arguments: `f<int>(...)` infers the remaining ones.**

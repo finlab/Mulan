@@ -2896,8 +2896,15 @@ Value d = Value.None;        // a unit alternative is a plain value
 - **Value semantics**: assignment and argument passing copy the value; the active payload is
   retained, overwriting or leaving scope releases it. A payload whose type needs cleanup
   (class/interface handle, `String`, slice, struct with reference fields) is therefore safe to store:
-  the variant owns one reference. Payload types with a **user destructor** are rejected (they cannot be
-  copied by value, same rule as array elements).
+  the variant owns one reference.
+- **Payloads must be movable, not copyable** (build 284). A move-only payload (`nocopy`, a user
+  destructor) is accepted: construct it with `Some(move v)` (an owned prvalue such as `Some(V())` also
+  works), move it out with `match move o { Some(v): ... }` (or bind by reference: `Some(ref v)`), and
+  the variant's tag-aware destruction only destroys the active alternative. The variant itself is
+  **copyable only when every payload is copyable**; otherwise copying it is a compile error, while
+  moving it (`b = move a`, returning it, passing it by value) is fine. A `nomove` payload is rejected.
+- **The zero value is the first alternative** (the tag is zero). An uninitialized variant local is
+  zero-initialized like a struct, so for `variant Option<T> { None; Some T; }` the default is `None`.
 - **Construction**: `Type.Alt(values...)` for a payload alternative, `Type.Alt` (no parentheses) for a
   unit alternative, and — when the target type is already known — the **bare alternative name**. The
   target is known in every target-typed position: a declaration or assignment (`Option<int> o = Some(3);`,

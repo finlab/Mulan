@@ -419,9 +419,14 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
                                "` infinitely large (store a pointer or a class handle instead)",
                            spec);
                 }
-                if (noncopyable_struct(ft)) {
-                    err_ts("payload of alternative `" + alt.name + "` is struct `" + ft->str() +
-                               "`, which has a destructor and cannot be stored by value in a sum",
+                // A payload may own a resource as long as it can be moved: construction transfers it
+                // with `Some(move v)`, a match binding moves it out, and the tag-aware destructor only
+                // destroys the active alternative. Only an immovable type (a `nomove` struct) cannot be
+                // stored by value.
+                if (!ft->movable()) {
+                    err_ts("payload of alternative `" + alt.name + "` is `" + ft->str() +
+                               "`, which is not movable and cannot be stored by value in a variant "
+                               "(store a pointer or a class handle instead)",
                            spec);
                 }
                 fts.push_back(ft);
