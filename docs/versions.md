@@ -27,6 +27,32 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 299 — 2026-11-21
+
+**Small semantic and error-recovery fixes.**
+
+- `'''` (like `''`) is diagnosed as an empty character literal instead of lexing as a quote byte (#209).
+- `in_return_` is restored with a guard, so an invalid return in one function no longer disables the
+  array-assignment rule (and other return-context checks) in later functions (#220).
+- A constructor prologue cannot call a private base constructor from another unit (#213).
+- An enum member whose name collides with a global or constant in the same unit is an error (#212).
+- A const receiver only accepts const member operators; a mutating `operator<<` on `const Buf` is
+  rejected instead of writing through it (#211).
+- New must-fail cases: `triple_quote_char`, `error_recovery_in_return`, `base_ctor_visibility`,
+  `enum_global_name`, `const_member_operator`. Full: Windows **1005/1005**, Linux **1003/1003** with
+  `MUC_VERIFY_MEM=1`.
+
+#### build 298 — 2026-11-21
+
+**Discarded expression and operator-assignment ownership.**
+
+- An expression statement that discards an owned variant or delegate result releases its
+  payload/environment (#156).
+- An assignment from a free/member operator result takes that owned value over instead of copying it
+  and leaking the temporary (#157).
+- New cases `discard_expr_cleanup`, `operator_result_assign`. Full: Windows **1000/1000**, Linux
+  **998/998** with `MUC_VERIFY_MEM=1`.
+
 #### build 297 — 2026-11-21
 
 **Standard-library boundary checks and null indirection.**

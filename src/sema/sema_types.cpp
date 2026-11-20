@@ -463,6 +463,12 @@ namespace muc_detail {
             // every member seen so far made a large enum quadratic (a 40k-member enum took 0.66s, 200k
             // never finished).
             std::unordered_map<std::string, std::string> owner;
+            // Enum members share the unit's unqualified namespace with globals and constants; a
+            // collision used to make the bare name silently bind to the variable (#212).
+            std::unordered_set<std::string> global_names;
+            for (auto& d : u->decls) {
+                if (auto g = dynamic_cast<GlobalVar*>(d.get())) global_names.insert(g->name);
+            }
             for (auto& d : u->decls) {
                 auto* ed = dynamic_cast<EnumDecl*>(d.get());
                 if (!ed) continue;
@@ -486,6 +492,11 @@ namespace muc_detail {
                     if (value < -2147483648LL || value > 2147483647LL) {
                         err("value of enum member `" + m + "` (" + std::to_string(value) +
                                 ") does not fit the underlying `int` range", ed);
+                    }
+                    if (global_names.count(m)) {
+                        err("enum member `" + m +
+                                "` conflicts with a variable or constant of the same name in this unit",
+                            ed);
                     }
                     if (auto it = owner.find(m); it != owner.end()) {
                         err("duplicate enum member `" + m + "` (declared in `" + it->second +

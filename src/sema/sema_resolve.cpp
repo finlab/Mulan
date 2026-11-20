@@ -288,6 +288,8 @@ namespace muc_detail {
             std::vector<const MethodSig*> ok;
             for (const auto& m : recv->methods) {
                 if (!m.is_operator || m.name != name) continue;
+                // A const receiver may only use a const operator (same discipline as ordinary methods).
+                if (read_only_view(recv) && !m.is_const) continue;
                 if (m.params_self.empty() || !m.params_self[0]) continue;  // the receiver must be `Self`
                 auto s = std::make_unique<MethodSig>(m);
                 s->params.erase(s->params.begin());
@@ -319,6 +321,7 @@ namespace muc_detail {
         std::vector<const MethodSig*> cands;
         for (const auto& m : recv->methods) {
             if (!m.is_operator || m.name != name) continue;
+            if (read_only_view(recv) && !m.is_const) continue;  // a mutating operator cannot run on a const value
             cands.push_back(&m);
         }
         if (cands.empty()) return nullptr;

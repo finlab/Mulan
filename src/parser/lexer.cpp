@@ -543,6 +543,9 @@ private:
         } else {
             int ch = peek();
             adv();
+            if (ch == '\'') {
+                throw err("empty character literal (write `'\\''` for a single quote)", line, col);
+            }
             if (ch > 0x7F) throw err("character literal only supports ASCII for now", line, col);
             v = ch;
         }

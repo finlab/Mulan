@@ -543,7 +543,13 @@ namespace muc_detail {
             }
             return;
         }
+        const bool saved_in_return = in_return_;
         in_return_ = true;
+        struct ReturnGuard {
+            bool& f;
+            bool v;
+            ~ReturnGuard() { f = v; }
+        } return_guard{in_return_, saved_in_return};
         // A `[ref x]` capture stores the address of a frame-owned local, so a returned delegate would
         // always dangle. Caller-owned storage (`this` of a struct method, a `ref` parameter, a `for ref`
         // binding) is the caller's responsibility, exactly like `&x` — those are allowed.
@@ -578,7 +584,6 @@ namespace muc_detail {
             }
         }
         check_assign(s->value.get(), rt, "return value");
-        in_return_ = false;
     }
 
     // Whether the origin of a returned borrow is stable: ref parameter / this / global / a path through a pointer or slice (heap storage) / forwarded borrow.

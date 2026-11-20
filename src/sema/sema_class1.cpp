@@ -385,6 +385,12 @@ namespace muc_detail {
                     std::vector<Expr*> raw;
                     for (auto& a : base_item->args) raw.push_back(a.get());
                     const auto* sig = choose_ctor(base_ctors, raw, "base class", base_item);
+                    const size_t bi = static_cast<size_t>(sig - base_ctors.data());
+                    if (bi < ty->base->ctor_is_public.size() && !ty->base->ctor_is_public[bi] &&
+                        (!cur_ || cur_->name != ty->base->unit)) {
+                        err("base constructor is not declared public and cannot be called from another unit",
+                            base_item);
+                    }
                     for (size_t i = 0; i < base_item->args.size(); ++i) {
                         ArgGuard ag(call_arg_depth_);
                         check_assign(base_item->args[i].get(), (*sig)[i], "base constructor argument");
