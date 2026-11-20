@@ -122,6 +122,9 @@ namespace muc_detail {
         // instead of on its own (SPEC 10.1.1 `target type is already known`).
         const FuncDecl* only = cands.size() == 1 ? cands[0] : nullptr;
         for (size_t i = 0; i < args.size(); ++i) {
+            // These are call arguments: a destructor-bearing struct may be constructed here (the same
+            // rule `check_call` applies when it re-checks them).
+            ArgGuard ag(call_arg_depth_);
             atys.push_back(check_expr(args[i], only && i < only->pty.size() ? only->pty[i] : TypePtr()));
         }
 
@@ -346,6 +349,9 @@ namespace muc_detail {
         // arguments.
         const MethodSig* only = cands.size() == 1 ? cands[0] : nullptr;
         for (size_t i = 0; i < args.size(); ++i) {
+            // Call arguments: a destructor-bearing struct may be constructed here (same rule as
+            // `choose_overload` and `check_method_args`).
+            ArgGuard ag(call_arg_depth_);
             atys.push_back(
                 check_expr(args[i], only && i < only->params.size() ? only->params[i] : TypePtr()));
         }

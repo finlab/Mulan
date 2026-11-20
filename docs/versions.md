@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 278 — 2026-11-20
+
+**A destructor-bearing temporary is allowed as a call argument (again).**
+
+The rule allows a dtor-bearing struct to be constructed "in a declaration initializer, an
+assignment, or a call argument", but two overload-resolution passes type-checked arguments before
+the `ArgGuard` that marks them as call arguments: `g(R(1))` — free function or method — was
+rejected with a message that listed "a call argument" as allowed.
+
+- `choose_overload` and `choose_method` now set the guard while typing arguments; the temporary is
+  built for the parameter (no copy, no leak);
+- case `dtor_temp_arg` (free function and method, allocation counter back to zero).
+
+Full suite: 930/930 on Windows.
+
 #### build 277 — 2026-11-20
 
 **Or-patterns: `A(x) | B(x)` shares one arm.**
