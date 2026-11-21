@@ -467,7 +467,28 @@ namespace muc_detail {
         };
         const bool cmp = op == "==" || op == "!=";
         TypePtr lt;
-        if (cmp && bare_alt_call(e->left.get()) && !bare_alt_call(e->right.get())) {
+        // `None == v`: a bare alternative Name on the left is resolved from the right operand's sum
+        // type, symmetric with `v == None` (#155).
+        if (cmp) {
+            if (auto nm = dynamic_cast<Name*>(e->left.get());
+                nm && nm->kind.empty() && lookup_local(nm->ident) == nullptr &&
+                collect_funcs_named(nm->ident).empty()) {
+                TypePtr prt = check_expr(e->right.get());
+                if (prt && prt->kind == TypeKind::Sum) {
+                    for (size_t k = 0; k < prt->sum_names.size(); ++k) {
+                        if (prt->sum_names[k] == nm->ident && prt->sum_fields[k].empty()) {
+                            nm->kind = "sum_unit";
+                            nm->sum_ty = prt;
+                            nm->sum_alt = static_cast<int>(k);
+                            nm->ty = prt;
+                            lt = prt;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (!lt && cmp && bare_alt_call(e->left.get()) && !bare_alt_call(e->right.get())) {
             TypePtr prt = check_expr(e->right.get());
             if (prt && prt->kind == TypeKind::Sum) {
                 check_assign(e->left.get(), prt, "comparison operand");
@@ -475,7 +496,7 @@ namespace muc_detail {
             } else {
                 lt = check_expr(e->left.get());
             }
-        } else {
+        } else if (!lt) {
             lt = check_expr(e->left.get());
         }
         // `v == None`: a bare alternative name on the right of a comparison with a sum value is

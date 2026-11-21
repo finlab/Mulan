@@ -777,13 +777,25 @@ namespace muc_detail {
             }
             check_method(c, m.get());
         }
-        std::unordered_set<std::string> ctor_keys;
+        std::unordered_map<std::string, std::string> ctor_keys;
         for (auto& ctor : c->ctors) {
-            std::string key;
-            for (auto& p : ctor->pty) key += p->str() + ",";
-            if (!ctor_keys.insert(key).second) {
+            std::string type_key, ref_key;
+            for (size_t i = 0; i < ctor->pty.size(); ++i) {
+                type_key += ctor->pty[i]->str() + ",";
+                const bool by_ref = i < ctor->params.size() && ctor->params[i] && ctor->params[i]->by_ref;
+                if (by_ref) ref_key += "ref ";
+                ref_key += ctor->pty[i]->str() + ",";
+            }
+            if (auto prev = ctor_keys.find(type_key); prev != ctor_keys.end()) {
+                if (prev->second != ref_key) {
+                    err("class constructor `" + c->name +
+                            "` differs from an earlier constructor only in ref-ness; ref-ness is not an "
+                            "overload dimension",
+                        ctor.get());
+                }
                 err("duplicate constructor signature in class `" + c->name + "`", ctor.get());
             }
+            ctor_keys[type_key] = ref_key;
             check_ctor(c, ctor.get());
         }
         check_ctor_delegate_cycles(c->ctors);

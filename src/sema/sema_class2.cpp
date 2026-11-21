@@ -794,6 +794,7 @@ namespace muc_detail {
             long long hi = 0;
             bool top = false;
             const Node* node = nullptr;
+            std::string member;  // enum member identity (same-valued aliases are distinct, #158)
         };
         std::vector<Iv> ivs;
         TypePtr result = nullptr;
@@ -817,9 +818,14 @@ namespace muc_detail {
             }
             if (arm->pats.empty()) err("match arm is missing a pattern", arm);
             for (auto& p : arm->pats) {
+                if (enum_scrut && !p.is_range) {
+                    if (auto nm = dynamic_cast<Name*>(p.lo.get())) p.member = nm->ident;
+                    else if (auto mb = dynamic_cast<Member*>(p.lo.get())) p.member = mb->name;
+                }
                 p.vlo = pattern_value(p.lo.get(), st);
                 Iv iv;
                 iv.lo = p.vlo;
+                iv.member = p.member;
                 iv.node = p.lo.get();
                 if (p.is_range) {
                     if (enum_scrut) {
@@ -867,6 +873,10 @@ namespace muc_detail {
             const Iv& prev = ivs[i - 1];
             const Iv& cur = ivs[i];
             if (prev.top || cur.lo < prev.hi) {
+                // Distinct enum members with the same value are distinct patterns.
+                if (!prev.member.empty() && !cur.member.empty() && prev.member != cur.member) {
+                    continue;
+                }
                 err("overlapping match patterns: value " + std::to_string(cur.lo) +
                         " is already covered by an earlier pattern (ranges are half-open; `a..b` excludes b)",
                     cur.node);

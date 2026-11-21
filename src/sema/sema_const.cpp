@@ -510,6 +510,12 @@ namespace muc_detail {
         ConstVal v;
         const bool ok = eval_const(ie->expr.get(), nullptr, v);
         if (!ok) return false;
+        // An implicit constructor makes this a runtime construction, not a data-area constant
+        // (`Wrap g = 5;` must work like the local form, #159).
+        if (g->rty->kind == TypeKind::Struct && v.ty && !same_type_sig(v.ty, g->rty) &&
+            find_implicit_conv(g->rty, v.ty)) {
+            return false;
+        }
         convert_const_to(v, g->rty, g, "initializer of `" + g->name + "`");
         g->const_evaluated = true;
         g->const_is_float = v.is_float;

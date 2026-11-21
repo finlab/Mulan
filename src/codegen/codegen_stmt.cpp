@@ -693,11 +693,16 @@ using ArgPack = Emitter::ArgPack;
         if (!anyGuard) {
             std::vector<std::pair<ConstantInt*, BasicBlock*>> cases;
             std::vector<std::pair<const MatchPat*, BasicBlock*>> ranges;
+            std::unordered_set<long long> seen_values;
             for (size_t i = 0; i < arms.size(); ++i) {
                 for (auto& p : arms[i]->pats) {
                     if (p.is_range) {
                         ranges.push_back({&p, bodyBB[i]});
                     } else {
+                        // Distinct enum members may share a value (aliases); LLVM rejects duplicate
+                        // switch cases, and the runtime value cannot distinguish them. The first arm
+                        // wins; the later one is unreachable (#158).
+                        if (!seen_values.insert(p.vlo).second) continue;
                         cases.push_back({constOf(p.vlo), bodyBB[i]});
                     }
                 }

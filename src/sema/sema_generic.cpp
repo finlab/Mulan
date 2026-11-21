@@ -871,6 +871,7 @@ TypePtr Sema::instantiate_generic(const TypeSpec* spec, Unit* u) {
         ty->ctors.push_back(ctor->pty);
         ty->ctor_param_names.push_back(ctor_param_names(ctor.get()));
         ty->ctor_is_public.push_back(ctor->is_public);
+        ty->ctor_is_implicit.push_back(ctor->is_implicit);
     }
 
     DtorDecl* dtor = is_struct ? sd->dtor.get() : cd->dtor.get();

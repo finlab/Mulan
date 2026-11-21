@@ -153,6 +153,9 @@ namespace muc_detail {
                 }
                 LocalVar* lv = lookup_local(cap.name);
                 if (!lv) err("`" + cap.name + "` is not a local variable, so it cannot be captured", e);
+                if (moved_locals_.count(lv)) {
+                    err("cannot capture `" + cap.name + "`: it was moved (capture a live variable)", e);
+                }
                 // A capture may only name a variable of the *immediately* enclosing function: a variable
                 // belonging to an outer function would not survive (or would silently read a fresh
                 // slot), so it must be captured by the enclosing lambda first.

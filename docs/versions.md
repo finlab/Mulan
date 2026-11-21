@@ -27,6 +27,22 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 305 — 2026-11-21
+
+**Implicit construction, constructors, enum aliases and lambda captures.**
+
+- A global initialization goes through an implicit constructor like the local form (#159); generic
+  instances now carry `ctor_is_implicit` (#161).
+- A class constructor pair differing only in ref-ness gets one clear diagnostic instead of
+  duplicate+ambiguous (#163).
+- A bare variant alternative works on either side of a comparison (`None == v`, #155).
+- Same-valued enum members are distinct match patterns; the first arm wins at runtime and codegen no
+  longer emits duplicate switch cases (#158).
+- Capturing a variable after `move` is rejected (#178).
+- New tests: `implicit_global`, `generic_implicit_ctor`, `bare_alt_compare`, `enum_alias_match`
+  (run); `class_ctor_ref_overload`, `lambda_capture_moved` (must-fail). Full: Windows **1030/1030**,
+  Linux **1028/1028** with `MUC_VERIFY_MEM=1`.
+
 #### build 304 — 2026-11-21
 
 **Inheritance, interface defaults and enum assignment.**

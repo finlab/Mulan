@@ -681,6 +681,9 @@ struct MatchPat {
     // sema
     long long vlo = 0;
     long long vhi = 0;
+    // For an enum scrutinee, the member identity of a bare member pattern (`A`), so same-valued
+    // aliases (`A = 1, B = 1`) are distinct patterns (#158).
+    std::string member;
 };
 
 // ---------------------------------------------------------------- `match` (SPEC 10.1.2)
