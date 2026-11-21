@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 303 — 2026-11-21
+
+**Slice/const/initialization hardening.**
+
+- An unsigned range for-in compares unsigned (`0u..3000000000u` iterates, #205).
+- A slice conversion keeps its rank (`int[] flat = grid` is rejected, #206).
+- A `for const ref` binding is a readonly view for field writes, non-const methods and mutable `ref`
+  arguments, not only for assigning the binding itself (#207).
+- Definite-initialization merges only reachable arms: an arm that returns/throws does not mark
+  variables uninitialized (#208).
+- A `#if` float-to-integer `as` outside the target range is a diagnostic instead of host UB (#210).
+- New tests: `unsigned_range`, `definite_init_terminating_arm`; `slice_rank_mismatch`,
+  `for_const_ref_field`, `for_const_ref_method`, `if_float_cast_range` (must-fail). Full: Windows
+  **1021/1021**, Linux **1019/1019** with `MUC_VERIFY_MEM=1`.
+
 #### build 302 — 2026-11-21
 
 **Overload resolution, visibility, and runtime exception messages.**

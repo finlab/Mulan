@@ -18,6 +18,7 @@
 #include "target.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <climits>
 #include <string>
 #include <vector>
@@ -394,6 +395,16 @@ bool eval(const Expr& e, V& out, std::string& why) {
                          : n == "long" || n == "ulong" || n == "usize" || n == "isize" ? 64
                                                                     : 32;
         const bool sgn = n != "uint" && n != "ulong" && n != "usize" && n != "byte" && n != "bool";
+        if (v.k == VK::Float) {
+            // Host float->int conversion outside the range is UB and used to produce LLONG_MIN
+            // silently; a `#if` constant must be in range, like the sema_const path (#210).
+            const double lo = sgn ? -std::ldexp(1.0, bits - 1) : 0.0;
+            const double hi = sgn ? std::ldexp(1.0, bits - 1) : std::ldexp(1.0, bits);
+            if (!(v.f >= lo && v.f < hi)) {
+                why = "a `#if` float-to-integer `as` value is outside the target range";
+                return false;
+            }
+        }
         out = vint(wrap_to(v.k == VK::Float ? static_cast<long long>(v.f) : v.i, bits, sgn));
         out.bits = bits;
         out.is_signed = sgn;

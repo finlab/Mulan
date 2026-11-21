@@ -659,6 +659,9 @@ bool implicitly_convertible(const TypePtr& src, const TypePtr& dst) {
         }
     }
     if (src && dst && src->kind == dst->kind) {
+        // A slice conversion must keep the rank: `int[] flat = grid` (rank 2 -> 1) used to read the
+        // dimension field as the length (#206).
+        if (src->kind == TypeKind::Slice && src->rank != dst->rank) return false;
         if (src->kind == TypeKind::Ptr || src->kind == TypeKind::Slice) {
             if (src->elem && dst->elem && src->elem->is_const && !dst->elem->is_const) {
                 return false;

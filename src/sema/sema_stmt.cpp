@@ -88,8 +88,17 @@ namespace muc_detail {
             }
             for (LocalVar* lv : afterThen) moved_locals_.insert(lv);
             for (LocalVar* lv : movedAtEntry) moved_locals_.insert(lv);
-            // Definite initialization: a scalar stays uninitialized if *either* path left it so.
-            for (const LocalVar* lv : uninitAfterThen) maybe_uninit_.insert(lv);
+            // Definite initialization merges only reachable paths: an arm that always returns or
+            // throws cannot reach the code after the `if` (#208).
+            const bool then_terminates = guarantees_return(iff->then.get());
+            const bool else_terminates = iff->els && guarantees_return(iff->els.get());
+            if (!then_terminates && !else_terminates) {
+                // A scalar stays uninitialized if *either* reachable path left it so.
+                for (const LocalVar* lv : uninitAfterThen) maybe_uninit_.insert(lv);
+            } else if (!then_terminates) {
+                // Only the then path reaches the join.
+                maybe_uninit_ = uninitAfterThen;
+            }
         } else if (auto ws = dynamic_cast<WhileStmt*>(s)) {
             check_cond(ws->cond.get(), "while condition");
             const auto uninitAtEntry = maybe_uninit_;

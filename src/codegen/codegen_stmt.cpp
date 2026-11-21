@@ -107,7 +107,8 @@ using ArgPack = Emitter::ArgPack;
                     b.CreateStore(v, tmp);
                     emitReleaseValue(tmp, ty);
                 } else if (ty && needsCleanup(ty) &&
-                           (ty->kind == TypeKind::Struct || ty->kind == TypeKind::Slice)) {
+                           (ty->kind == TypeKind::Struct || ty->kind == TypeKind::Slice ||
+                            ty->kind == TypeKind::Sum || ty->kind == TypeKind::Delegate)) {
                     auto* tmp = entryAlloca(lt(ty), "expr.tmp", alignOf(ty));
                     b.CreateStore(v, tmp);
                     emitReleaseValue(tmp, ty);
@@ -411,10 +412,15 @@ using ArgPack = Emitter::ArgPack;
             b.SetInsertPoint(condBB);
             Value* cur = b.CreateLoad(lt(vt), cntSlot);
             Value* cmp = nullptr;
+            // An unsigned range compares unsigned; the signed forms made `0u..3000000000u` look empty
+            // (#205).
+            const bool uns = vt && vt->kind == TypeKind::Prim && vt->is_integer() && !vt->is_signed();
             if (!down) {
-                cmp = re->inclusive ? b.CreateICmpSLE(cur, hiV) : b.CreateICmpSLT(cur, hiV);
+                if (uns) cmp = re->inclusive ? b.CreateICmpULE(cur, hiV) : b.CreateICmpULT(cur, hiV);
+                else cmp = re->inclusive ? b.CreateICmpSLE(cur, hiV) : b.CreateICmpSLT(cur, hiV);
             } else {
-                cmp = re->inclusive ? b.CreateICmpSGE(cur, hiV) : b.CreateICmpSGT(cur, hiV);
+                if (uns) cmp = re->inclusive ? b.CreateICmpUGE(cur, hiV) : b.CreateICmpUGT(cur, hiV);
+                else cmp = re->inclusive ? b.CreateICmpSGE(cur, hiV) : b.CreateICmpSGT(cur, hiV);
             }
             b.CreateCondBr(cmp, bodyBB2, endBB);
             b.SetInsertPoint(bodyBB2);

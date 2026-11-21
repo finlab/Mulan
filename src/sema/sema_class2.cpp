@@ -208,7 +208,7 @@ namespace muc_detail {
     bool Sema::root_is_const(Expr* e) {
         if (!e) return false;
         if (auto n = dynamic_cast<Name*>(e)) {
-            if (auto lv = std::get_if<LocalVar*>(&n->sym)) return *lv && (*lv)->is_const;
+            if (auto lv = std::get_if<LocalVar*>(&n->sym)) return *lv && ((*lv)->is_const || (*lv)->ref_const);
             if (auto gv = std::get_if<GlobalVar*>(&n->sym)) return *gv && (*gv)->is_const;
             return false;
         }
@@ -272,10 +272,11 @@ namespace muc_detail {
             // variable — for every value type, not only scalars. (It cannot "rebind": the language has no
             // references. The old struct carve-out made an out-parameter impossible to write, which is
             // what `std.mem.replace` needs.) The const rules below still apply.
-            if (root_is_const(t)) err("`" + n->ident + "` is a `const` binding and cannot be assigned", t);
             if (auto lv = std::get_if<LocalVar*>(&n->sym); lv && *lv && (*lv)->ref_const) {
+                // Keep the specific diagnostic for a read-only loop/match binding (#207).
                 err("cannot assign through a `const ref` binding", t);
             }
+            if (root_is_const(t)) err("`" + n->ident + "` is a `const` binding and cannot be assigned", t);
             // `int* const p`: the cv belongs to the pointer type, not to the binding, so the binding is
             // not `const` yet the object is read-only (`p` cannot be retargeted, `*p` can be written).
             if (n->ty && n->ty->is_const) {
