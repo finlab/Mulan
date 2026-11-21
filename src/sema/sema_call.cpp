@@ -270,7 +270,8 @@ namespace muc_detail {
 
             if (!cands.empty()) {
                 FuncDecl* chosen = choose_overload(cands, raw_args(c->args),
-                                                   "function `" + nm->ident + "`", c);
+                                                   "function `" + nm->ident + "`", c,
+                                                   /*check_ref=*/cands.size() > 1);
                 nm->kind = "func";
                 nm->sym = chosen;
                 target = chosen;
@@ -636,11 +637,18 @@ namespace muc_detail {
                 }
                 chosen = instantiate_func(c, uname + "." + m->name, cur_, targs);
             } else {
-                chosen = choose_overload(f->second, raw_args(c->args),
-                                         "function `" + uname + "." + m->name + "`", c);
-                if (!chosen->is_public) {
+                // Only public overloads participate: a private one must not win the ranking and then
+                // turn into "not public" when a public overload could have been chosen (#193).
+                std::vector<FuncDecl*> pub;
+                for (auto* cand : f->second) {
+                    if (cand->is_public) pub.push_back(cand);
+                }
+                if (pub.empty()) {
                     err("function `" + uname + "." + m->name + "` is not declared public", c);
                 }
+                chosen = choose_overload(pub, raw_args(c->args),
+                                         "function `" + uname + "." + m->name + "`", c,
+                                         /*check_ref=*/pub.size() > 1);
             }
             auto nm = dynamic_cast<Name*>(obj);
             nm->kind = "unit";
@@ -660,6 +668,7 @@ namespace muc_detail {
                 err("union `" + struct_ty->str() + "` cannot be constructed with `T(...)`; use `{ member = value }`", c);
             }
             if (!struct_ty->ctors.empty()) {
+                int named_hit = -1;
                 if (!c->named.empty()) {
                     // Named arguments pick the overload whose parameter names they spell out
                     // (`Point(x = 1, y = 2)`); the type checks below then see positional arguments.
@@ -686,6 +695,7 @@ namespace muc_detail {
                             c);
                     }
                     reorder_named_args(c->args, c->named, struct_ty->ctor_param_names[hit]);
+                    named_hit = hit;
                 }
                 if (struct_ty->has_dtor && c != direct_init_expr_ && c != assign_rhs_expr_ &&
                     call_arg_depth_ == 0) {
@@ -693,8 +703,13 @@ namespace muc_detail {
                         "initializer, an assignment, or a call argument",
                         c);
                 }
-                const auto* chosen = choose_ctor(struct_ty->ctors, raw_args(c->args),
-                                                 "struct `" + struct_ty->str() + "`", c);
+                // A unique named-argument match already selected the constructor; a type-based
+                // re-ranking would discard that choice when the literal promotes (`P(y = 5)` must
+                // run `P(long)`, #191).
+                const auto* chosen = named_hit >= 0
+                                         ? &struct_ty->ctors[static_cast<size_t>(named_hit)]
+                                         : choose_ctor(struct_ty->ctors, raw_args(c->args),
+                                                       "struct `" + struct_ty->str() + "`", c);
                 const size_t ci = static_cast<size_t>(chosen - struct_ty->ctors.data());
                 if (ci < struct_ty->ctor_is_public.size() && !struct_ty->ctor_is_public[ci] &&
                     (!cur_ || cur_->name != struct_ty->unit)) {

@@ -209,7 +209,10 @@ namespace muc_detail {
         Expr* obj = e->obj.get();
         if (!obj) err("missing object for member access", e);
 
-        if (auto nm = dynamic_cast<Name*>(obj); nm && lookup_local(nm->ident) == nullptr) {
+        if (auto nm = dynamic_cast<Name*>(obj);
+            nm && lookup_local(nm->ident) == nullptr && info().globals.count(nm->ident) == 0) {
+            // A unit of the same name is only considered when the name is not a local/global: the
+            // bare-name and lvalue paths already give the variable precedence (#196).
             const std::string uname = nm->ident;
             auto it = infos_.find(uname);
             if (it != infos_.end() && uname != cur_->name) {
@@ -221,9 +224,16 @@ namespace muc_detail {
                 nm->kind = "unit";
                 nm->ty = Type::make_module(uname);
                 if (auto f = ui.funcs.find(e->name); f != ui.funcs.end() && !f->second.empty()) {
+                    std::vector<FuncDecl*> pub;
+                    for (auto* cand : f->second) {
+                        if (cand->is_public) pub.push_back(cand);
+                    }
+                    if (pub.empty()) {
+                        err("function `" + uname + "." + e->name + "` is not declared public", e);
+                    }
                     e->kind = "func";
                     FuncDecl* chosen = nullptr;
-                    TypePtr ft = func_value_type(f->second, uname + "." + e->name, expected, &chosen, e);
+                    TypePtr ft = func_value_type(pub, uname + "." + e->name, expected, &chosen, e);
                     e->sym = chosen;
                     return ft;
                 }

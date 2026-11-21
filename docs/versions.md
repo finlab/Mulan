@@ -27,6 +27,25 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 302 — 2026-11-21
+
+**Overload resolution, visibility, and runtime exception messages.**
+
+- Ref-ness is not an overload dimension: a declaration that differs only in `ref` is one clear error
+  (#189), while ref feasibility filters candidates when an overload set exists so a `const` argument
+  falls through to a by-value overload (#190).
+- A unique named-argument constructor match is no longer re-ranked by type (#191); a delegate target
+  selects among overloads (#192); qualified function values and calls only consider public overloads
+  (#193); const methods stay in ranking on a mutable receiver, with a non-const tie-break (#194);
+  private free operators are not callable across units (#195); a global variable takes precedence over
+  a same-named unit in member access (#196).
+- Cold-path exceptions carry the offending index/length/axis, shift/cast width and division kind in
+  their message (#245).
+- New tests: `overload_matrix`, `global_unit_precedence`, `qualified_public_overload`,
+  `exception_messages` (run); `ref_overload_not_dimension`, `private_free_operator`,
+  `private_qualified_func` (must-fail). Full: Windows **1015/1015**, Linux **1013/1013** with
+  `MUC_VERIFY_MEM=1`.
+
 #### build 301 — 2026-11-21
 
 **Union constants, f32 literal normalization, arity disambiguation.**

@@ -18,6 +18,35 @@ public:
     }
 }
 
+
+// Small decimal formatter for the cold-path messages. `std.fmt` is still planned; keeping this
+// private avoids pulling a formatting unit into an implicitly loaded L3 unit.
+private String int_text(isize v) {
+    bool neg = v < 0;
+    long x = v as long;
+    if neg { x = -x; }
+    byte[20] tmp;
+    int n = 0;
+    if x == 0 { tmp[0] = 48 as byte; n = 1; }
+    while x > 0 {
+        tmp[n] = (48 + (x % 10)) as byte;
+        x = x / 10;
+        n += 1;
+    }
+    isize total = n as isize;
+    if neg { total += 1; }
+    byte[] out = new byte[total];
+    isize k = 0;
+    if neg { out[0] = 45 as byte; k = 1; }
+    int i = n - 1;
+    while i >= 0 {
+        out[k] = tmp[i];
+        k += 1;
+        i -= 1;
+    }
+    return String(out, total);
+}
+
 // Thrown by the bounds check that the compiler emits for a managed sequence subscript
 // (`T[]`); `--bounds=off` removes the check.
 public class BoundsError : Exception {
@@ -35,7 +64,10 @@ public:
 
 // Cold path of the bounds check: the compiler calls this with the offending index.
 public void bounds_fail(isize index, isize length, isize axis) {
-    throw new BoundsError(index, length, axis);
+    BoundsError e = new BoundsError(index, length, axis);
+    e.message = "index " + int_text(index) + " out of bounds for length " + int_text(length) +
+                " (axis " + int_text(axis) + ")";
+    throw e;
 }
 
 
@@ -58,11 +90,16 @@ public:
 
 // Cold paths of those checks (the compiler calls them; they always throw).
 public void shift_fail(long count, int width) {
-    throw new NumericEdgeError(0, count as double, width as long);
+    NumericEdgeError e = new NumericEdgeError(0, count as double, width as long);
+    e.message = "shift count " + int_text(count as isize) + " out of range for a " +
+                int_text(width as isize) + "-bit operand";
+    throw e;
 }
 
 public void cast_fail(double value, int width) {
-    throw new NumericEdgeError(1, value, width as long);
+    NumericEdgeError e = new NumericEdgeError(1, value, width as long);
+    e.message = "numeric cast out of range for a " + int_text(width as isize) + "-bit target";
+    throw e;
 }
 
 // Thrown by the null-reference check the compiler emits before a class handle or an interface value
@@ -97,5 +134,8 @@ public:
 
 // Cold paths of those checks (the compiler calls them; they always throw).
 public void div_fail(long value, int kind) {
-    throw new ArithmeticError(value, kind);
+    ArithmeticError e = new ArithmeticError(value, kind);
+    if kind == 0 { e.message = "integer division by zero"; }
+    else { e.message = "integer division overflow (minimum value divided by -1)"; }
+    throw e;
 }

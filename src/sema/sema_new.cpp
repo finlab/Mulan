@@ -128,6 +128,7 @@ namespace muc_detail {
                 ne);
         }
         const auto& ctors = t->ctors;
+        int named_hit = -1;
         if (!ne->named.empty()) {
             // Same rule as `C(...)`: named arguments select the overload whose parameter names they
             // spell out, then become positional arguments.
@@ -156,12 +157,15 @@ namespace muc_detail {
                     ne);
             }
             reorder_named_args(ne->args, ne->named, t->ctor_param_names[hit]);
+            named_hit = hit;
         }
         ne->has_ctor = !ctors.empty();
         if (ctors.empty()) {
             if (!ne->args.empty()) err("class `" + t->str() + "` has no matching constructor", ne);
         } else {
-            const auto* chosen = choose_ctor(ctors, raw_args(ne->args), "class `" + t->str() + "`", ne);
+            const auto* chosen = named_hit >= 0
+                                     ? &ctors[static_cast<size_t>(named_hit)]
+                                     : choose_ctor(ctors, raw_args(ne->args), "class `" + t->str() + "`", ne);
             const size_t idx = static_cast<size_t>(chosen - ctors.data());
             if (idx < t->ctor_is_public.size() && !t->ctor_is_public[idx] &&
                 (!cur_ || cur_->name != t->unit)) {

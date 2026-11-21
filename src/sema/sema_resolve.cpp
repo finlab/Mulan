@@ -79,7 +79,11 @@ namespace muc_detail {
             if (!scope.empty() && !scope.count(entry.first)) continue;
             auto it = entry.second.funcs.find(name);
             if (it != entry.second.funcs.end()) {
-                out.insert(out.end(), it->second.begin(), it->second.end());
+                for (auto* f : it->second) {
+                    // A private free operator is not callable from another unit; the member-operator
+                    // path already applies this check (#195).
+                    if (decl_visible(entry.first, f->is_public)) out.push_back(f);
+                }
             }
         }
         return out;
@@ -137,6 +141,7 @@ namespace muc_detail {
         std::vector<FuncDecl*> ok;
         std::vector<std::vector<int>> ranks;
         size_t ref_reject = static_cast<size_t>(-1);
+        int ref_reject_kind = 0;  // 1 = not addressable, 2 = readonly variable, 3 = readonly borrow
         for (auto* f : cands) {
             if (f->is_varargs ? f->pty.size() > args.size() : f->pty.size() != args.size()) continue;
             std::vector<int> r;
@@ -151,6 +156,18 @@ namespace muc_detail {
                     if (!is_lvalue(a) && !is_borrow_expr(a)) {
                         good = false;
                         ref_reject = i;
+                        break;
+                    }
+                    // A mutable `ref` needs a mutable place; `const ref` accepts a readonly one.
+                    const bool cref = i < f->pty_cref.size() && f->pty_cref[i];
+                    // A `const ref` return/borrow can lose its top-level const in the expression
+                    // type; the origin still tells us it is readonly.
+                    const bool readonly_arg =
+                        read_only_view(atys[i]) || root_is_const(a) || (a->ty && a->ty->is_const);
+                    if (!cref && readonly_arg) {
+                        good = false;
+                        ref_reject = i;
+                        ref_reject_kind = is_borrow_expr(a) ? 3 : 2;
                         break;
                     }
                     if (!same_type_sig(atys[i], f->pty[i])) { good = false; break; }
@@ -181,6 +198,12 @@ namespace muc_detail {
         }
         if (ok.empty()) {
             if (ref_reject != static_cast<size_t>(-1)) {
+                if (ref_reject_kind == 2) {
+                    err("cannot bind a readonly (`const`) variable to a mutable `ref` parameter", at);
+                }
+                if (ref_reject_kind == 3) {
+                    err("cannot bind a readonly (`const ref`) borrow to a mutable `ref` parameter", at);
+                }
                 err("argument " + std::to_string(ref_reject + 1) + " of `" + what +
                         "` must be an addressable variable: a `ref` parameter borrows the caller's storage",
                     at);
@@ -239,21 +262,10 @@ namespace muc_detail {
             ms = std::move(kept);
             return;
         }
-        // A mutable receiver prefers the non-const overload (C++ rules); the const overload stays
-        // callable only when there is no non-const candidate at all.
-        bool has_nonconst = false;
-        for (auto* s : ms) {
-            if (!s->is_const) {
-                has_nonconst = true;
-                break;
-            }
-        }
-        if (!has_nonconst) return;
-        std::vector<const MethodSig*> kept;
-        for (auto* s : ms) {
-            if (!s->is_const) kept.push_back(s);
-        }
-        ms = std::move(kept);
+        // A mutable receiver can call both forms; keep them for ranking. A const method with an
+        // exact parameter match must beat a non-const widening one (#194). A same-signature const/
+        // non-const tie is resolved in choose_method (non-const preferred).
+        return;
     }
 
     void Sema::collect_methods(const TypePtr& t, const std::string& name,
@@ -365,6 +377,22 @@ namespace muc_detail {
                 check_expr(args[i], only && i < only->params.size() ? only->params[i] : TypePtr()));
         }
 
+        // Two methods that differ only in ref-ness cannot be chosen by call syntax; report the
+        // contradiction instead of an "ambiguous overload" (the declaration check normally catches it,
+        // but an interface-default/on-demand path can miss it) (#189).
+        for (size_t i = 0; i < cands.size(); ++i) {
+            for (size_t j = i + 1; j < cands.size(); ++j) {
+                const MethodSig& a = *cands[i];
+                const MethodSig& b = *cands[j];
+                if (a.is_const != b.is_const || a.params.size() != b.params.size()) continue;
+                if (!same_param_sig(a.params, b.params)) continue;
+                if (a.params_ref != b.params_ref || a.params_cref != b.params_cref) {
+                    err("methods `" + a.name + "` differ only in ref-ness; ref-ness is not an overload "
+                        "dimension (write a different parameter type or name)",
+                        at);
+                }
+            }
+        }
         std::vector<const MethodSig*> ok;
         std::vector<std::vector<int>> ranks;
         for (auto* sig : cands) {
@@ -395,7 +423,37 @@ namespace muc_detail {
                 best = static_cast<int>(i);
             }
         }
-        if (best < 0) err("ambiguous overload call of `" + what + "`", at);
+        if (best < 0) {
+            // Prefer a non-const method when a mutable receiver's const and non-const overloads are
+            // otherwise identical (the const candidate was kept for ranking, #194).
+            std::vector<size_t> maximal;
+            for (size_t i = 0; i < ok.size(); ++i) {
+                bool dominated = false;
+                for (size_t j = 0; j < ok.size(); ++j) {
+                    if (i != j && dominates(ranks[j], ranks[i])) { dominated = true; break; }
+                }
+                if (!dominated) maximal.push_back(i);
+            }
+            int nc = -1;
+            bool one_nonconst = true;
+            for (size_t idx : maximal) {
+                if (!ok[idx]->is_const) {
+                    if (nc >= 0) { one_nonconst = false; break; }
+                    nc = static_cast<int>(idx);
+                }
+            }
+            if (one_nonconst && nc >= 0) {
+                bool same_ranks = true;
+                for (size_t idx : maximal) {
+                    if (static_cast<int>(idx) != nc && ranks[idx] != ranks[static_cast<size_t>(nc)]) {
+                        same_ranks = false;
+                        break;
+                    }
+                }
+                if (same_ranks) return ok[static_cast<size_t>(nc)];
+            }
+            err("ambiguous overload call of `" + what + "`", at);
+        }
         return ok[static_cast<size_t>(best)];
     }
 

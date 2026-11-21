@@ -554,6 +554,19 @@ bool same_param_sig(const std::vector<TypePtr>& a, const std::vector<TypePtr>& b
     return true;
 }
 
+bool same_param_sig(const std::vector<TypePtr>& a, const std::vector<bool>& a_ref,
+                    const std::vector<TypePtr>& b, const std::vector<bool>& b_ref) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        // A top-level `const` is not part of the signature (SPEC 3.7).
+        if (!same_type_sig(a[i], b[i])) return false;
+        const bool ar = i < a_ref.size() && a_ref[i];
+        const bool br = i < b_ref.size() && b_ref[i];
+        if (ar != br) return false;
+    }
+    return true;
+}
+
 bool read_only_view(const TypePtr& t) {
     if (!t) return false;
     if (t->is_const) return true;

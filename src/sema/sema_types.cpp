@@ -536,8 +536,23 @@ namespace muc_detail {
             }
             for (size_t i = 0; i < vec.size(); ++i) {
                 for (size_t j = i + 1; j < vec.size(); ++j) {
+                    auto refs_of = [](const FuncDecl* f) {
+                        std::vector<bool> r;
+                        for (auto& p : f->params) r.push_back(p && p->by_ref);
+                        return r;
+                    };
                     if (same_param_sig(vec[i]->pty, vec[j]->pty)) {
-                        err("duplicate signature of function `" + entry.first + "`", vec[j]);
+                        // Ref-ness is part of the symbol (calling convention) but not an overload
+                        // dimension: without call-site syntax to choose it, two forms differing only
+                        // in ref-ness would always be ambiguous (#189).
+                        if (!same_param_sig(vec[i]->pty, refs_of(vec[i]), vec[j]->pty, refs_of(vec[j]))) {
+                            err("function `" + entry.first +
+                                    "` differs from an earlier overload only in ref-ness; ref-ness is "
+                                    "not an overload dimension (write a different parameter type or name)",
+                                vec[j]);
+                        } else {
+                            err("duplicate signature of function `" + entry.first + "`", vec[j]);
+                        }
                     }
                 }
             }

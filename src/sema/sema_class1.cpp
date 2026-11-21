@@ -548,10 +548,21 @@ namespace muc_detail {
             // A materialized default points its diagnostics at the struct, not at the interface body
             // (the body's line/col would name a declaration the user cannot change here).
             Node* where = m->from_iface_default ? static_cast<Node*>(sd) : static_cast<Node*>(m.get());
+            auto refs_of = [](const std::vector<std::unique_ptr<Param>>& ps) {
+                std::vector<bool> r;
+                for (auto& p : ps) r.push_back(p && p->by_ref);
+                return r;
+            };
             for (MethodDecl* prev : seen) {
                 if (prev->name != m->name || prev->is_const != m->is_const ||
                     !same_param_sig(prev->pty, m->pty)) {
                     continue;
+                }
+                if (!same_param_sig(prev->pty, refs_of(prev->params), m->pty, refs_of(m->params))) {
+                    err("method `" + m->name +
+                            "` differs from an earlier overload only in ref-ness; ref-ness is not an "
+                            "overload dimension (write a different parameter type or name)",
+                        m.get());
                 }
                 std::string key = m->name + "(";
                 for (auto& p : m->pty) key += p->str() + ",";
@@ -651,10 +662,21 @@ namespace muc_detail {
                 sig.params_ref.push_back(prm->by_ref);
                 sig.params_cref.push_back(prm->by_ref && prm->is_const);
             }
+            auto refs_of = [](const std::vector<std::unique_ptr<Param>>& ps) {
+                std::vector<bool> r;
+                for (auto& p : ps) r.push_back(p && p->by_ref);
+                return r;
+            };
             for (MethodDecl* prev : seen) {
                 if (prev->name != m->name || prev->is_const != m->is_const ||
                     !same_param_sig(prev->pty, m->pty)) {
                     continue;
+                }
+                if (!same_param_sig(prev->pty, refs_of(prev->params), m->pty, refs_of(m->params))) {
+                    err("method `" + m->name +
+                            "` differs from an earlier overload only in ref-ness; ref-ness is not an "
+                            "overload dimension (write a different parameter type or name)",
+                        m.get());
                 }
                 std::string key = m->name + "(";
                 for (auto& p : m->pty) key += p->str() + ",";

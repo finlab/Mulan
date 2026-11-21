@@ -42,11 +42,17 @@ namespace muc_detail {
             if (chosen) *chosen = ok[0];
             return Type::make_func(ok[0]->pty, ok[0]->rty);
         }
-        if (expected && expected->kind == TypeKind::Func) {
+        if (expected && (expected->kind == TypeKind::Func || expected->kind == TypeKind::Delegate)) {
+            // A delegate target carries the same parameter/return types; a plain function value
+            // converts to a delegate at the coercion site (#192).
+            TypePtr want = expected->kind == TypeKind::Delegate
+                               ? Type::make_func(expected->fparams, expected->fret)
+                               : expected;
             for (auto* f : ok) {
-                if (same_type(Type::make_func(f->pty, f->rty), expected)) {
+                TypePtr ft = Type::make_func(f->pty, f->rty);
+                if (same_type(ft, want)) {
                     if (chosen) *chosen = f;
-                    return expected;
+                    return ft;
                 }
             }
             err("no overload of `" + what + "` matches the target type `" + expected->str() + "`", at);

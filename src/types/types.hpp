@@ -208,6 +208,9 @@ bool same_type_sig(const TypePtr& a, const TypePtr& b);
 // Parameter-list signature comparison (overloads, duplicate methods): same length and every type equal
 // under `same_type_sig`, so a top-level `const` never splits a signature.
 bool same_param_sig(const std::vector<TypePtr>& a, const std::vector<TypePtr>& b);
+// The same comparison including the ref/const-ref pattern (`g(int)` and `g(ref int)` are distinct).
+bool same_param_sig(const std::vector<TypePtr>& a, const std::vector<bool>& a_ref,
+                    const std::vector<TypePtr>& b, const std::vector<bool>& b_ref);
 // Can a value of this type only ever be read? True for a `const` handle and for an interface whose every
 // member is `const` — such a view can never grant write access, so widening it to a "mutable" handle is
 // safe (SPEC 3.7).
