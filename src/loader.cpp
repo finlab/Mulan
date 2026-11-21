@@ -354,6 +354,25 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         return ec ? p : c.string();
     };
     for (const auto& d : search_dirs) user_roots.insert(canonical(d));
+    if (const char* env = std::getenv("MUC_LIBS")) {
+        // MUC_LIBS has the same precedence as `-I`, so a shadowing standard-library unit there gets
+        // the same warning (#219).
+#ifdef _WIN32
+        const char sep = ';';
+#else
+        const char sep = ':';
+#endif
+        std::string cur;
+        for (const char* p = env;; ++p) {
+            if (*p == sep || *p == '\0') {
+                if (!cur.empty()) user_roots.insert(canonical(cur));
+                cur.clear();
+                if (*p == '\0') break;
+            } else {
+                cur.push_back(*p);
+            }
+        }
+    }
 
     const PlatformSpec spec = parse_platform_spec(platform_os);
     const std::vector<std::string> shadow_keys = platform_shadow_keys(spec);
@@ -427,7 +446,7 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
                 if (std::string p = try_dir(c.dir, un, c.dropped); !p.empty()) {
                     if (un.rfind("std.", 0) == 0 && user_roots.count(canonical(root)) != 0) {
                         std::cerr << "warning: unit `" << un << "` is shadowed by " << p
-                                  << " (a `-I` directory takes precedence over the standard library; "
+                                  << " (a `-I`/MUC_LIBS directory takes precedence over the standard library; "
                                      "remove it or rename the directory)\n";
                     }
                     return p;
@@ -490,6 +509,24 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
                 i += 2;
                 continue;
             }
+            // A string/char literal is data, not declarations: keep only the delimiters so a
+            // `use cstd.math;` inside one does not introduce a dependency (#217).
+            if (text[i] == '"' || text[i] == '\'') {
+                const char q = text[i];
+                clean += q;
+                ++i;
+                while (i < text.size()) {
+                    const char c = text[i];
+                    if (c == '\\' && i + 1 < text.size()) {
+                        i += 2;
+                        continue;
+                    }
+                    ++i;
+                    if (c == q) break;
+                }
+                clean += q;
+                continue;
+            }
             clean += text[i++];
         }
         std::string name;
@@ -502,7 +539,24 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
                        (std::isalnum(static_cast<unsigned char>(clean[j])) || clean[j] == '_' || clean[j] == '.'))
                     ++j;
                 const std::string word = clean.substr(i, j - i);
-                if (word == "unit" || word == "use") {
+                if (word == "use") {
+                    // `use a, b;` — every name in the comma list is a dependency (#218).
+                    size_t q = j;
+                    for (;;) {
+                        while (q < clean.size() && std::isspace(static_cast<unsigned char>(clean[q]))) ++q;
+                        size_t m = q;
+                        while (m < clean.size() &&
+                               (std::isalnum(static_cast<unsigned char>(clean[m])) || clean[m] == '_' ||
+                                clean[m] == '.'))
+                            ++m;
+                        if (m == q) break;
+                        uses.push_back(clean.substr(q, m - q));
+                        q = m;
+                        while (q < clean.size() && std::isspace(static_cast<unsigned char>(clean[q]))) ++q;
+                        if (q < clean.size() && clean[q] == ',') { ++q; continue; }
+                        break;
+                    }
+                } else if (word == "unit" && name.empty()) {
                     size_t k = j;
                     while (k < clean.size() && std::isspace(static_cast<unsigned char>(clean[k]))) ++k;
                     size_t m = k;
@@ -511,11 +565,7 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
                         ++m;
                     size_t s = m;
                     while (s < clean.size() && std::isspace(static_cast<unsigned char>(clean[s]))) ++s;
-                    if (m > k && s < clean.size() && clean[s] == ';') {
-                        const std::string id = clean.substr(k, m - k);
-                        if (word == "unit" && name.empty()) name = id;
-                        else if (word == "use") uses.push_back(id);
-                    }
+                    if (m > k && s < clean.size() && clean[s] == ';') name = clean.substr(k, m - k);
                 }
                 i = j;
                 continue;
@@ -523,6 +573,35 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
             ++i;
         }
         return std::make_pair(name, uses);
+    };
+    // A dependency's unit may also be declared by a sibling file the loader would never open
+    // (`b.mu` and `b2.mu` both `unit b`); check the prefix-named siblings of the resolved file
+    // (#150). Only dependencies are checked: unrelated files in a shared test directory are not
+    // part of this compilation.
+    auto check_duplicate_unit = [&](const std::string& un, const std::string& dep_path) {
+        const auto seg = split_unit(un);
+        const std::string prefix = seg.empty() ? un : seg.back();
+        const std::string dir = dirname_of(dep_path);
+        std::error_code ec;
+        for (const auto& ent : fs::directory_iterator(dir, ec)) {
+            if (ec) break;
+            if (!ent.is_regular_file(ec) || ent.path().extension() != ".mu") continue;
+            const std::string stem = ent.path().stem().string();
+            if (stem.rfind(prefix, 0) != 0) continue;
+            const std::string file = ent.path().string();
+            if (canonical(file) == canonical(dep_path)) continue;
+            try {
+                auto pre = prescan(file);
+                if (pre.first == un) {
+                    throw MuError("unit `" + un + "` is declared by both `" + dep_path + "` and `" +
+                                  file + "`");
+                }
+            } catch (const MuError&) {
+                throw;
+            } catch (...) {
+                // unreadable sibling: the live parse reports it if reached
+            }
+        }
     };
     std::set<std::string> prescan_stack;
 
@@ -541,6 +620,7 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
                 } catch (const MuError&) {
                     continue;  // may be a dead-branch use; the live parse reports it if reached
                 }
+                check_duplicate_unit(u, dep_path);
                 (void)visit(dep_path);
             }
             prescan_stack.erase(pre.first);
@@ -549,6 +629,14 @@ std::vector<std::unique_ptr<Unit>> load_units(const std::string& entry_path,
         std::string name = unit->name;
         check_unit_name(name, unit->line, unit->col, unit->filename);
         auto it = owned.find(name);
+        if (it != owned.end()) {
+            // The same unit declared by two files used to make the first one win silently (#150).
+            if (canonical(it->second->filename) != canonical(path)) {
+                throw MuError("unit `" + name + "` is declared by both `" + it->second->filename +
+                              "` and `" + path + "`");
+            }
+            return it->second.get();
+        }
         // The cycle check must come first: the unit is inserted into `owned` before its dependencies
         // are visited, so a back edge would otherwise return the half-built unit and hide the cycle.
         if (in_progress.count(name)) {

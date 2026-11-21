@@ -24,6 +24,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from muc_cmd import muc_tokens
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 ENTRY = ROOT / "tests" / "cases" / "arith.mu"
 WORK = ROOT / "build" / "cli-target-platform"
@@ -69,13 +71,7 @@ def host_triple() -> str:
 
 
 def compiler() -> list[str]:
-    raw = (os.environ.get("MUC_CMD") or str(ROOT / "build" / "muc.exe")).strip()
-    if " " not in raw:
-        return [raw]
-    as_path = Path(raw)
-    if as_path.is_file():
-        return [str(as_path)]
-    return shlex.split(raw)
+    return muc_tokens(str(ROOT / "build" / "muc.exe"))
 
 
 def run(extra: list[str]) -> tuple[int, str]:

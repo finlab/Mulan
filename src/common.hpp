@@ -33,6 +33,7 @@ inline std::string render_snippet(const std::string& file, int line, int col) {
     std::string shown;
     int visual = 0;
     int caret = -1;
+    int chars = 1;  // source columns are UTF-8 characters (lexer), not bytes (#187)
     for (size_t i = 0; i < src.size();) {
         const unsigned char c = static_cast<unsigned char>(src[i]);
         int bytes = 1;
@@ -51,13 +52,14 @@ inline std::string render_snippet(const std::string& file, int line, int col) {
             bytes = 4;
             w = 2;
         }
-        if (static_cast<int>(i) + 1 == col) caret = visual;
+        if (chars == col) caret = visual;
         if (c == '\t') {
             shown.append(static_cast<size_t>(w), ' ');
         } else {
             shown.append(src, i, static_cast<size_t>(bytes));
         }
         visual += w;
+        chars += 1;
         i += static_cast<size_t>(bytes);
     }
     if (caret < 0) caret = visual;  // col is past the end of the line: place the caret at the end

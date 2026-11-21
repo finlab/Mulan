@@ -18,6 +18,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from muc_cmd import muc_tokens
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 ENTRY = ROOT / "tests" / "cases" / "arith.mu"
 WORK = ROOT / "build" / "cli-build-args"
@@ -26,7 +28,7 @@ failures = 0
 
 
 def muc() -> list[str]:
-    return shlex.split(os.environ.get("MUC_CMD", "muc"))
+    return muc_tokens()
 
 
 def run(args: list[str]) -> tuple[int, str]:

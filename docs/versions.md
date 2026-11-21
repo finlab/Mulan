@@ -27,6 +27,21 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 307 — 2026-11-21
+
+**Loader, packaging and a spawn allocation guard.**
+
+- The loader's pre-scan skips string/char literal contents (#217) and understands comma `use` lists
+  (#218), detects two files declaring the same dependency unit (#150), and warns when MUC_LIBS
+  shadows a standard-library unit like `-I` does (#219).
+- `cmake --install` installs `bin/muc`, `libs/` and `VERSION`; the loader finds the installed
+  library tree through the executable's ancestors (#183). The CLI check scripts share a
+  backslash-safe `MUC_CMD` splitter (#181).
+- Diagnostic snippets map the caret with UTF-8 character columns (#187). A `para` spawn frame checks
+  the `malloc` result and aborts cleanly (#222).
+- New must-fail cases: `duplicate_unit`, `use_comma_cycle`. Full: Windows **1037/1037**, Linux
+  **1035/1035** with `MUC_VERIFY_MEM=1`.
+
 #### build 306 — 2026-11-21
 
 **RC cleanup: arguments on unwind, cursors, `is`, match jumps and slice aggregates.**

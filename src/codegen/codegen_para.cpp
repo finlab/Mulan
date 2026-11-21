@@ -150,6 +150,14 @@ namespace muc_detail {
         const uint64_t bytes = mod->getDataLayout().getTypeAllocSize(ct);
         Value* mem =
             b.CreateCall(libFn("malloc", ptrTy(), {i64()}), {ConstantInt::get(i64(), bytes)});
+        // OOM must abort cleanly like every other allocation, not write through null (#222).
+        BasicBlock* memOk = BasicBlock::Create(ctx, "spawn.mem", curFn);
+        BasicBlock* memBad = BasicBlock::Create(ctx, "spawn.oom", curFn);
+        b.CreateCondBr(b.CreateICmpEQ(mem, Constant::getNullValue(ptrTy())), memBad, memOk);
+        b.SetInsertPoint(memBad);
+        b.CreateCall(abortTrap(), {});
+        b.CreateUnreachable();
+        b.SetInsertPoint(memOk);
         b.CreateStore(sp->frame, b.CreateStructGEP(ct, mem, 0));
         Value* fld = b.CreateStructGEP(ct, mem, 1);
         if (sp->byRef) {

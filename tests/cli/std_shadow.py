@@ -17,13 +17,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from muc_cmd import muc_tokens
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 WORK = ROOT / "build" / "cli-std-shadow"
 FAKE = WORK / "fakestd" / "std"
 
 
 def muc() -> list[str]:
-    return shlex.split(os.environ.get("MUC_CMD", "muc"))
+    return muc_tokens()
 
 
 def main() -> int:

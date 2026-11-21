@@ -157,3 +157,10 @@ endif()
 if("AArch64" IN_LIST LLVM_TARGETS_TO_BUILD)
   target_compile_definitions(muc PRIVATE MUC_TARGET_AARCH64)
 endif()
+
+# Install layout: `bin/muc`, `libs/`, `VERSION` at the prefix root. The loader searches the
+# executable's ancestors for `libs/`, so this layout works without a hard-coded install path.
+include(GNUInstallDirs)
+install(TARGETS muc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY libs/ DESTINATION libs)
+install(FILES VERSION DESTINATION .)
