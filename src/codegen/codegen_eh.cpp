@@ -137,6 +137,19 @@ namespace muc_detail {
         Value* saved = loadPendingObj();
         clearPending();
         if (onThrow) onThrow();
+        // A call whose later argument threw: the arguments already evaluated belong to the caller
+        // (#216). Release them in reverse order.
+        for (size_t i = unwindTemps.size(); i > 0; --i) {
+            const auto& [v, ty] = unwindTemps[i - 1];
+            if (!ty || !needsCleanup(ty)) continue;
+            if (isRefKind(ty)) {
+                emitReleaseRef(v, ty);
+            } else {
+                auto* tmp = entryAlloca(lt(ty), "unwind.arg", alignOf(ty));
+                b.CreateStore(v, tmp);
+                emitReleaseValue(tmp, ty);
+            }
+        }
         // Every object whose construction this throw interrupted releases what it already built before
         // the scopes below (and the caller) see the partially constructed level (#24, #26). A catch in
         // this frame keeps the object under construction alive, so its own body fields are skipped;

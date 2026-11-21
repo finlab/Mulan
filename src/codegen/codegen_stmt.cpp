@@ -306,7 +306,9 @@ using ArgPack = Emitter::ArgPack;
         if (dynamic_cast<BreakStmt*>(s)) {
             if (loops.empty()) fail("LLVM backend: `break` outside of a loop");
             emitFinallyForLoopExit();
-            destroyTempsFrom(0);
+            // Release the iteration's temps but keep the compile-time table for the normal path
+            // (#223/#225).
+            releaseTempsOnExit(0);
             if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().second);
             BasicBlock* dead = BasicBlock::Create(ctx, "dead", curFn);
@@ -316,7 +318,9 @@ using ArgPack = Emitter::ArgPack;
         if (dynamic_cast<ContinueStmt*>(s)) {
             if (loops.empty()) fail("LLVM backend: `continue` outside of a loop");
             emitFinallyForLoopExit();
-            destroyTempsFrom(0);
+            // Release the iteration's temps but keep the compile-time table for the normal path
+            // (#223/#225).
+            releaseTempsOnExit(0);
             if (!loopScopeDepth.empty()) releaseScopesDeeperThan(loopScopeDepth.back());
             b.CreateBr(loops.back().first);
             BasicBlock* dead = BasicBlock::Create(ctx, "dead", curFn);
@@ -326,13 +330,13 @@ using ArgPack = Emitter::ArgPack;
         if (auto rs = dynamic_cast<ReturnStmt*>(s)) {
             if (!rs->value) {
                 emitFinallyBodies(finallyStack.size());
-                destroyTempsFrom(0);
+                releaseTempsOnExit(0);
                 releaseAllScopes();
                 b.CreateRetVoid();
             } else {
                 Value* rv = prepareReturn(rs->value.get());
                 emitFinallyBodies(finallyStack.size());
-                destroyTempsFrom(0);
+                releaseTempsOnExit(0);
                 releaseAllScopes();
                 // `sret`: the result travels through the hidden pointer and the function returns void.
                 // Otherwise a `Coerce*` result is packed into the register the C ABI asks for.
@@ -476,8 +480,12 @@ using ArgPack = Emitter::ArgPack;
             if (mayThrow.mayThrowMethod(s->iter_sig, sty)) emitCheckPending();
             auto* itSlot = entryAlloca(lt(s->it_ty), "it", alignOf(s->it_ty));
             b.CreateStore(itv, itSlot);
-            // an interface cursor is an owned value: release the copy when the statement ends
-            if (s->it_ty->kind == TypeKind::Interface) stmtTemps.emplace_back(itSlot, s->it_ty);
+            // The iterator is an owned value: a class/interface handle, or a struct cursor with RC
+            // fields, is released when the statement ends (#221).
+            if (isRefKind(s->it_ty) ||
+                (s->it_ty->kind == TypeKind::Struct && needsCleanup(s->it_ty))) {
+                stmtTemps.emplace_back(itSlot, s->it_ty);
+            }
             // struct cursors are passed by address (static dispatch); a class/interface cursor value is
             // passed as the receiver value itself.
             const bool itByValue =
@@ -496,7 +504,10 @@ using ArgPack = Emitter::ArgPack;
             if (mayThrow.mayThrowMethod(s->cur_sig, s->it_ty)) emitCheckPending();
             b.CreateStore(ev, varSlot);
             const bool ownCur = needsCleanup(s->elem_ty);
-            if (ownCur) emitRetainValue(varSlot, s->elem_ty);
+            // `current()` returns by value (sema rejects a borrow return): the returned value already
+            // owns its reference, so the loop variable takes it over; only the cleanup below is needed
+            // (#214). Retaining again leaked one reference per iteration.
+
             const size_t curDepth = refScopes.size();
             loops.push_back({incBB, endBB});
             pushRefScope();
@@ -651,6 +662,13 @@ using ArgPack = Emitter::ArgPack;
         // pointer is taken first. Both are exactly the `as` lowering, so reuse it: `x is C` is
         // `x as C != null`, and the optional binding is that non-null pointer.
         Value* srcv = eval(e->obj.get());
+        // An owned scrutinee (`fetch() is Dog`) must be released at scope end; the downcast result
+        // is an alias, not a new reference (#215).
+        if (isRefKind(e->obj->ty) && valueOwned(e->obj.get())) {
+            auto* slot = entryAlloca(lt(e->obj->ty), "is.obj", alignOf(e->obj->ty));
+            b.CreateStore(srcv, slot);
+            stmtTemps.emplace_back(slot, e->obj->ty);
+        }
         Value* cast = emitDowncast(srcv, e->obj->ty, e->test_ty);
         Value* cond = b.CreateICmpNE(cast, Constant::getNullValue(ptrTy()));
         if (!e->bind_locals.empty()) b.CreateStore(cast, slotFor(e->bind_locals[0]));

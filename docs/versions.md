@@ -27,6 +27,19 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 306 — 2026-11-21
+
+**RC cleanup: arguments on unwind, cursors, `is`, match jumps and slice aggregates.**
+
+- If a later argument throws, the owned arguments already evaluated are released on the unwind path
+  (free functions and method calls) (#216).
+- `is` releases an owned scrutinee (#215); cursor for-in takes over a by-value `current()` without
+  retaining it again and releases class/struct iterators (#214, #221); break/continue/return inside a
+  match arm no longer corrupt the temporary table for the normal path (#223, #225); slice aggregate
+  elements are constructed once, not default-constructed then overwritten (#239).
+- New cases: `arg_eval_unwind`, `is_rvalue_release`, `cursor_rc_release`, `match_jump_cleanup`,
+  `slice_agg_ctor_count`. Full: Windows **1035/1035**, Linux **1033/1033** with `MUC_VERIFY_MEM=1`.
+
 #### build 305 — 2026-11-21
 
 **Implicit construction, constructors, enum aliases and lambda captures.**

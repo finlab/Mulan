@@ -255,7 +255,8 @@ namespace muc_detail {
     // Allocate a dynamic array; dims holds the size of each dimension. Unless `uninit` is set the
     // whole block is zeroed (SPEC 3.3): a null handle is load-bearing for reference elements, and
     // `calloc` lets libc skip the zeroing entirely when the pages come fresh from the OS.
-    Value* Emitter::emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem, bool uninit) {
+    Value* Emitter::emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem, bool uninit,
+                                bool construct_elems) {
         int rank = static_cast<int>(dims.size());
         uint64_t es = sizeOf(elem);
         // INVARIANT: every dimension is a non-negative i64 and the byte count does not overflow.
@@ -327,7 +328,7 @@ namespace muc_detail {
         // and the block before unwinding continues (SPEC 3.14 partial construction); the element that
         // failed is released by the ctor-progress cleanup, not here. Order on that path is prefix first,
         // then the failed element — observable only in destructor side effects of a throwing ctor.
-        if (!uninit && elem->needs_ctor()) {
+        if (construct_elems && !uninit && elem->needs_ctor()) {
             Value* data = sliceDataPtr(h, rank);
             Value* count = sliceTotalCount(h, rank);
             AllocaInst* idx = entryAlloca(i64(), "arr.ctor.i");

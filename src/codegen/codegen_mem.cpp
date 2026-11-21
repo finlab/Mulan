@@ -221,7 +221,10 @@ namespace muc_detail {
             if (ty->kind == TypeKind::Slice) {
                 std::vector<Init*> elems;
                 for (auto& it : ia->items) elems.push_back(it.second.get());
-                Value* h = emitDynArrayAlloc(ConstantInt::get(i64(), elems.size()), ty->elem);
+                // The elements are built by `initInto` below; running the element default constructor
+                // here first was a double construction (and released nothing) (#239).
+                Value* h = emitSliceAlloc({ConstantInt::get(i64(), elems.size())}, ty->elem,
+                                          /*uninit=*/false, /*construct_elems=*/false);
                 // The handle lives in the destination before the elements are built, so the shared
                 // unwind block below can release the header and the constructed prefix.
                 storeAt(h, addr, unaligned);

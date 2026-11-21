@@ -560,7 +560,7 @@ private:
     TypePtr instantiate_generic_named(const std::string& name,
                                       const std::vector<TypeSpecPtr>& args, Unit* u);
     // Find a generic template by name (this unit first, then a unique suffix match); returns nullptr when none
-    Decl* find_generic_template(const std::string& full, Unit* u);
+    Decl* find_generic_template(const std::string& full, Unit* u, size_t min_type_args = 0);
     // The unit that declares a template (the `generic_templates_` key carries it); nullptr when the
     // declaration is not a registered template.
     Unit* unit_of_template(const Decl* d);

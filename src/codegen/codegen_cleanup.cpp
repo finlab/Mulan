@@ -144,6 +144,9 @@ namespace muc_detail {
         if (dynamic_cast<NewExpr*>(e)) return true;
         if (dynamic_cast<Ternary*>(e)) return true;
         if (dynamic_cast<MatchExpr*>(e)) return true;  // one owned value in the result slot
+        // A free/member operator returns a fresh value; taking it over by a plain store avoids
+        // copying it and leaking the temporary (#157). A `ref` operator result is a borrow.
+        if (auto b = dynamic_cast<Binary*>(e)) return (b->op_func || b->op_method) && !b->by_ref;
         return false;
     }
 
@@ -503,6 +506,13 @@ namespace muc_detail {
     }
 
     // Release the owned rvalues materialized during statement execution (those registered after mark), keeping reverse order
+    void Emitter::releaseTempsOnExit(size_t mark) {
+        if (stmtTemps.size() <= mark) return;
+        auto saved = stmtTemps;
+        emitReleaseTempsFrom(mark);
+        stmtTemps = std::move(saved);
+    }
+
     void Emitter::destroyTempsFrom(size_t mark) {
         if (stmtTemps.size() <= mark) return;
         emitReleaseTempsFrom(mark);

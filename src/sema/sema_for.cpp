@@ -50,6 +50,11 @@ namespace muc_detail {
             err("the cursor type `" + cursor->str() + "` must provide `current()` (std.interfaces.IIterator)",
                 s->seq.get());
         }
+        if (is_borrow_type(cur->ret)) {
+            err("cursor `current()` must return a value, not a borrow (`ref " + cur->ret->str() +
+                    "`): the loop variable owns the element for the iteration",
+                s->seq.get());
+        }
         if (s->by_ref) err("`for ref` is not supported for cursor sources (SPEC 6.4.2)", s);
         s->loop_kind = "cursor";
         s->it_ty = cursor;

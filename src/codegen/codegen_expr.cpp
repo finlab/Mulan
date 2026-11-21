@@ -697,6 +697,11 @@ static bool is_numeric(const TypePtr& t) {
     ArgPack Emitter::prepareArgs(const std::vector<Expr*>& args, const std::vector<TypePtr>& ptys,
                                  const std::vector<bool>* refs) {
         ArgPack pack;
+        struct UnwindGuard {
+            std::vector<std::pair<Value*, TypePtr>>& v;
+            size_t n;
+            ~UnwindGuard() { v.resize(n); }
+        } unwind_guard{unwindTemps, unwindTemps.size()};
         for (size_t i = 0; i < args.size() && i < ptys.size(); ++i) {
             if (refs && i < refs->size() && (*refs)[i]) {
                 // A `ref` parameter borrows the caller's storage: pass the address, never a copy.
@@ -710,6 +715,12 @@ static bool is_numeric(const TypePtr& t) {
             const bool handedOver = ptys[i] && ptys[i]->kind == TypeKind::Struct;
             if (!handedOver && needsCleanup(ptys[i]) && convOwns(args[i], ptys[i])) {
                 pack.owned.emplace_back(v, ptys[i]);
+            }
+            // Until the call actually happens, a struct copy and an owned temporary belong to the
+            // caller; if a later argument throws, the unwind path releases them (#216).
+            if (needsCleanup(ptys[i]) &&
+                (handedOver || convOwns(args[i], ptys[i]))) {
+                unwindTemps.emplace_back(v, ptys[i]);
             }
             pack.vals.push_back(v);
         }

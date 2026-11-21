@@ -222,6 +222,9 @@ struct Emitter {
     std::vector<size_t> loopScopeDepth;
     // owned struct/array temporaries materialized by taking their address inside a statement, released together at the end of the statement
     std::vector<std::pair<Value*, TypePtr>> stmtTemps;
+    // Owned argument values already evaluated while a call's remaining arguments are still being
+    // evaluated; an exception there must release them (#216).
+    std::vector<std::pair<Value*, TypePtr>> unwindTemps;
 
     // ------------------------------------------------------------ partially constructed objects
     // A construction sequence that is still running, innermost last. When an exception leaves it, the
@@ -490,7 +493,8 @@ struct Emitter {
 
     // Allocate a dynamic array; `uninit` leaves the element block uninitialized (sema restricts it
     // to trivial element types), otherwise the block is zeroed.
-    Value* emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem, bool uninit = false);
+    Value* emitSliceAlloc(const std::vector<Value*>& dims, const TypePtr& elem, bool uninit = false,
+                          bool construct_elems = true);
 
     Value* emitDynArrayAlloc(Value* n, const TypePtr& elem);
 
@@ -611,6 +615,9 @@ struct Emitter {
 
     // Release the owned rvalues materialized during statement execution (those registered after mark), keeping reverse order
     void destroyTempsFrom(size_t mark);
+    // Release temps after `mark` on an exiting branch without mutating the compile-time temp table
+    // (the sibling normal path still needs its own release instructions).
+    void releaseTempsOnExit(size_t mark);
 
     // whether the expression already holds a transferable strong reference (new / a call returning a class reference)
     bool ownsReference(Expr* e);

@@ -189,6 +189,7 @@ using ArgPack = Emitter::ArgPack;
                 mod->getOrInsertFunction(f->cname, FunctionType::get(lt(f->rty), ptys, f->is_varargs));
         }
         ArgPack pack;
+        const size_t unwind_mark = unwindTemps.size();
         Value* sretSlot = nullptr;
         if (sig.sret) {
             sretSlot = entryAlloca(lt(f->rty), "sret", alignOf(f->rty));
@@ -204,6 +205,11 @@ using ArgPack = Emitter::ArgPack;
             const bool handedOver = f->pty[i] && f->pty[i]->kind == TypeKind::Struct;
             if (!handedOver && needsCleanup(f->pty[i]) && convOwns(args[i], f->pty[i])) {
                 pack.owned.emplace_back(v, f->pty[i]);
+            }
+            // If a later argument throws, the arguments evaluated so far are still the caller's
+            // (#216). C ABI `ByVal` copies the value afterwards; register the owned value first.
+            if (needsCleanup(f->pty[i]) && (handedOver || convOwns(args[i], f->pty[i]))) {
+                unwindTemps.emplace_back(v, f->pty[i]);
             }
             if (f->c_abi) {
                 const size_t sigIdx = (sig.sret ? 1u : 0u) + i;
@@ -229,6 +235,9 @@ using ArgPack = Emitter::ArgPack;
                 pack.vals.push_back(promoteVararg(eval(args[i]), args[i]->ty));
             }
         }
+        // The callee now owns/handles the arguments; an exception from the call itself is not an
+        // argument-evaluation unwind.
+        unwindTemps.resize(unwind_mark);
         CallInst* call = b.CreateCall(callee, pack.vals);
         if (f->c_abi) applyCAbiCallAttrs(call, sig, f->pty, f->pty_ref, f->rty);
         releaseTemps(pack);

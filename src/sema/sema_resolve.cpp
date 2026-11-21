@@ -500,7 +500,20 @@ namespace muc_detail {
                 best = static_cast<int>(i);
             }
         }
-        if (best < 0) err("ambiguous constructor call of `" + what + "`", at);
+        if (best < 0) {
+            // Two constructors with the same decayed parameter types differ only in a mode the call
+            // cannot spell (e.g. `ref`); name that instead of a generic ambiguity (#163).
+            for (size_t i = 0; i < ok.size(); ++i) {
+                for (size_t j = i + 1; j < ok.size(); ++j) {
+                    if (*ok[i] == *ok[j]) {
+                        err("two constructors have identical parameter types; ref-ness is not an "
+                            "overload dimension",
+                            at);
+                    }
+                }
+            }
+            err("ambiguous constructor call of `" + what + "`", at);
+        }
         return ok[static_cast<size_t>(best)];
     }
 
