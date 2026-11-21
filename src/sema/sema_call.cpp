@@ -213,6 +213,20 @@ namespace muc_detail {
                 std::vector<const MethodSig*> ms;
                 collect_methods(cur_class_, nm->ident, ms);
                 if (!ms.empty()) {
+                    // A bare-name call must respect the declaring unit's visibility just like the
+                    // `this.` spelling does (#149).
+                    std::vector<const MethodSig*> visible;
+                    for (auto* sig : ms) {
+                        if (decl_visible(sig->owner ? sig->owner->unit : std::string(), sig->is_public)) {
+                            visible.push_back(sig);
+                        }
+                    }
+                    if (visible.empty()) {
+                        err("method `" + nm->ident +
+                                "` is not declared public and cannot be called from another unit",
+                            c);
+                    }
+                    ms = std::move(visible);
                     filter_methods_for_receiver(ms, cur_method_const_);
                     if (ms.empty())
                         err("cannot call a non-const method `" + nm->ident + "` inside a `const` method", c);
@@ -468,14 +482,18 @@ namespace muc_detail {
             }
             if (uname.empty()) {
                 // sum-type construction: `Value.Int(3)` — the callee is `Sum.Alternative(args)`.
-                // Checked before `check_expr(obj)`, because a type name is not an expression.
-                if (auto nm = dynamic_cast<Name*>(obj); nm && lookup_local(nm->ident) == nullptr) {
-                    TypePtr st = find_type_named(cur_->name, nm->ident, false);
+                // Checked before `check_expr(obj)`, because a type name is not an expression. A
+                // unit-qualified sum (`v.Value.Int(3)`) has a Member object instead of a Name.
+                TypePtr st;
+                Name* obj_name = dynamic_cast<Name*>(obj);
+                Member* obj_member = dynamic_cast<Member*>(obj);
+                if (obj_name && lookup_local(obj_name->ident) == nullptr) {
+                    st = find_type_named(cur_->name, obj_name->ident, false);
                     if (!st && !m->type_args.empty()) {
                         // a generic sum: `Option<int>.Some(3)` — instantiate with the member's type arguments
                         TypeSpec spec;
                         spec.kind = TypeSpec::K::Named;
-                        spec.name = nm->ident;
+                        spec.name = obj_name->ident;
                         spec.line = c->line;
                         spec.col = c->col;
                         for (auto& a : m->type_args) spec.args.push_back(clone_type_spec(*a));
@@ -484,35 +502,49 @@ namespace muc_detail {
                     if (!st) {
                         for (auto& use : cur_->uses) {
                             if (!unit_visible(use->unit_name)) continue;
-                            if (TypePtr t = find_type_named(use->unit_name, nm->ident, true)) { st = t; break; }
+                            if (TypePtr t = find_type_named(use->unit_name, obj_name->ident, true)) {
+                                st = t;
+                                break;
+                            }
                         }
                     }
-                    if (st && st->kind == TypeKind::Sum) {
-                        int idx = -1;
-                        for (size_t k = 0; k < st->sum_names.size(); ++k) {
-                            if (st->sum_names[k] == m->name) { idx = static_cast<int>(k); break; }
-                        }
-                        if (idx < 0) {
-                            err("variant `" + st->str() + "` has no alternative `" + m->name + "`", c);
-                        }
-                        const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
-                        if (c->args.size() != fs.size()) {
-                            err("alternative `" + m->name + "` of `" + st->str() + "` takes " +
-                                    std::to_string(fs.size()) + " value(s), but " +
-                                    std::to_string(c->args.size()) + " were given",
-                                c);
-                        }
-                        for (size_t k = 0; k < fs.size(); ++k) {
-                            check_assign(c->args[k].get(), fs[k], "sum payload");
-                        }
-                        nm->kind = "type";
-                        nm->ty = st;
-                        m->kind = "sum_alt";
-                        c->callee_kind = "sum_ctor";
-                        c->sum_ty = st;
-                        c->sum_alt = idx;
-                        return st;
+                } else if (obj_member) {
+                    if (auto* un = dynamic_cast<Name*>(obj_member->obj.get());
+                        un && lookup_local(un->ident) == nullptr && unit_imported(un->ident)) {
+                        st = find_type_named(un->ident, obj_member->name, true);
                     }
+                }
+                if (st && st->kind == TypeKind::Sum) {
+                    int idx = -1;
+                    for (size_t k = 0; k < st->sum_names.size(); ++k) {
+                        if (st->sum_names[k] == m->name) { idx = static_cast<int>(k); break; }
+                    }
+                    if (idx < 0) {
+                        err("variant `" + st->str() + "` has no alternative `" + m->name + "`", c);
+                    }
+                    const auto& fs = st->sum_fields[static_cast<size_t>(idx)];
+                    if (c->args.size() != fs.size()) {
+                        err("alternative `" + m->name + "` of `" + st->str() + "` takes " +
+                                std::to_string(fs.size()) + " value(s), but " +
+                                std::to_string(c->args.size()) + " were given",
+                            c);
+                    }
+                    for (size_t k = 0; k < fs.size(); ++k) {
+                        check_assign(c->args[k].get(), fs[k], "sum payload");
+                    }
+                    if (obj_name) {
+                        obj_name->kind = "type";
+                        obj_name->ty = st;
+                    }
+                    if (obj_member) {
+                        obj_member->kind = "type";
+                        obj_member->ty = st;
+                    }
+                    m->kind = "sum_alt";
+                    c->callee_kind = "sum_ctor";
+                    c->sum_ty = st;
+                    c->sum_alt = idx;
+                    return st;
                 }
                 TypePtr ot = check_expr(obj);
                 if (is_reference_type(ot)) {

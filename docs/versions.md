@@ -27,6 +27,19 @@
 
 ### 0.0.0 (unreleased)
 
+#### build 304 — 2026-11-21
+
+**Inheritance, interface defaults and enum assignment.**
+
+- A unit-qualified variant constructor (`v.Value.Int(3)`) is recognized when the callee object is a
+  Member, not only a Name (#202).
+- A bare-name method call respects the declaring unit's visibility like the `this.` spelling (#149).
+- Assigning to an enum member is rejected in sema instead of reaching the backend (#148).
+- A default interface method reached through a diamond is collected once per owner (#144).
+- `operator[]` and other inherited class operators are looked up through the base chain (#179).
+- New cases: `inherited_operator`, `diamond_default` (run); `enum_const_assign` (must-fail). Full:
+  Windows **1024/1024**, Linux **1022/1022** with `MUC_VERIFY_MEM=1`.
+
 #### build 303 — 2026-11-21
 
 **Slice/const/initialization hardening.**

@@ -586,6 +586,7 @@ namespace muc_detail {
                 for (size_t i = 0; i < defaults.size(); ++i) {
                     for (size_t j = i + 1; j < defaults.size(); ++j) {
                         if (same_sig(defaults[i], defaults[j]) &&
+                            defaults[i].owner != defaults[j].owner &&
                             !class_has_concrete(c->ty, defaults[i])) {
                             err("default interface method `" + defaults[i].name +
                                     "` is conflicting and must be overridden in the class",

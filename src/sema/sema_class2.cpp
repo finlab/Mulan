@@ -268,6 +268,9 @@ namespace muc_detail {
     void Sema::check_writable(Expr* t) {
         if (auto n = dynamic_cast<Name*>(t)) {
             if (n->ident == "this") err("cannot assign to `this`", t);
+            if (n->kind == "enum_const") {
+                err("cannot assign to enum member `" + n->ident + "`", t);
+            }
             // A `ref` parameter is a binding to the caller's variable, so assigning to it writes that
             // variable — for every value type, not only scalars. (It cannot "rebind": the language has no
             // references. The old struct carve-out made an out-parameter impossible to write, which is

@@ -331,10 +331,12 @@ namespace muc_detail {
         // class stay identity comparison and cannot be declared as members — the parser rejects them.
         if (!recv || (recv->kind != TypeKind::Struct && recv->kind != TypeKind::Class)) return nullptr;
         std::vector<const MethodSig*> cands;
-        for (const auto& m : recv->methods) {
-            if (!m.is_operator || m.name != name) continue;
-            if (read_only_view(recv) && !m.is_const) continue;  // a mutating operator cannot run on a const value
-            cands.push_back(&m);
+        std::vector<const MethodSig*> all;
+        collect_class_methods(recv, name, all);
+        for (const auto* m : all) {
+            if (!m->is_operator) continue;
+            if (read_only_view(recv) && !m->is_const) continue;  // a mutating operator cannot run on a const value
+            cands.push_back(m);
         }
         if (cands.empty()) return nullptr;
         for (const MethodSig* c : cands) {
