@@ -1,11 +1,5 @@
 # muc version file — the single source of truth. See docs/versions.md for the rules.
-# version: release version (major.minor.patch); changed only on an explicit release.
-version = 0.0.0
+# version: milestone version (0.0.x increments per milestone; 0.1.0 is the first complete release).
+version = 0.0.1
 # build: monotonic build counter; +1 for every change to the compiler code.
 build   = 307
-
-
-
-
-
-

@@ -6,24 +6,32 @@
   numbers** on labelled lines:
 
   ```
-  version = 0.0.0
-  build   = 145
+  version = 0.0.1
+  build   = 307
   ```
 
-- **`version`** (`major.minor.patch`) is the release version. It changes **only on an explicit release
-  request**; a release is recorded as a `###` section below with its date.
+- **`version`** (`major.minor.patch`) is the milestone version under conservative pre-1.0 versioning.
+  The first complete release (compiler + standard library) will be `0.1.0`; the `0.0.x` series starts at
+  `0.0.1`, and **each milestone increments the last digit**. `0.0.x` milestones do not promise
+  compatibility. The version changes only when the user designates a milestone, not on every change.
 - **`build`** is a monotonic build counter, **+1 for every change to the compiler code** (`src/`, compiler
   behaviour, generated artifacts). Documentation-only, comment-only or config/CI-text changes are recorded
   inside the current build entry's follow-up paragraph instead of bumping it.
 - A build number is only raised after that build passes the full test suite.
 - Everything reads the same file: CMake (`MUC_VERSION` / `MUC_BUILD`), `muc --version`
-  (`muc 0.0.0 (build 145)`), the DWARF `producer` string, and the `mulan.version` / `mulan.build`
+  (`muc 0.0.1 (build 307)`), the DWARF `producer` string, and the `mulan.version` / `mulan.build`
   module flags.
 - **Historical note**: builds up to `0.0.144` used a single `major.minor.build` number and keep their
-  original headings under *Legacy numbering*. From build 145 on, entries are `#### build <n> — <date>`
-  under the current release section.
+  original headings under *Legacy numbering*. From build 145 on, entries are `#### build <n> — <date>`.
+  Builds up to 307 remain recorded under `0.0.0`; the `0.0.1` milestone starts after that history.
 
 ## Releases
+
+### 0.0.1 — 2026-11-23 (milestone)
+
+- Start of the conservative `0.0.x` milestone series. The first complete release (compiler + standard
+  library) will be `0.1.0`; each milestone increments the last digit. No compatibility promise for `0.0.x`.
+- Build history up to build 307 remains under `0.0.0`; later builds are recorded under the current milestone.
 
 ### 0.0.0 (unreleased)
 
