@@ -325,6 +325,23 @@ public Cursor<T> cursor<T>(delegate () => bool next, delegate () => T current);
   declared struct with concrete closures can be inlined more aggressively. The wrapper trades that
   for not writing a class each time.
 
+### 6.7 Borrow guards and guarded cursors (0.1 rewrite placeholder)
+
+> Draft for the 0.1 language rewrite; the exact type/API/ABI is not frozen.
+
+Safe `for ref` / `for const ref` over a reference-storage container uses an **active borrow guard**:
+
+- the container object (class header, RC array header) carries one O(1) active-borrow word;
+- `iterator()` / loop entry acquires the guard; loop end, cursor drop, or consumption releases it;
+- cursor/adapter chains carry the guard by value: copy increments, move transfers, drop decrements;
+- every non-const method, `ref` / `move ref` free function, and public structural field write checks the word and throws `InvalidOperationError` when it is nonzero;
+- `const` methods skip the check;
+- value iteration (`for x`) does not require a guard; a custom cursor without a guard requires `unsafe` for `ref` iteration;
+- `unsafe`, raw views, and FFI are unchecked;
+- shared containers use an atomic count or the object's gate; value-struct containers need no runtime guard (the compile-time borrow checker covers them).
+
+The exact type name, guarded-cursor marker, and error subtype are pending the language rewrite.
+
 ## 7. Platform units
 
 - **Inside a unit**, a platform difference is an `#if` arm (SPEC 9.2): the unit keeps one file, the
