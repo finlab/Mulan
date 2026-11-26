@@ -334,11 +334,11 @@ Safe `for ref` / `for const ref` over a reference-storage container uses an **ac
 - the container object (class header, RC array header) carries one O(1) active-borrow word;
 - `iterator()` / loop entry acquires the guard; loop end, cursor drop, or consumption releases it;
 - cursor/adapter chains carry the guard by value: copy increments, move transfers, drop decrements;
-- every non-const method, `ref` / `move ref` free function, and public structural field write checks the word and throws `InvalidOperationError` when it is nonzero;
+- every non-const method, `ref` / `move ref` free function, and public structural field write checks the word and throws `BorrowConflictError` when it is nonzero;
 - `const` methods skip the check;
 - value iteration (`for x`) does not require a guard; a custom cursor without a guard requires `unsafe` for `ref` iteration;
 - `unsafe`, raw views, and FFI are unchecked;
-- shared containers protect a plain borrow word with the object's gate: `for ref` / `const ref` must run inside the gate, non-const methods acquire the gate and then check the word, reentrant conflicts throw `InvalidOperationError`, and another task blocks on the gate; no separate atomic borrow count is used. `shared I` dynamic ref returns remain unsafe. Value-struct containers need no runtime guard (the compile-time borrow checker covers them).
+- shared containers protect a plain borrow word with the object's gate: `for ref` / `const ref` must run inside the gate, non-const methods acquire the gate and then check the word, reentrant conflicts throw `BorrowConflictError`, and another task blocks on the gate; no separate atomic borrow count is used. `shared I` dynamic ref returns remain unsafe. Value-struct containers need no runtime guard (the compile-time borrow checker covers them).
 
 A static `ref` return acquires the root's guard for the reference's full-expression lifetime. Standard borrow-only accessors (the mutable subscript and cursor methods) are exempt from the non-const check; other non-const methods and `ref`-taking free functions are treated as structural mutation and check the guard. Safe ref returns are limited to root-owned private storage; independently aliasable inner containers need their own guard or `unsafe`.
 
